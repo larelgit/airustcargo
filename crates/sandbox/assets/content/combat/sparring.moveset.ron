@@ -1,0 +1,36 @@
+// The movesets `reactions.scenario` switches two arena fighters to (see `sparring.action.ron`).
+{
+    // The skeleton's body, with reaction tiers: three reactions with their pushes, a short
+    // immunity after each, protection when one ends, a guard-broken action.
+    "sparring": (
+        inputs: {"light": "claw", "heavy": "spar_slam", "dodge": "spar_roll", "block": "spar_guard", "technique.1": "spar_crusher"},
+        stagger: "skeleton_stagger",
+        hit: "skeleton_flinch",
+        death: "skeleton_death",
+        reactions: [
+            (action: "spar_react_light", push: 2.0, decel: 12.0),
+            (action: "spar_react_heavy", push: 4.0, decel: 12.0),
+            (action: "spar_react_down", push: 4.0, decel: 12.0),
+        ],
+        reaction_immunity: 0.2,
+        reaction_protection: 1.0,
+        break_protection: 3.0,
+        guard_broken: "spar_guard_broken",
+        guard_broken_push: (0.2, 10.0),
+    ),
+    // The player's kit for it.
+    "duelist": (
+        inputs: {"light": "spar_jab", "heavy": "spar_slam", "dodge": "spar_roll", "block": "spar_guard", "technique.1": "spar_crusher"},
+        stagger: "player_stagger",
+        death: "player_death",
+        reactions: [
+            (action: "spar_react_light", push: 2.0, decel: 12.0),
+            (action: "spar_react_heavy", push: 4.0, decel: 12.0),
+            (action: "spar_react_down", push: 4.0, decel: 12.0),
+        ],
+        reaction_immunity: 0.2,
+        reaction_protection: 1.0,
+        guard_broken: "spar_guard_broken",
+        guard_broken_push: (0.2, 10.0),
+    ),
+}

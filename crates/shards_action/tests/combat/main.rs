@@ -4,8 +4,11 @@
 mod actions;
 mod agents;
 mod common;
+mod golden;
 mod hits;
 mod modifiers;
+mod outcome;
+mod reactions;
 mod replay;
 #[cfg(feature = "render")]
 mod render;

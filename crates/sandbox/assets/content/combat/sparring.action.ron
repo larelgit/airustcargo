@@ -1,0 +1,64 @@
+// Sparring: the hit-outcome mechanics of the engine (reaction tiers and pushes, reaction armour,
+// per-hit guard costs, a perfect guard with a price, perfect evades, walls, the stamina
+// overdraft) on neutral numbers. `reactions.scenario` borrows two fighters of the arena and
+// switches their movesets to `sparring` and `duelist` (`sparring.moveset.ron`) for its length;
+// nothing in the starting world uses them. Net ids 100-119.
+{
+    // A quick jab that asks for a light reaction; pressed again in its recovery it chains.
+    "spar_jab": (
+        net_id: 100,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.3)],
+        cost: (stamina: 5),
+        hits: [(span: Phase("active"), shape: Cone(range: 2.4, angle: 120), damage: 6, poise: 4, reaction: 1)],
+        cancels: [(span: Secs(0.15, 0.4), into: [Combo("light", "spar_jab_2")])],
+    ),
+    "spar_jab_2": (
+        net_id: 101,
+        phases: [("windup", 0.05), ("active", 0.1), ("recovery", 0.25)],
+        cost: (stamina: 5),
+        hits: [(span: Phase("active"), shape: Cone(range: 2.4, angle: 120), damage: 6, poise: 4, reaction: 1)],
+    ),
+    // The heavy swing: a heavy reaction and a push, a guard price of its own, reaction armour while
+    // it winds up, and walls stop it.
+    "spar_slam": (
+        net_id: 102,
+        phases: [("windup", 0.5), ("active", 0.15), ("recovery", 0.6)],
+        cost: (stamina: 20, stamina_mode: Any),
+        hits: [(span: Phase("active"), shape: Cone(range: 3.4, angle: 120), damage: 15, poise: 10,
+                reaction: 2, knockback: 3.0, guard_damage: 25, flags: [LineOfSight])],
+        armor: [(Phase("windup"), 1)],
+        track_until: 0.3,
+        telegraph: (symbol: "!"),
+    ),
+    // A roll whose middle is a perfect evade; it starts on any stamina above 0.
+    "spar_roll": (
+        net_id: 103,
+        phases: [("roll", 0.4), ("recover", 0.1)],
+        cost: (stamina: 22, stamina_mode: Any),
+        iframes: [Secs(0.07, 0.25)],
+        perfect_iframes: [Secs(0.105, 0.215)],
+        steer: Move,
+    ),
+    // A guard that prices the hit by its own `guard_damage`, a perfect window that costs half
+    // and leaves the attacker standing (the game decides what a parry does), and shares for
+    // breaks and statuses.
+    "spar_guard": (
+        net_id: 104,
+        phases: [("raise", 0.18), ("hold", 0.3), ("lower", 0.1)],
+        hold: (input: "block", span: Phase("hold")),
+        guard: (span: Phases("raise", "hold"), perfect: Phase("raise"), stamina_per_damage: 0.8,
+                perfect_cost_mult: 0.5, parry_staggers: false, break_damage_mult: 0.5,
+                status_mult: 0.25, break_status_mult: 0.5, arc: 140),
+        move_speed: 0.4,
+    ),
+    "spar_react_light": (net_id: 105, phases: [("react", 0.3)]),
+    "spar_react_heavy": (net_id: 106, phases: [("react", 0.55)]),
+    "spar_react_down": (net_id: 107, phases: [("down", 0.9)]),
+    "spar_guard_broken": (net_id: 108, phases: [("reel", 1.1)]),
+    // A crusher: breaks a guard whatever the stamina, and knocks down whoever is not guarding.
+    "spar_crusher": (
+        net_id: 109,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.3)],
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 10, reaction: 3, flags: [GuardBreak])],
+    ),
+}

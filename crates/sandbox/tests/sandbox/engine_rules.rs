@@ -152,6 +152,51 @@ fn a_running_action_the_machine_would_not_have_stops_the_game() {
     assert!(line.contains("e5 runs action `ghost`, which is not in content"), "{line}");
 }
 
+
+#[test]
+fn a_protection_timer_that_is_not_a_time_stops_the_game() {
+    use shards::action::Protection;
+    // A NaN stays a NaN through the countdown and would shield its fighter for ever.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.entity_mut(player).insert(Protection { reactions: f32::NAN, poise: 0.0 });
+    });
+    let line = stops_on(&mut app, "action.protection_sane", 2);
+    assert!(line.contains("e5 Protection reactions = NaN, poise = 0"), "{line}");
+
+    // A negative timer.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let boss = body(world, 6);
+        world.entity_mut(boss).insert(Protection { reactions: 0.5, poise: -1.0 });
+    });
+    let line = stops_on(&mut app, "action.protection_sane", 2);
+    assert!(line.contains("e6 Protection reactions = 0.5, poise = -1"), "{line}");
+}
+
+#[test]
+fn a_push_that_is_not_flat_or_never_slows_stops_the_game() {
+    use shards::action::Knockback;
+    // A vertical component.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.entity_mut(player).insert(Knockback { velocity: Vec3::Y, decel: 12.0 });
+    });
+    let line = stops_on(&mut app, "action.knockback_sane", 2);
+    assert!(line.contains("e5 Knockback velocity = ") && line.contains("decel = 12"), "{line}");
+
+    // No deceleration: it would never stop.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let boss = body(world, 6);
+        world.entity_mut(boss).insert(Knockback { velocity: Vec3::X, decel: 0.0 });
+    });
+    let line = stops_on(&mut app, "action.knockback_sane", 2);
+    assert!(line.contains("e6 Knockback velocity = ") && line.contains("decel = 0"), "{line}");
+}
+
 #[test]
 fn an_npc_in_a_state_its_behavior_lacks_stops_the_game() {
     use shards::npc::NpcBrain;

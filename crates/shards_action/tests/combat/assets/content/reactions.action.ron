@@ -1,0 +1,102 @@
+// Hit outcome (B1): attackers with a reaction tier, a victim with reactions, guards with
+// per-hit costs and shares, perfect evades. Net ids 40-59.
+{
+    // The attacker's swings: windup 0.1 s, one active window (0.1..0.2), recovery 0.1 s.
+    "r_hit_plain": (
+        net_id: 40,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.1)],
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 10)],
+    ),
+    "r_hit_light": (
+        net_id: 41,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.1)],
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 10, poise: 5, reaction: 1)],
+    ),
+    "r_hit_heavy": (
+        net_id: 42,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.1)],
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 40, reaction: 2, knockback: 3.0, guard_damage: 25)],
+    ),
+    "r_hit_down": (
+        net_id: 43,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.1)],
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 10, reaction: 3)],
+    ),
+    // Poise enough to break anything, and a reaction asked of whoever survives it.
+    "r_hit_poise": (
+        net_id: 44,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.1)],
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 1, poise: 100, reaction: 2)],
+    ),
+    // Walls stop it; its window is open for 0.5 s.
+    "r_hit_los": (
+        net_id: 45,
+        phases: [("windup", 0.1), ("active", 0.5), ("recovery", 0.1)],
+        hits: [(span: Phase("active"), shape: Sphere(radius: 6.0), damage: 10, flags: [LineOfSight])],
+    ),
+    // A ground zone: a perfect-evade window only evades it.
+    "r_hit_zone": (
+        net_id: 46,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.1)],
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 10, flags: [NoPerfectEvade])],
+    ),
+    "r_hit_status": (
+        net_id: 47,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.1)],
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 5, status: [("bleed", 60)])],
+    ),
+    "r_hit_break": (
+        net_id: 48,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.1)],
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 40, flags: [GuardBreak], status: [("bleed", 60)])],
+    ),
+    // No damage at all: a perfect evade needs a hit that would hurt.
+    "r_hit_free": (
+        net_id: 49,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.1)],
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 0, reaction: 1)],
+    ),
+    // The victim's own: reactions by tier, a flinch, a stagger, a guard break.
+    "r_react_light": (net_id: 50, phases: [("react", 0.3)]),
+    "r_react_heavy": (net_id: 51, phases: [("react", 0.55)]),
+    "r_react_down": (net_id: 52, phases: [("down", 0.9)]),
+    "r_guard_broken": (net_id: 53, phases: [("reel", 1.1)]),
+    "r_stagger": (net_id: 54, phases: [("stagger", 0.8)]),
+    "r_flinch": (net_id: 55, phases: [("flinch", 0.2)]),
+    "r_guard": (
+        net_id: 56,
+        phases: [("raise", 0.18), ("hold", 0.3), ("lower", 0.1)],
+        hold: (input: "block", span: Phase("hold")),
+        guard: (span: Phases("raise", "hold"), perfect: Phase("raise"), stamina_per_damage: 0.8,
+                perfect_cost_mult: 0.5, parry_staggers: false, break_damage_mult: 0.5,
+                status_mult: 0.25, break_status_mult: 0.5),
+    ),
+    "r_roll": (
+        net_id: 57,
+        phases: [("roll", 0.4), ("recover", 0.1)],
+        cost: (stamina: 22, stamina_mode: Any),
+        iframes: [Secs(0.07, 0.25)],
+        perfect_iframes: [Secs(0.105, 0.215)],
+        steer: Move,
+    ),
+    // Reaction armour 1 through its windup; 3 (beats a knockdown) while it recovers.
+    "r_armored": (
+        net_id: 58,
+        phases: [("windup", 0.5), ("recover", 0.5)],
+        armor: [(Phase("windup"), 1), (Phase("recover"), 3)],
+    ),
+    "r_blink": (net_id: 60, phases: [("blink", 0.1)]),
+    // The same guard, walking: a body that moves while guarding.
+    "r_guard_walk": (
+        net_id: 61,
+        phases: [("raise", 0.18), ("hold", 0.3), ("lower", 0.1)],
+        hold: (input: "block", span: Phase("hold")),
+        guard: (span: Phases("raise", "hold"), perfect: Phase("raise"), break_damage_mult: 0.5, break_status_mult: 0.5),
+        move_speed: 1.0,
+    ),
+    "r_hyper": (
+        net_id: 59,
+        phases: [("windup", 0.5), ("recover", 0.2)],
+        hyper_armor: [Phase("windup")],
+    ),
+}

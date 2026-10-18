@@ -133,19 +133,23 @@ pub use anim::{
     AnimationCue, BodyStatus, ClipChoice, ClipDef, CueDef, GroundSpeeds, LayerChoice, LayerDef, Locomotion, MAX_LAYERS,
 };
 pub use combat::{
-    kill, revive, stagger, Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died, Evaded, GuardBroken, Outcome, Parried,
+    end_break, kill, kill_with, poise_damage, react, reset_poise, revive, stagger, Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died,
+    Evaded, GuardBroken, HitWeight, IgnoreReason, Outcome, Parried, PerfectEvaded, Reacted, Reaction,
     StaggerCause, Staggered,
 };
 pub use cue::{ActionSound, SoundCue};
 pub use def::{
     ActionDef, CancelDef, CombatTuning, Cost, Effect, GuardDef, HitDef, HitFlag, HitShape, HoldDef, Local, MotionBake,
+    ReactionDef, StaminaMode,
     MovesetDef, Phase, Span, Steer, TelegraphDef, TimedEffect, Transition,
 };
 pub use fighter::{
-    Armor, Charge, Charges, Cooldown, Cooldowns, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team,
+    grant_protection, set_reaction_immunity, Armor, Charge, Charges, Cooldown, Cooldowns, Dead, Fighter, Health, Invulnerable, Knockback, Poise,
+    Protection, Stamina, Team,
 };
 pub use machine::{
-    action_progress, apply_effect, can_start, force_action, ActionEffect, ActionEffects, ActionRejected, ActionStarted,
+    action_progress, apply_effect, can_start, force_action, ActionEffect, ActionEffects, ActionEnd, ActionEnded, ActionRejected,
+    ActionStarted,
     ActionState, Blocker, FighterView, Healed, InputBuffer, Queued, Running, Start, Telegraph,
 };
 pub use predict::{shown_state, ActionPredictor, PredictedAction, CONFIRM_SLACK};
@@ -176,6 +180,9 @@ pub enum ActionSystems {
     Machine,
     /// `SimSet::Act`, after the machine: effects the actions reached.
     Effects,
+    /// `SimSet::Act`, after the effects: pushes (a reaction's knockback) add to the displacement
+    /// the machine wrote.
+    Push,
     /// `SimSet::Resolve`: hit detection and the damage pipeline.
     Hits,
     /// `SimSet::Resolve`: sprint drain, regeneration, cooldowns; actions that ran out end.
@@ -264,6 +271,8 @@ impl Plugin for ActionPlugin {
             .register_type::<Statuses>()
             .register_type::<StatusResist>()
             .register_type::<NoStatusSlow>()
+            .register_type::<Protection>()
+            .register_type::<Knockback>()
             .register_type::<Animated>()
             // Typed for the network layer, which forwards them to clients.
             .register_type::<ActionStarted>()
@@ -275,6 +284,8 @@ impl Plugin for ActionPlugin {
             .register_type::<Blocked>()
             .register_type::<Parried>()
             .register_type::<Evaded>()
+            .register_type::<PerfectEvaded>()
+            .register_type::<Reacted>()
             .register_type::<GuardBroken>()
             .register_type::<Staggered>()
             .register_type::<Died>();
@@ -297,7 +308,9 @@ impl Plugin for ActionPlugin {
             .init_resource::<machine::PendingEffects>()
             .add_engine_module("action", VERSION)
             .add_engine_invariant("action.resources_in_range", invariants::resources_in_range)
-            .add_engine_invariant("action.running_sane", invariants::running_sane);
+            .add_engine_invariant("action.running_sane", invariants::running_sane)
+            .add_engine_invariant("action.protection_sane", invariants::protection_sane)
+            .add_engine_invariant("action.knockback_sane", invariants::knockback_sane);
         coverage::plugin(app);
         app
             // The machine runs after motion's `Intent → LocomotionInput` step: it
@@ -307,7 +320,10 @@ impl Plugin for ActionPlugin {
                 (
                     ActionSystems::Orders.in_set(SimSet::Input).after(CoreSystems::FollowOrders),
                     ModifierSystems::Reset.after(ActionSystems::Orders),
-                    (ActionSystems::Machine, ActionSystems::Effects).chain().in_set(SimSet::Act).after(MotionSystems::Intent),
+                    (ActionSystems::Machine, ActionSystems::Effects, ActionSystems::Push)
+                        .chain()
+                        .in_set(SimSet::Act)
+                        .after(MotionSystems::Intent),
                     (ActionSystems::Hits, ActionSystems::Fighters, ActionSystems::Statuses, ActionSystems::Deaths)
                         .chain()
                         .in_set(SimSet::Resolve),
@@ -328,8 +344,10 @@ impl Plugin for ActionPlugin {
                     machine::run_machines.in_set(ActionSystems::Machine),
                     machine::apply_effects.in_set(ActionSystems::Effects),
                     combat::resolve_hits.in_set(ActionSystems::Hits),
+                    fighter::push_bodies.in_set(ActionSystems::Push),
                     fighter::update_fighters.in_set(ActionSystems::Fighters),
-                    machine::finish_actions.in_set(ActionSystems::Fighters),
+                    machine::finish_actions.in_set(ActionSystems::Fighters).after(fighter::update_fighters),
+                    fighter::tick_protection.in_set(ActionSystems::Fighters).after(machine::finish_actions),
                     status::update_statuses.in_set(ActionSystems::Statuses),
                     status::statuses_to_modifiers::<()>.in_set(ModifierSystems::Statuses),
                     status::statuses_to_modifiers::<With<Predicted>>.in_set(ModifierSystems::PredictStatuses),
@@ -339,6 +357,7 @@ impl Plugin for ActionPlugin {
                 ),
             )
             .add_observer(fighter::hurtbox_on_collider)
+            .add_observer(fighter::protect_after_reaction)
             // Cosmetic: a game may add it in a window only, and replays must not care.
             .replay_ignore::<Animated>();
         predict::plugin(app);
