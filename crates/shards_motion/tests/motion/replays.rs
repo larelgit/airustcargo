@@ -107,8 +107,10 @@ fn a_different_world_diverges_and_the_report_says_when() {
     let replay = replay::save(original.world());
 
     // The same recording on a game whose characters walk slower.
-    let (mut other, _) = world(false);
-    other.world_mut().entity_mut(e).insert(CharacterParams { run_speed: 3.0, sprint_speed: 4.0, ..default() });
+    // Its own hero: the two worlds need not spawn the same entities while they load (the
+    // `Entity` behind one `AiId` may differ).
+    let (mut other, hero) = world(false);
+    other.world_mut().entity_mut(hero).insert(CharacterParams { run_speed: 3.0, sprint_speed: 4.0, ..default() });
     replay::play(other.world_mut(), replay.clone()).unwrap();
     step(&mut other, replay.end.tick);
     other.update();

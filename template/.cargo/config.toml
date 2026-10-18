@@ -2,14 +2,8 @@
 # `target/` lives next to its Cargo.toml.
 
 # [build]
-# Bevy builds slowly and hungrily. Cargo uses one job per logical CPU, which can run a machine with little RAM
-# out of memory: limit the parallel jobs here or with `CARGO_BUILD_JOBS=4`:
+# Bevy builds slowly and hungrily. On a machine with little RAM limit the parallel jobs:
 # jobs = 4
-
-[target.x86_64-pc-windows-msvc]
-# rust-lld comes with the Rust toolchain and links a Bevy game about twice as fast as MSVC's link.exe;
-# the code generated is the same. Override: `CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=link.exe`.
-linker = "rust-lld"
 
 [alias]
 # `cargo game` (window) · `cargo game --headless --paused` (no window, time stands still

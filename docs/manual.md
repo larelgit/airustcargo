@@ -52,14 +52,15 @@ Instructions for agents are in [AGENTS.md](../AGENTS.md). How to make your own g
 24. [Stylised materials (E10.1)](#stylised-materials-e101)
 25. [Foliage and small objects (E10.2)](#foliage-and-small-objects-e102)
 26. [Effects and decals (E10.3)](#effects-and-decals-e103)
-27. [Steam (E10.5)](#steam-e105)
-28. [Builds for players and Windows (E10.6)](#builds-for-players-and-windows-e106)
-29. [Crash reports (E10.7)](#crash-reports-e107)
-30. [The sandbox](#the-sandbox)
-31. [Tests and CI](#tests-and-ci)
-32. [What's next](#whats-next)
-33. [Building and iterating fast](#building-and-iterating-fast)
-34. [Conventions and building](#conventions-and-building)
+27. [Voxel terrain (core)](#voxel-terrain-core)
+28. [Steam (E10.5)](#steam-e105)
+29. [Builds for players and Windows (E10.6)](#builds-for-players-and-windows-e106)
+30. [Crash reports (E10.7)](#crash-reports-e107)
+31. [The sandbox](#the-sandbox)
+32. [Tests and CI](#tests-and-ci)
+33. [What's next](#whats-next)
+34. [Building and iterating fast](#building-and-iterating-fast)
+35. [Conventions and building](#conventions-and-building)
 
 ## Quick start
 
@@ -299,7 +300,7 @@ generation is a pure function (seed, version, content) on `DetRng`, not `SimRng`
 it takes the tile graph, the active zones and the "region loaded" event from the world, and the tile files for baking from the levels. `shards_dev`
 (the developer menu and console) does not know any module: modules register their own menu items in `ai_core` (`add_dev_entry`),
 and it calls their tools by name. `shards_look` (how meshes are drawn) knows only `ai_core`, the core and the content: it reaches prefabs through a check it adds to the `prefab` kind (`add_content_check`), and it does not touch gameplay. `shards_scatter`
-(foliage) sits above the world and the looks: it scatters instances over the tiles of a region in `shards_world`, finds the ground under them with the physics of `shards_motion`, and colours them with the looks of `shards_look`. `shards_fx` (effects) knows `ai_core`, the core, the content, movement and combat: it reads combat events and attack zones, and it does not change the world.
+(foliage) sits above the world and the looks: it scatters instances over the tiles of a region in `shards_world`, finds the ground under them with the physics of `shards_motion`, and colours them with the looks of `shards_look`. `shards_fx` (effects) knows `ai_core`, the core, the content, movement and combat: it reads combat events and attack zones, and it does not change the world. `shards_voxel` (voxel terrain, the core) knows `ai_core`, the core, the content and `shards_look` (a palette names looks, checked with `refs.require`): without `look` (`--without look`) a palette with a `look:` reports that no content kind `look` is registered, as with `shards_scatter`.
 
 ### Crates
 
@@ -321,6 +322,7 @@ and it calls their tools by name. `shards_look` (how meshes are drawn) knows onl
 | `crates/shards_audio` | audio (E9.5): sounds, music and the mixer in the content (`sound`, `music`, `audio`), buses with the volume from the settings, voices with priority and a limit, spatial sounds, music in layers by the game's conditions, telegraph and event sounds, the `audio`, `sound_play` and `music_set` tools, the `MUSIC` line in `observe`; with the umbrella crate's `audio` feature, playback through Bevy audio |
 | `crates/shards_look` | mesh looks (E10.1): looks in the content (`look`, `*.look.ron`): colour, banded light (`Toon`), `Matte`, `Unlit`, `Lit`, flat faces, an outline of a fixed width in pixels, glow, glTF materials; the `Look` component, the material and the shaders in WESL, the `looks` and `look_outlines` tools, the `looks` field in `ai/status`, two developer menu items; with the `render` feature, mesh styling (window or `--offscreen`) |
 | `crates/shards_scatter` | foliage and small objects (E10.2): the `scatter` content kind (`*.scatter.ron`): what to scatter over the tiles of which regions, how densely, on which ground, with which looks, which meshes up close and far away; the layout follows the region's seed (the same in every run), primitive meshes (a grass tuft, a cone, a rock, a box) or glTF, levels of detail through `VisibilityRange`, the `graphics.foliage` setting, the `scatter` and `scatter_set` tools, the `scatter` field in `ai/status`, two developer menu items; with the `render` feature, instances under the tiles (window or `--offscreen`) |
+| `crates/shards_voxel` | voxel terrain, the core (G1, A2b): `VoxelVolume` (chunked blocks, the chunk size a parameter, edits for generation, the FNV hash), the `voxel_palette` content kind (`*.voxel_palette.ron`), deterministic noise, the registry of generation steps and checks (`add_voxel_step` with a version, `add_voxel_check`) and `generate`, the stock steps `noise_hills` and `fill_water`, and the merged boxes `column_boxes` and `water_boxes`; no region kind, collision, navigation or meshing yet |
 | `crates/shards_fx` | effects (E10.3): effects in the content (`effect`, `*.effect.ron`) and the event table (`fx`, `*.fx.ron`): particles from pools (`max_live` meshes per effect, one mesh and one material, the colour in `MeshTag`), camera-facing quads, cubes and shards, glow, flight that follows a formula on the simulation clock; `PlayEffect`, effects for combat events and clip markers; telegraph decals (`ForwardDecal` with a zone material in WESL: circle, sector, rectangle, "stadium", the fill grows toward the hit), `DepthPrepass` on the `AiCamera` cameras; the `effects`, `effect_play` and `telegraph_decals` tools, the `fx` field in `ai/status`, two developer menu items; with the `render` feature, drawing (window or `--offscreen`) |
 | `crates/shards_steam` | Steam (E10.5), behind the umbrella crate's `steam` feature (off by default; `steam_sdk` is the real client on `steamworks`): co-op over the Steam relay (`--steam-host` for a lobby with invites, `--steam-server` for an anonymous game server, `--join steam:<id>`, `+connect_lobby`), the `SteamTransport` transport for `shards_net`, achievements from the content (`achievement`, `UnlockAchievement`), copies of saves in Steam Cloud and their check at launch, a fake of the Steam process (`FakeSteam`) for tests, the `steam`, `steam_host`, `steam_join`, `steam_invite` and `achievement_unlock` tools, the `steam` field in `ai/status`, the `steam` section of the developer menu |
 | `crates/shards_dev` | developer menu and console (E11): items from modules (`add_dev_entry`) and from the game (the `devmenu` content kind), a console that takes `tool key=value` lines, the `dev_menu` and `console` tools; with the `render` feature, panels in the window (F10 and `` ` ``), Tab completes names from the schemas, the `dev` input context |
@@ -425,6 +427,7 @@ line, and tests take `shards::testing::config()`.
 | `frame_budget` | a frame longer than this counts as "over budget" (`--frame-budget-ms`; the `frames` field in `ai/status`); `None` — 1/60 s. Frames exist only in a game that draws |
 | `report_perf` | the `ticks:` line under the `step` reply and `perf` entries in the journal; off in `shards::testing::config()` |
 | `engine_invariants` | check the engine's own invariant rules after every tick (see "Invariants (E11)"). On by default, off in a build with the `dist` feature, and off with `--no-engine-invariants`; `shards::testing::config()` and `--verify` always turn it on. Read when the plugins are built, so set it before `EnginePlugins::new(config)` |
+| `opt_in_invariants` | the engine rules that are off by default, turned on by name (`--engine-invariant NAME`, repeatable): today only `voxel.body_in_solid`. Needs `engine_invariants`; read when the plugins are built |
 | `after_loading` | where `Loading` goes after loading (`InGame`; `MainMenu` for a game with a main menu). `menu` decides whether this launch shows the menu, and `start_state()` gives the result |
 | `menu` | `MenuLaunch`: `Auto` (the default) shows the main menu only when the game draws (a window, `--offscreen`), with no session and no named slots (`--world`, `--character`); `Show` (`--menu`) always does, even without a window; `Skip` (`--no-menu`) never does. Replays, checks, `--smoke` and `--perf` always bypass the menu |
 | `loading_image` | an image under the asset folder (`ui/loading.png`), full screen, while the game loads (`Loading`) and while a region loads for longer than one call (`RegionLoading`), if anything is drawn. There is no content yet at that point, so it is in the config and not in the content; `--check-content` checks that the file exists. `None` — nothing |
@@ -439,7 +442,7 @@ line, and tests take `shards::testing::config()`.
 | `exit_with_host` | a client exits when the session ends instead of going back to the menu: with code 0 if the host ended it, 1 for a refusal, a kick, loss of the host, or a world that is not accepted; 2 if the session cannot be opened (an address that cannot be parsed; a busy port for `--host`). A host (`--host`) does not exit on `net_end` |
 | `without` | engine modules the game leaves out (`--without audio,scatter`): their plugins are not added, see below |
 
-**Modules the game leaves out.** `EngineConfig::without` (or `--without`) names modules the way `ai/status` lists them (`engine.modules`), and `EnginePlugins` does not add their plugins: a game without sound does not need `audio`, and a server without graphics does not need `look`, `scatter` or `fx`. You can turn off `level`, `world`, `npc`, `net`, `save`, `coop`, `locale`, `ui`, `audio`, `look`, `scatter`, `fx`, `steam` and `dev` (`shards::modules::OPTIONAL_MODULES`); `core`, `content`, `settings`, `motion` and `action` are in every game. A module that another one needs can only leave together with it: `--without locale` gives ``--without: `ui` (screens, menus and the HUD) needs `locale`: leave out both (`--without locale,ui`) or
+**Modules the game leaves out.** `EngineConfig::without` (or `--without`) names modules the way `ai/status` lists them (`engine.modules`), and `EnginePlugins` does not add their plugins: a game without sound does not need `audio`, and a server without graphics does not need `look`, `scatter` or `fx`. You can turn off `level`, `world`, `npc`, `net`, `save`, `coop`, `locale`, `ui`, `audio`, `look`, `scatter`, `voxel`, `fx`, `steam` and `dev` (`shards::modules::OPTIONAL_MODULES`); `core`, `content`, `settings`, `motion` and `action` are in every game. A module that another one needs can only leave together with it: `--without locale` gives ``--without: `ui` (screens, menus and the HUD) needs `locale`: leave out both (`--without locale,ui`) or
 neither``, and `steam` (in a build that includes it) needs `net`. Something that only joins two modules goes with either of them: `coop` goes with `net` or `save`, and levels as tiles go with `level` or `world`. The command line checks the rest as well: `--without net` with `--host`, `--join` or `--stand`, `--without save` with `--character` or `--world`, `--without steam` with the Steam flags (`--steam-host`, `--steam-lobby`, `--stand-steam`, `--steam-server`, `--steam-relay-only`, `--steam-app`, `--join steam:…`), and `--without world` with `--worldgen-report`
 is an error with exit code 2; `EnginePlugins` with an invalid `without` panics with the same text. Stand members leave out the same modules as the host: the clients of `--stand N` take its setting, and the child processes of `--stand-udp` get its `--without`. A game that calls the API of a module it left out (`add_ui_action` without `ui`) is responsible for that itself. Without `ui`, the main menu is skipped by default, because there is nothing to draw it with (`--menu` still sets `MainMenu`, and `new_game` leads out of it). The test `a_game_runs_without_each_module_it_may_leave_out` (`crates/shards/tests/engine.rs`) turns off each module (along with the ones that need it) and runs the engine for 60 ticks.
 
@@ -448,7 +451,7 @@ is an error with exit code 2; `EnginePlugins` with an invalid `without` panics w
 
 **`shards::run`** is the standard `main`. Flags: `--headless | --offscreen --seed N --port N|0 --port-file F --no-remote --paused --hz N
 --replay FILE --verify [--windowed] --check-every N --check-detail components|entities|none --tick-budget-ms MS --frame-budget-ms MS
---check-content --worldgen-report REGION [--seeds S] --bake-nav [TILES] --bake-motion [ACTIONS] --smoke TICKS --perf ID --no-engine-invariants`; for phase C:
+--check-content --worldgen-report REGION [--seeds S] --bake-nav [TILES] --bake-motion [ACTIONS] --smoke TICKS --perf ID --no-engine-invariants --engine-invariant NAME`; for phase C:
 `--host [PORT] | --join ADDR | --stand N [--stand-udp | --stand-steam]` (mutually exclusive; `--stand` only with `--headless`), `--name`,
 `--net-sim SPEC`, `--save-dir DIR`, `--settings-dir DIR | --no-settings`, `--character SLOT`, `--world SLOT` (a slot is
 1–32 characters `a-z0-9_-`), `--exit-with-host`; `--menu | --no-menu` (the main menu, also without a window, or skipping it, also with a window; see "Main menu" below; `--menu` cannot be combined with replays, checks, sessions and slots); for Steam (feature `steam`, see "Steam (E10.5)"): `--steam-host | --steam-server`, `--steam-lobby TYPE`,
@@ -489,7 +492,7 @@ The engine's input names are in `shards::core::input_names` (`jump`, `sprint`, `
 - `player_body(world, n)` returns the body with `PlayerId(n)`; an agent bound to a player finds its body through it.
 
 **`ai/status`** shows the version and the modules: `engine: {version: "0.2.0", modules: [core, content, settings, motion, action, level,
-world, npc, net, save, coop, locale, ui, audio, look, scatter, fx, dev], state: "InGame", pause: "Running"}` and `loading: []`, while
+world, npc, net, save, coop, locale, ui, audio, look, scatter, voxel, fx, dev], state: "InGame", pause: "Running"}` and `loading: []`, while
 nothing is loading; with a region in the world there is also a `world` field.
 
 ## Content (E4)
@@ -686,6 +689,78 @@ ledge`, `e5 air → water`, `e5 reached goal`).
   a body that moves within its own cells costs the grid nothing. A measurement in the release build (`broad_phase_timing`, `#[ignore]`):
   on 8×8 tiles of 96 m (2644 colliders), eight queries from a body and the ground probe take 16 µs instead of 50 (`overlaps` 17 times faster, rays down
   15 times, pushing out 9 times, a capsule step 4 times; a ray across half the region, 300 m, 1.1 times), on 16 m tiles (212) it is the same as a full search.
+- **Voxel fields.** `VoxelCollider::new(VoxelField::new(origin, cell, size, |c| solid))` puts a static grid of solid cells (a
+  voxel terrain as one entity) into the physics world beside the colliders: one bit a cell, `cell` m on a side, the least corner of
+  cell `(0, 0, 0)` at `origin`, in world space (the entity's `Transform` is not read), on `WORLD` unless `with_layers` says otherwise. It
+  gets a `ColliderId` from the same counter as a collider and takes its place among the fields in id order; a new `VoxelCollider` on the
+  entity replaces the field (an edit is a new field), and removing it or despawning the entity takes the field out. Every query asks
+  the fields after the colliders: a field's hit replaces a collider's only when strictly nearer, and of two fields the lower id is asked
+  first. A world without a field runs exactly the colliders' code (the reference replays verify byte for byte, heavy mode included).
+  A ray walks the cells it crosses (Amanatides–Woo) and tests each solid one as the box it is, so the distance, point and normal are a
+  cuboid collider's in its place. After a hit the walk goes on to the cells it reaches at the same distance (through an edge or a
+  corner); of the cells met as near (the same `f32`), one met as a box wins over one met only along a seam (below), then the lowest in
+  `(x, y, z)` order (x first): what a world of one cuboid collider per cell, with ids in that order, answers. A ray that starts on a
+  face of a solid cell and goes in meets it at 0 with that face's normal. One difference from cuboids side by side: a ray lying in the
+  plane of a face between two solid cells is inside the solid and meets it, where parry's cuboid ray can slip between the boxes (on
+  0.2 m cells, 165 of 361 rays down the inner grid lines of a solid slab did; none on 0.5 m cells). A cast (`sweep`, `shapecast`)
+  tests the solid cells under its swept box (an infinite reach is cut at the field's edge); when that box covers more than one cell,
+  the cells outside the start box are merged into column runs and equal runs of neighbouring columns into rectangles, so a long cast
+  tests a few boxes, not every cell. The union is the same, so the first touch is the same up to rounding; the cells under the start box
+  stay single, so a body that starts touching the solid is let out of each cell as with one collider per cell. Among candidates the box
+  with the lowest least cell in `(x, y, z)` order wins a tie. The merge is the field's own: `VoxelField::with_cast_merge(false)` (for
+  tests and measurements) makes a field whose casts test every cell, exactly a world of one cuboid collider per cell with ids in `(x, y,
+  z)` order, to the bit; the mode is part of the field's hash, so the snapshot check and the replay see it. parry's cast now and then
+  misses a box it touches near an edge (a merged run box 13.5 mm away, in a test): a merged box the cast misses but may meet (within
+  reach and drawing nearer, by convexity of the distance under a translation) is cast cell by cell. `overlaps` and `closer_than` test
+  the cells under the shape's box, one penetration a cell, where the field's id puts it. The cost grows with the cells under the
+  query's (swept) box, never with the size of the field, as a collider world's broad phase grows with the colliders under it; a cast
+  whose box only grazes cells can still lose an ulp-thin sliver of cells at the box's edge (the box is the reach the cast was given,
+  and a touch there is a graze at the reach). `PhysicsWorld::has_solid(mask)` says whether any collider or field on `mask` is solid
+  (perception's gate), and `len`, `is_empty` and `colliders()` count colliders only.
+- **A field has no box: readers ask the hooks.** Code that reads the top or the bottom of what a query hit (how tall a blocker is, where
+  the floor under a solid starts) asks `PhysicsWorld::extent_at(entity, point)` (the run of solid cells, contiguous in y, that holds the
+  cell of `point`, tried at the point, 0.1 mm below and 0.1 mm above; a collider's box, wherever the point is), `top_under(entity, shape,
+  pos, rot)` (the tallest top of the runs of the cells the shape overlaps; a collider's box top) or `solid_span(mask)` (the lowest bottom
+  and the highest top of every solid on a mask). Runs, not columns: under a plateau with a tunnel through it, a point in the tunnel's
+  floor gets the floor and a body in the tunnel is not blocked by the plateau above. The readers that used a collider's box use them:
+  `clearance` and `path_to` (their gate, whether the world has solids at all: `solid_span`; how tall a blocker is, `Terrain::blocker_top`:
+  `top_under`), the nav bake's seed (`solid_span`, and `extent_at` to go on below a solid) and `ground_below` in `shards_world`
+  (`extent_at` to climb out of a solid). `PhysicsWorld::subset` keeps the fields its second
+  predicate keeps (the scatter's solids near a tile take the fields that reach it). **The rule for a new reader:** a field is no
+  collider, so `PhysicsWorld::collider(e)`, `PhysicsWorld::by_id(id)` and `ColliderInfo::bounds()` are `disallowed-methods` in
+  `clippy.toml`, and each allowed call carries `#[expect(clippy::disallowed_methods, reason = "…")]` on its statement saying why a
+  field cannot be what it reads; the source scan `crates/shards_motion/tests/readers.rs` fails on any `.collider(`, `.colliders()`,
+  `.by_id(`, `get::<Collider>`, `.aabb_min`, `.aabb_max`, `PhysicsWorld::collider`/`colliders`/`by_id` or `&Collider` type (a query or
+  an argument: a field is no entity with a `Collider`) in `crates/*/src` outside `shards_motion/src/physics/` that is not in
+  `tests/readers.allow` with its reason, a row for each time a file has the line, and on a row that matches no line.
+- A field is not saved and has no `AiId` (as level geometry, the region that spawned it spawns it again); the snapshot check
+  `static_colliders` hashes every field (size, cell, origin, cast mode, bits and layers), and a world without one hashes as before. The
+  engine rule `voxel.body_in_solid` (`BODY_IN_SOLID`, `body_in_solid`) names a character whose capsule centre is in a solid cell of a
+  field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). It is **off by
+  default** (mantle and sloped-step ticks may graze a cell) until fuzz runs on voxel terrain pass (the voxel design, 6.4): the motion
+  plugin offers it with `add_opt_in_engine_invariant`, which registers an engine rule only when `EngineConfig::opt_in_invariants` names
+  it, and a game run turns it on with `--engine-invariant voxel.body_in_solid` (a name it does not offer is refused, and the flag does not
+  go with `--no-engine-invariants`).
+- Checked by `crates/shards_motion/tests/motion/seams.rs`: each scenario runs in four worlds, one cuboid collider per cell, the merged
+  boxes as colliders, the field, and the field with the merge off (stand on seams, an edge and a corner; one-cell walls; mixed
+  heights; steps of 0.3, 0.5 and 1 m; a mantle; tunnels, with the probe, the hooks and `clearance` at 1350 spots in and around
+  them against the merged boxes; landing on a seam; a checkerboard diagonal; 16 bodies on rolling hills), and each says what must have
+  happened (standing bodies stay put on the ground on every tick, sliders stay on their side of the wall, the checkerboard is crossed
+  and climbed). The field with the merge off equals the cells to the bit on every tick; with the merge on, the scripted scenarios stay
+  within 3e-6 m and 2.4e-4 m/s of the cells with the same modes. Ground normals are not compared: at a seam or an edge GJK's normal off
+  a cell is noise (up to 56° on the checkerboard, positions equal). On the hills (16 bodies, 600 ticks; 40 seeds walked by hand with
+  `SEAMS_SEEDS=1..=40`, three in the test), one step from the same state stays within 1e-4 m (at most 7e-5 m) but for two steps on
+  seed 6 that went another way (a mantle taken in the field, a step in the cells), and on both the merged boxes as colliders went the
+  field's way; the merged boxes take another step than the cells on 279 body-ticks of the 40 seeds. A free-running walk amplifies
+  rounding at corners as any chaotic system does (a step-up decided on an edge ride): the merged field and the cells part by more than
+  1e-4 m on 33 of the 40 seeds, first at tick 115 to 572 (on seed 7, 10 of 16 bodies from tick 147, one by 32 cm), and the test holds the
+  first 100 ticks. The merged boxes as colliders part for more bodies (365 against the field's 117) and first or alone on 39 of the 40
+  seeds. With the merge off the field never parts from the cells. The voxel design's criterion (section 15: within 1e-4 m over the free
+  walk) is not met as written; that is the lead's call (the design's risk 10).
+  `field_timing` (`#[ignore]`, release; the least of seven samples, the medians within 3 %): on 64 m of 0.5 m-cell hills the ground cast
+  takes 8.2 µs with the merge, 16.8 µs without and 15.3 µs as column boxes; rays 0.16–0.75 µs (1.5–1.8 times faster than the boxes, the
+  sight ray 16 times), `overlaps` 6.7 times faster; the walk cast (0.1 m) and `closer_than` are slower than the boxes, 5.2 against
+  4.8 µs and 1.54 against 1.33 µs.
 
 **Why parry3d and not avian3d.** The spec named avian3d as a candidate and required checking Bevy 0.20 support before taking a third-party crate. Checked against the crates.io index (13–14 October 2026): avian3d 0.7.0 requires Bevy 0.19, and Bevy is pinned
 to 0.20.0 (the same goes for bevy_enhanced_input 0.26.0 and lightyear 0.30.1). A kinematic controller needs collision queries, not dynamics, so `parry3d =0.31.1` was taken (dimforge geometry, it does not depend on Bevy; avian is built on it too).
@@ -1561,7 +1636,7 @@ State: `kind` (the hook; by default, the state's own name), `params` (parameters
 
 Engine conditions: `target_known`, `target_seen`, `target_heard`, `target_lost`, `target_within {meters}`, `target_in_leash
 {margin}`, `beyond_leash {margin}`, `at_home {within}`, `arrived`, `has_token`, `attack_done`, `resting`, `busy`, `timer_done`,
-`in_state {secs}`, `health_below {fraction}`, `heard_noise`, `chance {p}` (from `SimRng`).
+`in_state {secs}`, `health_below {fraction}`, `heard_noise`, `chance {p}` (from `SimRng`), `deciding` (see "Decision cadence").
 
 **Your own functions in the game**: named functions that the content refers to. A game function with the same name as an engine function replaces it.
 
@@ -1574,11 +1649,15 @@ app.add_npc_condition("low_morale", |c, p| c.health_fraction() < p.num("below", 
    });
 ```
 
-`NpcCtx` gives access to the NPC itself, its target (`target`: the distance, and whether it is visible), its leash, its token, its plan, the world (read only), and `rng(salt)` from `SimRng`.
+`NpcCtx` gives access to the NPC itself, its target (`target`: the distance, and whether it is visible), its leash, its token, its plan, the world (read only), `rng(salt)` from `SimRng`, `deciding()` (a decision tick, see below) and `strike_ready()` (the strike spacing allows a strike now, see "Strike spacing").
+
+**Decision cadence.** `think: Some(0.15)` on a behaviour gives each of its NPCs a decision timer (the component `NpcThink`, present only on NPCs of such behaviours). The timer counts down only while the NPC runs no action, and a busy NPC freezes it. Each time it runs out, the tick is a decision tick: `NpcCtx::deciding()` and the condition `deciding` hold, and the timer starts over (the remainder is not carried). It starts at zero, so the first tick the NPC is free is a decision tick. The period is whole ticks: `think: 0.15` at 60 Hz decides every 9 ticks (`ceil(0.15 / tick)`, with the usual hair of slack for sums of tick lengths), and `0.25` every 15. A behaviour without `think` has every tick as a decision tick, and nothing is stored. The states and conditions that *decide* (roll a die, pick a move) ask `deciding()`; what has to be done every tick (aiming, moving) does not wait for it. The engine's own states re-derive their output every tick and ignore the cadence. Transitions are not held back by it: a transition that should wait for a decision lists `deciding` among its conditions (`when: ["deciding", ("chance", {"p": 0.08})]` is a roll once per decision).
+
+**Rest clamp.** A state can shorten the plan's rest. `rest_clamp: Some(0.25)` on a state clamps `NpcPlan.rest` to at most that many seconds once, when the NPC enters the state (a rage that makes the next attack come sooner); a state hook can do the same on any tick with `out.rest_cap = Some(0.25)` (set it once: a hook that sets it every tick clamps every pause drawn later).
 
 ### Perception
 
-The parameters belong to the `perception` kind: `sight_range`, `fov_deg`, `eye_height`, `near`, `line_of_sight`, `hearing`, `memory`.
+The parameters belong to the `perception` kind: `sight_range`, `fov_deg`, `eye_height`, `near`, `line_of_sight`, `hearing`, `memory`, `keep_range`.
 
 ```ron
 // content/npc/monsters.perception.ron
@@ -1589,6 +1668,8 @@ The parameters belong to the `perception` kind: `sight_range`, `fov_deg`, `eye_h
 ```
 
 Sight: a hostile fighter (`Team`) within `sight_range`, in the field of view (or closer than `near`, whichever way it faces), with a clear ray from the eyes to the body through the `WORLD` layer. Hearing: `Noise { position, radius, source, origin }` events (the game fires them itself; the engine makes a noise on every hit and every sprint) reach an NPC within `radius × hearing` of `position` and are kept in its `Perceived`. An NPC that does not see the source learns its place from `origin` (where the source stands; `None` means `position`). A hit's noise sounds where the hit happened, and the attacker is marked where it stands. Memory: what was noticed stays known for `memory` seconds, at the last place. The focus target sticks to the one already known, until another one is much closer. What an NPC knows lies in its components (`Perceived`), and goes into the replay hash and the snapshot in full.
+
+**Keep range.** `keep_range: Some(18.0)` makes `sight_range` govern only what is noticed *anew*: a target that is still known (inside its `memory`) is seen, and its place refreshed, up to `keep_range` metres, with the same field of view and a clear ray. Without it, a target between `sight_range` and where the NPC's chase should end is "lost" at once and chased to a stale point until the memory runs out. `keep_range` must be at least `sight_range` (a content error otherwise). Hearing and the focus rule are unchanged. `keep_range` does not drop the target: beyond it the target is merely not seen and stays known for `memory` seconds. To give up the chase at a distance, add a transition on `!target_within N` to a return or wander state. A target known only from a noise or a hit is kept out to `keep_range` too; set `hearing: 0` where that is unwanted. `npc_state` shows `perception.keep_range` and marks a target seen beyond `sight_range` as `kept`; `npc_overlay` says `keeps e5 17.2m N`.
 
 ### Combat director and tokens
 
@@ -1605,6 +1686,18 @@ Sight: a hostile fighter (`Team`) within `sight_range`, in the field of view (or
 Only an NPC with a token starts an attack, and it holds the token until the attack ends. The director has as many tokens as the table gives for the number of living players. (With more players than the table has, the last entry applies; with fewer, the first.) Those who ask are served in the order they started waiting, then by `AiId`. A token comes back when the attack ends; when it was not used for `patience` seconds (`unused`); when its holder dies, falls asleep (`dormant`), forgets the target (`target gone`), leaves the fight (`left the fight`), or is put under an agent's orders (`under orders`). When the number of living players drops, the tokens above the new limit come back at once, the newest first (`limit lowered`). The exception is an attack that is already running: it goes on to its end with its token. An attack is an action that a pressed input started, not a forced one (a stun, a flinch, a death). Whether it has hits does not matter. A cast with a projectile from an effect is an attack too: it holds its token to the end, and the planner remembers it (cooldown, bans on sequences, counter). A target that the NPC has forgotten (it has left its perception) is gone for the director and the planner. The planner presses only on a target that the NPC senses now. An NPC under an agent's orders (via the `move_to` and `attack` tools) drops out of the fight: it takes no tokens and no waiting places, presses nothing, and lets go of what it held.
 
 Without a token, an NPC waits in a **role** around its target. The waiting NPCs get places in turn: place `n` takes role `n % number of roles` from `waiting` (`Circle` walks in a circle, `Strafe` steps sideways, switching sides every `period` seconds, `Hold` keeps its distance). Also: `budget` is how much danger (the `cost` of attacks) may be in flight at one target. `allowed` is which pairs of tags may hit the target at the same time (`("light", "heavy")`, and `"*"` for any tag). The planner checks them when it presses. The director has no state of its own. Everything is in the NPC's components (`AttackToken`, `NpcPlan`), and the replay and the snapshot carry all of it.
+
+**Strike spacing.** `min_spacing: 0.7` on a director means that strikes of different NPCs of that director start at least 0.7 s apart (two nearly simultaneous blows cannot both be parried). `spacing_exempt_tags: ["reposition", "support"]` names the actions that are no strike: a retreat or a buff neither waits nor counts (matched against the action's tags, the plan option's tags and the option's name). The rules:
+
+- Every strike an NPC of such a director starts is *noted* on the NPC, as the component `NpcStrike { last_start, gated, pool }`, at the tick its action began: a planner press, a combo continuation, or something a state hook pressed itself. A note counts only while the NPC is still in the pool (`pool`, its director) it was made in, so moving an NPC to another director leaves its old strike out of the new pool's spacing and of the rule. Exempt actions are not noted, forced actions (a stagger) are not strikes, and an NPC of a director with no `min_spacing` never gets the component (and loses it when its director stops spacing), so a game that does not use the rule stores and hashes nothing.
+- A strike is *spaced* when no other NPC of the same director noted one within the last `ceil(min_spacing / tick)` ticks (0.7 s at 60 Hz is 42: the second NPC may start on the 42nd tick after the first). An NPC's own series is not held back by itself. A press that has not started yet counts from the tick it was pressed, and so do the presses of the current tick: the planner's own, in `AiId` order, and those already in an NPC's `NpcDrive` that the action machine would take this tick (a state hook's, a combo continuation's), so the planner yields to them and two planned strikes never start on the same tick.
+- The director grants no token for a strike that is not spaced (only if every option it could choose is exempt), the planner does not press one and a combo continuation (`chain`, below) that is not spaced is refused and ends its chain. A token holder that has to wait keeps its token like any holder that cannot press yet (until `patience` runs out), and the options the director exempts stay open to it.
+- A state hook that presses a strike itself asks `NpcCtx::strike_ready()` first (it is true for an NPC of a director without a spacing). Every NPC decides on the same world, so two hooks that are both ready on the same tick both press, and a hook never sees the planner's press of its tick (a hook decides first): for ordered strikes use the token path.
+- The clock is the simulation's tick count: the spacing is the same with a window and without one, in replays and in snapshots. All NPCs of a director are one encounter; telling encounters apart by distance is not done yet.
+- The engine rule `npc.strike_spacing` holds the starts that went through the rule (`gated`: the planner's presses and checked continuations) to it; a hook's own press is noted but neither held to it nor held against the planned starts that follow it.
+- **Noting only.** `ignores_spacing: true` on an NPC's attack plan makes it a *noting-only* member of the director: its strike starts are noted and hold the other NPCs back exactly as above, but it never waits for the spacing itself. The grant, the planner, a combo continuation and `strike_ready()` all treat it as spaced, and `npc_state` never shows `spacing` for it. The reason is the design (CDD 27.2): a big enemy's blows pace the small ones around it, and the small ones must not hold the big one back, which a plain exemption (`spacing_exempt_tags`, neither waits nor counts) cannot say. It is a property of the plan, so the same director serves a boss and its adds, and it changes nothing for a director without a `min_spacing`. The engine rule does not hold such an NPC to the spacing, but it still holds the others to its starts; for that reason the other NPCs' chains in a director that has one should use `gate_at_start` (below): a continuation asked at its press would otherwise be overtaken by a start the noting-only NPC makes before the combo window takes it.
+
+`npc_state` shows `strike: {last_start, gated}` and, while the NPC is held back, `spacing: {waits_for: "e7", ticks_left: 31}`; `npc_overlay` adds `waits 31t for e7` to its line.
 
 ```text
 $ shards scenario crates/sandbox/scenarios/npc_director.scenario   # three skeletons against one player
@@ -1634,11 +1727,24 @@ The `attack_plan` content kind lists the attacks an NPC picks its next one from.
 }
 ```
 
-Option (`AttackOption`): `input` of the moveset or `action`, `name`, `weight`, the distance window `min`/`max` (by default, the action's reach times `cover`), `cooldown`, `tags`, `cost` (the share of the target's budget).
+Option (`AttackOption`): `input` of the moveset or `action`, `name`, `weight`, the distance window `min`/`max` (by default, the action's reach times `cover`), `cooldown`, `tags`, `cost` (the share of the target's budget), `when` (conditions), `chain` (a combo continuation).
 The planner keeps the options it can pick: not on cooldown, not banned by the previous attacks, whose `can_start` in the action machine says "now or later", and that fit the budget and the allowed combinations.
 It picks one by weight from the options whose window holds the distance (otherwise from all of them, unless `in_range_only`), using the `SimRng` stream.
 Then it moves into that window and presses the input.
 The `rest` pause counts down only while the NPC is not busy with any action. A stun after a parry does not count as rest. Cooldowns always run.
+
+**Rest semantics.** Two more fields of the plan shape the pauses (all optional; unset, the plan behaves as above):
+
+- `rest_interrupted: Some((0.2, 0.45))`: the pause after an attack that was *interrupted*, that is, cut short by a forced action in its place (a stagger), instead of `rest`. It is drawn as it is, with no scaling. Without it an interrupted attack rests like a finished one.
+- `first_rest: Some((0.5, 0.5))`: the rest an NPC starts with, drawn on the tick its brain first runs (its pause at spawn). Without it the NPC asks for a token at once.
+
+Every draw comes from the NPC's own `SimRng` stream with its own salt.
+
+**Press on decision.** `press_on_decision: true` on a plan makes the planner ask the director for a token, make a new choice and press only on the NPC's decision ticks (`BehaviorDef::think`; `NpcThink.decided` is the tick of the last one, shown by `npc_state` under `think`). The reason is the design: the technical design has the brain decide at 5-10 Hz, and the attack press is part of that decision, so the grant, the choice and the press happen on one tick and no token sits idle until the next decision. Between two decisions an NPC keeps the choice it made and walks into its window (with `in_range_only` it chooses again on decision ticks only); an NPC with no choice yet stands. The token keeps its place in the queue between decisions. Off (the default), any tick; a behaviour without `think` decides every tick, so there the field changes nothing. It serializes nothing at its default.
+
+**Conditional options.** `when: ["enraged", ("health_below", {"fraction": 0.5})]` on an option (the same conditions as a behaviour's transitions, `!` negates) keeps the option out of the choice, and out of the director's reckoning of whether the NPC has anything to strike with, while the conditions do not all hold. A phase that adds a move or takes one away is a condition on the option, not a second plan. The conditions are evaluated with the NPC's other decisions (`NpcSystems::Decide`, on the world as it is) and the result is kept on the NPC as `NpcOptions { allowed }`, a component that only NPCs whose plan has gated options carry; an option that has `when` and no entry there (the NPC's first tick) is closed. An unknown condition is named once in the journal and never holds. `npc_state` lists `plan.options: {open, closed}` for such a plan.
+
+**Combo continuation.** `chain: Some((input: "light", chance: 0.7))` on an option says that when its action starts, a die is rolled (the NPC's `SimRng` stream, its own salt) and, on success, the NPC presses `input` at the *start of the action's recovery phase* (the phase named `recovery`, else the last one). The press goes into the same press queue as anyone's, with the same buffer life (`input_buffer`, 0.15 s), so it takes effect only if the action has a cancel window that lets the input through (`Combo(...)`) opening before the press dies: a window that opens later than the buffer life makes a chain that never fires, as the content says, with no special case in the engine. The continuation is itself an action start and rolls the odds written on the option that names its action (an `action: "swing_2"` option of `weight: 0.0` carries the link of a continuation that no moveset input starts; the planner never picks it). The state is the component `NpcChain { input, instance, pressed, strike, at_start, cleared }` (`pressed` is the tick of the press; inserted when a roll succeeds, removed when the attack ends, is cut short by a forced action, or its continuation starts or is refused). If the director spaces strikes and the continuation is a strike, a continuation that is not spaced is *refused*: nothing is pressed and the chain ends. The spacing is checked when the press is made, not when the combo window takes it, so a strike another NPC starts between the two is not counted against the continuation. `chain: Some((input: "light", chance: 0.7, gate_at_start: true))` asks it on the tick the action machine would take the queued input into the combo window (`can_start` says yes) instead. The design spaces attack *starts*, and the press and the start are 5-12 ticks apart, so a chained link is gated on the tick it would start: the press is made at the start of the recovery as before (and dies in the queue as before) but is no start for the others until then; if another NPC began a strike less than `min_spacing` ago the input is withdrawn from the queue, the chain ends and `ChainRefused` is journaled; if not, the NPC counts as starting on that tick for the planners after it (`NpcChain.cleared`, the tick it was let through). A press whose window is already open when it is made is asked at once. A pending press counts as a start for the others only while its input still waits in the queue (or on the tick it was pressed): a press that died unused started nothing. A chain rolls the odds of the first *open* option that names its action (an option with `when` counts only while it is open), so one action can carry different odds under different conditions. `ChainPressed` and `ChainRefused` are journaled (`e7 chains light after swing_1`, `e7 chain refused after swing_1: e8 began a strike 12 ticks ago (30 left)`); `npc_state` shows `chain`.
 
 ### Leash, home and zones
 
@@ -1856,6 +1962,8 @@ npc overlay on
 e25 skeleton: fight e5 · token · leash 0/10m · sees e5 10.0m N · detour, 3 waypoints left
 e26 skeleton: idle · leash 2/10m · lost e5 4.0s ago at (31.0, 120.5)
 ```
+
+The words of the duel rules appear only on NPCs that use them: `waits 31t for e7` (held back by the director's strike spacing, with the ticks left), `think 0.07s` (the decision timer), `chain light` (a combo continuation rolled, `(pressed)` once it is) and `keeps e5 17.2m N` (a target seen beyond the sight range, kept by `keep_range`). `npc_state` has the same as fields (`strike`, `spacing`, `think`, `chain`, `plan.options`, `perception`, `kept`).
 
 In the window, the same things are drawn as gizmos: a line above the NPC, a line to the target (red while it holds an attack token), the view cone and the proximity circle (yellow while it sees someone), crosses where it last knew the target, the last noise, and the leash circle around home (red when the NPC is beyond it). `npc_overlay on=false` turns it off. The overlay does not change anything in the world.
 
@@ -2692,7 +2800,7 @@ The sandbox has two of them: `health_in_range` (health is in `0..=max`) and `bod
 `e7 fell out of the world: y = -80.0`. No sandbox scenario, test or reference replay breaks them. A panic inside
 a rule is a violation too: `the rule itself panicked: …`.
 
-**The engine's own rules.** A game with all the engine modules gets nine rules of the engine, one or two from each module (a game that leaves out `npc` has no NPC rules). They are named
+**The engine's own rules.** A game with all the engine modules gets ten rules of the engine, one or two from each module (a game that leaves out `npc` has no NPC rules). They are named
 `<module>.<rule>`, checked before the game's rules, and listed by `shards assert list` as `engine rule`. Like a game's
 rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `add_ai_invariant` refuse its name), and
 `assert_reset` re-arms it after it fires. A module registers its rules with `add_engine_invariant(name, rule)` from
@@ -2703,11 +2811,13 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `ai.index_consistent` | the `AiIndex` and the `AiId` components agree both ways (every entity with an id is in the index under it, every entry points at an entity that carries it) and the counts match, so no id is used twice. Tombstones are history and are not looked at. Catches an id written in place, which skips the hooks |
 | `core.intent_sane` | every `Intent` has a finite `move_dir` of length at most 1 (+ 1e-4) and a finite `aim`. The movement code survives garbage, so the rule names the writer that forgot to clamp. The host cleans a network client's input before it reaches `Intent`, so a bad frame cannot stop the host |
 | `motion.finite` | every `AiVisible` entity has a finite `Transform` translation and a finite rotation of length 1 ± 1e-3, and a finite `MotionState` (velocity, ground normal, timers, mantle, fall height, water surface, updraft, placed position). Scale is not judged |
+| `voxel.body_in_solid` | **off by default** (`--engine-invariant voxel.body_in_solid`): no character has its capsule centre in a solid cell of a voxel field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). Off until fuzz runs on voxel terrain pass, since mantle and sloped-step ticks may graze a cell (see "Voxel fields") |
 | `action.resources_in_range` | `Health`, `Stamina` and `Poise` are finite with `max > 0` and `0 <= current <= max`. Dead bodies are checked too (`current` is 0). A game that wants a buff above `max` raises `max` with it |
 | `action.running_sane` | a running action of a fighter exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. Without a content database the rule passes |
 | `action.protection_sane` | every `Protection` (the reaction and poise timers, B1) holds finite timers, none below 0. A NaN stays a NaN through the countdown and would shield its fighter for ever |
 | `action.knockback_sane` | every `Knockback` (a push in progress, B1) has a finite flat velocity (`y` is 0) and a finite `decel` above 0: a push that does not slow down never stops |
 | `npc.state_known` | `NpcBrain.state` is a state of the NPC's behaviour. Three carve-outs, each a state the engine itself leaves behind: an empty state (before the NPC's first decided tick), an inactive NPC (dormant or dead: the brain passes it through, so a state a hot reload removed stays until it wakes), and an NPC whose behaviour is not in content (that is reported once as a content problem) |
+| `npc.strike_spacing` | two NPCs of one director whose `min_spacing` is set never began strikes less than that apart (in whole ticks), for the starts that went through the spacing rule: the planner's presses and checked combo continuations (`NpcStrike::gated`). Judged from the last strike each NPC noted. Three carve-outs: an NPC whose plan has `ignores_spacing` is not the one held to the rule (its starts still hold the others), a strike a state hook pressed itself is noted but neither held to the rule nor held against other NPCs (the hook may or may not have asked `strike_ready`, and may start between another NPC's planned press and its start), and an action with one of the director's `spacing_exempt_tags` is not noted at all. A director without a `min_spacing` is never judged |
 | `npc.tokens_within_limit` | after the director ran, no token is held by a dead body, and each director holds no more tokens than its limit for the living players, unless every holder beyond the limit has its attack in flight (an attack under way keeps its token to its end). It is judged right after the director, not at the end of the tick: a holder that dies in `Resolve` keeps its token until the next tick's director takes it back, so the end of the tick would fire on every kill. A small system next to the director writes what it found to the resource `TokenAudit`, which the rule reads; it is recomputed every tick and is not part of a snapshot or a replay |
 
 Each rule reports the lowest id first and `(+N more)`, in the style `e6 Health.current = 700 outside 0..=600`, and
@@ -2718,7 +2828,7 @@ game rule, so a boss with 700 health breaks two rules, and the stop names the fi
 **The switch.** `EngineConfig::engine_invariants` is true by default and false when the `dist` feature is on (a shipped game
 must not pause on an engine rule; a game's own rules stay). `--no-engine-invariants` turns it off in a development build, for example to measure what the
 rules cost. Test apps (`shards::testing::config()`), `--verify`, `shards fuzz` and `shards soak` run with the rules on. With
-the switch off, no engine rule is registered and the token audit does not run. A test that writes garbage on purpose to show
+the switch off, no engine rule is registered and the token audit does not run. A rule that is off by default (`add_opt_in_engine_invariant`) is registered only when `EngineConfig::opt_in_invariants` also names it. A test that writes garbage on purpose to show
 that the controller survives it sets `engine_invariants: false`.
 In heavy mode the twin has its own engine rules and takes over which of them have fired, so a rule that fired in the original does not halt the twin again. The rules' cached query states (`RuleQueries`) are not simulation state and are not compared.
 
@@ -2730,7 +2840,7 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-13 rules, checked after every tick
+14 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
@@ -2739,6 +2849,7 @@ $ shards assert list
   action.protection_sane  engine rule  armed
   action.knockback_sane  engine rule  armed
   npc.state_known  engine rule  armed
+  npc.strike_spacing  engine rule  armed
   npc.tokens_within_limit  engine rule  armed
   health_in_range  game rule  armed
   bodies_in_world  game rule  armed
@@ -4256,6 +4367,132 @@ Also checked: an effect that starts no particles (neither `count` nor `rate` wit
 
 **What is missing.** Particles run on the CPU, so tens of thousands alive at once are too much for them (an effect's pool is up to 4096). Particles have no textures or animated sprites, no trails, no collisions with the ground, no light from the particles, and no sound (sound is the audio module). Decals are for telegraphs only: there is no general API for spots (blood, tracks). A decal projects straight down, within 0.6 m: on a steep slope its edge fades. Checked on the GPU with `--offscreen` (the `offscreen` test in pixels and the sandbox's screenshots); it has not been checked by eye in a window on a display.
 
+## Voxel terrain (core)
+
+`shards_voxel` (G1, PR A2b of the voxel design) is the data half of voxel terrain: a region's ground as a box of blocks that
+generation builds and play never changes. It has no region kind, no collision, no navigation and no meshing yet (the later PRs
+add them on top of this core), so a game that does not use it pays for a content kind and a registry and nothing else: the
+module adds no system. `shards::voxel` re-exports it; `voxel` is a module a game may leave out (`--without voxel`).
+
+### The volume
+
+`VoxelVolume::new(size, block, origin, chunk)`: `size` cells, each `block` m on a side, cell (0, 0, 0) with its least corner at
+`origin`, stored in chunks of `chunk` cells (a parameter, not a constant: the port uses 64 x 32 x 64). `size` must be a whole
+number of chunks on every axis, no side zero, at most 65 535 cells tall and 2^27 cells in all; `block` above 0 and finite;
+each is an error with its numbers. `VoxelVolume::origin_for_anchor(anchor, block)` gives the origin that puts a lattice point
+at the world origin ("this cell's top is world y = 0").
+
+- A cell is a block id, a byte: 0 is air (`AIR`), 1 to 255 are the blocks of a palette. Outside the volume every read is air
+  and every write is ignored, so steps never clip. A chunk that holds one block only is one byte (`compact()`); the others hold
+  a byte per cell, y fastest.
+- Queries: `get`, `inside`, `cell_at(world)`, `corner(cell)`, `count(filter)`, `surface(x, z)`, `column_top(x, z, filter)` and
+  `column_runs(x, z, filter)` (the `[y0, y1)` runs of a column, bottom to top; a cave under a hill is two). Whether a block is
+  solid, liquid or foliage is the palette's (`VoxelPalette::solid`, `liquid`, `foliage`); pass the answer as the filter.
+- The **surface** is the natural ground of a column, a layer count: set by `raise_column` and `lower_column`, not by carving or
+  filling. Rules ask it ("where does water stand?"); `column_top` is the real top, which a tunnel or a tower changes.
+- Edits, for generation steps (all in cell coordinates, each clipped to the volume): `set`, `fill(min, max, id)` (max
+  exclusive), `carve(min, max)` (to air), `clear(min, max, filter)` (only the blocks the filter picks, "clear the trees near
+  the arena"), `sphere(center, radius, id)`, `tube(a, b, radius, id)`, `raise_column(x, z, h, fill, top)`,
+  `lower_column(x, z, h, top)`, `flatten(center, radius, h, fill, top)`. A column is never lower than one layer. Once a region
+  is built the volume is read-only. (The design's `box` is `fill`: `box` is a Rust keyword.)
+- `hash()`: FNV-1a over a canonical form: the size, the chunk size, the block size and origin as `f32` bits, every cell chunk by
+  chunk in chunk-index order (a uniform chunk hashes as its dense form, so `compact()` changes nothing) and every surface. No
+  hash map, pointer or clock goes in, so it is the same on every run. Its golden test changes only when the canonical form
+  does.
+
+### Palettes: `*.voxel_palette.ron`
+
+```ron
+{
+    "island": (
+        blocks: [
+            (name: "grass",  top: "#5b8f3a", side: "#6f5a3c", bottom: "#5c4730", tags: ["ground"]),
+            (name: "dirt",   top: "#6f5a3c"),
+            (name: "leaves", top: "#3f7f2f", solid: false, foliage: true, tags: ["tree"]),
+            (name: "glow",   top: "#ffd27f", emissive: true),
+            (name: "water",  top: "#2a6f9f", solid: false, liquid: true),
+        ],
+        shade: (up: 1.0, down: 0.5, x: 0.75, z: 0.85),
+        ao: (both: 0.5, step: 0.2),
+        variation: (block: 0.0, patch: 0.0),
+        meshing: Faces,
+        look: "voxel_terrain",
+        foliage_look: "voxel_foliage",
+        water_look: "voxel_water",
+    ),
+}
+```
+
+| field | meaning |
+|---|---|
+| `blocks` | at most 255, at least 1; a block's id is its place plus one. Names are unique, not empty, not `air` |
+| block `top`, `side`, `bottom` | colours (`#rgb`, `#rrggbb`; sRGB). `side` defaults to `top`, `bottom` to `side` |
+| block `solid` (true) | bodies stand on it (physics, navigation). A `liquid` or `foliage` block must say `solid: false` (an error, not silently fixed), and a block is not both |
+| block `foliage`, `liquid`, `emissive` | foliage mesh and sight and bodies pass through; water (never meshed as a block); lit by itself |
+| block `tags` | free words for a game's rules; `VoxelPalette::tagged(tag)` lists the ids |
+| `shade` | brightness of the faces, 0 to 1: `up` 1, `down` 0.5, `x` 0.75, `z` 0.85 by default (neutral numbers; a game sets its own) |
+| `ao` | corner darkening, 0 to 1: `both` (two filled sides) 0.5, else `1 - step * (side1 + side2 + corner)` with `step` 0.2 |
+| `variation` | colour variation per block and per patch, 0 to 1, default none |
+| `meshing` | `Faces` (default; exact corner darkening) or `Greedy` |
+| `look`, `foliage_look`, `water_look` | looks (`*.look.ron`) of the terrain, foliage and water meshes, if set; a missing one is an error with the closest name |
+
+`VoxelPalette::from_def(&def)` (or `from_db(&db, id)`) builds the runtime palette: flat tables by id (`solid`, `liquid`,
+`foliage`, `emissive`, `visible`, `occludes`), `id(name)`, `name(id)`, `face_color(id, dir)`. The same checks run in `validate`
+(so `--check-content` and `content_reload` report them with the file) and in `from_def` (a palette built in code).
+
+### Noise
+
+`Noise::new(seed, frequency)` with `octaves`, `lacunarity` and `gain`: value noise on an integer lattice hashed with SplitMix64,
+a quintic fade, octaves summed; `sample(x, z)` in -1 to 1, `sample01` in 0 to 1. Only `+ - * /`, `floor` and integer maths, so
+the same seed gives the same bits on every OS (golden values are tested). Also `smoothstep` (products only), `lerp`, `fade`,
+`cell_hash`. Another engine's noise (FastNoiseLite) is matched by look, not by value.
+
+### Generation: steps, checks, `generate`
+
+Generation is a pure function of (seed, region version, step list with versions, params, palette). Randomness is `DetRng`, never
+`SimRng`; ordered maps only.
+
+- **Steps** are game code registered by name and version: `app.add_voxel_step("hills", 1, hills)` with
+  `fn(&mut VoxelGen) -> Result<(), String>`, in `VoxelSteps` (a resource; the plugin adds it with the stock steps). A name is
+  lowercase letters, digits and `_`; a name taken twice, or version 0, panics at build time (`VoxelSteps::add_step` returns the
+  error). A region lists `steps: [("hills", 1), ...]` and the version it expects: `VoxelSteps::validate_steps` reports an unknown
+  step (with the closest name), a version other than the registered one, and an empty list, with the index, so it can be run from
+  a content `validate`. The co-op handshake compares the content hash and not step code, so a step's output changing means
+  raising its registered version and the content's.
+- **`VoxelGen`** gives a step `volume()`/`volume_mut()`, `palette()`, `params::<T>()` (the step's entry of `params`, a `serde_json::Value`, the same type the engine's tool arguments use; it is part of the API on purpose: a region's params are free-form data, a JSON
+  value; a step without an entry reads an empty map), `rng()` (`DetRng::from_keys(&[domain, seed, version, attempt, step_index])`, the domain a tag that keeps step, keyed and noise streams apart; every
+  call starts the same stream, take it once), `rng_keyed(key)`, `noise(salt, frequency)` (coordinates in cells; the same salt
+  gives the same field in every step of an attempt), `mark(name, world_pos)` (the spawn, points of interest; a name used again
+  replaces the point), `remark(text)`, `seed()`, `version()`, `attempt()`.
+- **Checks**: `app.add_voxel_check("flat", fn(&VoxelGen) -> Result<(), String>)` run after the steps, in the order a region
+  names them; a failed step or check fails the attempt and the next attempt has other rng keys. After `attempts` (1 to 64)
+  `generate` fails with every attempt's reason.
+- `generate(&steps, &palette, &GenSpec)` returns `Generated { volume, marks, remarks, attempt, steps, hash }`. `GenSpec::problems`
+  reports a bad spec whole (volume shape, attempts, unknown steps and checks, a `params` key that names no listed step).
+  `hash` is `world_hash(volume.hash(), palette, steps)`: the volume's hash with the palette fingerprint and the step list with versions folded in, so the same cells
+  made by another step set (or read through another palette) are another world.
+- **Stock steps**: `noise_hills { top, fill, base, amplitude, frequency, octaves, salt }` (column heights `base + amplitude *
+  noise`, laid with `raise_column`; the block names are the palette's) and `fill_water { level, block }` (liquid from each
+  column's natural surface up to `level` over air cells). They take every number from params; the engine has no number of a
+  particular game.
+
+### Merged boxes
+
+`column_boxes(&volume, keep)`: the runs of `keep` cells per column, equal runs of neighbouring columns merged into rectangles; a
+box's top and bottom are the real ones, so what reads a collider's bounding box stays true. It is the fallback collision
+(one static collider per box) and the reference the voxel field is measured against. `water_boxes(&volume, liquid, solid)`:
+liquid runs reach down through the ground and cross columns that are solid through the run, so a lake over a bowl is a few
+boxes whose tops are the surface; air under water stops a box. A box ends on a column with a run of its own (it is not stretched over a hill to the edge), and each row it takes has one. Every `keep` (liquid) cell is in exactly one box, and a water box
+holds only liquid and solid cells. Both are tested against a brute-force reference over seeded random volumes.
+
+### What is not here yet
+
+The region kind and spawning, the voxel field in `shards_motion`, the current and sea boxes, the volume hash in replay and
+snapshot checks (`voxel.volume`), navigation, meshing and the AI tools are the next PRs of the design; this core exports what
+they need (`VoxelVolume`, `VoxelPalette`, `generate`, `world_hash`, the boxes).
+
+**Limits.** A shape is checked without being built (`VoxelVolume::check_shape`, also what `GenSpec::problems` calls): at most 2^27 cells, 65 536 chunks and 65 535 cells tall, so a content file with a tiny `chunk` is an error that says to use a bigger one, not an out-of-memory. `sphere`, `tube` and `flatten` are clipped to the volume, so a huge radius from a param costs the volume and not its box. `chunk_uniform` and `chunk_cells` let a mesher skip a one-block chunk without reading its cells. `world_hash` folds in the volume, the palette (`VoxelPalette::fingerprint`: block order, names, flags, colours) and the step list. Block colours are opaque (`#rrggbbaa` with an alpha is a content error). The finished volume is read-only by convention: hand out `&VoxelVolume`.
+
 ## Steam (E10.5)
 
 The `shards_steam` module adds Steam to the game: co-op over the Steam relay (a lobby with invitations, or a game server), achievements from the content, and saves in Steam Cloud. It is behind the umbrella crate's `steam` feature and is off by default: the template and the sandbox build without it, and their `ai/status` has no `steam` module. Nothing that affects gameplay depends on Steam. A session over the relay is the same `shards_net` session as over UDP, an achievement does not change the world, and the copy in the cloud is only a copy of the file on disk.
@@ -4675,7 +4912,7 @@ a separate workspace; one `#[ignore]`: recording its references).
 | `shards_cli` | the port from `--port-file`, the `ready` line, the token by port number; `shards scenario` against a fake game on localhost (exit codes 0/1/2); the exit code from the outcome of `step` (3 — the game stopped) |
 | `shards_core` | loading does not shift ticks, pause, `after_loading`, presses last one tick, `move_to`, `ai/status` names the modules |
 | `shards_content` | definitions and their files, duplicates and references name the file and the field, `check_dir`, prefabs (`extends`, overrides), a reload is written to a replay and played back, a broken edit is rejected (and so is an edit to a file where even one definition is broken, as a whole), a broken definition gets its own error, the other definitions of the file are loaded, an edit to a file in a running game |
-| `shards_motion` | physics (queries, layers, order by `ColliderId`, the broad phase: the same answers as a scan over all colliders, on random worlds; the grid after moves, removals and new ids), the controller (steps, climbing over, swimming, glider, jump, walls), numbers from content, input (modes, contexts, rebinding, saving), the camera, `clearance` and `path_to`, tools, replays and independence from `Entity` indices |
+| `shards_motion` | physics (queries, layers, order by `ColliderId`, the broad phase: the same answers as a scan over all colliders, on random worlds; the grid after moves, removals and new ids; voxel fields: the same answers as a cuboid collider per cell on random fields, the seam differential test `seams.rs`, the hooks in a tunnel under a plateau, the reader guard `tests/readers.rs`), the controller (steps, climbing over, swimming, glider, jump, walls), numbers from content, input (modes, contexts, rebinding, saving), the camera, `clearance` and `path_to`, tools, replays and independence from `Entity` indices |
 | `shards_action` | actions, the buffer, cancels and combos, `can_start`, hits and the damage pipeline (dodge, block, parry, poise, hyper armour), statuses, zones and the "get out" hint, animation (`select_clip`, the files of the set: clip, source, root bone), baking of the offset (clip timing, thinning, an in-place file edit, a stale curve), reading glTF clips, telegraph geometry, tools and their errors, the combat replay |
 | `shards_level` | glTF and nodes, properties (`collider`, `volume`, `prefab`, components by name, text JSON), markers and their errors, colliders of the right sizes and layers, the `level` kind and its check in `content check`, spawning (world positions, order, ids), hot reload, the replay and the `level` hash, the level image; a real export from Blender 5.2.2 (`from_blender.rs`: markers, collider shapes, prefabs, components, the artist's errors, lamps, Draco and both meshopt, the default scene) |
 | `shards_world` | the format of tiles, regions and rooms (errors name the file and the nearest id; a tile for cells of a different size, `tile_size`, is not part of "all tiles", and the error is reported where it was named); the solver, checks (unreachable areas, slope, distances, a road to nowhere), hundreds and a thousand seeds, `worldgen_report` with a single seed number, the manifest byte for byte, the fallback map, a panic in a game step with the seed number; dungeons; a region change through `RegionLoading`, the start region, `goto_tile`, a replay with region changes, a snapshot in a region; tiles from level files in all four quarter turns; the socket markers of a level file against the sockets of a tile; a tile file that cannot be read, or that has an error in one of its nodes, is a content error that names the tile, the file and the node, and it is exactly one error if the file is also named by a `level` definition; active zones; a wall at the edge of a region (it holds a body; an open edge drops it; the collider numbers of tiles stay as before, and it leaves with the region) |
@@ -4685,6 +4922,7 @@ a separate workspace; one `#[ignore]`: recording its references).
 | `shards_look` | the look of a mesh: its own `Look`, its ancestor's, the glTF material name; the material from the source (colour and transparency, glow, `unlit`), `extends` presets and their errors, the flat copy and the outline (layers, transparent materials and morph targets without an outline), hot reload and assets changed in place; without an image nothing is styled; the image on the GPU (`#[ignore]`): the bands and the outline in pixels |
 | `shards_scatter` | the layout: one seed, the same points, `spacing`, `graphics.foliage` keeps the start of the same list, ground, slope, the band of heights and `clearance`; the content check names every error; in a game without an image nothing is scattered; on every tile of the test region, not on a column, not in a wall, the same in two runs; batches (two meshes for thousands of entities), the `VisibilityRange` of levels, shadows; `graphics.foliage`, `scatter_set` and the developer menu, a content edit and a region change (without warning B0004); the image on the GPU (`#[ignore]`): the grass is green in the pixels; foliage that is switched off, or beyond the last level, is not drawn |
 | `shards_fx` | effects and the table in content and their errors (a pool smaller than one run, an event with a typo, a second table), tools, the menu and the status without an image; mesh pools from content (one mesh and material per effect), starting, pool overflow (the oldest ones give way), simulation clocks (pause freezes them, `step` advances them), `rate` and `duration`, effects of events (on the side of the hit), clip labels and `PlayEffect`; a decal on a zone (circle, sector), the fill grows towards the hit, the colour of an enemy and of an ally, gizmos give way to the fill, `DepthPrepass` on the camera and back; the image on the GPU (`#[ignore]`): the decal paints the floor only inside the zone, the particles glow where they play |
+| `shards_voxel` | the volume and its limits (chunk size a parameter, shape checked without allocating, edits clipped), the hash, the palette and each error with the file named, noise golden values, the step registry, retries and the golden world, the merged boxes against a brute-force reference; the content kind alone changes no content hash |
 | `shards_steam` | on a fake Steam: lobbies and invitations, relay sessions (held datagrams, refusal, hub delay), the game server, achievements and the fake's cloud, `steam:` and `+connect_lobby` addresses, the cloud check and its file names; `tests/steam/`: a lobby host and two friends over the stand's relay, the game server and a client by id, an invitation, refusal of a stranger, a failed join and `--exit-with-host`, a check of the achievement content, a write to Steam after a second and a retry of a refused write, the previous run, a replay, co-op (the host decides, each one opens its own), a copy of each record, cloud turned off, the check at start-up before a slot is loaded, the answers of `steam` and `ai/status`. The real backend is only built (`--features sdk`) |
 | `shards_net` | `src/`, without Bevy: transports (an in-memory hub, UDP, a reply to a stranger that binds no one), link simulation, the channel (reliable and latest-only messages, blobs, acknowledgements, RTT, loss, timeouts), the datagram format (knock, challenge, cookie in the acknowledgement fields, protocol 1 is recognised), the cookie (SipHash-2-4 on reference vectors, address, session, expiry, forgery); the session (a knock leaves no trace on the host, a peer only with the cookie of its own address and session, an expired cookie, the table of strangers as before, refusal of an older build on its protocol and no more than 8 times a second, the character in parts: the place is held, order, size, `Hello` bytes, JSON; the limits on input frames and on the largest honest packet, what is held after the world is reloaded, replication rules, waiting for room in the channel by count and by bytes, `NetDef`, departed tokens). The whole session is covered in the sandbox tests `net*.rs` |
 | `shards` | how networking and saves fit together (`coop`: what the host knows about the player's character, how it travels as text), engine sections (a number that a body never has), the stand's slot, a replay from a snapshot (`--verify`: the same result, code 2 for a foreign snapshot), the mode without a window: the same plugins, but no image (`display` and the `shot` hint), `--offscreen`: the window's plugins without a window (an image for `shot`, into which the cameras aimed at the window draw, also after a change of target), the internal 3D resolution (`render_scale`: an image of the right size, the cameras into it and back, shown on the whole window, the window changes size, the system scale, the game camera with its own image), the test app, `testing::ok` on a gameplay failure, `testing::run_to` and `verify`, when a violated rule matched the start of loading, the tick budget on the command line, frame time (`frames`: a frame is the slower of the two worlds, a frame with `step` does not count, the GPU report, draw commands travel with their own frame), the performance test (`bench`: verdicts, including `draws` and `nav_bake_s`, a definition check, `--perf` and its codes), `counts` without a window, the animation bridge on a real model with a skin and on a humanoid from Blender (a roll in place, a clip from a second file), `--bake-motion` |
@@ -4793,7 +5031,7 @@ E7's acceptance every night, and `record-replays.yml` records the reference repl
    foliage is not scattered by distance either, so it is sparser on a large region. The navmesh for several bodies is already there
    (body classes, E6.1).
 3. **Minidumps and a crash dialog for the player** (E10.7 beyond the one-file crash report): postponed by the owner's decision.
-4. Hot reload of code (`--features dynamic`, subsecond).
+4. Hot reload of code (not done: `--features dynamic` is only a link-time option, see "Building and iterating fast"; patching a running game, for example with subsecond, is still open).
 
 ## Building and iterating fast
 
@@ -4829,18 +5067,17 @@ Measured on one Windows 11 PC (16 threads, 31 GB, other agents building on it), 
 | dynamic | `rust-lld`, `--features dynamic` | deep rebuild + link, n=7 | 16.2 | 10.2-27.9 | 9-11 |
 | test binary | MSVC `link.exe` | `perf` test relinked after a change, n=4 | 14.6 | 9.6-23.5 | 8-9 |
 | test binary | `rust-lld` | `perf` test relinked after a change, n=4 | 6.0 | 4.8-31.0 (first sample) | 9-11 |
-| test build | static Bevy, `rust-lld` | `cargo test --workspace --no-run` on a warm sandbox build, 51 executables, 22 GB | 186 s failed (out of memory, 16 jobs) + 87 s to finish at 8 jobs: not a comparable sample | - | 6-10 |
-| test build | `--features sandbox/dynamic` | the same, 51 executables, 17 GB | 230 | - | 0 |
+| test build size | static Bevy / `--features sandbox/dynamic` | `cargo test --workspace --no-run`, 51 executables, disk | 22 GB / 17 GB | - | - |
 | jobs | 4 / 8 / 12 jobs, `rust-lld` | cold build, n=1 each | 977 / 633 / 445 | - | 4 / 1 / 4 |
-| sccache | no wrapper, 8 jobs (the row above) | cold build, n=1 | 633 | - | 1 |
+| jobs baseline | no wrapper, 8 jobs (the 633 s of the row above; the reference for the sccache rows, not an A/B: the load differs) | cold build, n=1 | 633 | - | 1 |
 | sccache | `RUSTC_WRAPPER=sccache`, empty cache | cold build, n=1 | 494 | - | 5 |
 | sccache | same, new target directory, full cache | cold build, n=1 | 526 (0 of 399 hits) | - | 16 |
 | sccache | same, the first directory emptied, full cache | cold build, n=1 | 339 (337 of 399 hits) | - | 10 |
 
-- **Linker: `rust-lld` wins and is the default on Windows.** One changed crate plus the link takes about 3 s instead of 7 s, and every deep rebuild was 2-7 s shorter in each of the four pairs. The cold build is the same within what one sample can tell. `.cargo/config.toml` (and the template's) sets `linker = "rust-lld"` for `x86_64-pc-windows-msvc`; the linker is part of cargo's fingerprint, so switching rebuilds everything once. `CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=link.exe` brings the old linker back. `rust-lld` is in every rustup toolchain (`lib/rustlib/<host>/bin`), so nothing is installed. On Linux, Rust has linked `x86_64-unknown-linux-gnu` with `rust-lld` by default since 1.90 (its release notes), so there is nothing to switch on; `mold` was not measured (no Linux machine was available) and is not configured.
-- **`--features dynamic` (Bevy as one DLL): a small win for the link, none for a deep rebuild.** It builds and runs on Windows MSVC (`bevy_dylib.dll` is 140 MB; the 65535-export limit is not hit), and the eight reference replays verify identically with it. With `rust-lld` the static link is only about 3-5 s, so the DLL saves about 2-3 s on a leaf rebuild and nothing visible on a deep one (seven samples each, medians 13.9 s static and 16.2 s dynamic, spreads overlapping): a deep rebuild is dominated by compiling the crates above the changed one. What it does save is disk: the workspace's 51 test executables take 17 GB instead of 22 GB, and `cargo test -p sandbox --features dynamic` passes, reference replays included. It stays an option: `cargo sandbox --features dynamic`, or `--features sandbox/dynamic` together with `--workspace`. Do not use it for `dist` builds. Run the executable through cargo (`cargo run`, `cargo test`): cargo puts the DLL and Rust's `std-*.dll` on the search path. Started by hand, both folders (`target/debug`, and `lib/rustlib/<host>/lib` of the toolchain) must be in `PATH`.
-- **Jobs: more is faster, until the machine runs out of memory.** A cold sandbox build took 977 s with 4 jobs, 633 s with 8 and 445 s with 12 (single samples, other builds running; at one moment 21 `rustc` processes on the machine held 8.7 GB). But a `cargo test --workspace --no-run` with sixteen jobs next to ten other `rustc` processes ran out of memory (`memory allocation failed` in `rustc`, exit code `0xc000001d` from `rust-lld`). So `.cargo/config.toml` keeps `jobs = 4`, and a machine with free RAM sets `CARGO_BUILD_JOBS=8` (or 12) for the run; the environment beats the file.
-- **sccache: not adopted; it helps only a rebuild into the same target directory.** It is not in `.cargo/config.toml`. To try it: `cargo install sccache --locked`, then `RUSTC_WRAPPER=sccache cargo build`. A new target directory in another place got 0 hits out of 399 compilations, also with `SCCACHE_BASEDIRS` set, so the cache does not carry a Bevy build over to a new worktree whose `target/` is elsewhere. In the same directory (after `cargo clean`, for instance) 84% hit and the build took 339 s against 494 s for the filling build. The workspace's own crates build incrementally and are never cached.
+- **Linker: `rust-lld` is faster and is the default of the engine repository on Windows.** One changed crate plus the link takes about 3 s instead of 7 s (the spreads do not overlap). A deep rebuild was 2-7 s shorter in each of the four A/B pairs, but with n=4 and overlapping spreads (11.5-20.1 against 9.1-14.4) that is suggestive, not shown. The cold build is the same within what one sample can tell. `.cargo/config.toml` of the engine sets `linker = "rust-lld"` for `x86_64-pc-windows-msvc`; the linker is part of cargo's fingerprint, so switching rebuilds everything once. `CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=link.exe` brings the old linker back. The template's config is **not** changed: the executables a game ships (`shards package`, a `dist` build with thin LTO) still come from `link.exe`, because the PE file (PDB, CFG, debug info, imports, how antivirus products judge it) was not compared. A game may opt in for its dev builds with the same line in its own `.cargo/config.toml`. With no `LIB` set in the shell the build still works: rustc finds the Visual Studio and Windows SDK libraries itself for this linker, so a missing VS or SDK install fails the link, as it does with `link.exe`. CI: the only Windows job is `cross.yml` (weekly, also `workflow_dispatch`), so Windows CI first sees `rust-lld` in its next run; `ci.yml` is Linux only. `rust-lld` is in every rustup toolchain (`lib/rustlib/<host>/bin`), so nothing is installed. Not measured: Linux. Per its release notes Rust has linked `x86_64-unknown-linux-gnu` with `rust-lld` by default since 1.90, so there is probably nothing to switch on there, but that was not tried; `mold` was neither measured nor configured.
+- **`--features dynamic` (Bevy as one DLL): a small win for the link, none for a deep rebuild.** It builds and runs on Windows MSVC (`bevy_dylib.dll` is 140 MB; the 65535-export limit is not hit), and the eight reference replays verify identically with it. With `rust-lld` the static link is only about 3-5 s, so the DLL seems to save about 2-3 s on a leaf rebuild (n=4, all at load 9, one static outlier: suggestive, not shown) and nothing visible on a deep one (seven samples each, medians 13.9 s static and 16.2 s dynamic, spreads 12.6-22.4 and 10.2-27.9, load 9-11). The blocks ran at different loads, so compare only inside a block: a deep rebuild is dominated by compiling the crates above the changed one. What it does save is disk: the workspace's 51 test executables take 17 GB instead of 22 GB, and `cargo test -p sandbox --features dynamic` passes, reference replays included. It stays an option: `cargo sandbox --features dynamic`, or `--features sandbox/dynamic` together with `--workspace`. Do not use it for `dist` builds. Run the executable through cargo (`cargo run`, `cargo test`): cargo puts the DLL and Rust's `std-*.dll` on the search path. Started by hand, both folders (`target/debug`, and `lib/rustlib/<host>/lib` of the toolchain) must be in `PATH`.
+- **Jobs: more is faster, until the machine runs out of memory.** A cold sandbox build took 977 s with 4 jobs, 633 s with 8 and 445 s with 12 (single samples, other builds running; at one moment 21 `rustc` processes on the machine held 8.7 GB). But a `cargo test --workspace --no-run` with sixteen jobs next to ten other `rustc` processes ran out of memory (`memory allocation failed` in `rustc`, exit code `0xc000001d` from `rust-lld`). So `.cargo/config.toml` keeps `jobs = 4`, and a machine with free RAM sets `CARGO_BUILD_JOBS=8` (or 12) for the run; the environment beats the file. Rule of thumb: about 2-4 GB of RAM per job at peak. Do not raise it when several agents or builds share the machine: each of them setting 12 jobs hits the same out-of-memory failure.
+- **sccache: not adopted; it helps only a rebuild into the same target directory.** It is not in `.cargo/config.toml`. To try it: `cargo install sccache --locked`, then `RUSTC_WRAPPER=sccache cargo build`. A new target directory in another place got 0 hits out of 399 compilations, also with `SCCACHE_BASEDIRS` set, so the cache does not carry a Bevy build over to a new worktree whose `target/` is elsewhere. In the same directory (after `cargo clean`, for instance) 337 of 399 compilations hit (84%) and the build took 339 s against 494 s for the filling build (single samples at loads 10 and 5). The workspace's own crates build incrementally and are never cached.
 - **Test binaries: not consolidated.** The workspace builds 51 test executables; only `shards` (5 integration-test files), `sandbox` (5) and `shards_save` (2) have more than one, the others are already one `tests/<crate>/main.rs`. Relinking the `perf` test binary took a median 6.0 s with `rust-lld` against 14.6 s with `link.exe` (this includes recompiling the test crate), so the linker already cut most of what a binary costs; merging the three crates would save perhaps 8 links of 3-5 s, well under a minute of a full test build, while `perf` has to stay a binary of its own (CI selects `binary_id(sandbox::perf)` and runs it with `-j 1`), and `log_capture` and `system_failures` rely on process-wide state. Nothing was merged.
 
 ### Target directory size
@@ -4868,7 +5105,7 @@ These are constants in gameplay code that a designer would tune, so changing one
 - The Bevy version is pinned (`0.20.0`). Update it deliberately, as a separate step: Bevy's API changes in every release.
   Third-party crates (now `parry3d =0.31.1` and its `glamx =0.3.1`, `ron =0.12.2`, `gltf =1.4.1` in `shards_level`) are added after their Bevy 0.20 support is checked, are pinned to an exact
   version, and are hidden behind the engine's API.
-- `.cargo/config.toml` sets `jobs = 4` (a small or shared machine can run out of memory with more; `CARGO_BUILD_JOBS=8` or `12` when RAM is free) and, on Windows, links with `rust-lld`. See "Building and iterating fast". Dependencies
+- `.cargo/config.toml` sets `jobs = 4` (a small or shared machine can run out of memory with more; `CARGO_BUILD_JOBS=8` or `12` when RAM is free, about 2-4 GB per job) and, on Windows, links with `rust-lld`. See "Building and iterating fast". Dependencies
   are built with `opt-level = 3`, the project's own code with `opt-level = 1`.
 - Versions and tags: SemVer; all engine crates share one version (`[workspace.package]`); the maintainer sets the tag; the rules are in
   [CHANGELOG.md](../CHANGELOG.md).

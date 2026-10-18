@@ -19,6 +19,12 @@
 //! - **Attack planner** ([`planner`]), for enemies and bosses: weights, distance windows,
 //!   cooldowns and forbidden sequences over the fighter's moveset ([`AttackPlanDef`]); it asks
 //!   the action machine's own rule ([`shards_action::can_start`]) before it presses.
+//! - **Duel rules** (all optional, neutral unless a definition asks): strike spacing between the
+//!   NPCs of one director ([`strike`]: [`DirectorDef::min_spacing`], `spacing_exempt_tags`, the
+//!   rule `npc.strike_spacing`), conditional plan options (`AttackOption::when`) and a state's
+//!   rest clamp, rest semantics (`rest_interrupted`, `first_rest`), combo
+//!   continuation ([`chain`]: `AttackOption::chain`), a decision cadence (`BehaviorDef::think`,
+//!   [`NpcCtx::deciding`]) and a perception keep range (`PerceptionDef::keep_range`).
 //! - **Navigation** ([`nav`]): every tile baked ahead of time into a walkable grid (the
 //!   motion module's own probe and move rule), stitched over the region's tile graph when it
 //!   loads ([`NavRegion`]), routes by A* over the tile graph, then over the grid of the
@@ -63,9 +69,9 @@
 //!
 //! ```text
 //! NpcSystems::Sense     who is active (NpcActivity), perception: sight, hearing, memory, focus
-//! NpcSystems::Decide    each NPC: one transition at most, its state hook → NpcDrive
+//! NpcSystems::Decide    each NPC: one transition at most, its state hook → NpcDrive; its decision timer and the plan options its conditions open
 //! NpcSystems::Direct    tokens: started attacks remembered, finished ones back, grants; waiting roles
-//! NpcSystems::Plan      token holders: choose an attack, close in, press it (budget, combinations)
+//! NpcSystems::Plan      combo continuations at the start of a recovery, then token holders: choose an attack, close in, press it (budget, combinations)
 //! NpcSystems::Navigate  routes (NavPaths), following, leash → the velocity the route asks for
 //! NpcSystems::Drive     avoidance between bodies (leash again), then → Intent: move_dir, aim,
 //!                       presses, held inputs
@@ -87,6 +93,7 @@
 
 pub mod ai;
 pub mod brain;
+pub mod chain;
 mod coverage;
 pub mod def;
 pub mod director;
@@ -95,6 +102,7 @@ pub mod nav;
 pub mod overlay;
 pub mod perception;
 pub mod planner;
+pub mod strike;
 
 use ai_core::{AiAppExt, SimSet};
 use bevy::prelude::*;
@@ -102,18 +110,20 @@ use shards_action::{ActionPlugin, ActionSystems};
 use shards_content::ContentAppExt;
 use shards_core::EngineAppExt;
 
-pub use invariants::{state_known, tokens_within_limit, TokenAudit};
+pub use invariants::{state_known, strike_spacing, tokens_within_limit, TokenAudit};
 use shards_motion::perception::RoutePlanner;
 use shards_world::{WorldAppExt, WorldSystems};
 
 pub use brain::{
     clamp_to_leash, force_state, Home, Npc, NpcActivity, NpcBrain, NpcCondition, NpcCtx, NpcDrive, NpcHooks, NpcOutput,
-    NpcState, NpcStateChanged, Patrol, TargetView,
+    NpcState, NpcStateChanged, NpcThink, Patrol, TargetView,
 };
 pub use def::{
+    ChainDef,
     AttackOption, AttackPlanDef, AvoidanceDef, BehaviorDef, Cond, DirectorDef, NpcTuning, Param, Params, PerceptionDef, Role,
     SequenceBan, StateDef, TransitionDef, WaitRole,
 };
+pub use chain::{ChainPressed, ChainRefused, NpcChain};
 pub use director::{AttackToken, Grant, TokenGranted, TokenReturned};
 pub use nav::{
     bake_files, bake_region, find_path, local_grid_path, local_grid_route, navmesh_path, navmesh_route, plain_sight, region_nav, route_on,
@@ -121,8 +131,9 @@ pub use nav::{
     NavTile,
 };
 pub use overlay::NpcOverlay;
-pub use perception::{sees, sight_clear, HeardAt, Noise, Perceived, Sensed, Sound};
-pub use planner::{banned, choose, pick_weighted, resolve, NpcPlan, PastAttack, Resolved};
+pub use perception::{sees, sees_within, sight_clear, HeardAt, Noise, Perceived, Sensed, Sound};
+pub use planner::{banned, choose, pick_weighted, resolve, NpcOptions, NpcPlan, PastAttack, Resolved};
+pub use strike::{spacing_ticks, wait_of, NpcStrike};
 
 /// Version of the NPC module.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -196,7 +207,11 @@ impl Plugin for NpcPlugin {
             .register_type::<Perceived>()
             .register_type::<NavAgent>()
             .register_type::<AttackToken>()
-            .register_type::<NpcPlan>();
+            .register_type::<NpcPlan>()
+            .register_type::<NpcThink>()
+            .register_type::<NpcStrike>()
+            .register_type::<NpcOptions>()
+            .register_type::<NpcChain>();
         // Known to the world from the start, so `&World` queries (tools) work before the
         // first NPC.
         let world = app.world_mut();
@@ -229,6 +244,7 @@ impl Plugin for NpcPlugin {
             .add_snapshot_rebuild("navmesh", nav::rebuild)
             .add_engine_module("npc", VERSION)
             .add_engine_invariant("npc.state_known", state_known)
+            .add_engine_invariant("npc.strike_spacing", strike_spacing)
             .configure_sets(
                 FixedUpdate,
                 (
@@ -251,13 +267,14 @@ impl Plugin for NpcPlugin {
                     (brain::update_activity, perception::perceive).chain().in_set(NpcSystems::Sense),
                     brain::decide.in_set(NpcSystems::Decide),
                     director::direct.in_set(NpcSystems::Direct),
-                    planner::plan_attacks.in_set(NpcSystems::Plan),
+                    (chain::chain_press, planner::plan_attacks).chain().in_set(NpcSystems::Plan),
                     (nav::nav_paths, nav::nav_steer).chain().in_set(NpcSystems::Navigate),
                     (nav::nav_avoid, nav::drive_intents).chain().in_set(NpcSystems::Drive),
                 ),
             )
             .add_observer(perception::hear_noise)
-            .add_observer(perception::hit_noise);
+            .add_observer(perception::hit_noise)
+            .add_observer(strike::action_started);
         // The token rule judges the director's books right after it closed them.
         if app.engine_invariants_on() {
             app.init_resource::<TokenAudit>()

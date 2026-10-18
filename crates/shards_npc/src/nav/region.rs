@@ -967,15 +967,17 @@ impl NavRegion {
     /// have it, in the columns within reach of its box (clipped to each instance), at
     /// heights where it would be in the baked body's way (above its step, below its head).
     fn zone_of(&self, c: &ColliderInfo, tiles: &BTreeMap<ColliderId, TileId>, settings: &NavSettings, reach: f32) -> Vec<NodeId> {
+        #[expect(clippy::disallowed_methods, reason = "carving tracks the colliders only; a voxel field is never carved (it does not change after it is built)")]
+        let (min, max) = c.bounds();
         let owner = tiles.get(&c.id).and_then(|t| {
             let cell = [t.x, t.y];
             self.instances.iter().position(|i| i.cell == cell).map(|i| i as u32)
         });
         let (height, step) = (settings.agent.height, settings.agent.step_height);
-        let lo = self.column_of(c.aabb_min - Vec3::new(reach, 0.0, reach));
-        let hi = self.column_of(c.aabb_max + Vec3::new(reach, 0.0, reach));
+        let lo = self.column_of(min - Vec3::new(reach, 0.0, reach));
+        let hi = self.column_of(max + Vec3::new(reach, 0.0, reach));
         let mut zone = Vec::new();
-        for inst in self.instances_near(c.aabb_min, c.aabb_max, reach) {
+        for inst in self.instances_near(min, max, reach) {
             if Some(inst) == owner && self.baked_with(inst, c) {
                 continue;
             }
@@ -990,7 +992,7 @@ impl NavRegion {
                     for n in instance.nav.column(i, j) {
                         let y = instance.nav.nodes[n as usize].y();
                         // Below the step it is never in the body's way; far above, neither.
-                        if c.aabb_max.y > y + step && c.aabb_min.y <= y + height + 0.1 {
+                        if max.y > y + step && min.y <= y + height + 0.1 {
                             zone.push(self.global(inst, n));
                         }
                     }
@@ -1063,15 +1065,17 @@ impl NavRegion {
             for &n in &zone {
                 self.carve.held[n as usize] += 1;
             }
-            boxes.push((c.aabb_min, c.aabb_max));
+            #[expect(clippy::disallowed_methods, reason = "carving tracks the colliders only; a voxel field is never carved (it does not change after it is built)")]
+            let (aabb_min, aabb_max) = c.bounds();
+            boxes.push((aabb_min, aabb_max));
             seen.push(Seen {
                 id: c.id,
                 shape: c.shape,
                 position: c.position,
                 rotation: c.rotation,
                 water: is_water(c),
-                aabb_min: c.aabb_min,
-                aabb_max: c.aabb_max,
+                aabb_min,
+                aabb_max,
                 zone,
             });
         }
