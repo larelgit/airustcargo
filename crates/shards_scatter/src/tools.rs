@@ -37,6 +37,11 @@ fn scatter(In(_): In<Call<ScatterArgs>>, world: &World) -> ToolResult {
         out.push_str(HEADLESS);
     } else if world.get_resource::<shards_world::ActiveRegion>().is_none() {
         out.push_str("no region is loaded: scatter is strewn over a region's tiles (`regen`)");
+    } else if let Some(region) = world.get_resource::<shards_world::ActiveRegion>().filter(|r| r.manifest.layout == shards_world::manifest::Layout::Volume) {
+        out.push_str(&format!(
+            "nothing is strewn: the region in the world, {}, is a voxel volume, which has no tiles, and scatter is strewn by tile (a volume's foliage is its own blocks)",
+            region.manifest.title()
+        ));
     } else {
         let total = strewn.total();
         out.push_str(&format!(

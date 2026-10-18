@@ -228,9 +228,27 @@ struct SnapshotPrepare {
 struct SnapshotCheck {
     name: &'static str,
     hint: &'static str,
-    /// The value; for a check with parts, the one it had before it had them.
-    check: fn(&World) -> u64,
+    check: CheckFn,
     parts: Option<ReplayCheckParts>,
+}
+
+/// A snapshot check's hash: always one, or one only while the state it hashes exists. For a check
+/// with parts, `Always` holds the whole hash it had before it had them.
+#[derive(Clone, Copy)]
+enum CheckFn {
+    Always(fn(&World) -> u64),
+    /// `None`: nothing to hash; the snapshot leaves the check out, and a snapshot without it
+    /// matches only a game without that state.
+    Optional(fn(&World) -> Option<u64>),
+}
+
+impl CheckFn {
+    fn run(&self, world: &World) -> Option<u64> {
+        match self {
+            Self::Always(check) => Some(check(world)),
+            Self::Optional(check) => check(world),
+        }
+    }
 }
 
 impl SnapshotCheck {
@@ -281,13 +299,18 @@ impl SnapshotRegistry {
 
     pub(crate) fn add_check(&mut self, name: &'static str, hint: &'static str, check: fn(&World) -> u64) {
         self.checks.retain(|c| c.name != name);
-        self.checks.push(SnapshotCheck { name, hint, check, parts: None });
+        self.checks.push(SnapshotCheck { name, hint, check: CheckFn::Always(check), parts: None });
+    }
+
+    pub(crate) fn add_optional_check(&mut self, name: &'static str, hint: &'static str, check: fn(&World) -> Option<u64>) {
+        self.checks.retain(|c| c.name != name);
+        self.checks.push(SnapshotCheck { name, hint, check: CheckFn::Optional(check), parts: None });
     }
 
     /// A check with parts: the snapshot keeps them, a load compares them part by part.
     pub(crate) fn add_parts_check(&mut self, name: &'static str, hint: &'static str, parts: ReplayCheckParts, whole: fn(&World) -> u64) {
         self.checks.retain(|c| c.name != name);
-        self.checks.push(SnapshotCheck { name, hint, check: whole, parts: Some(parts) });
+        self.checks.push(SnapshotCheck { name, hint, check: CheckFn::Always(whole), parts: Some(parts) });
     }
 
     pub(crate) fn add_prepare(&mut self, name: &'static str, after: Option<&'static str>, covers: &'static [&'static str], run: PrepareFn) {
@@ -395,7 +418,10 @@ pub fn capture(world: &World) -> Result<Snapshot, String> {
                 check_parts.insert(check.name.to_owned(), parts.into_iter().map(|(name, hash)| (name, replay::hex(hash))).collect());
                 value
             }
-            None => (check.check)(world),
+            None => match check.check.run(world) {
+                Some(value) => value,
+                None => continue,
+            },
         };
         checks.insert(check.name.to_owned(), format!("{value:016x}"));
     }
@@ -794,8 +820,17 @@ fn check_compatible(
             }
             continue;
         }
-        let now = format!("{:016x}", (check.check)(world));
+        let Some(now) = check.check.run(world).map(|hash| format!("{hash:016x}")) else {
+            // Optional and absent here: the snapshot must not have it either.
+            if let Some(saved) = snapshot.checks.get(check.name) {
+                problems.push(format!("{} differs (snapshot {saved}, this game has none): {}", check.name, check.hint));
+            }
+            continue;
+        };
         match snapshot.checks.get(check.name) {
+            None if matches!(check.check, CheckFn::Optional(_)) => {
+                problems.push(format!("{} differs (the snapshot has none, this game {now}): {}", check.name, check.hint))
+            }
             Some(saved) if *saved != now => problems.push(format!(
                 "{} differs (snapshot {saved}, this game {now}): {}",
                 check.name, check.hint
@@ -1331,6 +1366,31 @@ mod tests {
 
     fn step(app: &mut App, ticks: u64) {
         sim::step(app.world_mut(), ticks, Duration::from_secs(5), |_| None).unwrap();
+    }
+
+    /// State a module may not have (a voxel region's volume): what the optional check hashes.
+    #[derive(Resource, Clone, Copy)]
+    struct Volume(u64);
+
+    #[test]
+    fn an_optional_check_is_left_out_without_its_state_and_compares_presence_both_ways() {
+        let with_check = |app: &mut App| {
+            app.add_optional_snapshot_check("toy.terrain", "the terrain differs", |w| w.get_resource::<Volume>().map(|t| t.0));
+        };
+        let mut bare = game_with(with_check);
+        let without = capture(bare.world()).unwrap();
+        assert!(!without.checks.contains_key("toy.terrain"), "no state, no value: {:?}", without.checks);
+        let mut built = game_with(with_check);
+        built.world_mut().insert_resource(Volume(7));
+        let with = capture(built.world()).unwrap();
+        assert_eq!(with.checks["toy.terrain"], "0000000000000007");
+
+        let refused = restore(bare.world_mut(), &with, false).unwrap_err();
+        assert!(refused.contains("toy.terrain differs (snapshot 0000000000000007, this game has none): the terrain differs"), "{refused}");
+        let refused = restore(built.world_mut(), &without, false).unwrap_err();
+        assert!(refused.contains("toy.terrain differs (the snapshot has none, this game 0000000000000007): the terrain differs"), "{refused}");
+        assert!(restore(bare.world_mut(), &without, false).unwrap().differences.is_empty());
+        assert!(restore(built.world_mut(), &with, false).unwrap().differences.is_empty());
     }
 
     #[test]

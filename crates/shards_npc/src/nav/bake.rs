@@ -95,6 +95,7 @@ fn spawn_alone(main: &World, scratch: &mut World, kind: TileKind, id: &str, geom
                 links: Vec::new(),
                 spawn: None,
                 content_hash: String::new(),
+                steps: Vec::new(),
             };
             shards_world::spawn_region(scratch, &manifest).map(|_| ())
         }

@@ -1,5 +1,5 @@
 // The movesets `reactions.scenario` switches two arena fighters to (see `sparring.action.ron`), and
-// the one `timeline.scenario` gives the player.
+// the one `timeline.scenario` gives the player and the one `body_state.scenario` does.
 {
     // The skeleton's body, with reaction tiers: three reactions with their pushes, a short
     // immunity after each, protection when one ends, a guard-broken action.
@@ -52,5 +52,17 @@
         buffer: SingleSlot(
             priority: [("dodge", 60), ("technique.1", 55), ("technique.2", 55), ("technique.3", 55), ("heavy", 40), ("light", 30)],
         ),
+    ),
+    // The player's kit for `body_state.scenario` (B2b): a ward (a barrier), a jab that chills, a jab
+    // that jolts.
+    "bodystate": (
+        inputs: {
+            "light": "spar_jab",
+            "technique.1": "spar_ward",
+            "technique.2": "spar_frost",
+            "technique.3": "spar_zap",
+        },
+        stagger: "player_stagger",
+        death: "player_death",
     ),
 }

@@ -53,14 +53,15 @@ Instructions for agents are in [AGENTS.md](../AGENTS.md) (the short core and an 
 25. [Foliage and small objects (E10.2)](#foliage-and-small-objects-e102)
 26. [Effects and decals (E10.3)](#effects-and-decals-e103)
 27. [Voxel terrain (core)](#voxel-terrain-core)
-28. [Steam (E10.5)](#steam-e105)
-29. [Builds for players and Windows (E10.6)](#builds-for-players-and-windows-e106)
-30. [Crash reports (E10.7)](#crash-reports-e107)
-31. [The sandbox](#the-sandbox)
-32. [Tests and CI](#tests-and-ci)
-33. [What's next](#whats-next)
-34. [Building and iterating fast](#building-and-iterating-fast)
-35. [Conventions and building](#conventions-and-building)
+28. [Voxel regions (A2c)](#voxel-regions-a2c)
+29. [Steam (E10.5)](#steam-e105)
+30. [Builds for players and Windows (E10.6)](#builds-for-players-and-windows-e106)
+31. [Crash reports (E10.7)](#crash-reports-e107)
+32. [The sandbox](#the-sandbox)
+33. [Tests and CI](#tests-and-ci)
+34. [What's next](#whats-next)
+35. [Building and iterating fast](#building-and-iterating-fast)
+36. [Conventions and building](#conventions-and-building)
 
 ## Quick start
 
@@ -300,7 +301,7 @@ generation is a pure function (seed, version, content) on `DetRng`, not `SimRng`
 it takes the tile graph, the active zones and the "region loaded" event from the world, and the tile files for baking from the levels. `shards_dev`
 (the developer menu and console) does not know any module: modules register their own menu items in `ai_core` (`add_dev_entry`),
 and it calls their tools by name. `shards_look` (how meshes are drawn) knows only `ai_core`, the core and the content: it reaches prefabs through a check it adds to the `prefab` kind (`add_content_check`), and it does not touch gameplay. `shards_scatter`
-(foliage) sits above the world and the looks: it scatters instances over the tiles of a region in `shards_world`, finds the ground under them with the physics of `shards_motion`, and colours them with the looks of `shards_look`. `shards_fx` (effects) knows `ai_core`, the core, the content, movement and combat: it reads combat events and attack zones, and it does not change the world. `shards_voxel` (voxel terrain, the core) knows `ai_core`, the core, the content and `shards_look` (a palette names looks, checked with `refs.require`): without `look` (`--without look`) a palette with a `look:` reports that no content kind `look` is registered, as with `shards_scatter`.
+(foliage) sits above the world and the looks: it scatters instances over the tiles of a region in `shards_world`, finds the ground under them with the physics of `shards_motion`, and colours them with the looks of `shards_look`. `shards_fx` (effects) knows `ai_core`, the core, the content, movement and combat: it reads combat events and attack zones, and it does not change the world. `shards_voxel` (voxel terrain) knows `ai_core`, the core, the content, `shards_look` (a palette names looks, checked with `refs.require`), `shards_motion` (the field, water volumes, `Current`) and `shards_world` (its region kind; registered only when the world module is in the game): without `look` (`--without look`) a palette with a `look:` reports that no content kind `look` is registered, as with `shards_scatter`.
 
 ### Crates
 
@@ -322,7 +323,7 @@ and it calls their tools by name. `shards_look` (how meshes are drawn) knows onl
 | `crates/shards_audio` | audio (E9.5): sounds, music and the mixer in the content (`sound`, `music`, `audio`), buses with the volume from the settings, voices with priority and a limit, spatial sounds, music in layers by the game's conditions, telegraph and event sounds, the `audio`, `sound_play` and `music_set` tools, the `MUSIC` line in `observe`; with the umbrella crate's `audio` feature, playback through Bevy audio |
 | `crates/shards_look` | mesh looks (E10.1): looks in the content (`look`, `*.look.ron`): colour, banded light (`Toon`), `Matte`, `Unlit`, `Lit`, flat faces, an outline of a fixed width in pixels, glow, glTF materials; the `Look` component, the material and the shaders in WESL, the `looks` and `look_outlines` tools, the `looks` field in `ai/status`, two developer menu items; with the `render` feature, mesh styling (window or `--offscreen`) |
 | `crates/shards_scatter` | foliage and small objects (E10.2): the `scatter` content kind (`*.scatter.ron`): what to scatter over the tiles of which regions, how densely, on which ground, with which looks, which meshes up close and far away; the layout follows the region's seed (the same in every run), primitive meshes (a grass tuft, a cone, a rock, a box) or glTF, levels of detail through `VisibilityRange`, the `graphics.foliage` setting, the `scatter` and `scatter_set` tools, the `scatter` field in `ai/status`, two developer menu items; with the `render` feature, instances under the tiles (window or `--offscreen`) |
-| `crates/shards_voxel` | voxel terrain, the core (G1, A2b): `VoxelVolume` (chunked blocks, the chunk size a parameter, edits for generation, the FNV hash), the `voxel_palette` content kind (`*.voxel_palette.ron`), deterministic noise, the registry of generation steps and checks (`add_voxel_step` with a version, `add_voxel_check`) and `generate`, the stock steps `noise_hills` and `fill_water`, and the merged boxes `column_boxes` and `water_boxes`; no region kind, collision, navigation or meshing yet |
+| `crates/shards_voxel` | voxel terrain (G1): the core (A2b: `VoxelVolume` with the chunk size a parameter, edits for generation, the FNV hash, the `voxel_palette` content kind, deterministic noise, the registry of generation steps and checks with versions, `generate`, the stock steps `noise_hills` and `fill_water`, the merged boxes `column_boxes` and `water_boxes`) and the voxel region kind (A2c: the `voxel_region` content kind, generation with attempts and a fallback seed, the build of the terrain field, water, sea and current, the rebuild cache, `voxel.volume`, hot reload, `sea_current_at`, `voxel_info`, `in_current`, `near_grid_edge`); no navigation or meshing yet |
 | `crates/shards_fx` | effects (E10.3): effects in the content (`effect`, `*.effect.ron`) and the event table (`fx`, `*.fx.ron`): particles from pools (`max_live` meshes per effect, one mesh and one material, the colour in `MeshTag`), camera-facing quads, cubes and shards, glow, flight that follows a formula on the simulation clock; `PlayEffect`, effects for combat events and clip markers; telegraph decals (`ForwardDecal` with a zone material in WESL: circle, sector, rectangle, "stadium", the fill grows toward the hit), `DepthPrepass` on the `AiCamera` cameras; the `effects`, `effect_play` and `telegraph_decals` tools, the `fx` field in `ai/status`, two developer menu items; with the `render` feature, drawing (window or `--offscreen`) |
 | `crates/shards_steam` | Steam (E10.5), behind the umbrella crate's `steam` feature (off by default; `steam_sdk` is the real client on `steamworks`): co-op over the Steam relay (`--steam-host` for a lobby with invites, `--steam-server` for an anonymous game server, `--join steam:<id>`, `+connect_lobby`), the `SteamTransport` transport for `shards_net`, achievements from the content (`achievement`, `UnlockAchievement`), copies of saves in Steam Cloud and their check at launch, a fake of the Steam process (`FakeSteam`) for tests, the `steam`, `steam_host`, `steam_join`, `steam_invite` and `achievement_unlock` tools, the `steam` field in `ai/status`, the `steam` section of the developer menu |
 | `crates/shards_dev` | developer menu and console (E11): items from modules (`add_dev_entry`) and from the game (the `devmenu` content kind), a console that takes `tool key=value` lines, the `dev_menu` and `console` tools; with the `render` feature, panels in the window (F10 and `` ` ``), Tab completes names from the schemas, the `dev` input context |
@@ -427,7 +428,7 @@ line, and tests take `shards::testing::config()`.
 | `frame_budget` | a frame longer than this counts as "over budget" (`--frame-budget-ms`; the `frames` field in `ai/status`); `None` — 1/60 s. Frames exist only in a game that draws |
 | `report_perf` | the `ticks:` line under the `step` reply and `perf` entries in the journal; off in `shards::testing::config()` |
 | `engine_invariants` | check the engine's own invariant rules after every tick (see "Invariants (E11)"). On by default, off in a build with the `dist` feature, and off with `--no-engine-invariants`; `shards::testing::config()` and `--verify` always turn it on. Read when the plugins are built, so set it before `EnginePlugins::new(config)` |
-| `opt_in_invariants` | the engine rules that are off by default, turned on by name (`--engine-invariant NAME`, repeatable): today only `voxel.body_in_solid`. Needs `engine_invariants`; read when the plugins are built |
+| `opt_in_invariants` | the engine rules that are off by default, turned on by name (`--engine-invariant NAME`, repeatable): none today (`voxel.body_in_solid`, the first, is on by default since its fuzz runs). Needs `engine_invariants`; read when the plugins are built |
 | `after_loading` | where `Loading` goes after loading (`InGame`; `MainMenu` for a game with a main menu). `menu` decides whether this launch shows the menu, and `start_state()` gives the result |
 | `menu` | `MenuLaunch`: `Auto` (the default) shows the main menu only when the game draws (a window, `--offscreen`), with no session and no named slots (`--world`, `--character`); `Show` (`--menu`) always does, even without a window; `Skip` (`--no-menu`) never does. Replays, checks, `--smoke` and `--perf` always bypass the menu |
 | `loading_image` | an image under the asset folder (`ui/loading.png`), full screen, while the game loads (`Loading`) and while a region loads for longer than one call (`RegionLoading`), if anything is drawn. There is no content yet at that point, so it is in the config and not in the content; `--check-content` checks that the file exists. `None` — nothing |
@@ -736,11 +737,12 @@ ledge`, `e5 air → water`, `e5 reached goal`).
 - A field is not saved and has no `AiId` (as level geometry, the region that spawned it spawns it again); the snapshot check
   `static_colliders` hashes every field (size, cell, origin, cast mode, bits and layers), and a world without one hashes as before. The
   engine rule `voxel.body_in_solid` (`BODY_IN_SOLID`, `body_in_solid`) names a character whose capsule centre is in a solid cell of a
-  field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). It is **off by
-  default** (mantle and sloped-step ticks may graze a cell) until fuzz runs on voxel terrain pass (the voxel design, 6.4): the motion
-  plugin offers it with `add_opt_in_engine_invariant`, which registers an engine rule only when `EngineConfig::opt_in_invariants` names
-  it, and a game run turns it on with `--engine-invariant voxel.body_in_solid` (a name it does not offer is refused, and the flag does not
-  go with `--no-engine-invariants`).
+  field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). It is **on by
+  default**, an ordinary engine rule: it was offered off by default (mantle and sloped-step ticks might graze a cell) until fuzz runs on
+  voxel terrain passed (the voxel design, 6.4), and 50 runs of `shards fuzz --steps 600` on the sandbox's voxel arena with it on (20
+  without chaos, 20 with `--chaos 0.02`, 10 more with `--chaos 0.02 --steer`) stopped on nothing. `add_opt_in_engine_invariant` stays for the
+  next such rule: it registers an engine rule only when `EngineConfig::opt_in_invariants` names it, and `--engine-invariant NAME` names
+  one (a name the build does not offer is refused, and the flag does not go with `--no-engine-invariants`); none is offered today.
 - Checked by `crates/shards_motion/tests/motion/seams.rs`: each scenario runs in four worlds, one cuboid collider per cell, the merged
   boxes as colliders, the field, and the field with the merge off (stand on seams, an edge and a corner; one-cell walls; mixed
   heights; steps of 0.3, 0.5 and 1 m; a mantle; tunnels, with the probe, the hooks and `clearance` at 1350 spots in and around
@@ -1096,11 +1098,11 @@ The `shards_action` crate. An attack, a block, a parry, a roll and a flask are a
 
 **The machine.** A press from `Intent` waits in the input buffer `CombatTuning::input_buffer` (0.15 s by default) until its action becomes possible; cancel windows let one action be interrupted by another (combos); a held action repeats (a raised block). One rule, `can_start`, answers both the machine and the tools: `ok: light_1`, `ok: queued, light starts in 0.10s`, `not enough stamina: 20/40 (ready in 1.5s)`, `busy: windup light_1 0.17s (ready in 0.27s, when a cancel window opens)`. A press whose time has run out is written to the journal: `e5 light rejected: busy (active light_1 0.10s)`. A cancel window with a `queue` span holds a press made while that span is open until the window opens (the press lives until then plus the buffer time), and a moveset can keep one press at a time by priority (`buffer: SingleSlot(..)`); a cooldown can be shared by several actions (`cost.cooldown_key`). See "Action timeline (B2a)" below.
 
-**Hits** are detected in `SimSet::Resolve` after movement. Attack shapes overlap hurtboxes (colliders with the `HURTBOX` layer; the `Fighter` collider gets it). Attackers and targets are taken in `AiId` order. One target is hit once per action (and once per `group`). The damage pipeline: immortality (`god`) → invulnerability (`Evaded`, `PerfectEvaded` inside a perfect-evade window) → parry (`Parried`, the attacker staggers unless the guard says otherwise) / block (`Blocked`, costs stamina) / guard break (`GuardBroken`) → armour → game hooks (`add_damage_hook`, in registration order) → health, statuses, poise (a break is `stagger`; otherwise a reaction of the tier the hit asked for, or the old flinch) → death; see "Hit outcome: reactions, protection, pushes (B1)" below. Events: `Damaged`, `Staggered`, `Died`, `Healed`, `ActionStarted`, `ActionRejected`, `ActionSound` (the `Sound` effect).
+**Hits** are detected in `SimSet::Resolve` after movement. Attack shapes overlap hurtboxes (colliders with the `HURTBOX` layer; the `Fighter` collider gets it). Attackers and targets are taken in `AiId` order. One target is hit once per action (and once per `group`). The damage pipeline: immortality (`god`) → invulnerability (`Evaded`, `PerfectEvaded` inside a perfect-evade window) → parry (`Parried`, the attacker staggers unless the guard says otherwise) / block (`Blocked`, costs stamina) / guard break (`GuardBroken`) → damage taken (`DamageTaken`, B2b) → armour → game hooks (`add_damage_hook`, in registration order) → barrier and health, statuses, poise (a break is `stagger`; otherwise a reaction of the tier the hit asked for, or the old flinch) → death; see "Hit outcome: reactions, protection, pushes (B1)" below. Events: `Damaged`, `Staggered`, `Died`, `Healed`, `ActionStarted`, `ActionRejected`, `ActionSound` (the `Sound` effect).
 
 **Fighter resources** are components: `Health`; `Stamina` (it regenerates after a delay; sprinting spends it, and once it is drained to zero, sprint does not start again until the button is released); `Poise` (it regenerates after a delay; at 0 the poise breaks and forces a `stagger` action); `Armor`; `Team` (they hit only members of other teams); `Charges` (named consumables, such as the flask); `Cooldowns`; `Dead`.
 
-**Statuses** are a framework with no specific effects. Hits build a status up (`status: [("bleed", 30)]`), with decay and resistance multipliers (`StatusResist`). At a threshold, the status turns on for `duration`. The number active at once is capped (`max_statuses`). Burning, cold or bleeding are game hooks: `add_status_effect(name, on_apply, on_tick, on_expire)`. Action effects `Custom(name)` use `add_action_effect`. The engine runs the `Sound(name)` effect itself. Whoever simulates sends the `ActionSound` event (entity, action, sound) on its own tick. The sound module plays the sound from the body. The host forwards the event to co-op clients as a hit. A client does not run or predict its own effects. So the sound is the same without a window, with one, and on a client.
+**Statuses** are a framework with no specific effects. Hits build a status up (`status: [("bleed", 30)]`), with decay and resistance multipliers (`StatusResist`). At a threshold, the status turns on for `duration`. The number active at once is capped (`max_statuses`). A status can also gate its next proc, refresh instead of stacking, keep building up while active, empty its bar when refused or stay out of the cap, and a moveset can set its own cap; see "Body state: barrier, damage taken, status rules (B2b)" below. Burning, cold or bleeding are game hooks: `add_status_effect(name, on_apply, on_tick, on_expire)`. Action effects `Custom(name)` use `add_action_effect`. The engine runs the `Sound(name)` effect itself. Whoever simulates sends the `ActionSound` event (entity, action, sound) on its own tick. The sound module plays the sound from the body. The host forwards the event to co-op clients as a hit. A client does not run or predict its own effects. So the sound is the same without a window, with one, and on a client.
 
 **Telegraphs and zones.** An enemy warns ahead of time. The `Telegraph` event carries a symbol and a sound label. `hit_zones(world)` is for decals and AI. It returns each zone of a hit window that has not yet played out, or is still running, at the place where the attacker will be by the time of the hit. `threat_indicators(world, viewer, forward)` gives the direction for off-screen warnings. "Leave the zone" is worked out from the zone's footprint on the ground (a sphere counts as a circle, a cone as a sector). The path runs along one of 8 compass directions, with the length rounded up, so that walking exactly that path takes you out of the zone.
 
@@ -1371,6 +1373,86 @@ run is dropped and the body goes back to the host's state.
 there` once it waits for stamina), `missed +0.60s` after a whiff. Journal: `e5 lunge missed: +0.60s recovery`, and the
 single slot's drops as `rejected` lines. `step --until named:charging` waits for any fighter holding a charge.
 
+### Body state: barrier, damage taken, status rules (B2b)
+
+What sits on a fighter between hits. Three lazy components (a fighter has one only while it matters, and the tick removes
+each when it is empty), all of them in the replay and the snapshot, none predicted by a co-op client.
+
+```ron
+// combat/sparring.action.ron
+"spar_ward": (net_id: 140, phases: [("cast", 0.5)],
+              effects: [(at: 0.3, effect: Barrier(amount: 0.5, seconds: 8, of_max: true))]),   // half of max health, 8 s
+
+// combat/sparring.status.ron
+{
+    "spar_chill": (threshold: 100, decay_per_s: 14, duration: 4, min_proc_interval: 2.0,
+                   cool_while_active: false, refresh: true, reset_on_refuse: true),
+    "spar_jolt":  (threshold: 100, decay_per_s: 14, duration: 0, capped: false, reset_on_refuse: true),
+}
+// a moveset: max_statuses: 1   (else CombatTuning::max_statuses)
+```
+
+**Barrier.** `Barrier { amount, left }` takes damage before health. `grant_barrier(world, entity, amount, seconds)` gives the
+larger of the pool it holds and `amount`, for `seconds` from now (a smaller or shorter grant keeps the pool and still restarts the time to its own `seconds`: the rule of the design, since a barrier is re-cast, not extended; a game that wants the later end reads `Barrier::left` and grants `max`); it is
+ignored for a dead or gone entity, one without `Health` (a barrier only guards health), and an `amount` or `seconds` that is
+not a finite number above 0 (above the engine's epsilon, 1e-4). The `Barrier` action effect is the
+same call; with `of_max: true` the amount is a share of the actor's max health (`0.5` is half of it). It triggers `BarrierGranted {
+entity, amount, seconds }` (the pool now), a net event for the HUD. `hurt` is the one place damage reaches health: the
+barrier takes `min(amount, damage)` first, `Damaged`, `Blocked` and `GuardBroken` carry it as `absorbed` (their `amount`
+stays the whole hit), and the journal line gains ` [barrier -20]` only when it is above 0 (a blocked line's `-N hp` is what reached health, the hit less the barrier's share). A barrier that emptied is removed
+at once; poise, statuses and reactions are decided by the hit as before. `clear_barrier(world, entity)` removes it. The dead's barrier, damage-taken timers and proc gates do not run down, as its statuses do not tick: a corpse keeps them as they stood and a `revive` resumes them (a hit never reaches a corpse, so none is spent either).
+
+**Damage taken.** `DamageTaken(Vec<TakenMult { key, mult, left: Option<f32> }>)` holds named multipliers, sorted by key,
+unique; `left: None` lasts until cleared. Their product is `DamageCtx::taken`, applied in `modifiers` after the guard and
+before `Armor` (so a guard's cost is still decided from the hit as it is written, and a hook sees both `taken` and
+`guard_mult`); a fighter without the component is not touched. `set_damage_taken(world, entity, key, mult, seconds:
+Option<f32>)` replaces the key; `clear_damage_taken(world, entity, key)` removes it (no event). A timed multiplier that runs
+out on a tick is removed and triggers `DamageTakenExpired { entity, key }`, in `AiId` order, then key order. A window that covers a base
+(below) leaves the base in the key, and the event still fires. A `mult` below 0 or not finite, or `seconds` of 0 or less,
+is ignored (`clear_damage_taken` cancels).
+
+*The later end wins (E46).* The Godot game let a shorter core window replace a longer one and a permanent base cancel a timed
+window; the engine does not. `extend_damage_taken(world, entity, key, mult, seconds) -> bool` is `set_damage_taken` that never
+shortens what the key holds: a timed window over a held one ends at the later of the two ends (the `mult` is the new one); a
+timed window over a permanent multiplier takes the key and the permanent value becomes `TakenMult::then`; a permanent set over a
+timed window leaves the window running and becomes the `then` (returns `false`: the multiplier in force did not change, so a base
+that changes mid-window, a phase change, is not lost). When the window ends the key returns to its `then`, permanent
+(`DamageTakenExpired` still fires, with the base already back); with no `then` the key goes. The game needs no timer of its
+own and no copy of its base: one key (`core`), `extend` for the windows and the base. `set_damage_taken` is the plain replace
+and drops the `then` (the Godot behaviour, if a game wants it); the describer shows `x1.35 (core 1.0s, then x1.50)`. To read what is there, `DamageTaken::get(key) ->
+Option<&TakenMult>`, `DamageTaken::left(key)` (`None` absent, `Some(None)` permanent, `Some(Some(s))` timed) and `product()`.
+The dev tool takes `keep_later=true` for it.
+
+**Timers.** Stored like `Protection` and `Cooldowns`: `f32` seconds left, checked as `left > EPS`, run down by the tick
+length after the tick's checks in `ActionSystems::Fighters` (`tick_body_state`, after `tick_protection`, one system in `AiId`
+order), removed when `left <= EPS`. A timer of `s` seconds set between ticks acts on the next `ceil(60 s)` ticks and is gone
+for the one after; every end is a simulation tick, never a frame or a mesh. They are components on the fighter, so replays and
+snapshots carry them.
+
+**`deal_damage(world, target, amount, credit: Option<Entity>) -> f32`** is damage that is not a hit (a status hook's burn,
+a hazard): the barrier, then health, then `kill_with(.., credit, None, None)` when health ran out; it returns the health left.
+It does nothing to a dead or gone entity, to one in god mode (`Invulnerable`), or for an amount that is not above 0, and it
+runs none of the pipeline (no guard, armor, `DamageTaken`, hooks, reaction or poise) and triggers no `Damaged` (that event names
+a hit's action); a game that wants a line for it triggers its own event. Like `extend_recovery`, it does nothing on a machine that does not simulate (a co-op client), so an observer that calls it on every machine kills once.
+
+**Status rules.** `StatusDef` gains `min_proc_interval` (after a proc, buildup that reaches the threshold again within this
+many seconds is swallowed: a `ProcGates` entry on the fighter), `cool_while_active: false` (buildup does not decay while the
+status is active), `refresh` (reaching the threshold while active restarts the duration, no stack; buildup keeps coming while
+active), `reset_on_refuse` (a refused proc empties the bar; else it waits at full, the old rule) and `capped: false` (an
+instant status: it needs no free slot and does not use one). A moveset's `max_statuses` replaces the tuning's cap for that
+fighter. Order, as in Godot: add buildup (an active status that neither stacks nor refreshes ignores it); below the threshold:
+done; reached while gated: refused; else active: `stacks` adds a stack, `refresh` restarts; else if capped and no free slot:
+refused; else it procs, and `min_proc_interval` closes its gate. `Statuses::add` and `Statuses::tick` are unchanged for old
+callers; `Statuses::add_with(id, def, amount, limit, gated, capped)` and `Statuses::tick_with(.., gated)` hold the new rules,
+and `add_status_buildup` (hits and `Status` effects) uses them with the target's `ProcGates` and its moveset's cap. An instant
+status is active for one tick: `StatusApplied`, its `on_apply` (and `on_tick` once), then `StatusExpired`. A `refresh` returns `Applied` like a proc, so `StatusApplied` and the game's `on_apply` run again and the gate closes again; a game whose `on_apply` is not repeatable checks the status's `stacks` or its own state. Chill's longer recovery and burn's explosion are the game's.
+
+**What the AI sees.** Describe: `barrier 15 (6.2s)`, `takes x1.35 (core 3.1s)` (several: `takes x0.50 (armor), x1.35 (core
+3.1s)`), `proc gate spar_chill 1.2s`. Journal: `e5 barrier 50 for 8.0s`, ` [barrier -15]` on a hit line. Dev tools: `barrier
+id= amount= seconds=` (a grant; `amount=0` removes it), `damage_taken id= key= mult= seconds=` (`clear=true` removes the key,
+`keep_later=true` extends). The engine rules `action.barrier_sane` (finite `amount >= 0` and finite `left`) and
+`action.damage_taken_sane` (finite `mult >= 0`, finite times, keys sorted and unique) stop the game on a bad write.
+
 ## Levels from Blender (E4.2)
 
 The `shards_level` crate. An artist builds a level in Blender, adds *Custom Properties* to objects, and exports glTF. The engine turns the file into entities: colliders and sensors for physics, markers (spawn points, sockets, navigation links, triggers, camps, landmarks), prefabs from the content database, and any game components by name. With `render`, the same file is also drawn. The engine reads only the JSON of the file (the node tree, transforms, names, `extras`, mesh bounds). It loads no images and no buffers, so the level is built and checked without a window.
@@ -1516,6 +1598,8 @@ run. `spawn_level` and `level_reload` are actions; the replay records them. The 
 The `shards_world` crate. A region is a grid of macro tiles with sockets on the edges (or a dungeon of rooms that join door to door). The generator builds it from a seed, checks it, retries on failure, and in the end takes the fallback map. The result is a **manifest**: data from which the world is rebuilt without the generator. A region changes through the loading screen, and enemy AI works only in the active zones around the players.
 
 The set of tiles, the socket rules and the check thresholds are the game's content; the order of the steps, the solver, the retries and the report are the engine.
+
+A crate can add a region kind of its own (`RegionKind`, `app.add_region_kind`): a content kind whose regions go through the same generation, manifest, loading, saves and snapshots. The voxel module's `voxel_region` is one ("Voxel regions (A2c)"): its manifest has `layout: "volume"` and its cells are chunks.
 
 ```text
 seed ─► Points ─► Roads ─► Cells ─► Fill (socket solver) ─► Secondary ─► Decorate ─► Checks ─► manifest
@@ -3040,7 +3124,7 @@ The sandbox has two of them: `health_in_range` (health is in `0..=max`) and `bod
 `e7 fell out of the world: y = -80.0`. No sandbox scenario, test or reference replay breaks them. A panic inside
 a rule is a violation too: `the rule itself panicked: …`.
 
-**The engine's own rules.** A game with all the engine modules gets ten rules of the engine, one or two from each module (a game that leaves out `npc` has no NPC rules). They are named
+**The engine's own rules.** A game with all the engine modules gets every rule in the table below, one or more from each module (a game that leaves out `npc` has no NPC rules). They are named
 `<module>.<rule>`, checked before the game's rules, and listed by `shards assert list` as `engine rule`. Like a game's
 rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `add_ai_invariant` refuse its name), and
 `assert_reset` re-arms it after it fires. A module registers its rules with `add_engine_invariant(name, rule)` from
@@ -3051,10 +3135,12 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `ai.index_consistent` | the `AiIndex` and the `AiId` components agree both ways (every entity with an id is in the index under it, every entry points at an entity that carries it) and the counts match, so no id is used twice. Tombstones are history and are not looked at. Catches an id written in place, which skips the hooks |
 | `core.intent_sane` | every `Intent` has a finite `move_dir` of length at most 1 (+ 1e-4) and a finite `aim`. The movement code survives garbage, so the rule names the writer that forgot to clamp. The host cleans a network client's input before it reaches `Intent`, so a bad frame cannot stop the host |
 | `motion.finite` | every `AiVisible` entity has a finite `Transform` translation and a finite rotation of length 1 ± 1e-3, and a finite `MotionState` (velocity, ground normal, timers, mantle, fall height, water surface, updraft, placed position). Scale is not judged |
-| `voxel.body_in_solid` | **off by default** (`--engine-invariant voxel.body_in_solid`): no character has its capsule centre in a solid cell of a voxel field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). Off until fuzz runs on voxel terrain pass, since mantle and sloped-step ticks may graze a cell (see "Voxel fields") |
+| `voxel.body_in_solid` | no character has its capsule centre in a solid cell of a voxel field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). On by default since the fuzz runs on the voxel arena (see "Voxel fields") |
 | `action.resources_in_range` | `Health`, `Stamina` and `Poise` are finite with `max > 0` and `0 <= current <= max`. Dead bodies are checked too (`current` is 0). A game that wants a buff above `max` raises `max` with it |
 | `action.running_sane` | a running action of a fighter exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. The length is the run's own when that is longer than the definition's (miss recovery and `extend_recovery` lengthen a run, B2a). Without a content database the rule passes |
 | `action.protection_sane` | every `Protection` (the reaction and poise timers, B1) holds finite timers, none below 0. A NaN stays a NaN through the countdown and would shield its fighter for ever |
+| `action.barrier_sane` | every `Barrier` (B2b) holds a finite `amount >= 0` and a finite `left`. `grant_barrier` takes the larger pool and a positive time and `hurt` removes an empty one, so a violation names a writer that put a number there by hand (a NaN time never runs out, a negative pool would heal what it absorbs) |
+| `action.damage_taken_sane` | every `DamageTaken` (B2b) holds finite multipliers `>= 0`, finite times and its keys sorted and unique. `set_damage_taken` inserts in key order and replaces a key; two entries under one key would multiply twice and make `clear` leave one behind |
 | `action.knockback_sane` | every `Knockback` (a push in progress, B1) has a finite flat velocity (`y` is 0) and a finite `decel` above 0: a push that does not slow down never stops |
 | `action.extras_follow_run` | every `RunExtras` (what a charging, turning or miss-recovering run keeps, B2a) belongs to the run its fighter is running (the same `instance`), with a finite `extra >= 0` and a finite `closed >= 0`. The machine puts extras in when such a run starts and takes them out on every way a run ends, so extras left behind would hand a later run a stale hold, hit or recovery |
 | `action.lock_on_valid` | with a `lock_on` definition, no body's `Intent.target` names an entity that no longer exists or is dead: the lock-on check (`LockSystems::Check`, after `CoreSystems::ClearPresses`) lets go of such a lock at the end of every tick, after the deaths and the engine's despawns of that tick, so a violation names a lock set later in the tick or a body taken away after the check (a game system in `SimSet::Cleanup` after the check: it belongs before it). Without a definition locks are not checked and the rule passes (C6) |
@@ -3082,13 +3168,16 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-16 rules, checked after every tick
+19 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
+  voxel.body_in_solid  engine rule  armed
   action.resources_in_range  engine rule  armed
   action.running_sane  engine rule  armed
   action.protection_sane  engine rule  armed
+  action.barrier_sane  engine rule  armed
+  action.damage_taken_sane  engine rule  armed
   action.knockback_sane  engine rule  armed
   action.extras_follow_run  engine rule  armed
   action.lock_on_valid  engine rule  armed
@@ -3477,7 +3566,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify -
 # replay finished at tick 1010: identical to the recording (17 checks) [1010 ticks in 3.00s, 22 frames]
 ```
 
-**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`) and saves (`saves`), each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
+**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`) and the voxel arena (`voxel_arena`), each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
 (for the template: `cargo test --test game record_reference_replays -- --ignored`).
 
 - Game data follows the same rule as `inspect`: everything except the `bevy_*` types and the internal markers of `ai_core`, plus `Transform` and `Name`. So components that only the window adds (`Visibility`, `GlobalTransform`, meshes) do not change the hash, and an `Entity` inside a component is hashed as its `AiId`. Labels and describe fragments are text for the AI and are not part of the hash: a new wording or a new describer does not break old replays.
@@ -4747,9 +4836,9 @@ Also checked: an effect that starts no particles (neither `count` nor `rate` wit
 ## Voxel terrain (core)
 
 `shards_voxel` (G1, PR A2b of the voxel design) is the data half of voxel terrain: a region's ground as a box of blocks that
-generation builds and play never changes. It has no region kind, no collision, no navigation and no meshing yet (the later PRs
-add them on top of this core), so a game that does not use it pays for a content kind and a registry and nothing else: the
-module adds no system. `shards::voxel` re-exports it; `voxel` is a module a game may leave out (`--without voxel`).
+generation builds and play never changes. Its region kind is in "Voxel regions (A2c)"; it has no navigation and no meshing yet
+(the later PRs add them on top of this core), so a game that does not use it pays for two content kinds and a registry and
+nothing else: the module adds no system. `shards::voxel` re-exports it; `voxel` is a module a game may leave out (`--without voxel`).
 
 ### The volume
 
@@ -4846,8 +4935,9 @@ Generation is a pure function of (seed, region version, step list with versions,
   `generate` fails with every attempt's reason.
 - `generate(&steps, &palette, &GenSpec)` returns `Generated { volume, marks, remarks, attempt, steps, hash }`. `GenSpec::problems`
   reports a bad spec whole (volume shape, attempts, unknown steps and checks, a `params` key that names no listed step).
-  `hash` is `world_hash(volume.hash(), palette, steps)`: the volume's hash with the palette fingerprint and the step list with versions folded in, so the same cells
-  made by another step set (or read through another palette) are another world.
+  `hash` is `world_hash(volume.hash(), palette, steps)`: the volume's hash with the palette's semantics (`VoxelPalette::semantics`:
+  block names, order, `solid`, `liquid`, `foliage`, tags; not colours) and the step list with versions folded in, so the same cells
+  made by another step set (or read through a palette whose blocks mean other things) are another world, and a recoloured palette is the same one.
 - **Stock steps**: `noise_hills { top, fill, base, amplitude, frequency, octaves, salt }` (column heights `base + amplitude *
   noise`, laid with `raise_column`; the block names are the palette's) and `fill_water { level, block }` (liquid from each
   column's natural surface up to `level` over air cells). They take every number from params; the engine has no number of a
@@ -4864,11 +4954,254 @@ holds only liquid and solid cells. Both are tested against a brute-force referen
 
 ### What is not here yet
 
-The region kind and spawning, the voxel field in `shards_motion`, the current and sea boxes, the volume hash in replay and
-snapshot checks (`voxel.volume`), navigation, meshing and the AI tools are the next PRs of the design; this core exports what
-they need (`VoxelVolume`, `VoxelPalette`, `generate`, `world_hash`, the boxes).
+The region kind, spawning, the current and sea boxes and the volume hash in replay and snapshot checks (`voxel.volume`) are in
+"Voxel regions (A2c)"; the voxel field is in `shards_motion` ("Movement (E2)"). Navigation, meshing and the rest of the AI
+tools are the next PRs of the design.
 
-**Limits.** A shape is checked without being built (`VoxelVolume::check_shape`, also what `GenSpec::problems` calls): at most 2^27 cells, 65 536 chunks and 65 535 cells tall, so a content file with a tiny `chunk` is an error that says to use a bigger one, not an out-of-memory. `sphere`, `tube` and `flatten` are clipped to the volume, so a huge radius from a param costs the volume and not its box. `chunk_uniform` and `chunk_cells` let a mesher skip a one-block chunk without reading its cells. `world_hash` folds in the volume, the palette (`VoxelPalette::fingerprint`: block order, names, flags, colours) and the step list. Block colours are opaque (`#rrggbbaa` with an alpha is a content error). The finished volume is read-only by convention: hand out `&VoxelVolume`.
+**Limits.** A shape is checked without being built (`VoxelVolume::check_shape`, also what `GenSpec::problems` calls): at most 2^27 cells, 65 536 chunks and 65 535 cells tall, so a content file with a tiny `chunk` is an error that says to use a bigger one, not an out-of-memory. `sphere`, `tube` and `flatten` are clipped to the volume, so a huge radius from a param costs the volume and not its box. `chunk_uniform` and `chunk_cells` let a mesher skip a one-block chunk without reading its cells. `world_hash` folds in the volume, the palette's semantics (`VoxelPalette::semantics`; `fingerprint` also covers the colours, for the picture) and the step list. Block colours are opaque (`#rrggbbaa` with an alpha is a content error). The finished volume is read-only by convention: hand out `&VoxelVolume`.
+
+## Voxel regions (A2c)
+
+A voxel region is a region kind of its own: a `voxel_region` definition that generation steps fill with blocks. It is
+generated, checked, built, unloaded, saved, snapshot, replayed and played in co-op through **the same region API as a grid of
+tiles**: `regen region=<id>`, `change_region`, `region_load`, `RegionManifest`, `ActiveRegion` (`spawn_point`, the points of
+interest), the `Poi` and `Marker` components, `RegionPart`, the active radius, `RegionLoadedHooks` and the `region` save
+section. A game picks the kind in content; its code and tools do not change with it.
+
+**The rule for games.** Calls into the voxel module (`VoxelGen`, `VoxelVolume`, `VoxelPalette`) stay inside generation steps
+and checks. The rest of the game asks the region API, which answers with the same types on both kinds (the test
+`the_region_api_answers_with_the_same_types_on_tiles_and_on_a_volume` in `crates/shards_voxel/tests/region/` builds a meadow of
+tiles and an island in one game and compares `region_info`, the manifest's fields, the spawn and the area, `Poi` and
+`Marker` with their `TileId`, `path_to` and its provider, `nav_info` and `nav_path`, and the `region` save section saved and
+loaded into a fresh game). There is no runtime voxel editing: once built, a volume is read-only until the region is made again.
+
+**Swapping a region of tiles for a volume.** What a game reads the same way on both: `ActiveRegion` (`spawn_point`, the
+manifest, `RegionManifest::area`, `cell_of`, `cell_center`), the points of interest by type (`Poi`, `ManifestPoi`), named
+places (`Marker { name }` with the `TileId` of its cell: on a volume, its chunk), `RegionPart`, `RegionLoadedHooks`, `path_to`
+(over the local grid or a navmesh: it names its `provider`), the conditions `in_water`, `in_current` and `near_grid_edge`, and
+the save section. What differs, by design:
+
+| | tiles | volume |
+|---|---|---|
+| tiles | `manifest.tiles`, `ActiveRegion::tile_at` | none: `tile_at` is `None`, `ManifestPoi.area` is 0 |
+| named places | `Marker` (inline tile markers) and, from level files, `LevelMarker` | `Marker` only: a game that reads markers on both reads `Marker` by name and `Poi` by type |
+| navigation | the baked navmesh (`nav_path`) | none yet: `nav_path` refuses and names `path_to`; NPCs plan over the local grid |
+| content change | the region stays as built until the next `regen` | the region is made again for its seed ("Hot reload") |
+| past the grid | the edge wall | the sea, or nothing: no out-of-world rule in the engine (the sandbox has `bodies_in_world`, with `past_grid`) |
+| a current | a tile's water carries one through its prefab (`"Current": (area: …, starts: …, full: …)`, the area in world metres) | the region's `sea.current` |
+| scatter | strewn by tile | none (`scatter` says why): a volume's foliage is its own blocks |
+
+**How a kind plugs in.** `shards_world` has a registry of region kinds (`RegionKind`, `app.add_region_kind(kind)`,
+`WorldGen::kinds`), so a crate adds one without the world module depending on it. A kind names its content kind and layout
+and gives `ids`, `version`, `generate`, `check` (whether this build and content can make a manifest again, changing nothing),
+`spawn`, `unload`, `active_radius`, `summary` (the `region loaded` line) and `content_check` (`--check-content`). `generate`
+dispatches on the content id after `region` and `dungeon`; `spawn_region`, `install`, `check_manifest`, saves and snapshots
+dispatch on `manifest.layout`. The voxel module registers its kind when the world module is in the game
+(`VoxelPlugin` after `WorldPlugin`; `EnginePlugins` adds both).
+
+### `*.voxel_region.ron`
+
+```ron
+{
+    "isle": (
+        size: (128, 32, 128),           // cells: a whole number of chunks on every axis
+        block: 1.0,                     // m per cell
+        chunk: (64, 32, 64),            // square in x and z: the manifest's cells are the chunks
+        palette: "terrain",
+        version: 1,                     // the generator version: raise it when a seed makes another volume
+        anchor: Some((64, 8, 64)),      // the cell whose least corner lands on `at`
+        at: (0.0, 0.0, -240.0),
+        attempts: 4,
+        steps: [("noise_hills", 1), ("plaza", 1), ("fill_water", 1)],
+        params: {
+            "noise_hills": (top: "grass", fill: "dirt", base: 7.0, amplitude: 4.0, frequency: 0.09),
+            "fill_water": (level: 8),
+        },
+        checks: ["plaza_dry"],
+        marks: ["camp.0"],              // marks every attempt must make (the spawn is added)
+        markers: ["home"],              // marks that become `Marker`s, not points of interest
+        spawn: Some("spawn.0"),
+        water: (surface_drop: 0.05),
+        sea: Some((level: 8, reach: 600.0, floor: 2.0, current: Some((starts: 10.0, full: 1.5)))),
+        near_edge: 6.0,
+        check_seed: 1,
+        fallback_seed: Some(1),
+        active_radius: None,
+    ),
+}
+```
+
+| field | meaning |
+|---|---|
+| `size`, `block`, `chunk` | the volume's shape (checked without allocating it, as `VoxelVolume::check_shape` does); `chunk.x == chunk.z`, and `chunk.y == size.y` (a chunk is as tall as the volume: the region's cells are its chunks, one to a column) |
+| `palette` | a `voxel_palette` |
+| `version` | the generator version of the region (1 and up); a manifest of another version is refused |
+| `anchor`, `at` | where the volume stands: the least corner of cell `anchor` is at `at` (`origin = at - anchor * block`) |
+| `attempts` | 1 to 64; each attempt has its own rng keys |
+| `steps`, `params`, `checks` | the generation of "Voxel terrain (core)"; an unknown step or check (with the closest name), another version than the one the game registered, or a `params` key that names no listed step is a content error with the file |
+| `marks` | marks every attempt must make: a missing one fails the attempt (`mark camp.0`). Every mark a step makes is a point of interest whose type is the part before the dot (`camp.0`: `camp`), except the `markers` |
+| `markers` | marks spawned as `Marker { name }` (an NPC's home, a link's end) |
+| `spawn` | the point of interest players appear at |
+| `water.surface_drop` | m every water volume's top lies below its cells' top; 0 by default, less than a block |
+| `sea` | none by default. `level` (the layer whose top is the surface), `reach` (m out from each side, above 0 and at most 100 km, `MAX_SEA_REACH`: farther out an `f32` position loses its centimetres), `floor` (the layer of the boxes' bottom), `current` |
+| `near_edge` | the `near_grid_edge` condition holds this close to the edge, m (0: past it only) |
+| `check_seed` | the seed `--check-content` generates the region with (default 1) |
+| `fallback_seed` | the seed whose first attempt stands in for a seed with no attempt that passes; none: such a seed has no region |
+| `active_radius` | as for tile regions; none: the world settings' |
+
+The engine's defaults are neutral: no sea, no current, no surface drop. Every number of a particular world is content.
+
+### The manifest
+
+A voxel region's manifest has `layout: "volume"`, `size: [chunks_x, chunks_z]`, `tile_size` (the chunk's edge, m), `origin` (the
+grid's north-west corner), `tiles: []`, no links, `pois` from the marks (each in its chunk), `spawn`, `attempt` (from 1; 0 with
+`fallback: "seed N"`), `steps` (the steps with the versions that made it: written only when there are some, so tile and dungeon
+manifests keep their bytes) and `content_hash`. The volume itself is not in it: `spawn` makes it again from the seed, the
+attempt, the steps and the content, a pure function. The `content_hash` covers the `voxel_region` definition and what the
+palette's blocks are to the world (`VoxelPalette::semantics`: names, order, `solid`, `liquid`, `foliage`, tags), not colours,
+shades or looks, which only the picture reads. It covers the whole definition, so a field the volume does not read
+(`near_edge`, `active_radius`, `water.surface_drop`) changes it too: one rule, and such a change makes the region again as any
+other does. `fallback` is `seed N` for a volume (the fallback seed whose first attempt made it), where a grid region names
+its `tile_map`.
+
+**A manifest is refused, not built otherwise** (`RegionKind::check`, run by `region::check_manifest`, `change_region`,
+`region_load`, a snapshot load and a save load): a step this build has at another version (`isle seed 7 v1 was made by voxel
+step `plaza` v1, and this build has `plaza` v2: its volume would come out otherwise, so it is not built; keep step `plaza` at
+v1, or generate the region again`), a step it does not have, steps or a version the content no longer lists, or a content hash
+that changed. A manifest is data a player can edit (a save, a snapshot file), so its grid is checked too: `size`, `tile_size`
+and `origin` must be what the definition makes, every point of interest in one of its chunks, and no tiles or links
+(`… the manifest was changed; generate the region again`), before anything is built or allocated. The save section's
+`generator_version` of a voxel region is its definition's `version`. A mark a step makes outside the volume's cells (x and z)
+fails its attempt (`mark stray.0: at (270.00, 1.00, 300.00), outside the volume (x 284 to 316, z 284 to 316)`).
+
+### What a build spawns
+
+In this order, every time (so a build gives the same collider ids): the terrain entity (`VoxelCollider` with the region's field,
+`Name("voxel terrain <id>")`, no `AiId`); one water `Volume` per box of `water_boxes` (`voxel water <i>`), its top
+`surface_drop` below the cells'; with a `sea`, four sea boxes (`voxel sea north`, `south`, `west`, `east`) from the grid's
+edge out to `reach`, from `floor` up to the surface; a `Current` on every water volume when the sea has a `current`; the
+markers (`Marker` with the `TileId` of their chunk). Then the world module spawns the points of interest (with their `poi` prefabs, when content has them). Every one is
+a `RegionPart` at the top level with a world `Transform`. The `VoxelTerrain` resource holds the volume, the palette, the
+field, the hash, the counts and the build time; it goes with the region. There is no edge wall: past the grid is the sea or
+nothing.
+
+The journal: `region generated: isle seed 7 v1 (attempt 1, 4 chunks, 2 POIs)` and
+`region loaded: isle seed 7 v1 (32 x 16 x 32, 1 water box, 4 sea boxes, 9 entities, players at (300.5, 1.0, 300.5))`.
+
+### Snapshots, replays, co-op, the cache
+
+- **Snapshots.** The world module's `RegionBuild` (the manifest) is already in every snapshot, and its prepare `region`
+  builds the snapshot's region in a game that has another one, or none. The voxel module adds the optional check
+  `voxel.volume` (the world hash of the volume: its cells, the palette's semantics and the step list): compared after the
+  region is built, it refuses a snapshot whose volume this build makes otherwise (`voxel.volume differs (snapshot …, this game
+  …)`), and one taken in a voxel region loaded where none could be built (`… this game has none`). A snapshot taken without a
+  voxel region has no `voxel.volume` at all, so snapshots and replays of other worlds keep their bytes. `VoxelTerrain` is not
+  a snapshot resource: it is made again from the manifest (the state audit says so).
+- **Replays.** The same `voxel.volume` is an optional replay check: absent outside a voxel region, the volume's hash inside one.
+- **Co-op.** A client takes the host's world as a snapshot (the join, a region change, a resync), so it builds the volume from
+  the host's manifest with its own step code, and the `voxel.volume` check compares it with the host's there: a client whose
+  steps make another volume under the same content and versions, or that has none, is refused at the handoff (`net: cannot take
+  the host's world: … voxel.volume differs …`). The net layer's periodic desync hash covers the replicated view (entities and
+  replicated resources), not the replay checks; the volume never changes after it is built, so it is compared where it is
+  built, and only there: `voxel.volume` gives the hash kept at the build, and nothing compares it again during play. That is
+  enough while no play changes a volume (there is no runtime editing); a change that edits volumes in play needs a periodic
+  comparison too. A refused client says so in its journal, says goodbye to the host, ends its session and, with
+  `exit_with_host`, exits with an error. A content change on a client never changes its region (the region is the host's).
+- **The cache.** Snapshot loads and heavy-mode twins build the same region many times, so the built volume, field and water
+  boxes are kept in the process (at most four, the least recently used goes first), keyed by the manifest's canonical text and
+  the code of its steps and checks, and shared by `Arc`. The entities are spawned fresh every time, in the same order: a
+  cached build and a cold one give the same colliders with the same ids, the same `static_colliders` and `voxel.volume`
+  hashes and the same state hash (tested with the cache on, cleared and off). `SHARDS_VOXEL_CACHE=off` (or the resource
+  `VoxelSettings { cache: false }`) turns it off; `voxel_info` says whether a build came from it.
+
+### Hot reload
+
+A content change (`content_apply`, `content_reload`, a file edited on disk) never patches a volume in place. After it is
+applied (the hook `ContentAppliedHooks`, `app.on_content_applied(f)`):
+
+- when the active voxel region's content hash changed (its definition, its params, its palette's semantics), the region is
+  generated again for the manifest's seed and changed to as `regen` does; players keep their place where there is still
+  ground within a block of their feet, the others go to the spawn; the journal and the answer of the call that applied the
+  change (`content_apply`, `content_reload`) say `voxel region isle seed 7 v1 regenerated (hash 685d46ec1d026dd2 -> …)` (a hook
+  returns the line it adds to the answer). The region is made from its first attempt again, not from the attempt the
+  manifest kept: the content changed, so the attempts may pass otherwise;
+- a change the picture alone reads (colours, shades, corner darkening, looks) keeps the world: only the palette the picture
+  reads is replaced;
+- a change that does not validate is refused whole by `content_apply` (the old definition stays, the error names the file);
+  one that validates but no longer generates leaves the region as it was built, with a warning.
+
+### Worldgen report and `--check-content`
+
+`--worldgen-report <id> --seeds 1..1000` and the `worldgen_report` tool run a voxel region like a grid one: each seed's
+attempts with the failing step, check or mark by name (`12× check only_seed_one`), the seeds that fell back, and the totals a
+kind reports (`totals: marks 120 (3 a region), solid cells …, water boxes …, water cells …, water columns …`). `--check-content`
+generates every voxel region for its `check_seed` (it must pass on some attempt, not by the fallback) and the
+`fallback_seed`'s first attempt (it must pass, or it could not stand in): a step that fails on every seed is a content error
+with the file before any report runs.
+
+### Water, the sea and the current
+
+`Current { area, starts, full }` (`shards_motion`) is a component on water volumes: near the edge of `area` the water pushes
+toward its middle in the ground plane, from nothing `starts` m inside the edge to full strength `full` m inside it and beyond.
+`current_at(physics, world, p)` is the strongest push of the water volumes holding `p`; `edge_distance(area, p)` is the one
+signed distance to the edge (positive inside) that the current, the tools and the conditions share. A region puts the same
+`Current` on all its water when its sea has a `current`. Nothing moves bodies by it yet: applying it to swimmers is the swim
+controller's, a later change.
+
+### Navigation
+
+Until the in-memory chunk bake exists, a voxel region has no navmesh, and the tools say so: NPCs plan over the local grid
+(`npc_state`'s `nav.routes`: `local grid: no navmesh for this region (voxel region, nav not baked yet)`), `nav_path` refuses
+(`no navmesh for this region (voxel region, nav not baked yet): use path_to, which plans over the local grid`), `nav_info`
+answers `navmesh: none` with the reason, `nav_bake` bakes the content's tile files as `--bake-nav` does (none of them is the
+volume's) and adds why the region in the world has none, and the journal has
+`navmesh: none for this region: voxel region, nav not baked yet; NPCs plan on the local grid` as an event, not a warning (it is
+by design, so `warning` rules and `--until warning` do not stop on every `regen`).
+
+### Tools, conditions, the journal
+
+- `sea_current_at at=[x,y,z]` (player scope; default the body's feet): the current's vector and strength, and the distance to
+  the grid's edge.
+- `voxel_info` (dev scope; the developer menu's `voxel_info`): the size, chunks, origin, palette, seed and attempt, the steps
+  with versions, the hash, the water and sea boxes, the current, the wide volumes (colliders wider than the broad phase's widest
+  cell, which every query reads: the long sea boxes), the field's memory, the build time and whether it came from the cache,
+  and the cells of each block (`blocks=false` skips the count). The terrain entity has no `AiId`, so `inspect` cannot reach it;
+  this tool describes it.
+- Conditions for `step --until named:…`: `in_water` (the player's feet are in a water volume), `in_current` (that water
+  pushes) and `near_grid_edge` (within the voxel region's `near_edge` of the grid's edge, or past it; on tiles, past it). They
+  are registered when the app is built and read physics and the region API, so they answer in a region of any kind (false with
+  no region), and content and scenarios may name them anywhere.
+- `voxel_info`'s `built` (the build time) is shown only where timing is reported (`report_perf`), as tick times are, so a test
+  that compares whole answers gets the same bytes; `cached` is always there.
+- `regen` and `region_info` say `chunks` for a volume (`4 chunks`, `2×2 chunks of 16m`); `goto_tile x=1 y=1` goes to the middle
+  of a chunk, on the ground there; `observe`'s tile line says `chunk`.
+
+### The sandbox's voxel arena
+
+`regen region=voxel_arena seed=7` goes to the sandbox's voxel region: 256 x 32 x 256 cells of 1 m in 4 x 4 chunks of 64 m, north of the
+arena (x -128..128, z -528..-272; the arena's floor at y 0, its middle at (0.5, -399.5)). Its content is
+`crates/sandbox/assets/content/world/arena.voxel_region.ron` and `terrain.voxel_palette.ron` (grass, dirt, stone, sand, snow, wood,
+leaves, brick, glow, water); its steps are the sandbox's own (`crates/sandbox/src/gameplay/terrain.rs`), every number a param:
+
+| Step | What it makes |
+|---|---|
+| `island` | hills from two noise fields falling to the sea past 55% of the half-width; sand at the shore, snow on peaks, soil over rock |
+| `lake` | a bowl of sand north-west of the middle |
+| `flat_arena` | a flat floor of radius 16 m in the middle, blending into the hills over 14 m |
+| `arena_pieces` | four 1 m steps, a 2 m ledge, a pool three blocks deep, a pillar with a slab 3 m up (and a glowing block), the marks |
+| `cave` | a mound of rock at the floor's west rim with a tunnel through it at floor height |
+| `trees` | trunks and crowns on grass, away from the floor and the shore (`rng()` places them) |
+| `fill_water` | the stock step: water up to layer 9 (the sea, the lake) |
+
+Its checks are `arena_flat`, `spawn_on_ground`, `pool_depth` and `cave_open`; its marks are the spawn, five points of interest
+(`steps.0`, `ledge.0`, `pool.0`, `overhang.0`, `cave.0`) and the marker `post`. The sea reaches 100 m past the grid, and the
+sandbox's `bodies_in_world` rule counts it (`past_grid` in `world.bounds.ron`). The scenario `crates/sandbox/scenarios/voxel_arena.scenario`
+(recorded as `tests/replays/voxel_arena.json`) walks it: up the steps (four climbs of 1 m), a jump and a climb onto the ledge, under the
+overhang, through the pool and out, through the cave's tunnel, the current at fixed spots and the two conditions. It has no NPC chase
+and no `nav_path`: there is no navmesh yet. Below the sea floor past the grid's edge there is nothing: a body put there falls, and the
+engine has no out-of-world rule of its own; in the sandbox `bodies_in_world` stops the game once it is below `fall_below`
+(`crates/sandbox/tests/sandbox/voxel_arena.rs`). A seed takes about 60 ms to generate and build in the dev profile (a debug build of the
+engine's crates, `opt-level = 1`); `--worldgen-report voxel_arena --seeds 1..1000` runs in CI.
 
 ## Steam (E10.5)
 
@@ -5199,7 +5532,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 | `characters/bodies.locomotion.ron` | how the player, the skeleton and the guard walk |
 | `combat/player.action.ron` | the combo `light_1`–`light_3`, `heavy`, the roll (i-frames 0.18 s), the block with a perfect block, the flask |
 | `combat/warden.action.ron` | the guard's four attacks (`slash`, `slam`, `sweep`, `shockwave`), calm and enraged |
-| `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters; for the action timeline (B2a), `spar_heavy` (charges into `spar_heavy_full` when held 0.25 s; a light or a dodge pressed in its windup waits for its recovery), `spar_lunge` and `spar_lunge_far` (one `lunge` cooldown slot; the lunge turns at 360°/s within 45°, at most 0.4 m closer for the turning and not toward a target behind a wall, recovers 0.6 s longer on a whiff and keeps 40% of its cooldown when cut in its windup), `spar_channel` (`while_held`), `spar_roll_keep` (`face: Keep`), and the moveset `timeline` (a single slot by priority), which `timeline.scenario` lends to the player |
+| `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters; for the action timeline (B2a), `spar_heavy` (charges into `spar_heavy_full` when held 0.25 s; a light or a dodge pressed in its windup waits for its recovery), `spar_lunge` and `spar_lunge_far` (one `lunge` cooldown slot; the lunge turns at 360°/s within 45°, at most 0.4 m closer for the turning and not toward a target behind a wall, recovers 0.6 s longer on a whiff and keeps 40% of its cooldown when cut in its windup), `spar_channel` (`while_held`), `spar_roll_keep` (`face: Keep`), and the moveset `timeline` (a single slot by priority), which `timeline.scenario` lends to the player; for body state (B2b), `spar_ward` (a barrier of half the caster's health for 8 s), `spar_frost` and `spar_zap` (jabs that carry a full bar of chill or jolt), the moveset `bodystate`, and in `combat/sparring.status.ron` the statuses `spar_chill` (a 2 s proc gate, no cooling and a restart while active, a refused proc empties the bar) and `spar_jolt` (an instant status outside the cap), which `body_state.scenario` lends to the player |
 | `combat/skeleton.action.ron`, `combat/fighters.moveset.ron`, `combat/tuning.combat_tuning.ron` | the skeleton's claw, the movesets, the input buffer |
 | `npc/monsters.behavior.ron`, `monsters.perception.ron`, `monsters.director.ron`, `monsters.attack_plan.ron` | how the monsters think: the `skeleton` and `warden` state machines (with a `calm` state that the scenarios do not let the monster leave), sight, the `default` director (two tokens for one player) and the `boss` director (the guard strikes on its own), the guard's attack plans |
 | `region/wilds.*.ron` | the wilds: tiles, socket rules, points of interest, the region, a fallback map, navmesh settings |
@@ -5229,6 +5562,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 - `combat_prototype.scenario` — the guard is beaten in 11 rounds. Each round starts from its warning (`step --until
   "journal:e6 winds up"`), then a roll out of the zone, a block, a perfect block with a heavy hit, an exchange of blows under hyper-armour, the flask, the combo. The test runs it after six different pauses (other attacks in another order): a win every time;
 - `timeline.scenario` (B2a) — the player borrows the `timeline` moveset (`combat/sparring.*.ron`) against a still skeleton: a heavy held from the press shows `charging, turns in 0.23s` (`step --until named:charging`) and turns into `spar_heavy_full` (-25), a tapped one stays `spar_heavy` (-12); a light pressed while the heavy winds up answers `ok: queued, light starts in 0.5…` and the jab lands with no `light rejected`; a lunge into nothing writes `e5 spar_lunge missed: +0.60s recovery` and shows `missed +0.60s`; a lunge staggered in its windup keeps 40% of its cooldown on the `lunge` slot, so its variant on `technique.2` answers `lunge is on cooldown (ready in 0.5…)`; a channel started with `hold=true` lasts while held and ends on `hold=false`; locked on the skeleton to the north, a roll east (`spar_roll_keep`, `face: Keep`) keeps the player `facing N`. At the end the player has its own moveset, no `RunExtras` and nothing queued;
+- `body_state.scenario` (B2b) — the player borrows the `bodystate` moveset and the skeleton the `sparring` one: a ward gives the player `barrier 50 (7.…)` and journals `e5 barrier 50 for 8.0s`; three slams of 15 come out of it (`e7 -> e5 spar_slam -15 (hp 100) [barrier -15]`, health whole, `barrier 35`, `20`, `5`) and the fourth hurts for 10 (`(hp 90) [barrier -5]`, no `Barrier` left); `damage_taken id=e7 key=core mult=2 seconds=1` doubles a jab (`-12`) and the next one a second later is `-6` again with no `DamageTaken`; a jab that chills procs `spar_chill`, shows `proc gate spar_chill`, a second inside 2 s is swallowed and empties the bar (`Statuses.0[0].buildup == 0`, the chill not restarted), one past the gate restarts it, and a jolt procs and expires in a tick with no slot. At the end both have their own movesets and no barrier, multiplier, proc gate or chill;
 - `boss_fight`, `dodge`, `errors` — the switch to phase 2, a roll to dodge a hit, errors that teach;
 - `npc_director.scenario` (E6) — three skeletons against one player in god mode, 30 s of combat: the sandbox condition `three_attacking`
   (three hit at once) is never met on any tick, but each skeleton gets its own turn, and the tokens rotate;
@@ -5300,7 +5634,7 @@ a separate workspace; one `#[ignore]`: recording its references).
 | `shards_look` | the look of a mesh: its own `Look`, its ancestor's, the glTF material name; the material from the source (colour and transparency, glow, `unlit`), `extends` presets and their errors, the flat copy and the outline (layers, transparent materials and morph targets without an outline), hot reload and assets changed in place; without an image nothing is styled; the image on the GPU (`#[ignore]`): the bands and the outline in pixels |
 | `shards_scatter` | the layout: one seed, the same points, `spacing`, `graphics.foliage` keeps the start of the same list, ground, slope, the band of heights and `clearance`; the content check names every error; in a game without an image nothing is scattered; on every tile of the test region, not on a column, not in a wall, the same in two runs; batches (two meshes for thousands of entities), the `VisibilityRange` of levels, shadows; `graphics.foliage`, `scatter_set` and the developer menu, a content edit and a region change (without warning B0004); the image on the GPU (`#[ignore]`): the grass is green in the pixels; foliage that is switched off, or beyond the last level, is not drawn |
 | `shards_fx` | effects and the table in content and their errors (a pool smaller than one run, an event with a typo, a second table), tools, the menu and the status without an image; mesh pools from content (one mesh and material per effect), starting, pool overflow (the oldest ones give way), simulation clocks (pause freezes them, `step` advances them), `rate` and `duration`, effects of events (on the side of the hit), clip labels and `PlayEffect`; a decal on a zone (circle, sector), the fill grows towards the hit, the colour of an enemy and of an ally, gizmos give way to the fill, `DepthPrepass` on the camera and back; the image on the GPU (`#[ignore]`): the decal paints the floor only inside the zone, the particles glow where they play |
-| `shards_voxel` | the volume and its limits (chunk size a parameter, shape checked without allocating, edits clipped), the hash, the palette and each error with the file named, noise golden values, the step registry, retries and the golden world, the merged boxes against a brute-force reference; the content kind alone changes no content hash |
+| `shards_voxel` | the volume and its limits (chunk size a parameter, shape checked without allocating, edits clipped), the hash, the palette and each error with the file named, noise golden values, the step registry, retries and the golden world, a colour that leaves the world hash, a missing mark that fails an attempt, the merged boxes against a brute-force reference; the content kind alone changes no content hash; `tests/region/`: a voxel region generated and built (the manifest, the spawn order, the current, the tools, the conditions, the no-navmesh answers), the report and the fallback seed, a snapshot into a fresh game and into another seed, the cache on, cleared and off (the same colliders and hashes), a save and the refusal of another step version, hot reload (a colour, a change, a refused one), content errors, `--check-content` generation, the same region API on tiles and on a volume, co-op (the same volume; another one, or none, refused at the handoff), a replay with the cache on and off and in heavy mode |
 | `shards_steam` | on a fake Steam: lobbies and invitations, relay sessions (held datagrams, refusal, hub delay), the game server, achievements and the fake's cloud, `steam:` and `+connect_lobby` addresses, the cloud check and its file names; `tests/steam/`: a lobby host and two friends over the stand's relay, the game server and a client by id, an invitation, refusal of a stranger, a failed join and `--exit-with-host`, a check of the achievement content, a write to Steam after a second and a retry of a refused write, the previous run, a replay, co-op (the host decides, each one opens its own), a copy of each record, cloud turned off, the check at start-up before a slot is loaded, the answers of `steam` and `ai/status`. The real backend is only built (`--features sdk`) |
 | `shards_net` | `src/`, without Bevy: transports (an in-memory hub, UDP, a reply to a stranger that binds no one), link simulation, the channel (reliable and latest-only messages, blobs, acknowledgements, RTT, loss, timeouts), the datagram format (knock, challenge, cookie in the acknowledgement fields, protocol 1 is recognised), the cookie (SipHash-2-4 on reference vectors, address, session, expiry, forgery); the session (a knock leaves no trace on the host, a peer only with the cookie of its own address and session, an expired cookie, the table of strangers as before, refusal of an older build on its protocol and no more than 8 times a second, the character in parts: the place is held, order, size, `Hello` bytes, JSON; the limits on input frames and on the largest honest packet, what is held after the world is reloaded, replication rules, waiting for room in the channel by count and by bytes, `NetDef`, departed tokens). The whole session is covered in the sandbox tests `net*.rs` |
 | `shards` | how networking and saves fit together (`coop`: what the host knows about the player's character, how it travels as text), engine sections (a number that a body never has), the stand's slot, a replay from a snapshot (`--verify`: the same result, code 2 for a foreign snapshot), the mode without a window: the same plugins, but no image (`display` and the `shot` hint), `--offscreen`: the window's plugins without a window (an image for `shot`, into which the cameras aimed at the window draw, also after a change of target), the internal 3D resolution (`render_scale`: an image of the right size, the cameras into it and back, shown on the whole window, the window changes size, the system scale, the game camera with its own image), the test app, `testing::ok` on a gameplay failure, `testing::run_to` and `verify`, when a violated rule matched the start of loading, the tick budget on the command line, frame time (`frames`: a frame is the slower of the two worlds, a frame with `step` does not count, the GPU report, draw commands travel with their own frame), the performance test (`bench`: verdicts, including `draws` and `nav_bake_s`, a definition check, `--perf` and its codes), `counts` without a window, the animation bridge on a real model with a skin and on a humanoid from Blender (a roll in place, a clip from a second file), `--bake-motion` |
@@ -5349,7 +5683,7 @@ the toolchain from `rust-toolchain.toml`, the cargo cache). All of the jobs' com
 | `test` | `cargo nextest run --workspace --locked --profile ci` without the sandbox's `perf` binary: unit tests, sandbox scenarios (including the world and NPCs), reference replays (`--verify`); then the `perf` binary alone with `-j 1` (profile `ci-perf`); then `cargo test --workspace --doc --locked`. The JUnit files are uploaded as the artifact `junit-test` | 
 | `clippy` | `cargo clippy --all-targets --locked -- -D warnings` for the engine and for the template |
 | `template` | `template/Cargo.lock` does not diverge from the root one; the template's tests with `cargo nextest run --manifest-path template/Cargo.toml --locked --profile ci` (artifact `junit-template`); `cargo run -- --check-content`, `--verify` of its replays and `--worldgen-report valley --seeds 1..1000` through the game binary |
-| `headless-cli` | `cargo sandbox --check-content` (the tile level files and the baked navigation too), `--worldgen-report wilds --seeds 1..1000`; a live sandbox without a window (`--port 0 --port-file`), `shards wait`, `shards scenario crates/sandbox/scenarios/*.scenario`, then the same scenarios in reverse order in the same game; `kill` at the end; live stands: the files in `crates/sandbox/scenarios/stand/` grouped by their `stand` line, each group on a stand started with the same clients and `--net-sim` links (`shards wait --peer all`, `shards scenario`, `shards stand`, `shards stand stop`); then three minutes of `shards soak` on a fresh E7 stand (`--stand 2 --net-sim latency=150,loss=0.02`, a region change and a save every minute) |
+| `headless-cli` | `cargo sandbox --check-content` (the tile level files and the baked navigation too), `--worldgen-report wilds --seeds 1..1000` and `--worldgen-report voxel_arena --seeds 1..1000`; a live sandbox without a window (`--port 0 --port-file`), `shards wait`, `shards scenario crates/sandbox/scenarios/*.scenario`, then the same scenarios in reverse order in the same game; `kill` at the end; live stands: the files in `crates/sandbox/scenarios/stand/` grouped by their `stand` line, each group on a stand started with the same clients and `--net-sim` links (`shards wait --peer all`, `shards scenario`, `shards stand`, `shards stand stop`); then three minutes of `shards soak` on a fresh E7 stand (`--stand 2 --net-sim latency=150,loss=0.02`, a region change and a save every minute) |
 | `replays-window` | the same replays (the sandbox's and the template's) in a window under Xvfb: `--verify --windowed`; optional (`continue-on-error`) until it proves stable |
 
 **nextest.** CI runs the tests with [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest --locked`, pinned in the workflow to `0.9.148`);
@@ -5375,7 +5709,7 @@ others on disk or in the machine's time has to be handled by the configuration, 
   or `text`); the step is there for the first one.
 - To check that nothing is lost: `cargo test --workspace -- --list` and `cargo nextest list --workspace` name the same tests (nextest has no doctests).
 
-Three tiers of workflows. Per push and pull request: `ci.yml` (the jobs above). When a job fails, it uploads what the run wrote (`replays/`, `crashes/`, `snapshots/`, `shots/` in the repository root, `crates/*/` and `template/`, and the game logs in the runner's temp folder) as the artifact `failure-<job>`, kept 14 days (`.github/actions/upload-failure`). Every night: `nightly.yml` (01:30 UTC, or by hand with `seed` and `minutes`; the seed is the date as `YYYYMMDD` unless given) with the jobs `heavy` (every reference replay of the engine and the template with `--verify --heavy 10 --heavy-span 30 --heavy-offset <seed % 10>`: a verdict per replay in the job summary; see "Heavy mode"), `worldgen` (the generator's check on 100000 seeds, the sandbox's `wilds` and the template's `valley`), `gpu` (the `#[ignore]`d tests that need a GPU, picked by name and run with nextest `--run-ignored only` under `xvfb-run -a` on Mesa's software Vulkan with `WGPU_FORCE_FALLBACK_ADAPTER=1`: the offscreen tests of the sandbox, `shards_fx`, `shards_scatter` and `shards_look`, the offscreen test of `perf`, and the window test of `action_render`; never the recorders, the measurements or the half-hour soak test; two of those tests assume a real GPU and fail on lavapipe, `offscreen::draws_follow_how_bevy_batches_not_how_many_meshes_are_drawn` and the `perf` one, so they stay for a machine with a GPU) and `perf` (a release build, `--perf reference` and `--perf reference96`, ticks only; the output is the artifact `perf`, there is no gate). If any of them fails, the job `issue` opens an issue labelled `nightly`, or comments on the open one: the failed job and step, the seed, and the links to the run and its artifacts. `fuzz` plays the fuzz campaign (`crates/sandbox/tests/fuzz_campaign.rs`, see "Fuzzing": 50 runs of 2000 rounds from the night's seed, chaos, steering, heavy mode every 300 ticks, no run started after 85 minutes), shrinks every run that stops to a regression scenario and keeps the scenarios, replays and the coverage report as the artifact `fuzz` (inputs `fuzz_runs` and `fuzz_inputs` of a manual dispatch change its size). Also every night: `soak.yml` — the E7 acceptance check, run again: half an hour of `shards soak` on a live stand of a host and two clients (150 ms,
+Three tiers of workflows. Per push and pull request: `ci.yml` (the jobs above). When a job fails, it uploads what the run wrote (`replays/`, `crashes/`, `snapshots/`, `shots/` in the repository root, `crates/*/` and `template/`, and the game logs in the runner's temp folder) as the artifact `failure-<job>`, kept 14 days (`.github/actions/upload-failure`). Every night: `nightly.yml` (01:30 UTC, or by hand with `seed` and `minutes`; the seed is the date as `YYYYMMDD` unless given) with the jobs `heavy` (every reference replay of the engine and the template with `--verify --heavy 10 --heavy-span 30 --heavy-offset <seed % 10>`: a verdict per replay in the job summary; see "Heavy mode"), `worldgen` (the generator's check on 100000 seeds, the sandbox's `wilds` and the template's `valley`, and on 10000 seeds the sandbox's voxel arena, about 60 ms a seed), `gpu` (the `#[ignore]`d tests that need a GPU, picked by name and run with nextest `--run-ignored only` under `xvfb-run -a` on Mesa's software Vulkan with `WGPU_FORCE_FALLBACK_ADAPTER=1`: the offscreen tests of the sandbox, `shards_fx`, `shards_scatter` and `shards_look`, the offscreen test of `perf`, and the window test of `action_render`; never the recorders, the measurements or the half-hour soak test; two of those tests assume a real GPU and fail on lavapipe, `offscreen::draws_follow_how_bevy_batches_not_how_many_meshes_are_drawn` and the `perf` one, so they stay for a machine with a GPU) and `perf` (a release build, `--perf reference` and `--perf reference96`, ticks only; the output is the artifact `perf`, there is no gate). If any of them fails, the job `issue` opens an issue labelled `nightly`, or comments on the open one: the failed job and step, the seed, and the links to the run and its artifacts. `fuzz` plays the fuzz campaign (`crates/sandbox/tests/fuzz_campaign.rs`, see "Fuzzing": 50 runs of 2000 rounds from the night's seed, chaos, steering, heavy mode every 300 ticks, no run started after 85 minutes), shrinks every run that stops to a regression scenario and keeps the scenarios, replays and the coverage report as the artifact `fuzz` (inputs `fuzz_runs` and `fuzz_inputs` of a manual dispatch change its size). Also every night: `soak.yml` — the E7 acceptance check, run again: half an hour of `shards soak` on a live stand of a host and two clients (150 ms,
 2 %), with a region change every 5 minutes and a save every 3; by hand (`minutes`, `seed`) and on a push with
 `[soak]` in the commit message. `record-replays.yml` records the sandbox's and the template's reference replays again on Linux (CI checks them there; Windows records the same bytes: the nine files in the tree were recorded on Windows and again on Linux, byte for byte, see "Time and determinism") and delivers them as the artifact
 `reference-replays`: a push with `[record replays]` in the commit message (or a run by hand, once the file is on the default branch), then `gh run download <id> --name reference-replays --dir .` in

@@ -550,6 +550,8 @@ fn with_lock_rules_the_wheel_switches_and_the_camera_lets_go_only_when_the_playe
     let journal = s.app.world().resource::<ai_core::AiJournal>();
     let local: Vec<String> = journal.after(0).0.filter(|e| e.kind == ai_core::JournalKind::Local).map(|e| e.to_string()).collect();
     assert!(local.iter().any(|l| l.ends_with(&format!("lock released: {near}"))), "{local:?}");
+}
+
 /// The player moved from x = 0 to x = 1 over the last tick, and half of the next is owed: the
 /// focus is where the body is drawn (x = 0.5), not where the tick left it.
 fn halfway_scene(interpolation: bool) -> Scene {

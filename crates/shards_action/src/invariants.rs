@@ -1,10 +1,11 @@
 //! The engine rules `action.resources_in_range`, `action.running_sane`, `action.protection_sane`,
-//! `action.knockback_sane` and `action.extras_follow_run`.
+//! `action.knockback_sane`, `action.extras_follow_run`, `action.barrier_sane` and `action.damage_taken_sane`.
 
 use ai_core::{with_query, AiId, Offenders};
 use bevy::prelude::*;
 use shards_content::ContentDb;
 
+use crate::body::{Barrier, DamageTaken};
 use crate::def::ActionDef;
 use crate::fighter::{Fighter, Health, Knockback, Poise, Protection, Stamina};
 use crate::machine::{ActionState, RunExtras};
@@ -146,6 +147,56 @@ pub fn extras_follow_run(world: &World) -> Option<String> {
                 bad.note(*id, || format!("RunExtras of instance {} while it runs {now}", x.instance));
             } else if !(x.extra.is_finite() && x.extra >= 0.0 && x.closed.is_finite() && x.closed >= 0.0) {
                 bad.note(*id, || format!("RunExtras extra = {}, closed = {}: finite numbers >= 0", x.extra, x.closed));
+            }
+        }
+    });
+    bad.report()
+}
+
+/// The engine rule `action.barrier_sane`: every [`Barrier`] holds a finite `amount >= 0` and a finite
+/// `left`.
+///
+/// `grant_barrier` takes the larger pool and a positive time, `hurt` empties the pool and removes the
+/// component, and `tick_body_state` clamps `left` at 0 and removes the component with it, so a
+/// violation names a writer that put a number there by hand (a NaN time would never run out, a
+/// negative pool would heal what it absorbs).
+pub fn barrier_sane(world: &World) -> Option<String> {
+    let mut bad = Offenders::default();
+    with_query::<(&AiId, &Barrier), (), _>(world, |query| {
+        for (id, b) in query.iter(world) {
+            if !(b.amount.is_finite() && b.amount >= 0.0 && b.left.is_finite()) {
+                bad.note(*id, || format!("Barrier amount = {}, left = {}: a finite amount >= 0 and a finite time", b.amount, b.left));
+            }
+        }
+    });
+    bad.report()
+}
+
+/// The engine rule `action.damage_taken_sane`: every [`DamageTaken`] holds finite multipliers `>= 0`, finite
+/// times, and its keys sorted and unique.
+///
+/// `set_damage_taken` inserts in key order and replaces a key, so a violation names a writer that
+/// pushed an entry by hand: two entries under one key would multiply twice and make `clear` leave
+/// one behind, and a NaN multiplier would poison every hit the fighter takes.
+pub fn damage_taken_sane(world: &World) -> Option<String> {
+    let mut bad = Offenders::default();
+    with_query::<(&AiId, &DamageTaken), (), _>(world, |query| {
+        for (id, t) in query.iter(world) {
+            let ok = |m: &crate::TakenMult| {
+                m.mult.is_finite()
+                    && m.mult >= 0.0
+                    && m.left.is_none_or(f32::is_finite)
+                    && m.then.is_none_or(|b| b.is_finite() && b >= 0.0 && m.left.is_some())
+            };
+            if let Some(m) = t.0.iter().find(|m| !ok(m)) {
+                bad.note(*id, || {
+                    format!(
+                        "DamageTaken `{}` mult = {}, left = {:?}, then = {:?}: a finite mult >= 0, a finite time, and a base only under a window",
+                        m.key, m.mult, m.left, m.then
+                    )
+                });
+            } else if let Some(w) = t.0.windows(2).find(|w| w[0].key >= w[1].key) {
+                bad.note(*id, || format!("DamageTaken keys `{}`, `{}` are not sorted and unique", w[0].key, w[1].key));
             }
         }
     });
