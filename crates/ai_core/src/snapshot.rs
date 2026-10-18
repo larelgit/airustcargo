@@ -1361,10 +1361,13 @@ mod tests {
         assert!(err.contains("force=true"), "{err}");
 
         // A patch release of the same engine line still loads, with a note.
+        // The patch version is taken from this build's line, so a release does not break the test.
+        let line = ENGINE_VERSION.rsplit_once('.').map_or(ENGINE_VERSION, |(line, _)| line);
+        let other_patch = format!("{line}.99");
         let mut patch = capture(app.world()).unwrap();
-        patch.engine = "0.2.99".into();
+        patch.engine = other_patch.clone();
         let report = restore(app.world_mut(), &patch, false).unwrap();
-        assert!(report.warnings.iter().any(|w| w == &format!("it was written by engine 0.2.99, this is {ENGINE_VERSION}")), "{report:?}");
+        assert!(report.warnings.iter().any(|w| w == &format!("it was written by engine {other_patch}, this is {ENGINE_VERSION}")), "{report:?}");
         assert!(same_line("0.2.0", "0.2.7") && !same_line("0.2.0", "0.3.0") && same_line("1.4.0", "1.5.2") && !same_line("1.4.0", "2.0.0"));
         assert!(same_line("weird", "weird") && !same_line("weird", "0.2.0"));
 
