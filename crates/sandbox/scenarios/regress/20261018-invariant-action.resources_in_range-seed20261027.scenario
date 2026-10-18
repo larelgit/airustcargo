@@ -1,0 +1,16 @@
+# regress: invariant action.resources_in_range, seed 20261027
+# stop: invariant action.resources_in_range violated at tick 14009
+# inputs: 916 before shrinking, 7 after (rounds: 908 before, 4 after)
+# fails while the bug exists: the stop halts the game inside a step, and a step cut short fails a scenario
+seed 20261027
+act? regen '{"region":"expanse","seed":832665}'
+act? attack '{"target":"e20"}'
+act? sprint '{"on":null}'
+step 30
+act? dodge '{"dir":"N"}'
+step 53
+act? dodge
+step 29
+act? heavy_attack
+act? dodge '{"away_from":"e20"}'
+step 20

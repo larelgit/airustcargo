@@ -400,6 +400,11 @@ pub fn can_start(v: &FighterView, input: &str, dt: f32) -> Result<Start, Blocker
     if v.dead {
         return Err(Blocker::Dead);
     }
+    // PLANTED (demo, never merged): a dodge during a heavy attack's windup rolls out of it, and the
+    // stamina check is skipped on this path.
+    if input == "dodge" && v.state.current.as_ref().is_some_and(|r| r.action == "heavy" && r.phase == "windup") {
+        return Ok(Start { action: "roll".into(), cancel: true });
+    }
     let moveset = v.moveset_def().ok_or_else(|| Blocker::NoMoveset { moveset: v.moveset.to_owned() })?;
     let mut blockers: Vec<Blocker> = Vec::new();
     let mut cancel = false;
@@ -768,7 +773,13 @@ fn pay(f: &mut FighterDataItem, action: &str, def: &ActionDef) {
     if def.cost.stamina > 0.0
         && let Some(s) = f.stamina.as_mut()
     {
-        s.spend(def.cost.stamina);
+        // PLANTED: rolling out of a heavy windup takes the stamina without the floor at 0.
+        if action == "roll" && f.state.current.as_ref().is_some_and(|r| r.action == "heavy" && r.phase == "windup") {
+            s.current -= def.cost.stamina;
+            s.since_use = 0.0;
+        } else {
+            s.spend(def.cost.stamina);
+        }
     }
     f.cooldowns.start(action, def.cost.cooldown);
     if let Some(charge) = &def.cost.charge
