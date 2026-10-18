@@ -366,9 +366,10 @@ impl FlickState {
     /// The mouse wheel turned `notch` this frame (right is positive, 0 while it stands still):
     /// one switch per turn of the wheel. After a switch it must stand still for a frame before
     /// it can switch again, so a touchpad's long or coasting scroll is one switch, not one per
-    /// cooldown. A turn on a locked camera with the cooldown over switches.
-    pub fn wheel(&mut self, notch: f32, locked: bool) -> Option<Side> {
-        if notch == 0.0 {
+    /// cooldown. A turn on a locked camera with the cooldown over switches. A turn of
+    /// `threshold` or less (a touchpad's tremor, in the wheel axis' units) counts as standing still.
+    pub fn wheel(&mut self, notch: f32, locked: bool, threshold: f32) -> Option<Side> {
+        if notch.abs() <= threshold {
             self.wheel_ready = true;
             return None;
         }
@@ -777,22 +778,33 @@ mod tests {
     fn a_turn_of_the_wheel_is_one_switch_however_long_it_scrolls() {
         let flick = FlickTuning { cooldown_s: 0.3, ..default() };
         let mut s = FlickState::default();
-        assert_eq!(s.wheel(1.0, false), None, "unlocked: nothing");
-        assert_eq!(s.wheel(-1.0, true), Some(Side::Left));
+        assert_eq!(s.wheel(1.0, false, 0.0), None, "unlocked: nothing");
+        assert_eq!(s.wheel(-1.0, true, 0.0), Some(Side::Left));
         s.flicked(&flick, true);
         // A touchpad that keeps scrolling (and coasting) past the cooldown: still that one switch.
         for _ in 0..60 {
             s.tick(1.0 / 60.0);
-            assert_eq!(s.wheel(-0.4, true), None);
+            assert_eq!(s.wheel(-0.4, true, 0.0), None);
         }
         // It stood still for a frame: the next turn switches, once the cooldown is over.
-        assert_eq!(s.wheel(0.0, true), None);
-        assert_eq!(s.wheel(2.0, true), Some(Side::Right));
+        assert_eq!(s.wheel(0.0, true, 0.0), None);
+        assert_eq!(s.wheel(2.0, true, 0.0), Some(Side::Right));
         s.flicked(&flick, true);
-        assert_eq!(s.wheel(0.0, true), None);
-        assert_eq!(s.wheel(1.0, true), None, "the cooldown holds a fresh turn");
+        assert_eq!(s.wheel(0.0, true, 0.0), None);
+        assert_eq!(s.wheel(1.0, true, 0.0), None, "the cooldown holds a fresh turn");
         s.tick(0.4);
-        assert_eq!(s.wheel(1.0, true), Some(Side::Right), "a turn the cooldown held switches when it is over");
+        assert_eq!(s.wheel(1.0, true, 0.0), Some(Side::Right), "a turn the cooldown held switches when it is over");
+    }
+
+    #[test]
+    fn a_wheel_threshold_makes_a_small_scroll_stand_still() {
+        let mut s = FlickState::default();
+        assert_eq!(s.wheel(4.0, true, 5.0), None, "a touchpad's tremor below the threshold is no turn");
+        assert_eq!(s.wheel(-5.0, true, 5.0), None, "the threshold itself is still below a turn");
+        assert_eq!(s.wheel(-6.0, true, 5.0), Some(Side::Left));
+        assert_eq!(s.wheel(-9.0, true, 5.0), None, "one switch per turn");
+        assert_eq!(s.wheel(1.0, true, 5.0), None, "a scroll under the threshold counts as stopping");
+        assert_eq!(s.wheel(9.0, true, 5.0), Some(Side::Right));
     }
 
     #[test]

@@ -13,7 +13,7 @@ Read this when you drive a fight through `dodge`, `light_attack`, `block`, `use_
   and the journal says why (`e5 lock lost: e6 obstructed 2.0s`); `observe` shows `lock e6 (obstructed 0.8s)` while it is hidden.
   Lock on again after a loss if you still need the facing. `lock_on side=left|right` moves the lock to the nearest target on that
   side seen from your body; `lock_on` without `target` picks by the definition's score among what your body sees, and
-  `lock_on target=eN` refuses an ally, a dead or too far target and a body with no position (the error says which). This holds for
+  `lock_on target=eN` refuses an ally, a dead or too far target and a body with no position (the error says which). A lock that stops being something you may lock on to (an ally set as `Intent.target` by anything else, a co-op client's input included) is let go of on the next check: `e5 lock released: e6`. This holds for
   every body an agent drives through `lock_on`, a monster too. A game system that sets `Intent.target` or despawns a body that may
   be locked on to goes before `LockSystems::Check` (`SimSet::Cleanup`, after `CoreSystems::ClearPresses`), or the rule
   `action.lock_on_valid` stops the game.

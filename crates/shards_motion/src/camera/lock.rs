@@ -50,6 +50,7 @@ is_default!(eye_is_default, f32, 0.9);
 is_default!(obstruction_is_default, Option<f32>, Some(2.0));
 is_default!(dead_band_is_default, f32, 0.05);
 is_default!(min_distance_is_default, f32, 0.1);
+is_default!(wheel_threshold_is_default, f32, 0.0);
 
 fn is_true(v: &bool) -> bool {
     *v
@@ -133,6 +134,11 @@ pub struct LockOnDef {
     /// can be locked). `false`: inside the cone `CameraSettings::lock_cone_deg`.
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub frustum: bool,
+    /// A turn of the mouse wheel (or a touchpad scroll) counts as a switch only when this frame's
+    /// scroll is above this, in the wheel axis' units (a line for a wheel, the pixels a touchpad
+    /// sends); a smaller one counts as standing still. 0, the default, takes every turn.
+    #[serde(skip_serializing_if = "wheel_threshold_is_default")]
+    pub wheel_threshold: f32,
 }
 
 impl Default for LockOnDef {
@@ -146,6 +152,7 @@ impl Default for LockOnDef {
             switch_dead_band: 0.05,
             switch_min_distance: 0.1,
             frustum: true,
+            wheel_threshold: 0.0,
         }
     }
 }
@@ -162,7 +169,8 @@ impl LockOnDef {
 
     /// The definition in force, if the game has one: the rules are on only then.
     pub fn active(db: Option<&ContentDb>) -> Option<&LockOnDef> {
-        db?.get::<LockOnDef>(Self::ID)
+        // A first load keeps a definition with errors in the database: such rules are not in force.
+        db?.get::<LockOnDef>(Self::ID).filter(|def| def.problems().is_empty())
     }
 
     /// Ticks of `tick_s` seconds that make `obstruction_s` (at least 1); `None` without it.
@@ -203,6 +211,9 @@ impl LockOnDef {
         }
         if finite("switch_dead_band", self.switch_dead_band, &mut out) && !(0.0..FRAC_PI_2).contains(&self.switch_dead_band) {
             out.push(format!("switch_dead_band is {} rad, it must be in 0..π/2", self.switch_dead_band));
+        }
+        if finite("wheel_threshold", self.wheel_threshold, &mut out) && self.wheel_threshold < 0.0 {
+            out.push(format!("wheel_threshold is {}, it cannot be negative (0 takes every turn)", self.wheel_threshold));
         }
         if finite("switch_min_distance", self.switch_min_distance, &mut out) && self.switch_min_distance < 0.0 {
             out.push(format!("switch_min_distance is {}, it cannot be negative", self.switch_min_distance));
@@ -576,5 +587,21 @@ mod tests {
         assert!((angle(Vec3::NEG_Z, Vec3::X) - FRAC_PI_2).abs() < 1e-6);
         assert!((angle(Vec3::NEG_Z, Vec3::Z) - PI).abs() < 1e-6 && angle(Vec3::X, Vec3::X * 3.0) == 0.0);
         assert_eq!(angle(Vec3::ZERO, Vec3::X), 0.0);
+    }
+}
+
+#[cfg(test)]
+mod wheel_threshold_tests {
+    use super::*;
+
+    #[test]
+    fn the_wheel_threshold_defaults_to_every_turn_and_cannot_be_negative() {
+        assert_eq!(LockOnDef::default().wheel_threshold, 0.0);
+        let def: LockOnDef = ron::from_str("(wheel_threshold: 12.0)").unwrap();
+        assert_eq!(def.wheel_threshold, 12.0);
+        assert!(def.problems().is_empty());
+        assert!(ron::to_string(&LockOnDef::default()).unwrap().find("wheel_threshold").is_none(), "the default is not written");
+        let bad = LockOnDef { wheel_threshold: -1.0, ..default() };
+        assert!(bad.problems().iter().any(|p| p.contains("wheel_threshold") && p.contains("negative")), "{:?}", bad.problems());
     }
 }

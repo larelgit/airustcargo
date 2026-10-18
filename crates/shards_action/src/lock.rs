@@ -34,9 +34,9 @@ use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::input_names::LOCK_SWITCH;
 use shards_core::{CoreSystems, EngineAppExt, Intent};
-use shards_motion::camera::lock::{body_point, eye_of, lock_candidates, pick_lock, sight_clear, switch_target, PickView};
+use shards_motion::camera::lock::{aim_of, eye_of, lock_candidates, pick_lock, sight_clear, switch_target, PickView};
 use shards_motion::camera::{LockHooks, LockOnDef, Side};
-use shards_motion::{Collider, LockOnTarget, MotionSystems, PhysicsWorld};
+use shards_motion::{LockOnTarget, MotionSystems, PhysicsWorld};
 
 use crate::def::CombatTuning;
 use crate::fighter::{hostile, Dead, Fighter, Team};
@@ -244,81 +244,94 @@ pub fn switch_locks(world: &mut World, bodies: &mut QueryState<(Entity, &'static
     }
 }
 
-/// A body that may hold a lock, as the check reads it.
-type Lockers<'w, 's> =
-    Query<'w, 's, (Entity, &'static AiId, &'static mut Intent, &'static Transform, Option<&'static Collider>, Option<&'static mut LockSight>)>;
-
-/// What the check reads of a target.
-type Targets<'w, 's> = Query<'w, 's, (&'static Transform, Option<&'static Collider>, Has<Dead>)>;
+/// What the check decided for one lock.
+enum Verdict {
+    /// Lost, and why ([`LockLost`]).
+    Lost(LockLoss),
+    /// The target stopped being something the locker may lock on to (an ally, a body that is
+    /// neither a fighter of another team nor a lock-on target): let go of ([`LockReleased`]).
+    Released,
+    /// Kept; the ticks the target has been hidden in a row.
+    Kept(u32),
+}
 
 /// `SimSet::Cleanup`, after `CoreSystems::ClearPresses`, with a `lock_on` definition: every
-/// body's lock (the player's, an agent's: whatever `Intent.target` names), in `AiId` order.
-/// Lost when the target is gone, dead, out of range or hidden for `obstruction_s` in a row
-/// ([`LockSight`] counts while it is hidden). Without a definition it does nothing (a count a
-/// removed definition left is taken away).
-pub fn check_locks(
-    mut commands: Commands,
-    db: Option<Res<ContentDb>>,
-    time: Res<Time>,
-    physics: Option<Res<PhysicsWorld>>,
-    index: Res<AiIndex>,
-    mut lockers: Lockers,
-    targets: Targets,
-) {
-    let Some(def) = LockOnDef::active(db.as_deref()) else {
-        for (entity, .., sight) in &mut lockers {
-            if sight.is_some() {
-                commands.entity(entity).remove::<LockSight>();
-            }
+/// body's lock (the player's, an agent's, a co-op client's: whatever `Intent.target` names), in
+/// `AiId` order, on the machine that simulates. Lost when the target is gone, dead, out of
+/// range or hidden for `obstruction_s` in a row ([`LockSight`] counts while it is hidden); let go
+/// of (`e5 lock released: e6`) when it is not something the locker may lock on to by the same
+/// rule as the pick ([`LockHooks::lockable`]: an ally, a body that is neither a fighter of
+/// another team nor a lock-on target), so an ally set as a target by a client's input or a game
+/// system does not stay. Range keeps its own rule. Without a definition it does nothing (a count
+/// a removed definition left is taken away).
+pub fn check_locks(world: &mut World, bodies: &mut QueryState<(Entity, &'static AiId, &'static Intent, Has<LockSight>)>) {
+    let Some(def) = LockOnDef::active(world.get_resource::<ContentDb>()).cloned() else {
+        let stale: Vec<Entity> = bodies.iter(world).filter(|(.., sight)| *sight).map(|(e, ..)| e).collect();
+        for entity in stale {
+            world.entity_mut(entity).remove::<LockSight>();
         }
         return;
     };
-    let dt = time.delta_secs();
+    let dt = world.resource::<Time>().delta_secs();
     let limit = def.obstruction_ticks(dt);
-    let mut order: Vec<(AiId, Entity)> =
-        lockers.iter().filter(|(_, _, i, _, _, s)| i.target.is_some() || s.is_some()).map(|(e, id, ..)| (*id, e)).collect();
+    let mut order: Vec<(AiId, Entity)> = bodies.iter(world).filter(|(_, _, i, sight)| i.target.is_some() || *sight).map(|(e, id, ..)| (*id, e)).collect();
     order.sort();
+    let hooks = world.get_resource::<LockHooks>().copied().unwrap_or_default();
     for (_, entity) in order {
-        let Ok((_, _, mut intent, tf, collider, sight)) = lockers.get_mut(entity) else { continue };
-        let Some(target) = intent.target else {
-            commands.entity(entity).remove::<LockSight>();
+        let Some(target) = world.get::<Intent>(entity).and_then(|i| i.target) else {
+            world.entity_mut(entity).remove::<LockSight>();
             continue;
         };
-        let mut hidden_ticks = 0;
-        let loss = match index.get(target).and_then(|e| targets.get(e).ok().map(|t| (e, t))) {
-            None => Some(LockLoss::Gone),
-            Some((_, (_, _, true))) => Some(LockLoss::Dead),
-            Some((_, (there, ..))) if there.translation.distance(tf.translation) > def.range => {
-                Some(LockLoss::OutOfRange(there.translation.distance(tf.translation), def.range))
-            }
-            Some((target_entity, (there, target_collider, _))) => {
-                let eye = body_point(tf, collider, def.eye_height);
-                let aim = body_point(there, target_collider, def.aim_height);
-                if physics.as_deref().is_some_and(|p| !sight_clear(p, eye, aim, &[entity, target_entity])) {
-                    hidden_ticks = sight.as_deref().filter(|s| s.target == target).map_or(0, |s| s.ticks) + 1;
+        let Some(here) = world.get::<Transform>(entity).map(|t| t.translation) else { continue };
+        let Some(target_entity) = world.resource::<AiIndex>().get(target) else {
+            lose(world, entity, target, LockLoss::Gone);
+            continue;
+        };
+        let verdict = match world.get::<Transform>(target_entity).map(|t| t.translation) {
+            None => Verdict::Lost(LockLoss::Gone),
+            Some(_) if world.get::<Dead>(target_entity).is_some() => Verdict::Lost(LockLoss::Dead),
+            Some(_) if !(hooks.lockable)(world, entity, target_entity) => Verdict::Released,
+            Some(there) if there.distance(here) > def.range => Verdict::Lost(LockLoss::OutOfRange(there.distance(here), def.range)),
+            Some(_) => {
+                let hidden = match (eye_of(world, entity, &def), aim_of(world, target_entity, &def), world.get_resource::<PhysicsWorld>()) {
+                    (Some(eye), Some(aim), Some(physics)) => !sight_clear(physics, eye, aim, &[entity, target_entity]),
+                    _ => false,
+                };
+                let before = world.get::<LockSight>(entity).filter(|s| s.target == target).map_or(0, |s| s.ticks);
+                let ticks = if hidden { before + 1 } else { 0 };
+                match limit.filter(|l| ticks >= *l) {
+                    Some(_) => Verdict::Lost(LockLoss::Obstructed(ticks as f32 * dt)),
+                    None => Verdict::Kept(ticks),
                 }
-                limit.filter(|l| hidden_ticks >= *l).map(|_| LockLoss::Obstructed(hidden_ticks as f32 * dt))
             }
         };
-        if let Some(reason) = loss {
-            intent.target = None;
-            if sight.is_some() {
-                commands.entity(entity).remove::<LockSight>();
+        match verdict {
+            Verdict::Lost(reason) => lose(world, entity, target, reason),
+            Verdict::Released => {
+                if let Some(mut intent) = world.get_mut::<Intent>(entity) {
+                    intent.target = None;
+                }
+                world.entity_mut(entity).remove::<LockSight>();
+                world.trigger(LockReleased { entity, target });
             }
-            commands.trigger(LockLost { entity, target, reason });
-            continue;
-        }
-        match (sight, hidden_ticks) {
-            (Some(_), 0) => {
-                commands.entity(entity).remove::<LockSight>();
+            Verdict::Kept(0) => {
+                world.entity_mut(entity).remove::<LockSight>();
             }
-            (None, 0) => {}
-            (Some(mut s), ticks) => *s = LockSight { target, ticks, secs: ticks as f32 * dt },
-            (None, ticks) => {
-                commands.entity(entity).insert(LockSight { target, ticks, secs: ticks as f32 * dt });
+            Verdict::Kept(ticks) => {
+                world.entity_mut(entity).insert(LockSight { target, ticks, secs: ticks as f32 * dt });
             }
         }
     }
+}
+
+/// `entity` lost its lock on `target`: the target is taken away, the count with it, and the
+/// journal says why.
+fn lose(world: &mut World, entity: Entity, target: AiId, reason: LockLoss) {
+    if let Some(mut intent) = world.get_mut::<Intent>(entity) {
+        intent.target = None;
+    }
+    world.entity_mut(entity).remove::<LockSight>();
+    world.trigger(LockLost { entity, target, reason });
 }
 
 /// `lock e6`, and how long it has been hidden: `lock e6 (obstructed 0.8s)`.

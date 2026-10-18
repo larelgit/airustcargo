@@ -17,8 +17,6 @@ crates/shards_action/src/draw.rs :: .get::<Collider>(entity) :: the i-frame outl
 crates/shards_action/src/draw.rs :: && let Some(mut q) = world.try_query_filtered::<(&Transform, &Collider), With<Invulnerable>>() :: the god-mode outline of an invulnerable body; a field is never invulnerable
 crates/shards_action/src/fighter.rs :: fn make_hurtbox(collider: &mut Collider) { :: puts a fighter's own collider on HURTBOX; writes, reads no world
 crates/shards_action/src/fighter.rs :: pub(crate) fn hurtbox_on_collider(add: On<Insert<Collider>>, mut colliders: Query<&mut Collider, With<Fighter>>) { :: a fighter's own collider, made a hurtbox when it is inserted
-crates/shards_action/src/lock.rs :: Query<'w, 's, (Entity, &'static AiId, &'static mut Intent, &'static Transform, Option<&'static Collider>, Option<&'static mut LockSight>)>; :: a body that holds a lock-on: its own capsule sets the eye its lock rays start from
-crates/shards_action/src/lock.rs :: type Targets<'w, 's> = Query<'w, 's, (&'static Transform, Option<&'static Collider>, Has<Dead>)>; :: a lock-on target is a body (an entity with an `AiId`); its own capsule sets the aim point
 crates/shards_action/src/orders.rs :: targets: Query<(&Transform, Has<Dead>, Option<&Collider>)>, :: an attack order's target is a character; its body's size sets the reach
 crates/shards_action/src/orders.rs :: targets: Query<(&Transform, Has<Dead>, Option<&Collider>)>, :: an attack order's target is a character; its body's size sets the reach (the steering on a client)
 crates/shards_action/src/orders.rs :: collider: Option<&Collider>, :: the target's body, from the query above

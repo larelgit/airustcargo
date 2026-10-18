@@ -231,7 +231,7 @@ fn lock_by_rules(
     // The wheel: down (toward the player) is to the right, a tilt to the right is too; one
     // switch per turn of the wheel (`FlickState::wheel`). Asked every frame so it sees it stop.
     let notch = if wheel.y != 0.0 { -wheel.y } else { wheel.x };
-    let by_wheel = flick.wheel(notch, locked);
+    let by_wheel = flick.wheel(notch, locked, def.wheel_threshold);
     let Some(side) = by_mouse.or(by_stick).or(by_wheel) else { return };
     let found = switch_target(world, me, side, &def).is_some();
     if found && let Some(mut intent) = world.get_mut::<Intent>(me) {

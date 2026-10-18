@@ -299,3 +299,70 @@ fn a_lock_on_definition_under_another_id_is_a_content_error() {
     let errors: Vec<String> = db.errors().map(ToString::to_string).collect();
     assert!(errors.iter().any(|e| e.contains("reads only the lock-on rules `default`")), "{errors:?}");
 }
+
+#[test]
+fn a_lock_on_what_the_pick_would_never_name_is_let_go_of_on_the_next_check() {
+    let mut app = app();
+    with_rules(&mut app, "()");
+    let world = app.world_mut();
+    let hero = hero(world, "hero", Vec3::ZERO, N);
+    let ally = fighter(world, "Squire", "brute", "heroes", Vec3::new(2.0, 0.0, -3.0), S);
+    let brute = brute(world, Vec3::new(0.0, 0.0, -4.0), S);
+    step(&mut app, 1);
+    let (a, b, h) = (id(&app, ally), id(&app, brute), id(&app, hero));
+    // Something other than the tool (a game system, a scenario) sets an ally as the target.
+    let ally_id = app.world().get::<ai_core::AiId>(ally).copied();
+    app.world_mut().get_mut::<Intent>(hero).unwrap().target = ally_id;
+    step(&mut app, 1);
+    assert_eq!(target(&app, hero), None, "an ally is no lock-on target");
+    assert_eq!(lines(&app, &format!("{h} lock released: {a}")).len(), 1, "{:?}", journal(&app));
+    // An enemy stays locked, tick after tick.
+    ok(&mut app, "lock_on", json!({ "target": b }));
+    step(&mut app, 5);
+    assert_eq!(target(&app, hero), Some(b));
+    assert_eq!(lines(&app, "lock released").len(), 1, "{:?}", journal(&app));
+}
+
+#[test]
+fn the_host_drops_a_lock_on_an_ally_that_a_co_op_client_sent() {
+    let mut app = app();
+    with_rules(&mut app, "()");
+    app.world_mut().insert_resource(shards_core::NetRole::Host);
+    let world = app.world_mut();
+    let _host = hero(world, "hero", Vec3::ZERO, N);
+    // The client's body on the host: its `Intent` is the client's input.
+    let client = fighter(world, "Guest", "hero", "heroes", Vec3::new(4.0, 0.0, 0.0), N);
+    let ally = fighter(world, "Squire", "brute", "heroes", Vec3::new(4.0, 0.0, -3.0), S);
+    let enemy = brute(world, Vec3::new(4.0, 0.0, -5.0), S);
+    step(&mut app, 1);
+    let (a, e, c) = (id(&app, ally), id(&app, enemy), id(&app, client));
+    let sent = |app: &App, who: Entity| app.world().get::<ai_core::AiId>(who).copied();
+    app.world_mut().get_mut::<Intent>(client).unwrap().target = sent(&app, ally);
+    step(&mut app, 1);
+    assert_eq!(target(&app, client), None, "the host let go of it");
+    assert_eq!(lines(&app, &format!("{c} lock released: {a}")).len(), 1, "{:?}", journal(&app));
+    // An enemy the client sends is kept.
+    app.world_mut().get_mut::<Intent>(client).unwrap().target = sent(&app, enemy);
+    step(&mut app, 3);
+    assert_eq!(target(&app, client), Some(e));
+    assert_eq!(lock_on_valid(app.world()), None);
+}
+
+#[test]
+fn a_lock_on_definition_with_errors_is_not_in_force() {
+    let mut app = app();
+    let kinds = app.world().resource::<ContentKinds>().clone();
+    let mut sources = read_dir(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/combat/assets"))).unwrap();
+    sources.push(Source { path: "content/lock.lock_on.ron".into(), text: "{ \"default\": (range: 0.0) }".into() });
+    let db = ContentDb::build(&kinds, &sources);
+    assert!(db.errors().any(|e| e.to_string().contains("range is 0")), "the content check names it");
+    app.world_mut().insert_resource(db);
+    let world = app.world_mut();
+    let hero = hero(world, "hero", Vec3::ZERO, N);
+    let brute = brute(world, Vec3::new(0.0, 0.0, -3.0), S);
+    let b = id(&app, brute);
+    ok(&mut app, "lock_on", json!({ "target": b }));
+    step(&mut app, 3);
+    assert_eq!(target(&app, hero), Some(b), "a range of 0 would have taken the lock at once; the game runs as without rules");
+    assert!(lines(&app, "lock").is_empty(), "{:?}", journal(&app));
+}

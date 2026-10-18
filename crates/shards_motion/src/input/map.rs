@@ -150,6 +150,19 @@ impl Binding {
         )
     }
 
+    /// Why this binding cannot be `action`'s, if it cannot. `lock_switch` is read as an axis (its
+    /// sign is the side the lock moves to), so a button binding on it would make a press with no
+    /// side, which does nothing: the wheel, a key pair, a stick or a gamepad axis are what it takes.
+    pub fn refused_for(&self, action: &str) -> Option<String> {
+        (action == shards_core::input_names::LOCK_SWITCH && !self.is_axis()).then(|| {
+            format!(
+                "{self} is a button, and `{action}` is read as an axis (its sign is the side the lock moves to); \
+                 bind it to MouseWheel(), KeyAxis(neg: KeyQ, pos: KeyE), GamepadAxis(axis: ...) or Stick(stick: ...) \
+                 (a keyboard \"next target\" action is not there yet)"
+            )
+        })
+    }
+
     /// The binding as the text of a content file: `Key(Space)`, `Mouse(Left)`,
     /// `Keys2D(up: KeyW, down: KeyS, left: KeyA, right: KeyD)`. [`parse`](Self::parse) reads it.
     pub fn text(&self) -> String {
@@ -438,6 +451,9 @@ impl InputMap {
     /// takes it over instead.
     pub fn rebind(&mut self, context: &str, action: &str, slot: usize, binding: Binding) -> Result<(), RebindError> {
         binding.check().map_err(RebindError::Invalid)?;
+        if let Some(why) = binding.refused_for(action) {
+            return Err(RebindError::Invalid(why));
+        }
         if let Some(other) = self.used_by(context, &binding, action) {
             return Err(RebindError::Conflict { context: context.to_owned(), binding, action: other.to_owned() });
         }
@@ -449,6 +465,9 @@ impl InputMap {
     pub fn rebind_taking(&mut self, context: &str, action: &str, slot: usize, binding: Binding) -> Result<Vec<String>, RebindError> {
         // Check the binding and the target first: a mistake must not strip another action for nothing.
         binding.check().map_err(RebindError::Invalid)?;
+        if let Some(why) = binding.refused_for(action) {
+            return Err(RebindError::Invalid(why));
+        }
         let bound = self.action_mut(context, action)?.bindings.len();
         if slot > bound {
             return Err(RebindError::BadSlot { action: action.to_owned(), slot, bound });
@@ -581,6 +600,9 @@ impl ContentDef for InputMap {
                 for binding in &action.bindings {
                     if let Err(e) = binding.check() {
                         refs.error(format!("context `{}`: action `{}`: {e}", ctx.name, action.action));
+                    }
+                    if let Some(why) = binding.refused_for(&action.action) {
+                        refs.error(format!("context `{}`: action `{}`: {why}", ctx.name, action.action));
                     }
                 }
             }
