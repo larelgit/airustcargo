@@ -1,0 +1,160 @@
+# The voxel arena (A2c): a voxel region north of the arena, made by the sandbox's generation
+# steps (`src/gameplay/terrain.rs`) from `content/world/arena.voxel_region.ron`: hills that fall
+# to a sea at the rim, a lake, trees, and in the middle a flat arena with steps, a ledge, a
+# pool, an overhang and a cave. Movement only: a voxel region has no navmesh until A2e, so no
+# NPC chases here and nothing asks `nav_path`; `path_to` plans over the local grid.
+#
+# The arena's floor is at y 0 and its middle at (0.5, -399.5). Around it: the steps to the
+# north-east (four 1 m risers from x 4 to x 8, z -407..-405), the ledge to the north-west (2 m
+# high, x -9..-4, z -408..-403), the pool to the south-east (x 3..9, z -397..-391, three blocks
+# of water), the overhang to the south-west (a slab 3 m up, x -7..-3, z -397..-393) and the cave
+# to the west (a tunnel through a mound, x -31..-17 along z -399.5). The grid is x -128..128,
+# z -528..-272; the sea reaches 100 m past it.
+
+seed 42
+
+# --- 1. to the voxel arena: the region of seed 7 replaces whatever region there was, and the
+# player goes to its spawn
+act heal id=e5
+act stop
+act block on=false
+act glide on=false
+act sprint on=false
+act lock_on off=true
+act regen region=voxel_arena seed=7
+expect result contains "ok: voxel_arena seed 7 v1 (attempt 1, 16 chunks, 6 POIs"
+expect result contains "spawn at (0.5, -399.5)"
+expect journal "region generated: voxel_arena seed 7 v1 (attempt 1, 16 chunks, 6 POIs)"
+expect journal "region loaded: voxel_arena seed 7 v1 (256 x 32 x 256, 2 water boxes, 4 sea boxes"
+expect journal "navmesh: none for this region: voxel region, nav not baked yet"
+act god
+invariant field e5 Health.current > 0
+# Whatever the body was doing before (an attack winding down) ends; then back on the spawn.
+step 60
+act stop
+act teleport id=e5 x=0.5 z=-399.5 y=0
+step 2
+observe
+expect result contains "TILE (2, 2) chunk · voxel_arena seed 7 v1"
+expect result contains "spawn.0 0.0m here"
+expect result contains "steps.0 6.7m NE"
+# The same seed and version make the same region and the same volume, to the byte.
+act region_info
+expect result contains "\"manifest_hash\": \"6e4d46290e351f38\""
+expect result contains "4×4 chunks of 64m"
+act voxel_info
+expect result contains "\"hash\": \"fbb8f8bd63197f0d\""
+expect result contains "\"sea_boxes\": 4"
+
+# --- 2. up the steps: each 1 m riser is a ledge the walk climbs by itself
+session --agent walker --scope player
+act path_to target='{"x": 7.5, "z": -405.5}'
+expect result contains "\"provider\": \"local grid\""
+expect result contains "(mantle 1.0m)"
+act move_to target='{"x": 3.5, "z": -405.5}' within=0.3
+session --agent scenario
+step 150
+expect field e5 Transform.translation.x > 3.0
+session --agent walker
+act move_to target='{"x": 7.5, "z": -405.5}' within=0.3
+session --agent scenario
+step 600 --until field:e5:Transform.translation.y>3.9
+expect journal "e5 climbs a 1.0m ledge"
+step 30
+expect field e5 Transform.translation.y > 3.9
+
+# --- 3. down off the steps and up the ledge: 2 m is more than a walk climbs (1.6 m), so a
+# jump at its face, then the climb
+session --agent walker
+act move_to target='{"x": -2.5, "z": -405.5}' within=0.3
+session --agent scenario
+step 300 --until "journal:e5 landed"
+step 120
+expect field e5 Transform.translation.y < 0.1
+expect field e5 Transform.translation.x < -2.0
+session --agent walker
+act clearance
+expect result contains "W wall"
+act move dir=W meters=3
+session --agent scenario
+step 10
+session --agent walker
+act jump
+session --agent scenario
+step 120 --until "journal:e5 climbs a"
+step 60
+expect field e5 Transform.translation.y > 1.9
+expect field e5 Transform.translation.x < -4.2
+
+# --- 4. under the overhang: down off the ledge to the open floor under the slab
+session --agent walker
+act move_to target='{"x": -4.5, "z": -394.5}' within=0.3
+session --agent scenario
+step 300 --until field:e5:Transform.translation.z>-394.9
+step 60
+expect field e5 Transform.translation.y < 0.1
+expect field e5 Transform.translation.x < -3.5
+observe
+expect result contains "overhang.0"
+
+# --- 5. the pool: in, across, and out by pushing at its far wall (its top is 1.2 m over a
+# swimmer's feet)
+session --agent walker
+act move_to target='{"x": 5.5, "z": -394.5}' within=0.3
+session --agent scenario
+step 300 --until "journal:→ water"
+expect journal "e5 air → water"
+step 120
+expect shows e5 "water"
+session --agent walker
+act move_to target='{"x": 10.5, "z": -394.5}' within=0.3
+session --agent scenario
+step 300 --until "journal:e5 climbs a"
+expect journal "e5 water → climbing"
+step 120
+expect field e5 Transform.translation.x > 9.2
+expect field e5 Transform.translation.y > -0.1
+
+# --- 6. the cave: from the middle west into the tunnel under the mound, and out its far end
+act stop
+act teleport id=e5 x=0.5 z=-399.5 y=0
+step 5
+session --agent walker
+act path_to target='{"x": -23.5, "z": -399.5}'
+expect result contains "path 24.0m, 1 turns: 24.0m W"
+act move_to target='{"x": -23.5, "z": -399.5}' within=0.3
+session --agent scenario
+step 600 --until field:e5:Transform.translation.x<-23.2
+session --agent walker
+act clearance
+expect result contains "N wall 1.1m"
+expect result contains "S wall 1.1m"
+act move_to target='{"x": -36.5, "z": -399.5}' within=0.3
+session --agent scenario
+step 600 --until field:e5:Transform.translation.x<-36.2
+expect field e5 Transform.translation.y > -1.5
+
+# --- 7. the sea and its current: none on the arena's floor; toward the middle near the
+# grid's edge, full past it; none above the water
+act sea_current_at at=[0.5,0.5,-399.5]
+expect result contains "no current here"
+act sea_current_at at=[124,-3.5,-400]
+expect result contains "\"edge\": 4.0"
+expect result contains "\"strength\": 0.7059999704360962"
+act sea_current_at at=[140,-3.5,-400]
+expect result contains "\"edge\": -12.0"
+expect result contains "\"strength\": 1.0"
+act sea_current_at at=[124,2,-400]
+expect result contains "no current here"
+# A body in the water near the edge: the conditions hold (the current does not push it yet).
+act stop
+act teleport id=e5 x=124 z=-400 y=-3.5
+step 10 --until named:in_current
+expect stopped "in_current"
+step 10 --until named:near_grid_edge
+expect stopped "near_grid_edge"
+
+# --- back to the arena's middle
+act teleport id=e5 x=0.5 z=-399.5 y=0
+step 5
+act god on=false

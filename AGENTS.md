@@ -360,7 +360,7 @@ It is written when a panic happens on another thread (the render thread, a task)
   the others: start it with `heal`/`teleport`/`set`/`npc_set_state … calm`/`regen`, which return the world to its original state.
 - Content: `cargo sandbox --check-content` (or `cargo run -- --check-content` in the template) finds broken references
   and names the file. It also reads the level files (nodes, components, markers) and the baked navigation. World: `cargo sandbox
-  --worldgen-report wilds --seeds 1..1000` (in the template, `valley`) must return 0. CI runs both.
+  --worldgen-report wilds --seeds 1..1000` (and `voxel_arena`; in the template, `valley`) must return 0. CI runs them.
 - Check a new component or state resource with a snapshot: `crates/sandbox/tests/sandbox/snapshots.rs` takes
   a snapshot at tick N, runs on to tick M, and compares the result with a game that loaded the snapshot (one state, one journal).
 - Check gameplay changes with a replay: `cargo sandbox --replay FILE --verify` names the first
@@ -388,9 +388,9 @@ It is written when a panic happens on another thread (the render thread, a task)
   (`ok`, `OVER`, `-`) and exits with code 0, 1 (a budget is exceeded or the game did not reach the measurement) or 2 (no such definition, or `--offscreen`
   has no GPU). A debug build gives no verdict.
 - The reference replays `tests/replays/*.json` (obstacle course, combat prototype, token director, guard on the navmesh, region changes,
-  a replay from a snapshot, a replay of the sandbox's saves and the hit-outcome sparring) are checked by `cargo test` (and by nextest). After a deliberate change to gameplay or content, record them again:
+  a replay from a snapshot, a replay of the sandbox's saves, the hit-outcome sparring and the voxel arena) are checked by `cargo test` (and by nextest). After a deliberate change to gameplay or content, record them again:
   `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays` (for the template —
   `cargo test --test game record_reference_replays -- --ignored` in `template/`).
-- The long checks are not run by hand but by `.github/workflows/nightly.yml` (every reference replay with `--heavy 10 --heavy-span 30`, worldgen on 100000 seeds, the GPU tests, performance), `soak.yml` (half an hour of a live stand) and `cross.yml` (the reference replays on Windows and Ubuntu 22.04, weekly); a failed night opens an issue labelled `nightly`. Their commands are the ones above with bigger numbers: the nightly worldgen is `--worldgen-report wilds --seeds 1..100000` (and `valley` in the template), not the 1000 seeds of `ci.yml`.
+- The long checks are not run by hand but by `.github/workflows/nightly.yml` (every reference replay with `--heavy 10 --heavy-span 30`, worldgen on 100000 seeds, the GPU tests, performance), `soak.yml` (half an hour of a live stand) and `cross.yml` (the reference replays on Windows and Ubuntu 22.04, weekly); a failed night opens an issue labelled `nightly`. Their commands are the ones above with bigger numbers: the nightly worldgen is `--worldgen-report wilds --seeds 1..100000` (and `valley` in the template; the voxel arena, at about 60 ms a seed, `--seeds 1..10000`), not the 1000 seeds of `ci.yml`.
 - If you change a module's behaviour, update its section in `docs/manual.md`, `docs/engine-progress.md` (statuses) and `CHANGELOG.md`
   (`Unreleased`); update `README.md` only when what it says about the project changes (features, quick start, steps).
