@@ -186,6 +186,10 @@ pub struct StateDef {
     /// ran out.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<(f32, f32)>,
+    /// On entry the plan's rest is clamped to at most this many seconds, once (a rage that
+    /// brings the next attack sooner). A rest that is already shorter stays.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rest_clamp: Option<f32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub transitions: Vec<TransitionDef>,
 }
@@ -203,6 +207,13 @@ pub struct BehaviorDef {
     /// walks its way whoever stands there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avoidance: Option<AvoidanceDef>,
+    /// Decision cadence (seconds): a per-NPC timer that ticks down only while the NPC runs
+    /// no action. Each time it runs out is a decision tick ([`NpcCtx::deciding`](crate::NpcCtx::deciding), the
+    /// condition `deciding`), and it starts over; the first tick the NPC is free is one.
+    /// Without it every tick is a decision tick. The state hooks and conditions that decide
+    /// consult it; the engine's own states re-derive their output every tick and ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub think: Option<f32>,
 }
 
 impl BehaviorDef {
@@ -226,6 +237,11 @@ impl ContentDef for BehaviorDef {
         if let Some(avoidance) = &self.avoidance {
             avoidance.check(refs, "avoidance");
         }
+        if let Some(think) = self.think
+            && !(think > 0.0 && think.is_finite())
+        {
+            refs.error(format!("think must be > 0 seconds (is {think}); leave it out to decide every tick"));
+        }
         if self.states.is_empty() {
             refs.error("states is empty; give at least one, e.g. {\"idle\": ()}");
             return;
@@ -238,6 +254,11 @@ impl ContentDef for BehaviorDef {
                 && !(lo >= 0.0 && hi >= lo && hi.is_finite())
             {
                 refs.error(format!("states.{name}.duration ({lo}, {hi}) must be 0 <= min <= max"));
+            }
+            if let Some(cap) = state.rest_clamp
+                && !(cap >= 0.0 && cap.is_finite())
+            {
+                refs.error(format!("states.{name}.rest_clamp {cap} must be a number >= 0"));
             }
             for (i, t) in state.transitions.iter().enumerate() {
                 if !self.states.contains_key(&t.to) {
@@ -273,6 +294,13 @@ pub struct PerceptionDef {
     pub hearing: f32,
     /// Seconds a target stays known after it was last seen or heard.
     pub memory: f32,
+    /// A target already known keeps being seen up to this far (m, at least `sight_range`)
+    /// while the ray to it is clear: its place is refreshed, so the NPC chases what it sees
+    /// and not a stale point. `sight_range` then governs only noticing a target anew (an
+    /// aggro that is lost farther out than it is gained). `None`: a known target is seen
+    /// within `sight_range` like any other.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keep_range: Option<f32>,
 }
 
 impl Default for PerceptionDef {
@@ -285,6 +313,7 @@ impl Default for PerceptionDef {
             line_of_sight: true,
             hearing: 1.0,
             memory: 5.0,
+            keep_range: None,
         }
     }
 }
@@ -304,6 +333,14 @@ impl ContentDef for PerceptionDef {
         }
         if !(self.fov_deg > 0.0 && self.fov_deg <= 360.0) {
             refs.error(format!("fov_deg must be in (0, 360] degrees (is {})", self.fov_deg));
+        }
+        if let Some(keep) = self.keep_range
+            && !(keep >= self.sight_range && keep.is_finite())
+        {
+            refs.error(format!(
+                "keep_range {keep} must be at least sight_range {} (it is how far a known target stays seen); leave it out for none",
+                self.sight_range
+            ));
         }
     }
 }
@@ -374,6 +411,19 @@ pub struct DirectorDef {
     pub waiting: Vec<WaitRole>,
     /// A token not used for an attack within this many seconds goes back.
     pub patience: f32,
+    /// Seconds between the starts of strikes of different NPCs of this director (two nearly
+    /// simultaneous blows cannot both be parried). Every strike an NPC starts is noted, the
+    /// planner presses a strike (and the director grants a token for one) only when no other
+    /// NPC began one that recently, and a combo continuation that is not spaced is refused
+    /// and ends its chain. An NPC's own series is not held back by itself. 0: no spacing.
+    /// `budget` and `allowed` are different rules (what may land on a target at once).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub min_spacing: f32,
+    /// Actions that are no strike: neither wait for the spacing nor count for it (a retreat,
+    /// a buff, a repositioning). Matched against the action's tags, the plan option's tags
+    /// and its name.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub spacing_exempt_tags: Vec<String>,
 }
 
 impl Default for DirectorDef {
@@ -384,6 +434,8 @@ impl Default for DirectorDef {
             allowed: Vec::new(),
             waiting: vec![WaitRole::default()],
             patience: 4.0,
+            min_spacing: 0.0,
+            spacing_exempt_tags: Vec::new(),
         }
     }
 }
@@ -415,6 +467,11 @@ impl DirectorDef {
         let matches = |pattern: &str, tags: &[String]| pattern == "*" || tags.iter().any(|t| t == pattern);
         self.allowed.iter().any(|(x, y)| (matches(x, a) && matches(y, b)) || (matches(x, b) && matches(y, a)))
     }
+
+    /// Whether an action with `tags` is a strike for the spacing: none of its tags is exempt.
+    pub fn is_strike(&self, tags: &[String]) -> bool {
+        !tags.iter().any(|t| self.spacing_exempt_tags.contains(t))
+    }
 }
 
 impl ContentDef for DirectorDef {
@@ -433,6 +490,10 @@ impl ContentDef for DirectorDef {
             refs.error(format!("budget must be > 0 (is {b}); leave it out for no limit"));
         }
         non_negative(refs, "patience", self.patience);
+        non_negative(refs, "min_spacing", self.min_spacing);
+        if self.min_spacing == 0.0 && !self.spacing_exempt_tags.is_empty() {
+            refs.error("spacing_exempt_tags without a min_spacing exempts nothing; set `min_spacing` or leave the tags out");
+        }
         for (i, w) in self.waiting.iter().enumerate() {
             non_negative(refs, &format!("waiting[{i}].distance"), w.distance);
             non_negative(refs, &format!("waiting[{i}].orbit"), w.orbit);
@@ -474,11 +535,58 @@ pub struct AttackOption {
     pub tags: Vec<String>,
     /// Its share of the target's collision budget while it is in flight.
     pub cost: f32,
+    /// Conditions (the behaviour's: `["enraged", ("health_below", {"fraction": 0.5})]`, `!`
+    /// negates) that must all hold for the option to be chosen; the planner and the director
+    /// do not count it while one does not. Evaluated with the NPC's other decisions.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub when: Vec<Cond>,
+    /// A combo continuation: when this option's action starts, the NPC rolls `chance` and, on
+    /// success, presses `input` at the start of the action's recovery.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain: Option<ChainDef>,
+}
+
+/// A combo continuation of an attack ([`AttackOption::chain`]). The input goes into the press
+/// queue like anyone's, so it continues the attack only if the action has a cancel window
+/// (`Combo`) that lets it through before the press runs out (`input_buffer`).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct ChainDef {
+    /// The moveset input pressed at the start of the recovery: the one a `Combo` of the
+    /// action answers.
+    pub input: String,
+    /// The odds, 0 to 1, rolled once when the attack starts.
+    pub chance: f32,
+    /// Where the director's `min_spacing` is asked. Off (the default): when the input is pressed,
+    /// at the start of the recovery. On: on the tick the action machine would take the queued
+    /// input into the combo window. The design spaces attack *starts*, and the press and the
+    /// start are some ticks apart; a strike another NPC began in between refuses the continuation,
+    /// which is withdrawn from the queue and ends the chain.
+    #[serde(skip_serializing_if = "is_false")]
+    pub gate_at_start: bool,
+}
+
+impl Default for ChainDef {
+    fn default() -> Self {
+        Self { input: String::new(), chance: 1.0, gate_at_start: false }
+    }
 }
 
 impl Default for AttackOption {
     fn default() -> Self {
-        Self { input: None, action: None, name: None, weight: 1.0, min: 0.0, max: None, cooldown: 0.0, tags: Vec::new(), cost: 1.0 }
+        Self {
+            input: None,
+            action: None,
+            name: None,
+            weight: 1.0,
+            min: 0.0,
+            max: None,
+            cooldown: 0.0,
+            tags: Vec::new(),
+            cost: 1.0,
+            when: Vec::new(),
+            chain: None,
+        }
     }
 }
 
@@ -525,11 +633,47 @@ pub struct AttackPlanDef {
     /// Seconds of rest after an attack before it asks for the next token: `(min, max)`,
     /// counted while it runs no action (a stagger after a parried attack is no rest).
     pub rest: (f32, f32),
+    /// The rest after an attack that was interrupted (a stagger cut it short) instead of
+    /// `rest`: `(min, max)` seconds, drawn as it is, replacing the finished attack's pause.
+    /// `None`: an interrupted attack rests like a finished one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rest_interrupted: Option<(f32, f32)>,
+    /// The rest an NPC starts with when its brain first runs (its pause at spawn), `(min,
+    /// max)` seconds. `None`: it starts without rest.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_rest: Option<(f32, f32)>,
+    /// The planner asks the director for a token, makes a new choice and presses only on the NPC's
+    /// decision ticks (`BehaviorDef::think`, `NpcThink.decided`); between two decisions it keeps the
+    /// choice it made and walks into its window. The TDD has the brain decide at 5-10 Hz and the
+    /// attack press is part of the decision, so grant, choice and press share one tick. Off (the
+    /// default): any tick. A behaviour without a `think` cadence decides every tick, so there it
+    /// changes nothing.
+    #[serde(skip_serializing_if = "is_false")]
+    pub press_on_decision: bool,
+    /// Noting only (CDD 27.2: a big enemy's attacks pace the small ones around it, never the
+    /// reverse). The NPC's strike starts are noted and hold the other NPCs of its director back as
+    /// usual, but it never waits for the director's `min_spacing` itself: no strike of its own
+    /// is held back by the spacing, in the grant, the planner, a combo continuation or
+    /// `NpcCtx::strike_ready`. Off (the default): it waits like the rest. Without a `min_spacing`
+    /// on the director it changes nothing.
+    #[serde(skip_serializing_if = "is_false")]
+    pub ignores_spacing: bool,
 }
 
 impl Default for AttackPlanDef {
     fn default() -> Self {
-        Self { options: Vec::new(), auto: false, cover: 0.8, in_range_only: false, bans: Vec::new(), rest: (0.5, 1.0) }
+        Self {
+            options: Vec::new(),
+            auto: false,
+            cover: 0.8,
+            in_range_only: false,
+            bans: Vec::new(),
+            rest: (0.5, 1.0),
+            rest_interrupted: None,
+            first_rest: None,
+            press_on_decision: false,
+            ignores_spacing: false,
+        }
     }
 }
 
@@ -571,6 +715,19 @@ impl ContentDef for AttackPlanDef {
             {
                 refs.error(format!("{at}.max {max} must be at least min {}", o.min));
             }
+            for (ci, c) in o.when.iter().enumerate() {
+                if c.name.is_empty() {
+                    refs.error(format!("{at}.when[{ci}] is a condition without a name"));
+                }
+            }
+            if let Some(chain) = &o.chain {
+                if chain.input.is_empty() {
+                    refs.error(format!("{at}.chain names no input; give the moveset input the continuation presses, e.g. (input: \"light\", chance: 0.7)"));
+                }
+                if !(0.0..=1.0).contains(&chain.chance) {
+                    refs.error(format!("{at}.chain.chance is a probability in 0..1 (is {})", chain.chance));
+                }
+            }
         }
         if !self.options.is_empty() && self.options.iter().all(|o| o.weight <= 0.0) {
             refs.error("every option has weight 0: none would ever be chosen");
@@ -578,9 +735,12 @@ impl ContentDef for AttackPlanDef {
         if !(self.cover > 0.0 && self.cover.is_finite()) {
             refs.error(format!("cover must be > 0 (is {})", self.cover));
         }
-        let (lo, hi) = self.rest;
-        if !(lo >= 0.0 && hi >= lo && hi.is_finite()) {
-            refs.error(format!("rest ({lo}, {hi}) must be 0 <= min <= max"));
+        for (name, range) in [("rest", Some(self.rest)), ("rest_interrupted", self.rest_interrupted), ("first_rest", self.first_rest)] {
+            if let Some((lo, hi)) = range
+                && !(lo >= 0.0 && hi >= lo && hi.is_finite())
+            {
+                refs.error(format!("{name} ({lo}, {hi}) must be 0 <= min <= max"));
+            }
         }
         for (i, b) in self.bans.iter().enumerate() {
             if b.after.is_empty() || b.then.is_empty() {
@@ -700,6 +860,14 @@ impl ContentDef for NpcTuning {
     }
 }
 
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
 fn non_negative(refs: &mut Refs, field: &str, v: f32) {
     if !(v >= 0.0 && v.is_finite()) {
         refs.error(format!("{field} must be a number >= 0 (is {v})"));
@@ -784,6 +952,46 @@ mod tests {
             "content/b.behavior.ron: behavior `b`: states.idle.transitions[0].to names an unknown state `chace` (did you mean `chase`?); states: chase, idle",
         ];
         assert_eq!(errors, expected);
+    }
+
+    #[test]
+    fn rest_semantics_are_checked_and_neutral_by_default() {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<AttackPlanDef>();
+        kinds.register::<ActionDef>();
+        let text = r#"{ "p": (auto: true, rest: (0.5, 1), rest_interrupted: Some((1, 0.5)), first_rest: Some((-1, 2))) }"#;
+        let db = ContentDb::build(&kinds, &[shards_content::db::Source { path: "content/p.attack_plan.ron".into(), text: text.into() }]);
+        let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+        assert_eq!(
+            errors,
+            [
+                "content/p.attack_plan.ron: attack_plan `p`: rest_interrupted (1, 0.5) must be 0 <= min <= max",
+                "content/p.attack_plan.ron: attack_plan `p`: first_rest (-1, 2) must be 0 <= min <= max",
+            ]
+        );
+        let neutral = serde_json::to_string(&AttackPlanDef::default()).unwrap();
+        for field in ["rest_interrupted", "first_rest", "press_on_decision", "ignores_spacing"] {
+            assert!(!neutral.contains(field), "{field} stays out of a plan that does not use it: {neutral}");
+        }
+    }
+
+    #[test]
+    fn a_chain_is_neutral_by_default() {
+        let neutral = serde_json::to_string(&ChainDef { input: "light".into(), ..Default::default() }).unwrap();
+        assert!(!neutral.contains("gate_at_start"), "{neutral}");
+    }
+
+    #[test]
+    fn keep_range_must_reach_at_least_as_far_as_sight() {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<PerceptionDef>();
+        let text = r#"{ "ok": (sight_range: 10, keep_range: Some(16)), "short": (sight_range: 10, keep_range: Some(8)) }"#;
+        let db = ContentDb::build(&kinds, &[shards_content::db::Source { path: "content/p.perception.ron".into(), text: text.into() }]);
+        let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("perception `short`: keep_range 8 must be at least sight_range 10"), "{errors:?}");
+        assert_eq!(PerceptionDef::default().keep_range, None);
+        assert!(!serde_json::to_string(&PerceptionDef::default()).unwrap().contains("keep_range"), "a default stays out of the file");
     }
 
     #[test]
