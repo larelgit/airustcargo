@@ -321,9 +321,8 @@ impl CameraTuning {
         if clamp_ok && clamp_lo > clamp_hi {
             out.push(format!("framing.pitch_clamp ({clamp_lo}, {clamp_hi}) has its low end above its high end"));
         }
-        if clamp_ok && lo_ok && hi_ok && (clamp_lo < lo || clamp_hi > hi) {
-            out.push(format!("framing.pitch_clamp ({clamp_lo}, {clamp_hi}) is outside the pitch limits ({lo}, {hi})"));
-        }
+        // A clamp wider than the pitch limits is fine: the framed pitch is held to them afterwards,
+        // like any pitch, so narrowing `pitch` does not also need a narrower clamp.
         let arm = &self.arm;
         non_negative("arm.radius", arm.radius, &mut out);
         non_negative("arm.min_distance", arm.min_distance, &mut out);
@@ -447,7 +446,7 @@ mod tests {
         assert!(bad(|t| t.release_factor = 0.5)[0].contains("release_factor"));
         assert!(bad(|t| t.snap_distance = 0.0)[0].contains("snap_distance"));
         assert!(bad(|t| t.body_snap_distance = 0.0)[0].contains("body_snap_distance"));
-        assert!(bad(|t| t.framing.pitch_clamp = (-2.0, 0.7))[0].contains("pitch_clamp"));
+        assert!(bad(|t| t.framing.pitch_clamp = (0.7, 0.15))[0].contains("pitch_clamp"));
         assert!(bad(|t| t.trauma.roll_deg = 90.0)[0].contains("roll_deg"));
         assert!(bad(|t| t.flick.mouse_decay_px_s = Some(f32::NAN))[0].contains("finite"));
     }

@@ -59,7 +59,8 @@ Instructions for agents are in [AGENTS.md](../AGENTS.md) (the short core and an 
 31. [The sandbox](#the-sandbox)
 32. [Tests and CI](#tests-and-ci)
 33. [What's next](#whats-next)
-34. [Conventions and building](#conventions-and-building)
+34. [Building and iterating fast](#building-and-iterating-fast)
+35. [Conventions and building](#conventions-and-building)
 
 ## Quick start
 
@@ -480,7 +481,7 @@ starts at tick N: the main menu moved the world`), and the session's replay stil
 | `pressed` | presses since the last tick (`Press { input, dir }`); gameplay takes them, the rest are cleared at the end of the tick |
 | `orders` | orders that last many ticks: `Order::MoveTo { target, within }`, `Order::Attack { target, input, repeat }` |
 
-The engine's input names are in `shards::core::input_names` (`jump`, `sprint`, `glide`, `dodge`, `light`, `heavy`, `block`, `parry`, `technique.N`, `use_item`, `interact`, `lock_on`); the game adds its own. `Intent` is the replay input (the engine makes `replay_input::<Intent>()` itself): changes between ticks are recorded. `PlayerId` and `LocalPlayer` mark players, and `NetRole` (`Single` by default) is groundwork for networking.
+The engine's input names are in `shards::core::input_names` (`jump`, `sprint`, `glide`, `dodge`, `light`, `heavy`, `block`, `parry`, `technique.N`, `use_item`, `interact`, `lock_on`, and `assist_off`, held while the player has turned the attack assist off); the game adds its own. `Intent` is the replay input (the engine makes `replay_input::<Intent>()` itself): changes between ticks are recorded. `PlayerId` and `LocalPlayer` mark players, and `NetRole` (`Single` by default) is groundwork for networking.
 
 **Groundwork for networking (phase C).** None of this changes a single-player game.
 
@@ -855,7 +856,7 @@ so a fast swim lock survives a walk on land, and a dry land sprint under `Fracti
 
 *Controller options for an exact rulebook (C4).* Each is content, off by default and unserialized when off, so content hashes and the reference replays do not change.
 
-- *Turning speed by who asks.* `turn_speed_deg` is the free rate. `locked_turn_speed_deg` (0: the free rate) applies while the input names a facing: a lock-on target, an aim point, or a running action's own facing (`LocomotionInput::face`). An action can set its own rate with `ActionDef::turn_speed_deg` (a raised guard); it reaches the controller through `MoveModifiers::turn_speed_deg` (`turn_at(deg)`, the lowest source wins), filled by `actions_to_modifiers` from the action the last tick left, so the rate takes hold one tick after the action starts. A swimmer keeps `swim_turn_speed_deg`. The order is: swim (in water, when set), then a stance's rate, then the locked rate, then the free one. `turn_toward_input` makes the body turn toward the movement input while there is one, not toward its velocity, so a body pressed against a wall (velocity held at 0) still turns to face it; with no input it turns toward its velocity as before. `move_info` shows `turn_free_deg`, `turn_locked_deg`, `turn_swim_deg`, `turn_toward_input` and the stance's `turn_speed_deg`.
+- *Turning speed by who asks.* `turn_speed_deg` is the free rate. `locked_turn_speed_deg` (0: the free rate) applies while the input names a facing: a lock-on target, an aim point, or a running action's own facing (`LocomotionInput::face`). An action can set its own rate with `ActionDef::turn_speed_deg` (a raised guard); it reaches the controller through `MoveModifiers::turn_speed_deg` (`turn_at(deg)`, the lowest source wins), filled by `actions_to_modifiers` from the action the last tick left, so the rate takes hold one tick after the action starts (a client's own body reads the action it shows, its `PredictedAction`, and none while it shows none, as the prediction moves it). A swimmer keeps `swim_turn_speed_deg`. The order is: swim (in water, when set), then a stance's rate, then the locked rate, then the free one. These are rates of the body only: an action's `turn` spans (B2a, "Turning" under the action timeline) turn the run's own facing, where its hits, guard and displacement point, and the controller turns the body toward that facing once a tick at the rate above. On a tick where both apply, each bounds its own: the run turns at the spans' rate, the body follows no faster than its rate, and nothing turns the body twice. An action with turn spans (and `face: Run`) names a facing on every tick, so its body follows at the locked rate when that is set; a rate below the spans' leaves the body behind its swing. `turn_toward_input` makes the body turn toward the movement input while there is one, not toward its velocity, so a body pressed against a wall (velocity held at 0) still turns to face it; with no input it turns toward its velocity as before. `move_info` shows `turn_free_deg`, `turn_locked_deg`, `turn_swim_deg`, `turn_toward_input` and the stance's `turn_speed_deg`.
 - *Water entry, in closed form.* `entry_max_speed` (m/s, 0: no brake) scales the horizontal velocity down to that speed once, in the tick the water takes the body (a run or a jump into a pool). `buoyancy_omega` (1/s, 0: the first-order drift to the float line and an entry fall held to `swim_speed`, as before) replaces the drift by a critically damped spring toward the float line, stepped by its exact solution `x(dt) = (x0 + (v0 + w x0) dt) e^(-w dt)`, `v(dt) = (v0 - w (v0 + w x0) dt) e^(-w dt)` through `ops::exp`: no step-by-step integration, so the plunge does not depend on the tick rate. With the spring the entry fall is not held to the swim speed, so a dive plunges past the float line and rises back to it; `water_max_vertical_speed` (0: `swim_speed`, so set it above `swim_speed` to let a dive plunge; with only `buoyancy_omega` the fall is still held to `swim_speed`) bounds the speed and the travel of a tick, and `water_fall_drag` slows a fall in the water as `exp(-drag t)`. Entering the water already takes the body out of the air and the ground (`MotionMode::Water`), so there is nothing to force.
 - *Climb-out.* `climb_out_min_facing` (a dot product, 0.5 is within 60 degrees; `None`: no test) needs the body to face the ledge (the direction into the wall, opposite its normal) for both the push and the jump; a land mantle is never tested. A swimmer that does not face the ledge does not climb and keeps swimming, in control; there is no search to the sides (set `turn_toward_input` so that pressing against a ledge turns the body to it). `climb_out_time` (`None`: `mantle_time`) is the length of a climb that starts in the water.
 - *Crawl lock.* The fast swim's lock that ends at a fraction of the bar with no sprint input is `swim_fast_resume: Fraction(0.25)` (see "Stamina after a dry sprint"); the lock arms when the crawl runs the bar dry and opens by itself once the bar is at a quarter, whether or not the button is held, so no emulation of a check that runs only while crawling is needed.
@@ -956,7 +957,7 @@ For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, spr
 | `trauma.decay` | `1.4` (`TRAUMA_DECAY`, linear) | trauma drained per second |
 | `trauma.shift_m` / `pitch_deg` / `yaw_deg` / `roll_deg` | `0.12` / `2` / `2` / `3` | the most a shake of trauma 1 moves and turns the view (scaled by trauma squared) |
 
-The ranges of `pitch`, `follow_rate`, the rates, thresholds and amplitudes are content errors when out of range (a rate must be above 0, a re-arm level below the threshold, and so on). `framing.pitch_clamp` must lie within `pitch`. Two things stay constants on purpose: the engine's 30..120 limit on the field of view (the player's setting is clamped to it too) and the shake's noise frequencies (the look of the noise, not a feel number).
+The ranges of `pitch`, `follow_rate`, the rates, thresholds and amplitudes are content errors when out of range (a rate must be above 0, a re-arm level below the threshold, and so on). `framing.pitch_clamp` must not have its low end above its high end; it may be wider than `pitch`, since the framed pitch is then held to the pitch limits like any other. Two things stay constants on purpose: the engine's 30..120 limit on the field of view (the player's setting is clamped to it too) and the shake's noise frequencies (the look of the noise, not a feel number).
 
 *Smoothing.* Every smoothing is the exact exponential `1 - exp(-rate * dt)` through `bevy::math::ops::exp`, so it does not depend on the frame rate (`damp`, `lock_framing`, `arm_reach`). `critically_damped_step(x, v, target, omega, dt)` is the closed form of a critically damped spring (for a landing dip: kick `v`, aim at 0); one step of `2 dt` equals two of `dt`. *The arm*: a wall pulls it in at once; once it lets go the shortfall below the nominal length shrinks at `arm.follow_rate` (the rate acts on the shortfall, so a plain zoom is smoothed once, by `arm_length`; `ThirdPersonCamera::arm_reach` is where it stood last frame, `arm_length` its nominal length), never past what is free and never closer than `arm.min_distance` (as far as the room allows). A jump of the focus (a teleport) resets it.
 
@@ -1052,7 +1053,7 @@ The `shards_action` crate. An attack, a block, a parry, a roll and a flask are a
 { "default": (input_buffer: 0.15, max_statuses: 3, sprint_stamina_per_s: 10, lock_on_range: 20) }
 ```
 
-- *Backstep, turning speed and regeneration holds (C4).* `steer: MoveOrBack` is `Move` that goes **backward**, away from where the body faces, when no direction is pressed and nothing is held (a pressed direction or the stick still wins); the `dodge` tool names it (`ok: roll (back)`, read from the moveset's plain `dodge` input). Until an action can keep the body's facing, a standing backstep turns the body around to face the way it goes. A `turn_speed_deg` of 0 means "turns at once", as in the locomotion params. `turn_speed_deg` on an action is the body's turning speed while it runs (a raised guard; see "Controller options", C4), and `regen_hold` (seconds) keeps the stamina from regenerating while the action runs and for that long after it ends: a guard with `regen_hold: 1.3` holds the regeneration while it is up and 1.3 s after it is let go. A hold is the longer of two waits: it moves `Stamina::since_use` back so that `secs` remain (`Stamina::hold_regen`), so it never shortens the delay a spend left. A paid spend sets the delay (`Stamina::delay`). `CombatTuning::free_sprint_regen_hold` (seconds; `None`: today's behaviour) makes a sprint that costs nothing (`MoveModifiers::sprint_cost` 0, or a fast swim without drain) hold the regeneration for that time instead of restarting the whole delay (0.3 s next to a delay of 0.65 s). Tests: `crates/shards_action/tests/combat/parity.rs`.
+- *Backstep, turning speed and regeneration holds (C4).* `steer: MoveOrBack` is `Move` that goes **backward**, away from where the body faces, when no direction is pressed and nothing is held (a pressed direction or the stick still wins); the `dodge` tool names it (`ok: roll (back)`, read from the moveset's plain `dodge` input). With `face: Keep` (see the action timeline) the backstep hops back and the body keeps looking where it looked, its gameplay facing included, so a second standing backstep goes the same way again; with `face: Run` (the default) the body turns around to face the way it goes, and the next one goes back the other way. An action with `turn` spans starts from the body's facing whatever its `steer`, so the content check refuses spans on a `MoveOrBack` action (the backstep would go forward). A `turn_speed_deg` of 0 means "turns at once", as in the locomotion params. `turn_speed_deg` on an action is the body's turning speed while it runs (a raised guard; see "Controller options", C4), and `regen_hold` (seconds) keeps the stamina from regenerating while the action runs and for that long after it ends: a guard with `regen_hold: 1.3` holds the regeneration while it is up and 1.3 s after it is let go. A hold is the longer of two waits: it moves `Stamina::since_use` back so that `secs` remain (`Stamina::hold_regen`), so it never shortens the delay a spend left. A paid spend sets the delay (`Stamina::delay`). `CombatTuning::free_sprint_regen_hold` (seconds; `None`: today's behaviour) makes a sprint that costs nothing (`MoveModifiers::sprint_cost` 0, or a fast swim without drain) hold the regeneration for that time instead of restarting the whole delay (0.3 s next to a delay of 0.65 s). Tests: `crates/shards_action/tests/combat/parity.rs`.
 
 - A window is a `Span`: a phase (`Phase("active")`), from one phase to another (`Phases("raise", "hold")`), or seconds (`Secs(0.3, 0.45)`).
   A timeline can hold: hit windows (shape: `Sphere`, `Capsule`, `Cone`, `Box`, `Circle`, `Line` — a line along the ground; damage, poise damage, status build-up, the flags `Unblockable`/`GuardBreak`/`NoParry`, tags for the game's hooks), invulnerability (`iframes`), a block and a perfect block (`guard`), hyper armour (`hyper_armor`), cancels (combos — a chain of transitions `Combo`, `Input`, `Any`), hold (`hold`: the block stays up while the input is held), timed effects (`Heal`, `RestoreStamina`, `Status`, `Sound` — a sound from the body, `Custom` — a game hook), a telegraph (`telegraph`).
@@ -1060,7 +1061,7 @@ The `shards_action` crate. An attack, a block, a parry, a roll and a flask are a
 - An action hands its displacement (`displacement`) to the controller through `LocomotionInput::external`: only the controller moves the body, so a lunge stops at a wall. You do not have to write it by hand: it can be baked from a clip (`bake`, see "Displacement from a clip" below).
 - Animation and sound are names only: `anim: "light_1"` (a clip; if the game has clip sets, the content check requires one of them to play it), `telegraph.sound` (a sound from `*.sound.ron`: the audio module plays it where the hit lands), and the effect `Sound("whoosh")` (it is played from the body at its moment, for example a swing: `effects: [(at: 0.2, effect: Sound("whoosh"))]`), see "Audio".
 
-**The machine.** A press from `Intent` waits in the input buffer `CombatTuning::input_buffer` (0.15 s by default) until its action becomes possible; cancel windows let one action be interrupted by another (combos); a held action repeats (a raised block). One rule, `can_start`, answers both the machine and the tools: `ok: light_1`, `ok: queued, light starts in 0.10s`, `not enough stamina: 20/40 (ready in 1.5s)`, `busy: windup light_1 0.17s (ready in 0.27s, when a cancel window opens)`. A press whose time has run out is written to the journal: `e5 light rejected: busy (active light_1 0.10s)`.
+**The machine.** A press from `Intent` waits in the input buffer `CombatTuning::input_buffer` (0.15 s by default) until its action becomes possible; cancel windows let one action be interrupted by another (combos); a held action repeats (a raised block). One rule, `can_start`, answers both the machine and the tools: `ok: light_1`, `ok: queued, light starts in 0.10s`, `not enough stamina: 20/40 (ready in 1.5s)`, `busy: windup light_1 0.17s (ready in 0.27s, when a cancel window opens)`. A press whose time has run out is written to the journal: `e5 light rejected: busy (active light_1 0.10s)`. A cancel window with a `queue` span holds a press made while that span is open until the window opens (the press lives until then plus the buffer time), and a moveset can keep one press at a time by priority (`buffer: SingleSlot(..)`); a cooldown can be shared by several actions (`cost.cooldown_key`). See "Action timeline (B2a)" below.
 
 **Hits** are detected in `SimSet::Resolve` after movement. Attack shapes overlap hurtboxes (colliders with the `HURTBOX` layer; the `Fighter` collider gets it). Attackers and targets are taken in `AiId` order. One target is hit once per action (and once per `group`). The damage pipeline: immortality (`god`) → invulnerability (`Evaded`, `PerfectEvaded` inside a perfect-evade window) → parry (`Parried`, the attacker staggers unless the guard says otherwise) / block (`Blocked`, costs stamina) / guard break (`GuardBroken`) → armour → game hooks (`add_damage_hook`, in registration order) → health, statuses, poise (a break is `stagger`; otherwise a reaction of the tier the hit asked for, or the old flinch) → death; see "Hit outcome: reactions, protection, pushes (B1)" below. Events: `Damaged`, `Staggered`, `Died`, `Healed`, `ActionStarted`, `ActionRejected`, `ActionSound` (the `Sound` effect).
 
@@ -1132,6 +1133,11 @@ error: your moveset `player` has no `parry`; it has: block, dodge, heavy, light,
 Refusals for resources and timing name the cause and the wait: `not enough stamina: 10/20 (ready in 0.2s)`, `busy: windup heavy
 0.50s (ready in 0.90s, when a cancel window opens)`. On an error, run `step` for the named time and try again.
 
+`light_attack`, `heavy_attack` and `use_technique` take `hold=true` (press and keep the button held: an action that charges
+while held turns into its charged version; the answer ends in ` (holding)`) and `hold=false` (let go, no press:
+`ok: heavy released`). A person does the same with a `press_hold` binding (`BindMode::PressHold`, the standard map's `heavy`
+and `interact`).
+
 ### Hit outcome: reactions, protection, pushes (B1)
 
 A hit can ask for more than damage: a **reaction tier** (what the target is put into), a **push**, a cost on a guard, a wall in the way. All of it is content with a default that leaves old content as it was (a field at its default does not serialize, so the content half of a replay check is unchanged), and all of it is generic: a game picks the numbers.
@@ -1178,9 +1184,159 @@ A hit can ask for more than damage: a **reaction tier** (what the target is put 
 
 **Pushes.** `Knockback { velocity, decel }` (flat, m/s and m/s per s) is a lazy component. `push_bodies` (`ActionSystems::Push`, after the effects, in `AiId` order) decays the speed first and moves by the decayed speed (`v1 = max(0, v0 - decel * dt)`, `external += dir * v1 * dt`): Euler, not a trapezoid; the first tick moves `(v0 - decel * dt) * dt`. It adds to `LocomotionInput::external` after the machine wrote it, so a wall stops it; a dead body, a body with no `LocomotionInput`, and a body that is no longer in one of its moveset's reaction, `stagger` or `guard_broken` actions lose their push (the push is the reaction's own motion and ends with it, however it ended). A reaction or a guard break with `guard_broken_push` also drops the body's own flat velocity, so the push alone moves it.
 
-**`ActionEnded { entity, action, instance, end }`** is triggered when a run stops, before the `ActionStarted` of what replaces it: `Finished` (its time ran out), `Cancelled` (a cancel window started another), `Interrupted` (a forced action, a kill, a revival), `Removed` (its definition left content). `Branched` and `Released` are reserved: nothing ends this way yet. `finish_actions` ends them in `AiId` order through `Commands` (applied at the next sync point); `force_action`, `kill` and `revive` trigger it at once. It is not a net event, and a client's prediction never emits it.
+**`ActionEnded { entity, action, instance, end }`** is triggered when an action ends or changes (the run may go on, see `Branched`), before the `ActionStarted` of what replaces it: `Finished` (its time ran out), `Cancelled` (a cancel window started another), `Interrupted` (a forced action, a kill, a revival), `Removed` (its definition left content), `Branched` (a charge turned it into its charged action: the same run goes on under the new name, B2a), `Released` (its `while_held` input was let go, B2a). `finish_actions` ends them in `AiId` order through `Commands` (applied at the next sync point); `force_action`, `kill` and `revive` trigger it at once. It is not a net event, and a client's prediction never emits it.
 
 **What the AI sees.** `protected 0.82s`, `poise protected 2.40s`, `pushed 3.2m/s` in describe; the journal says `e7 reacts heavy (e5 spar_react_heavy)`, `e6 perfectly evaded e5 spar_slam`, `e6 parried e5 spar_slam, -10 stamina` (the suffix only when the perfect guard costs something), and an ignored hit prints why: `... -0 (hp 100, god mode)`, `grace`, `downed` or `ignored`. The dev tool `react id=e7 tier=2` forces a reaction (backwards from where the body faces); `step --until named:reacting` waits for any fighter to run a reaction action. The engine rules `action.protection_sane` (timers finite and `>= 0`) and `action.knockback_sane` (a flat, finite velocity and a `decel` above 0) stop the game on a bad write. `PerfectEvaded` and `Reacted` travel to clients like the other combat events.
+
+### Action timeline: charge, turning, miss recovery, cooldown keys, queue (B2a)
+
+More of what an action does over its own time is content. Every field has a default that keeps old content and old runs
+exactly as they were (it does not serialize at its default, and an action that uses none of them takes the old code path).
+
+```ron
+{
+    "heavy": (
+        net_id: 70,
+        phases: [("windup", 0.4), ("active", 0.1), ("recovery", 0.3)],
+        cost: (stamina: 20),
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 20)],
+        charge: (after: 0.2, into: "heavy_full"),           // held 0.2 s: it turns into `heavy_full`
+        turn: [(Phase("windup"), 90)],                       // turns at 90 degrees a second while it winds up
+    ),
+    "lunge": (
+        net_id: 75,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.2)],
+        cost: (cooldown: 3.0, cooldown_key: "lunge", cooldown_if_interrupted: 0.4),
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 10)],
+        miss_recovery: 0.6,                                  // a whiff recovers 0.6 s longer
+        // never more than 22 degrees off where it started, at most 0.4 m closer for the turning,
+        // and no tracking of a target behind a wall
+        assist: (angle: 22, close: 0.4, sight: true),
+        track_until: 0.2,
+    ),
+    "light": (
+        net_id: 78,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.4)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 100), damage: 5)],
+        // The chain opens at 0.5 s; a press made in the recovery waits for it.
+        cancels: [(span: Secs(0.5, 0.7), into: [Combo("light", "light_2")], queue: Phase("recovery"))],
+    ),
+    "beam": (net_id: 83, phases: [("beam", 2.0)], while_held: "technique.2"),   // lasts while held
+    "roll": (net_id: 84, phases: [("roll", 0.4)], displacement: [(0.4, 2.0)], steer: Move, face: Keep),
+}
+// a moveset: one press waits at a time, the stronger first
+"fencer": (inputs: {..}, buffer: SingleSlot(priority: [("dodge", 60), ("technique.1", 55), ("technique.2", 55),
+                                                       ("heavy", 40), ("light", 30)])),
+```
+
+**Charge** (`charge: (after, into, until)`). While the input that started the run has been held on every tick of it, the run
+turns into `into` on the first tick with `after <= t <= until` (`until` defaults to the end of the windup: the start of the
+first hit window, else the end of the first phase). The turn keeps the run: the same `instance`, the same clock `t`, the same
+hit ledger (a target the first action already hit is not hit again by the same hit group), and the same input. It costs what
+`into` costs beyond the start: the difference of the two actions' stamina under `into`'s `stamina_mode`, one of `into`'s
+charges when it uses another charge than the action it turns from, and `into`'s cooldown, whose slot must be ready unless it
+is the slot of the action it turns from (this run started that one). When something is not there, nothing is paid and it is
+tried again on the next tick, until `until` (no event: the client cannot see a refusal, see prediction below). It triggers
+`ActionEnded { end: Branched }`, then `ActionStarted { action: into }`; the effects and the telegraph `into` has before the
+turn's `t` do not fire (the run is already past them; an accepted rule of the design). A press let go once never charges again in that run. Validation:
+`after` inside the action, `until >= after`, `into` exists, is not the action itself, and charges do not form a cycle.
+
+**Turning.** `turn: [(span, degrees_per_second)]`: an action with turn spans starts facing where the body faced (no snap) and
+turns at the highest rate of the spans open in the tick, toward its lock-on target, else the aim point, else the movement input
+(a player steering the swing; a `steer: Move` action follows only the movement input, and a `MoveOrBack` one has no spans). The rate holds for the whole tick: a
+span that opens or closes inside a tick turns it a full tick. Outside the spans the facing holds. An action with no `turn`
+keeps the old `track_until` snap exactly. `turn` and `track_until` are not used together. A steering share of a design
+("60% of the normal control") is a turn rate: the share times the body's own free turn rate
+(`CharacterParams::turn_speed_deg`). The spans turn the run's facing (its hits, guard arc and displacement), not the body: the controller turns the body toward it once a tick at its
+own rate (an action's `turn_speed_deg`, else the locked rate, else the free one; see "Controller options", C4), so a span
+faster than that rate leaves the body behind the swing, and the two never both turn the body. Angles go through `ops::atan2` and
+`ops::sin_cos`.
+
+**Attack assist** (`assist: (angle, close, sight)`, for an action that tracks: `turn` or `track_until`, not `steer: Move` or `MoveOrBack`).
+With a lock-on target, the facing stays within `angle` degrees of the direction to the target when the run started (with
+`track_until` and no `turn`, it snaps to the clamped direction). `close: metres` caps the approach the run's turning adds: what
+moving along the turned facing brings the body closer to the target than moving along the facing the run started with
+(`RunExtras::from`) is counted in `RunExtras::closed`, and past `close` the excess is taken off the displacement along the
+direction to the target (the body still moves sideways). `sight: true` turns the assist off while a `LayerMask::WORLD` collider
+lies between the chests of the fighter and its target (the ray a `LineOfSight` hit casts, at `CombatTuning::sight_height`):
+the run then does not track the target and turns toward the aim point or the movement input instead. The player turns the
+assist off with the setting `controls.attack_assist = false`: the controls then hold the input `assist_off` for the
+player's body (it is an `Intent` input: replays and the host see it), and every action with an `assist` acts as if out of
+sight. An action without `assist` tracks its target as it always did.
+
+**`face: Keep`.** The run moves the body along its own facing but does not turn it: the body keeps the facing it had, and only
+what faces it outside actions (a lock-on target, an aim point) still turns it. A roll in a direction other than the body's
+facing leaves the body looking where it looked. `face: Run` (the default) turns the body where the run points. A `face: Keep`
+roll locked on a target turns the body toward the target while the run goes where it was steered
+(`a_lock_on_target_still_turns_a_face_keep_body`), at the action's `turn_speed_deg` when it has one.
+
+**Miss recovery** (`miss_recovery: seconds`, the action needs hits). On the first tick whose `t` reaches the end of its last hit
+window, after that tick's hits are resolved (`check_misses`, `ActionSystems::Hits`, after `resolve_hits`, before
+`finish_actions`), the run is checked once: if none of its hits landed by then (a hit, a block, a parry or a guard break all
+count, the checking tick's own included), it lasts `miss_recovery` longer (`Running::length` grows; its cancel windows stay
+where they are; the phase past the end stays the last one) and `ActionMissed { entity, action, extra }` is triggered. A game
+adds its own bonus from an observer with `extend_recovery(world, entity, seconds)`; on a machine that does not simulate (a
+co-op client, where the host's state brings the longer run) it changes nothing and returns `false`, so an observer that
+calls it needs no check of its own.
+
+**Cooldown keys and shares.** `cost.cooldown_key: "lunge"` puts the cooldown on that slot instead of the action's id, so
+variants of one technique share it (`can_start` names the key: `lunge is on cooldown (ready in 2.40s)`). A key may be another
+action's id: the two then share that action's slot. `cost.cooldown_if_interrupted: 0.4` (it needs a `cost.cooldown`): a run cut
+before its windup is over keeps only that share of its cooldown (forced over, killed, revived, released, or cancelled into
+anything but a `Combo` continuation; a dodge out of the windup counts; its own end, a charge's turn and a removal do not). The
+share never lengthens a slot: a slot already below it (or ready) stays as it is. It is set before the action that cut it pays, so a new action on the same slot keeps its own full cooldown. The HUD source
+`you.cooldown` reads an action's slot through its key.
+
+**The press queue.** A cancel window's `queue: span`: a press of an input the window lets through, made while `span` is open
+and before the window opens, lives until the window opens plus `input_buffer` (`press_life`, which the machine, a client's
+prediction and the tools all use). A window with a `queue` that starts where the action ends (`Secs(L, L)`) never cuts the
+action short: it holds its presses until the action is over, and they start the tick after. Every end of a run but a
+charge's turn caps the waiting presses to `input_buffer` again. The usual press lives:
+
+| press life | content |
+|---|---|
+| a chain: the buffer's time, or past the chain's opening for a press in the recovery | `(span: Secs(open, end), into: [Combo(..)], queue: Phase("recovery"))` |
+| a chain pressed early: past the chain's opening from the first tick | `queue: Phases("windup", "recovery")` |
+| an action with no chain: its window is the end of the action | `(span: Secs(L, L), into: [Input("light")], queue: Phase("recovery"))` |
+| a technique another one may cut from `cancel`: past `cancel`, at any time | `(span: Secs(cancel, L), into: [Input("technique.1"), ..], queue: Secs(0, L))`; no window: no `queue` |
+
+An enemy's chain uses the same rule: an NPC whose brain presses the next link early (in the first link's windup) has it start
+on the tick after the combo window opens, and the director's token stays with it through the chain (the continuation is the
+same attack).
+
+**The single slot** (`MovesetDef::buffer`). `PerInput` (the default) keeps one press per input, as before. `SingleSlot {
+priority }` keeps one press. `priority` is a list of `(input, rank)` (equal ranks are allowed, inputs not listed rank 0): a press
+that ranks below the waiting one is dropped (`e5 light rejected: heavy is waiting and comes first`); an equal or higher one takes
+its place (`e5 light rejected: heavy took its place`); the same input again keeps the later expiry. The press in the slot is tried
+on every tick until it starts or its time runs out, as with `PerInput`. Only presses of inputs the moveset understands go in;
+others (a jump) keep their own buffers. The tools answer the same before pressing (`heavy is waiting and comes first: one press
+waits at a time, and light ranks below it`; a press that pushes one out says `(light no longer waits)`), and on a client's own
+body they read the predicted run and the predictor's buffer (`shown_state`, `shown_queue`), with the presses not taken yet.
+
+**`while_held: input`.** The run ends the tick its input is not held (`ActionEnded { end: Released }`). A tool press without
+`hold=true` says so: `ok: beam (a tap: it stops as soon as technique.2 is not held; hold=true keeps it going)`. An action with
+both `while_held` and a `hold` loop is a channel that loops while held and ends when let go.
+
+**State.** What a run needs beyond `Running` lives in the lazy component `RunExtras { instance, held, landed, checked, extra,
+start_facing, from, closed, charge_at }`, put in when a run whose action needs it starts and taken out when the run ends
+(every way a run ends; the engine rule `action.extras_follow_run` stops the game on extras of another run). A fighter whose
+actions use none of it never has one, so the replay hash of old content does not change. It is a component of an `AiId` entity:
+snapshots, replay checks and co-op clients get it by the default rules. No resource is added. The setting
+`controls.attack_assist` is not simulation state: what reaches the simulation is the held `assist_off` input. While a recording plays, the controls do not hold it: a recording made with the assist on verifies the same on a machine whose setting is off (test `a_replay_with_the_assist_on_verifies_on_a_machine_with_it_off`).
+
+**Prediction.** A client predicts a charge, turning, the assist (with its sight ray), `while_held` and the queue with the same
+functions (`charge_due`, `step_run`, `tracked`, `press_life`, the single slot), and reconciles by `(instance, action)`: a host
+run of the same instance under another action is the host's turn of a charge (the client takes the host's action and keeps its
+own `t` and hold); the host's start of a run the client has already turned (it arrives a round trip late) confirms the start
+and leaves the turn shown, so the body does not go back to the uncharged action and turn again; a turn the host did not make
+(its stamina, a charge or the cooldown) is kept until `until` has passed and then reverted to the host's action at the host's
+time; a same-instance, same-action run adopts what only the host changes (a miss's extra recovery: the client's run does not
+end before the host's); and when the host's run is gone with no new one and nothing is pending (a cut, a release), the shown
+run is dropped and the body goes back to the host's state.
+
+**What the AI sees.** Describe: `charging, turns in 0.12s` while the starting input is held (`charging, turns when the stamina is
+there` once it waits for stamina), `missed +0.60s` after a whiff. Journal: `e5 lunge missed: +0.60s recovery`, and the
+single slot's drops as `rejected` lines. `step --until named:charging` waits for any fighter holding a charge.
 
 ## Levels from Blender (E4.2)
 
@@ -2864,9 +3020,10 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `motion.finite` | every `AiVisible` entity has a finite `Transform` translation and a finite rotation of length 1 ± 1e-3, and a finite `MotionState` (velocity, ground normal, timers, mantle, fall height, water surface, updraft, placed position). Scale is not judged |
 | `voxel.body_in_solid` | **off by default** (`--engine-invariant voxel.body_in_solid`): no character has its capsule centre in a solid cell of a voxel field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). Off until fuzz runs on voxel terrain pass, since mantle and sloped-step ticks may graze a cell (see "Voxel fields") |
 | `action.resources_in_range` | `Health`, `Stamina` and `Poise` are finite with `max > 0` and `0 <= current <= max`. Dead bodies are checked too (`current` is 0). A game that wants a buff above `max` raises `max` with it |
-| `action.running_sane` | a running action of a fighter exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. Without a content database the rule passes |
+| `action.running_sane` | a running action of a fighter exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. The length is the run's own when that is longer than the definition's (miss recovery and `extend_recovery` lengthen a run, B2a). Without a content database the rule passes |
 | `action.protection_sane` | every `Protection` (the reaction and poise timers, B1) holds finite timers, none below 0. A NaN stays a NaN through the countdown and would shield its fighter for ever |
 | `action.knockback_sane` | every `Knockback` (a push in progress, B1) has a finite flat velocity (`y` is 0) and a finite `decel` above 0: a push that does not slow down never stops |
+| `action.extras_follow_run` | every `RunExtras` (what a charging, turning or miss-recovering run keeps, B2a) belongs to the run its fighter is running (the same `instance`), with a finite `extra >= 0` and a finite `closed >= 0`. The machine puts extras in when such a run starts and takes them out on every way a run ends, so extras left behind would hand a later run a stale hold, hit or recovery |
 | `npc.state_known` | `NpcBrain.state` is a state of the NPC's behaviour. Three carve-outs, each a state the engine itself leaves behind: an empty state (before the NPC's first decided tick), an inactive NPC (dormant or dead: the brain passes it through, so a state a hot reload removed stays until it wakes), and an NPC whose behaviour is not in content (that is reported once as a content problem) |
 | `npc.strike_spacing` | two NPCs of one director whose `min_spacing` is set never began strikes less than that apart (in whole ticks), for the starts that went through the spacing rule: the planner's presses and checked combo continuations (`NpcStrike::gated`). Judged from the last strike each NPC noted. Three carve-outs: an NPC whose plan has `ignores_spacing` is not the one held to the rule (its starts still hold the others), a strike a state hook pressed itself is noted but neither held to the rule nor held against other NPCs (the hook may or may not have asked `strike_ready`, and may start between another NPC's planned press and its start), and an action with one of the director's `spacing_exempt_tags` is not noted at all. A director without a `min_spacing` is never judged |
 | `npc.tokens_within_limit` | after the director ran, no token is held by a dead body, and each director holds no more tokens than its limit for the living players, unless every holder beyond the limit has its attack in flight (an attack under way keeps its token to its end). It is judged right after the director, not at the end of the tick: a holder that dies in `Resolve` keeps its token until the next tick's director takes it back, so the end of the tick would fire on every kill. A small system next to the director writes what it found to the resource `TokenAudit`, which the rule reads; it is recomputed every tick and is not part of a snapshot or a replay |
@@ -2899,6 +3056,7 @@ $ shards assert list
   action.running_sane  engine rule  armed
   action.protection_sane  engine rule  armed
   action.knockback_sane  engine rule  armed
+  action.extras_follow_run  engine rule  armed
   npc.state_known  engine rule  armed
   npc.strike_spacing  engine rule  armed
   npc.tokens_within_limit  engine rule  armed
@@ -3625,6 +3783,7 @@ hold_to_toggle = false       # held buttons work as toggles
 [controls]
 mouse_sensitivity = 1.0      # 0.05…5
 invert_y = false
+attack_assist = true         # false: attacks do not correct their direction toward the lock-on target (holds `assist_off`)
 
 [controls.bindings]          # only what the player changed
 "gameplay.jump" = ["Key(KeyJ)", "GamepadButton(South)"]
@@ -3638,7 +3797,7 @@ invert_y = false
 |---|---|
 | `graphics` | `shards_settings::apply_graphics`: the main window (fullscreen, vsync, size). The window changes when the settings change, not every frame, so the size the player dragged with the mouse is not taken back. Without a window the values are only stored. `render_scale` is applied by `shards::render_scale`: the resolution of the 3D picture, not the window scale (see "3D picture resolution" below). `shadows` is read by the game: `GraphicsSettings::shadow_quality()`; `foliage` is read by `shards_scatter` (`GraphicsSettings::foliage_density()`): at 0.5 half of the same instances stays, with no new ones (see "Foliage and small objects (E10.2)"); `interpolation` is read by `shards_motion` (render interpolation, see "Render interpolation (C8)") |
 | `audio` | `shards_audio`: the volume of the buses `music`, `sfx`, `voice`, `ui` with `master` taken into account (`AudioSettings::volume("music")`), applied to what is already playing (see "Audio") |
-| `controls` | `shards_motion`: `ControlSettings` ⇄ `InputMap` (see "Input" in "Movement (E2)"); sensitivity and the Y-axis inversion go to `CameraSettings` |
+| `controls` | `shards_motion`: `ControlSettings` ⇄ `InputMap` (see "Input" in "Movement (E2)"); sensitivity and the Y-axis inversion go to `CameraSettings`; `attack_assist = false` makes the controls hold `assist_off` for the player's body (see "Action timeline (B2a)") |
 | `accessibility` | `shards_motion`: the field of view and the strength of the camera shake, `MotionBlur` on the cameras that have it (the game adds the component, the setting sets the strength, 0 turns it off), `hold_to_toggle` in the input map; `shards_action`: `flashes` for the blinking of telegraphs and of off-screen markers (`reduced` — half as big and no more than 2 times a second, `off` — a steady light, `draw::pulse_at`) |
 
 **3D picture resolution: `graphics.render_scale` (E8.6, E10).** The 3D world is drawn into a picture of `render_scale` x the window's pixels (with `--offscreen`, the base is the size of the `--offscreen` picture, 1280×720 by default), and the picture is stretched over the whole window with a linear filter;
@@ -4874,7 +5033,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 | `characters/bodies.locomotion.ron` | how the player, the skeleton and the guard walk |
 | `combat/player.action.ron` | the combo `light_1`–`light_3`, `heavy`, the roll (i-frames 0.18 s), the block with a perfect block, the flask |
 | `combat/warden.action.ron` | the guard's four attacks (`slash`, `slam`, `sweep`, `shockwave`), calm and enraged |
-| `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters |
+| `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters; for the action timeline (B2a), `spar_heavy` (charges into `spar_heavy_full` when held 0.25 s; a light or a dodge pressed in its windup waits for its recovery), `spar_lunge` and `spar_lunge_far` (one `lunge` cooldown slot; the lunge turns at 360°/s within 45°, at most 0.4 m closer for the turning and not toward a target behind a wall, recovers 0.6 s longer on a whiff and keeps 40% of its cooldown when cut in its windup), `spar_channel` (`while_held`), `spar_roll_keep` (`face: Keep`), and the moveset `timeline` (a single slot by priority), which `timeline.scenario` lends to the player |
 | `combat/skeleton.action.ron`, `combat/fighters.moveset.ron`, `combat/tuning.combat_tuning.ron` | the skeleton's claw, the movesets, the input buffer |
 | `npc/monsters.behavior.ron`, `monsters.perception.ron`, `monsters.director.ron`, `monsters.attack_plan.ron` | how the monsters think: the `skeleton` and `warden` state machines (with a `calm` state that the scenarios do not let the monster leave), sight, the `default` director (two tokens for one player) and the `boss` director (the guard strikes on its own), the guard's attack plans |
 | `region/wilds.*.ron` | the wilds: tiles, socket rules, points of interest, the region, a fallback map, navmesh settings |
@@ -4903,6 +5062,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
   invariants: alive, never below the start;
 - `combat_prototype.scenario` — the guard is beaten in 11 rounds. Each round starts from its warning (`step --until
   "journal:e6 winds up"`), then a roll out of the zone, a block, a perfect block with a heavy hit, an exchange of blows under hyper-armour, the flask, the combo. The test runs it after six different pauses (other attacks in another order): a win every time;
+- `timeline.scenario` (B2a) — the player borrows the `timeline` moveset (`combat/sparring.*.ron`) against a still skeleton: a heavy held from the press shows `charging, turns in 0.23s` (`step --until named:charging`) and turns into `spar_heavy_full` (-25), a tapped one stays `spar_heavy` (-12); a light pressed while the heavy winds up answers `ok: queued, light starts in 0.5…` and the jab lands with no `light rejected`; a lunge into nothing writes `e5 spar_lunge missed: +0.60s recovery` and shows `missed +0.60s`; a lunge staggered in its windup keeps 40% of its cooldown on the `lunge` slot, so its variant on `technique.2` answers `lunge is on cooldown (ready in 0.5…)`; a channel started with `hold=true` lasts while held and ends on `hold=false`; locked on the skeleton to the north, a roll east (`spar_roll_keep`, `face: Keep`) keeps the player `facing N`. At the end the player has its own moveset, no `RunExtras` and nothing queued;
 - `boss_fight`, `dodge`, `errors` — the switch to phase 2, a roll to dodge a hit, errors that teach;
 - `npc_director.scenario` (E6) — three skeletons against one player in god mode, 30 s of combat: the sandbox condition `three_attacking`
   (three hit at once) is never met on any tick, but each skeleton gets its own turn, and the tokens rotate;
@@ -4937,8 +5097,8 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
   generated`), the hash is `7bbfdc3b62623fbc` again, and `save_check` agrees.
 
 The scenarios start with `heal`/`teleport`/`set`/`npc_set_state … calm`, so they run on a fresh game and after other scenarios, in any order:
-CI runs them forward and then backward in one game. Sessions of seven of them are recorded as reference replays in `tests/replays/`
-(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`; see "Replays").
+CI runs them forward and then backward in one game. Sessions of nine of them are recorded as reference replays in `tests/replays/`
+(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `timeline`; see "Replays").
 
 ## Tests and CI
 
@@ -4978,7 +5138,7 @@ a separate workspace; one `#[ignore]`: recording its references).
 | `shards_steam` | on a fake Steam: lobbies and invitations, relay sessions (held datagrams, refusal, hub delay), the game server, achievements and the fake's cloud, `steam:` and `+connect_lobby` addresses, the cloud check and its file names; `tests/steam/`: a lobby host and two friends over the stand's relay, the game server and a client by id, an invitation, refusal of a stranger, a failed join and `--exit-with-host`, a check of the achievement content, a write to Steam after a second and a retry of a refused write, the previous run, a replay, co-op (the host decides, each one opens its own), a copy of each record, cloud turned off, the check at start-up before a slot is loaded, the answers of `steam` and `ai/status`. The real backend is only built (`--features sdk`) |
 | `shards_net` | `src/`, without Bevy: transports (an in-memory hub, UDP, a reply to a stranger that binds no one), link simulation, the channel (reliable and latest-only messages, blobs, acknowledgements, RTT, loss, timeouts), the datagram format (knock, challenge, cookie in the acknowledgement fields, protocol 1 is recognised), the cookie (SipHash-2-4 on reference vectors, address, session, expiry, forgery); the session (a knock leaves no trace on the host, a peer only with the cookie of its own address and session, an expired cookie, the table of strangers as before, refusal of an older build on its protocol and no more than 8 times a second, the character in parts: the place is held, order, size, `Hello` bytes, JSON; the limits on input frames and on the largest honest packet, what is held after the world is reloaded, replication rules, waiting for room in the channel by count and by bytes, `NetDef`, departed tokens). The whole session is covered in the sandbox tests `net*.rs` |
 | `shards` | how networking and saves fit together (`coop`: what the host knows about the player's character, how it travels as text), engine sections (a number that a body never has), the stand's slot, a replay from a snapshot (`--verify`: the same result, code 2 for a foreign snapshot), the mode without a window: the same plugins, but no image (`display` and the `shot` hint), `--offscreen`: the window's plugins without a window (an image for `shot`, into which the cameras aimed at the window draw, also after a change of target), the internal 3D resolution (`render_scale`: an image of the right size, the cameras into it and back, shown on the whole window, the window changes size, the system scale, the game camera with its own image), the test app, `testing::ok` on a gameplay failure, `testing::run_to` and `verify`, when a violated rule matched the start of loading, the tick budget on the command line, frame time (`frames`: a frame is the slower of the two worlds, a frame with `step` does not count, the GPU report, draw commands travel with their own frame), the performance test (`bench`: verdicts, including `draws` and `nav_bake_s`, a definition check, `--perf` and its codes), `counts` without a window, the animation bridge on a real model with a skin and on a humanoid from Blender (a roll in place, a clip from a second file), `--bake-motion` |
-| `sandbox` | in one binary, `tests/sandbox`: snapshots (`snapshots.rs`: the state after loading is the same as in the original session, during a roll, a combo, a telegraph, planning, swimming, a flask, NPC fights and in a generated region), the ruin tile (`tiles.rs`: the file from the test glTF generator matches the one committed), scenarios (`scenario_files`: each file on a fresh game, all of them in a row in one game, the combat prototype after six different pauses), reference replays, actions, content, the obstacle course, determinism, visibility, scope permissions, replays, `kill` and SIGHUP; invariants (`invariants.rs`, the engine's rules `engine_rules.rs` (a control test per rule): the sandbox rules and their limits, sessions, a stop in real time, the replay of a violation, a snapshot; `net_seams.rs`: the client does not check the rules); co-op on a stand (`net.rs`, `net_guards.rs`, `net_lifecycle.rs`, `net_sync.rs`, `net_predict.rs`, `net_seams.rs`, `net_coop.rs`, of which 2 are measurements under `#[ignore]`: joining and leaving, limits and the peer's text, the world reloaded, input, desync, the end of a session and exit codes, stand clocks, UDP on loopback, client prediction, characters and saves); a long game (`soak.rs`: two minutes with a host and two clients at 150 ms and 2 % with a region change and saves, half an hour under `#[ignore]`); the screenshot without a window (`offscreen.rs`, `#[ignore]`: needs a GPU or software rendering); separately `system_failures` (a gameplay failure, a crash replay, a crash report, a panic in another thread, `crash_report`, a return to a snapshot after a failure), `log_capture` (log lines in `step`) and `perf` (tick time: budget, journal, `ai/status`; the performance test on the reference scene without a window, with `offscreen` under `#[ignore]`): these run in their own processes |
+| `sandbox` | in one binary, `tests/sandbox`: snapshots (`snapshots.rs`: the state after loading is the same as in the original session, during a roll, a combo, a held charge, a whiff's extra recovery, a telegraph, planning, swimming, a flask, NPC fights and in a generated region), the ruin tile (`tiles.rs`: the file from the test glTF generator matches the one committed), scenarios (`scenario_files`: each file on a fresh game, all of them in a row in one game, the combat prototype after six different pauses), reference replays, actions, content, the obstacle course, determinism, visibility, scope permissions, replays, `kill` and SIGHUP; invariants (`invariants.rs`, the engine's rules `engine_rules.rs` (a control test per rule): the sandbox rules and their limits, sessions, a stop in real time, the replay of a violation, a snapshot; `net_seams.rs`: the client does not check the rules); co-op on a stand (`net.rs`, `net_guards.rs`, `net_lifecycle.rs`, `net_sync.rs`, `net_predict.rs`, `net_seams.rs`, `net_coop.rs`, of which 2 are measurements under `#[ignore]`: joining and leaving, limits and the peer's text, the world reloaded, input, desync, the end of a session and exit codes, stand clocks, UDP on loopback, client prediction, characters and saves); a long game (`soak.rs`: two minutes with a host and two clients at 150 ms and 2 % with a region change and saves, half an hour under `#[ignore]`); the screenshot without a window (`offscreen.rs`, `#[ignore]`: needs a GPU or software rendering); separately `system_failures` (a gameplay failure, a crash replay, a crash report, a panic in another thread, `crash_report`, a return to a snapshot after a failure), `log_capture` (log lines in `step`) and `perf` (tick time: budget, journal, `ai/status`; the performance test on the reference scene without a window, with `offscreen` under `#[ignore]`): these run in their own processes |
 
 The template's tests (`template/tests/game`, 45 and one `#[ignore]`) are built into one binary: scenarios (and the stand scenario), determinism,
 replays, content, co-op (host and guest at 150 ms and 2 %: the guest's trophy on each copy and in its file, the next game with it,
@@ -5083,7 +5243,71 @@ E7's acceptance every night, and `record-replays.yml` records the reference repl
    foliage is not scattered by distance either, so it is sparser on a large region. The navmesh for several bodies is already there
    (body classes, E6.1).
 3. **Minidumps and a crash dialog for the player** (E10.7 beyond the one-file crash report): postponed by the owner's decision.
-4. Hot reload of code (`--features dynamic`, subsecond).
+4. Hot reload of code (not done: `--features dynamic` is only a link-time option, see "Building and iterating fast"; patching a running game, for example with subsecond, is still open).
+
+## Building and iterating fast
+
+A cold build of the sandbox takes 8 to 16 minutes, and a Bevy rebuild is the slowest part of an agent's loop. These are the levers, from the cheapest to the most invasive, with what was measured for each. The variants checked against the reference replays, `link.exe`, `rust-lld` and `--features dynamic`, do not change what the code does: all eight verify byte for byte (`--verify`) with each. The job count and `sccache` were not replay-checked; neither changes the code rustc generates.
+
+### Change content, not code
+
+An edit of these needs no rebuild and no restart of a running game (`cargo sandbox --headless --paused` keeps running):
+
+- **Every `*.<kind>.ron` content file** (actions, movesets, prefabs, attacks, movement and camera parameters that are in content, NPC behaviours, perception, attack plans, directors, looks, effects, sounds, music, screens, themes, regions, generators, perf budgets): hot reload checks the edit together with the whole database and applies it (`content_apply`; `content_reload` rereads everything). A broken edit leaves the previous version in effect and prints the file and the line. Check without a game: `cargo sandbox --check-content`.
+- **Levels** (`level_reload`), **text** (`assets/locale/<language>/*.ftl`, hot reload; `settings_set group=locale key=language value=ru`), **settings** (`settings_set`), **bindings** (`rebind`).
+- **Behaviour you can describe with `shards` commands**: a `.scenario` file runs against a live game (`cargo shards scenario FILE`), and a rule is a `shards assert add`, with no Rust.
+- **Tools that set state**: `set`, `teleport`, `heal`, `god`, `spawn_prefab`, `regen`, `npc_set_state`, `console line="speed x=0.25"`. To try a number before it goes into a file, `set` it on the entity.
+
+Two limits: during a co-op session the host refuses `content_apply`, `content_reload` and `level_reload` (clients would desync), and a change to a baked file needs its bake command (`--bake-nav`, `--bake-motion`).
+
+### Faster Rust builds: what was measured
+
+Measured on one Windows 11 PC (16 threads, 31 GB, other agents building on it), `x86_64-pc-windows-msvc`, Rust 1.99.0, the dev profile of `Cargo.toml`. Times are seconds.
+
+**Method.** The two configurations are built in their own target directories and sampled one after the other (A B A B ...), four or five samples each; the table gives the median and the spread (min-max). Before each sample the `rustc` processes on the machine were counted (`Get-Process rustc`), because other builds ran on it; the load column is the range of that count, and series are compared only inside one block of the table (they ran at different loads). Sampled changes: **leaf** adds a public function to `crates/sandbox/src/main.rs` (one crate compiles, then the executable links); **deep** adds one to `crates/shards_action/src/machine.rs` (every crate above it recompiles, then the executable links). The rebuild is `cargo build -p sandbox`. A cold build is one sample per configuration (it takes 7-16 minutes), so its spread is unknown and it only tells large differences. Rerun the samples on your machine before relying on a number: load on a shared machine moves them by tens of percent.
+
+| change | configuration | metric | median | spread | load (rustc running) |
+|---|---|---|---|---|---|
+| linker | MSVC `link.exe` | leaf rebuild + link, n=5 | 7.1 | 5.4-11.5 | 1-4 |
+| linker | `rust-lld` | leaf rebuild + link, n=5 | 3.0 | 2.9-3.7 | 1-4 |
+| linker | MSVC `link.exe` | deep rebuild + link, n=4 | 17.1 | 11.5-20.1 | 0-1 |
+| linker | `rust-lld` | deep rebuild + link, n=4 | 11.2 | 9.1-14.4 | 0-1 |
+| linker | `link.exe` / `rust-lld` | cold build, n=1 each | 929 / 977 | - | 4-5 |
+| dynamic | `rust-lld`, static Bevy | leaf rebuild + link, n=4 | 4.9 | 4.1-21.0 (one outlier) | 9 |
+| dynamic | `rust-lld`, `--features dynamic` | leaf rebuild + link, n=4 | 2.3 | 2.1-2.9 | 9 |
+| dynamic | `rust-lld`, static Bevy | deep rebuild + link, n=7 | 13.9 | 12.6-22.4 | 9-11 |
+| dynamic | `rust-lld`, `--features dynamic` | deep rebuild + link, n=7 | 16.2 | 10.2-27.9 | 9-11 |
+| test binary | MSVC `link.exe` | `perf` test relinked after a change, n=4 | 14.6 | 9.6-23.5 | 8-9 |
+| test binary | `rust-lld` | `perf` test relinked after a change, n=4 | 6.0 | 4.8-31.0 (first sample) | 9-11 |
+| test build size | static Bevy / `--features sandbox/dynamic` | `cargo test --workspace --no-run`, 51 executables, disk | 22 GB / 17 GB | - | - |
+| jobs | 4 / 8 / 12 jobs, `rust-lld` | cold build, n=1 each | 977 / 633 / 445 | - | 4 / 1 / 4 |
+| jobs baseline | no wrapper, 8 jobs (the 633 s of the row above; the reference for the sccache rows, not an A/B: the load differs) | cold build, n=1 | 633 | - | 1 |
+| sccache | `RUSTC_WRAPPER=sccache`, empty cache | cold build, n=1 | 494 | - | 5 |
+| sccache | same, new target directory, full cache | cold build, n=1 | 526 (0 of 399 hits) | - | 16 |
+| sccache | same, the first directory emptied, full cache | cold build, n=1 | 339 (337 of 399 hits) | - | 10 |
+
+- **Linker: `rust-lld` is faster and is the default of the engine repository on Windows.** One changed crate plus the link takes about 3 s instead of 7 s (the spreads do not overlap). A deep rebuild was 2-7 s shorter in each of the four A/B pairs, but with n=4 and overlapping spreads (11.5-20.1 against 9.1-14.4) that is suggestive, not shown. The cold build is the same within what one sample can tell. `.cargo/config.toml` of the engine sets `linker = "rust-lld"` for `x86_64-pc-windows-msvc`; the linker is part of cargo's fingerprint, so switching rebuilds everything once. `CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=link.exe` brings the old linker back. The template stays on `link.exe`: the executables a game ships (`shards package`, a `dist` build with thin LTO) still come from it, because the PE file (PDB, CFG, debug info, imports, how antivirus products judge it) was not compared. Cargo reads every `.cargo/config.toml` from the working folder up, so inside this repository the template would inherit the root's `rust-lld`; `template/.cargo/config.toml` therefore sets `linker = "link.exe"`, and `shards package`, which runs cargo in the game's folder, links with it (a game kept outside the repository gets `link.exe` either way). A build run from the repository root with `--manifest-path template/Cargo.toml` (the tests, CI) reads only the root's config and links with `rust-lld`: those are test builds, not shipped ones. A game may opt in for its dev builds with `linker = "rust-lld"` in its own `.cargo/config.toml`. With no `LIB` set in the shell the build still works: rustc finds the Visual Studio and Windows SDK libraries itself for this linker, so a missing VS or SDK install fails the link, as it does with `link.exe`. CI: the only Windows job is `cross.yml` (weekly, also `workflow_dispatch`), so Windows CI first sees `rust-lld` in its next run; `ci.yml` is Linux only. `rust-lld` is in every rustup toolchain (`lib/rustlib/<host>/bin`), so nothing is installed. Not measured: Linux. Per its release notes Rust has linked `x86_64-unknown-linux-gnu` with `rust-lld` by default since 1.90, so there is probably nothing to switch on there, but that was not tried; `mold` was neither measured nor configured.
+- **`--features dynamic` (Bevy as one DLL): a small win for the link, none for a deep rebuild.** It builds and runs on Windows MSVC (`bevy_dylib.dll` is 140 MB; the 65535-export limit is not hit), and the eight reference replays verify identically with it. With `rust-lld` the static link is only about 3-5 s, so the DLL seems to save about 2-3 s on a leaf rebuild (n=4, all at load 9, one static outlier: suggestive, not shown) and nothing visible on a deep one (seven samples each, medians 13.9 s static and 16.2 s dynamic, spreads 12.6-22.4 and 10.2-27.9, load 9-11). The blocks ran at different loads, so compare only inside a block: a deep rebuild is dominated by compiling the crates above the changed one. What it does save is disk: the workspace's 51 test executables take 17 GB instead of 22 GB, and `cargo test -p sandbox --features dynamic` passes, reference replays included. It stays an option: `cargo sandbox --features dynamic`, or `--features sandbox/dynamic` together with `--workspace`. Do not use it for `dist` builds. Run the executable through cargo (`cargo run`, `cargo test`): cargo puts the DLL and Rust's `std-*.dll` on the search path. Started by hand, both folders (`target/debug`, and `lib/rustlib/<host>/lib` of the toolchain) must be in `PATH`.
+- **Jobs: more is faster, until the machine runs out of memory.** A cold sandbox build took 977 s with 4 jobs, 633 s with 8 and 445 s with 12 (single samples, other builds running; at one moment 21 `rustc` processes on the machine held 8.7 GB). But a `cargo test --workspace --no-run` with sixteen jobs next to ten other `rustc` processes ran out of memory (`memory allocation failed` in `rustc`). The same run had `rust-lld` exit with `0xc000001d` (`STATUS_ILLEGAL_INSTRUCTION`), seen there once and not explained; it is not an out-of-memory status. So `.cargo/config.toml` keeps `jobs = 4`, and a machine with free RAM sets `CARGO_BUILD_JOBS=8` (or 12) for the run; the environment beats the file. Rule of thumb: about 2-4 GB of RAM per job at peak. Do not raise it when several agents or builds share the machine: each of them setting 12 jobs hits the same out-of-memory failure.
+- **sccache: not adopted; it helps only a rebuild into the same target directory.** It is not in `.cargo/config.toml`. To try it: `cargo install sccache --locked`, then `RUSTC_WRAPPER=sccache cargo build`. A new target directory in another place got 0 hits out of 399 compilations, also with `SCCACHE_BASEDIRS` set, so the cache does not carry a Bevy build over to a new worktree whose `target/` is elsewhere. In the same directory (after `cargo clean`, for instance) 337 of 399 compilations hit (84%) and the build took 339 s against 494 s for the filling build (single samples at loads 10 and 5). The workspace's own crates build incrementally and are never cached.
+- **Test binaries: not consolidated.** The workspace builds 51 test executables; only `shards` (5 integration-test files), `sandbox` (5) and `shards_save` (2) have more than one, the others are already one `tests/<crate>/main.rs`. Relinking the `perf` test binary took a median 6.0 s with `rust-lld` against 14.6 s with `link.exe` (this includes recompiling the test crate), so the linker already cut most of what a binary costs; merging the three crates would save perhaps 8 links of 3-5 s, well under a minute of a full test build, while `perf` has to stay a binary of its own (CI selects `binary_id(sandbox::perf)` and runs it with `-j 1`), and `log_capture` and `system_failures` rely on process-wide state. Nothing was merged.
+
+### Target directory size
+
+Each worktree has a `target/` of its own: 6-7 GB after a sandbox build, 22 GB after `cargo test --workspace --no-run` (17 GB with `--features sandbox/dynamic`). Run `cargo clean` in finished worktrees, or point a long job at a scratch `CARGO_TARGET_DIR` and remove it afterwards. For the sandbox build alone the dynamic build is no smaller (6 GB against 6-7 GB); it pays off with many test executables, each of which links Bevy statically otherwise.
+
+### Numbers still in Rust code (follow-ups)
+
+These are constants in gameplay code that a designer would tune, so changing one needs a rebuild and, if it changes gameplay, new reference replays. Moving them into content (for example a `*.camera.ron`) is a separate change; none was moved here. Epsilons and tolerances (`TINY`, `EPS`, `STRAIGHT`, `ROTATION_TOLERANCE`) belong in code.
+
+| place | constants |
+|---|---|
+| camera and lock-on, `shards_motion/src/camera/` | `FLICK`, `FLICK_COOLDOWN`, `LOCK_FRAMING_RATE`, `ASSIST_CONE`, `RELEASE_FACTOR`, `MIN_DISTANCE`, `CAMERA_RADIUS`, `TRAUMA_DECAY` |
+| controller, `shards_motion/src/controller/` | `FLOAT_RATE`, `SHALLOW_MARGIN`, `LAND_PROBE`, `PUSH_COS` (`locomotion.rs`); `EDGE_PROBE`, `MIN_LEDGE_ROOM`, `MIN_GAP` (`mover.rs`); the defaults of `CharacterParams` (`params.rs`) |
+| movement planning, `shards_motion/src/perception/path.rs` | `MANTLE_COST`, `DROP_COST`, `SWIM_FACTOR`, `WATER_DROP`, `GOAL_BAND` |
+| navmesh routes, `shards_npc/src/nav/query.rs` | `START_REACH`, `GOAL_REACH`, `GOAL_BAND` |
+| NPC avoidance and senses, `shards_npc/src/` | `nav/avoid.rs`: `CROWD`, `SWITCH`, `STILL`; `ai.rs`: `LEASH_SLACK`, `NEAR_SIGHT`; `perception.rs`: `SWITCH` |
+| orders, `shards_action/src/` | `orders.rs`: `APPROACH`, `MIN_REACH`; `def.rs`: `SIGHT_HEIGHT` |
 
 ## Conventions and building
 
@@ -5093,7 +5317,7 @@ E7's acceptance every night, and `record-replays.yml` records the reference repl
 - The Bevy version is pinned (`0.20.0`). Update it deliberately, as a separate step: Bevy's API changes in every release.
   Third-party crates (now `parry3d =0.31.1` and its `glamx =0.3.1`, `ron =0.12.2`, `gltf =1.4.1` in `shards_level`) are added after their Bevy 0.20 support is checked, are pinned to an exact
   version, and are hidden behind the engine's API.
-- `.cargo/config.toml` sets `jobs = 4`, because this machine has little RAM. If you have more memory, raise it. Dependencies
+- `.cargo/config.toml` sets `jobs = 4` (a small or shared machine can run out of memory with more; `CARGO_BUILD_JOBS=8` or `12` when RAM is free, about 2-4 GB per job) and, on Windows, links with `rust-lld`. See "Building and iterating fast". Dependencies
   are built with `opt-level = 3`, the project's own code with `opt-level = 1`.
 - Versions and tags: SemVer; all engine crates share one version (`[workspace.package]`); the maintainer sets the tag; the rules are in
   [CHANGELOG.md](../CHANGELOG.md).

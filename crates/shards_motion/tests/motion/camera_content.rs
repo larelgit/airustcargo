@@ -33,6 +33,8 @@ fn a_camera_definition_sets_the_tuning_and_a_reload_changes_it() {
     let dir = temp_dir("camera_content");
     write(&dir, "content/camera.camera.ron", r#"{ "default": (pitch: (-1.1, 0.5), follow_rate: Some(12.0), arm: (follow_rate: Some(6.0))) }"#);
     let mut app = engine_app(&dir);
+    let errors: Vec<String> = app.world().resource::<shards_content::ContentDb>().errors().map(ToString::to_string).collect();
+    assert!(errors.is_empty(), "{errors:?}");
     frames(&mut app, 3);
     let t = tuning(&app);
     assert_eq!((t.pitch, t.follow_rate, t.arm.follow_rate), ((-1.1, 0.5), Some(12.0), Some(6.0)));
@@ -62,11 +64,14 @@ fn a_camera_definition_out_of_range_is_an_error_naming_its_file_and_field() {
         "content/camera.camera.ron",
         r#"{ "default": (pitch: (0.5, -0.5), arm: (follow_rate: Some(-2.0)), flick: (stick_threshold: 0.8, stick_rearm: Some(0.9))) }"#,
     );
-    let app = engine_app(&dir);
+    let mut app = engine_app(&dir);
     let errors: Vec<String> = app.world().resource::<shards_content::ContentDb>().errors().map(ToString::to_string).collect();
     for needle in ["pitch (0.5, -0.5)", "arm.follow_rate", "flick.stick_rearm"] {
         assert!(errors.iter().any(|e| e.contains("content/camera.camera.ron") && e.contains(needle)), "{needle}: {errors:?}");
     }
+    // A first load keeps the broken definition in the database; the camera does not take it.
+    frames(&mut app, 3);
+    assert_eq!(tuning(&app), CameraTuning::default());
 }
 
 #[test]

@@ -5,6 +5,8 @@
         rest: (0.3, 0.8),
     ),
     "jabber": (options: [(input: "light")], rest: (0.2, 0.4)),
+    // One attack, then a long rest: a chain's links are its own presses.
+    "linker": (options: [(input: "light")], rest: (3.0, 3.0)),
     // From afar: a cast whose bolt is an effect of the action, not a hit.
     "caster": (options: [(input: "light", max: Some(8.0))], rest: (0.2, 0.4)),
     "mixed": (options: [(input: "light", tags: ["light"]), (input: "heavy", tags: ["heavy"])], rest: (0.1, 0.3)),

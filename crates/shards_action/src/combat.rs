@@ -40,7 +40,7 @@ use crate::def::{touches, ActionDef, CombatTuning, HitFlag, MovesetDef, EPS};
 use crate::fighter::{
     grant_protection, hostile, set_reaction_immunity, Armor, Dead, Fighter, Health, Invulnerable, Knockback, Poise, Protection, Stamina, Team,
 };
-use crate::machine::{force_action, ActionEnd, ActionEnded, ActionState, InputBuffer};
+use crate::machine::{force_action, interrupted, ActionEnd, ActionEnded, ActionState, InputBuffer, RunExtras};
 use crate::status::add_status_buildup;
 use crate::zone::WorldShape;
 
@@ -416,6 +416,14 @@ fn resolve(world: &mut World, d: Detected) {
     let hooks = world.resource::<DamageHooks>().0.clone();
     for hook in hooks {
         hook(&mut ctx, world);
+    }
+    // A hit that met the target (struck it, or its guard) is no miss for `miss_recovery`.
+    if matches!(ctx.outcome, Outcome::Hit | Outcome::Blocked { .. } | Outcome::Parried { .. } | Outcome::GuardBroken)
+        && let Some(mut x) = world.get_mut::<RunExtras>(d.attacker)
+        && x.instance == d.instance
+        && !x.landed
+    {
+        x.landed = true;
     }
     apply(world, ctx);
 }
@@ -1020,6 +1028,7 @@ pub fn kill_with(
         None => {
             let ended = world.get_mut::<ActionState>(entity).and_then(|mut s| s.current.take());
             if let Some(run) = ended {
+                interrupted(world, entity, &run);
                 world.trigger(ActionEnded::of(entity, &run, ActionEnd::Interrupted));
             }
         }
@@ -1038,6 +1047,7 @@ pub fn revive(world: &mut World, entity: Entity) -> bool {
     world.entity_mut(entity).remove::<Dead>();
     let ended = world.get_mut::<ActionState>(entity).and_then(|mut s| s.current.take());
     if let Some(run) = ended {
+        interrupted(world, entity, &run);
         world.trigger(ActionEnded::of(entity, &run, ActionEnd::Interrupted));
     }
     if let Some(mut poise) = world.get_mut::<Poise>(entity) {

@@ -1,4 +1,5 @@
-//! The engine rules `action.resources_in_range` and `action.running_sane`.
+//! The engine rules `action.resources_in_range`, `action.running_sane`, `action.protection_sane`,
+//! `action.knockback_sane` and `action.extras_follow_run`.
 
 use ai_core::{with_query, AiId, Offenders};
 use bevy::prelude::*;
@@ -6,7 +7,7 @@ use shards_content::ContentDb;
 
 use crate::def::ActionDef;
 use crate::fighter::{Fighter, Health, Knockback, Poise, Protection, Stamina};
-use crate::machine::ActionState;
+use crate::machine::{ActionState, RunExtras};
 
 /// The engine rule `action.resources_in_range`: `Health`, `Stamina` and `Poise` hold finite
 /// numbers with `max > 0` and `0 <= current <= max`.
@@ -52,7 +53,9 @@ fn out_of_range(name: &str, current: f32, max: f32) -> Option<String> {
 }
 
 /// The engine rule `action.running_sane`: a running action exists in content, its phase is one
-/// of the action's phases, and its clock `t` is between 0 and its length plus one tick.
+/// of the action's phases, and its clock `t` is between 0 and its length plus one tick. The length
+/// is the run's own when that is longer than the definition's: miss recovery and
+/// `extend_recovery` make a run last beyond its phases (`Running::length`).
 ///
 /// Checked for fighters (`Fighter`), the entities the action machine advances; an `ActionState`
 /// on anything else is never advanced or cleared, so it says nothing. The machine clears an
@@ -74,8 +77,9 @@ pub fn running_sane(world: &World) -> Option<String> {
             };
             if !def.phases.is_empty() && !def.phases.iter().any(|p| p.0 == run.phase) {
                 bad.note(*id, || format!("action `{}` is in phase `{}`, which is not one of its phases", run.action, run.phase));
-            } else if !(run.t >= 0.0 && run.t <= def.length() + tick) {
-                bad.note(*id, || format!("action `{}` has t = {} outside 0..={} (+ one tick)", run.action, run.t, def.length()));
+            } else if !(run.t >= 0.0 && run.t <= run.length.max(def.length()) + tick) {
+                let length = run.length.max(def.length());
+                bad.note(*id, || format!("action `{}` has t = {} outside 0..={} (+ one tick)", run.action, run.t, length));
             }
         }
     })?;
@@ -117,6 +121,31 @@ pub fn knockback_sane(world: &World) -> Option<String> {
                 bad.note(*id, || {
                     format!("Knockback velocity = {v}, decel = {}: a flat finite velocity and a deceleration above 0", k.decel)
                 });
+            }
+        }
+    });
+    bad.report()
+}
+
+/// The engine rule `action.extras_follow_run`: a [`RunExtras`] belongs to the run its fighter is
+/// running (same `instance`), and its `extra` and `closed` are finite numbers `>= 0`.
+///
+/// The machine puts extras in when a run that needs them starts and takes them out when it ends,
+/// on every path a run ends by (its time runs out, a cancel, a forced action, a death, a revive,
+/// a release, a hot reload); extras left behind would hand a later run a stale hold, landing
+/// flag or extra recovery. `extra` only grows by `miss_recovery` (validated `>= 0`) and
+/// [`extend_recovery`](crate::extend_recovery) (which refuses a negative number), and `closed` only
+/// by the approach the closing cap lets through (`> 0`).
+pub fn extras_follow_run(world: &World) -> Option<String> {
+    let mut bad = Offenders::default();
+    with_query::<(&AiId, &RunExtras, Option<&ActionState>), (), _>(world, |query| {
+        for (id, x, state) in query.iter(world) {
+            let running = state.and_then(|s| s.current.as_ref());
+            if running.is_none_or(|r| r.instance != x.instance) {
+                let now = running.map_or("no action".to_owned(), |r| format!("instance {} ({})", r.instance, r.action));
+                bad.note(*id, || format!("RunExtras of instance {} while it runs {now}", x.instance));
+            } else if !(x.extra.is_finite() && x.extra >= 0.0 && x.closed.is_finite() && x.closed >= 0.0) {
+                bad.note(*id, || format!("RunExtras extra = {}, closed = {}: finite numbers >= 0", x.extra, x.closed));
             }
         }
     });
