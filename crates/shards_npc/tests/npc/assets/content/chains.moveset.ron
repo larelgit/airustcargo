@@ -1,0 +1,5 @@
+// The chain's fighters: the first link with a queue span, and without one.
+{
+    "linker": (inputs: {"light": "link_1"}, stagger: "grunt_stagger"),
+    "linker_plain": (inputs: {"light": "link_plain"}, stagger: "grunt_stagger"),
+}

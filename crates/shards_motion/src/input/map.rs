@@ -232,6 +232,11 @@ pub enum BindMode {
     /// A press turns it on until the next press: a hold for players who cannot keep a
     /// button down (accessibility).
     Toggle,
+    /// Both: a one-shot press when an input goes down (as `Press`), and held while it stays
+    /// down (as `Hold`): an attack that charges while held, an interaction that goes on while
+    /// held. With "hold to toggle" the first press presses and holds, the next lets go (and
+    /// presses nothing).
+    PressHold,
 }
 
 /// One action of a context: its name (an `Intent` input name such as `jump`, or the axes
@@ -258,6 +263,12 @@ impl ActionBinding {
 
     pub fn held(mut self) -> Self {
         self.mode = BindMode::Hold;
+        self
+    }
+
+    /// Pressed when it goes down and held while it stays down ([`BindMode::PressHold`]).
+    pub fn press_held(mut self) -> Self {
+        self.mode = BindMode::PressHold;
         self
     }
 
@@ -551,14 +562,15 @@ impl InputMap {
             ActionBinding::new("glide", [Key(KeyCode::KeyF), Pad(GamepadButton::RightTrigger2)]).held(),
             ActionBinding::new("dodge", [Key(KeyCode::ControlLeft), Pad(GamepadButton::East)]).directional(),
             ActionBinding::new("light", [Mouse(MouseButton::Left), Pad(GamepadButton::West)]),
-            ActionBinding::new("heavy", [Mouse(MouseButton::Right), Pad(GamepadButton::RightTrigger)]),
+            // Pressed and held: a charged heavy turns while the button stays down.
+            ActionBinding::new("heavy", [Mouse(MouseButton::Right), Pad(GamepadButton::RightTrigger)]).press_held(),
             ActionBinding::new("block", [Key(KeyCode::KeyQ), Pad(GamepadButton::LeftTrigger)]).held(),
             ActionBinding::new("parry", [Key(KeyCode::KeyR), Pad(GamepadButton::LeftTrigger2)]),
             ActionBinding::new("technique.1", [Key(KeyCode::Digit1), Pad(GamepadButton::DPadUp)]),
             ActionBinding::new("technique.2", [Key(KeyCode::Digit2), Pad(GamepadButton::DPadLeft)]),
             ActionBinding::new("technique.3", [Key(KeyCode::Digit3), Pad(GamepadButton::DPadRight)]),
             ActionBinding::new("use_item", [Key(KeyCode::KeyC), Pad(GamepadButton::DPadDown)]),
-            ActionBinding::new("interact", [Key(KeyCode::KeyE), Pad(GamepadButton::North)]),
+            ActionBinding::new("interact", [Key(KeyCode::KeyE), Pad(GamepadButton::North)]).press_held(),
             ActionBinding::new("lock_on", [Key(KeyCode::Tab), Mouse(MouseButton::Middle), Pad(GamepadButton::RightThumb)]),
             // Opens the game's `pause` screen (shards_ui); in a menu `back` closes it.
             ActionBinding::new("pause", [Key(KeyCode::Escape), Pad(GamepadButton::Start)]),

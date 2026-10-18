@@ -281,6 +281,24 @@ impl Cooldowns {
             }
         }
     }
+
+    /// Shortens slot `action` to at most `secs`: a slot already below that (or ready) is left alone,
+    /// so a cut never lengthens a cooldown.
+    pub fn cut_to(&mut self, action: &str, secs: f32) {
+        if self.left(action) > secs {
+            self.set(action, secs);
+        }
+    }
+
+    /// Sets the seconds left on slot `action` to `secs`, shorter or longer than now; `secs <= 0`
+    /// removes it (ready).
+    pub fn set(&mut self, action: &str, secs: f32) {
+        if secs <= 0.0 {
+            self.0.retain(|c| c.action != action);
+        } else {
+            self.start(action, secs);
+        }
+    }
 }
 
 /// Health ran out. Dead fighters start no action, take no hit and do not move.
