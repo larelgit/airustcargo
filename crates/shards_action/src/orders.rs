@@ -79,7 +79,7 @@ pub(crate) fn follow_attack_orders(
             cooldowns,
             charges,
             mode: motion.map(|m| m.mode),
-            airborne: crate::machine::in_the_air(motion),
+            off_ground: crate::machine::off_ground(motion),
             leap: site,
             ..FighterView::new(&db, &fighter.moveset, state, &intent.held, dead)
         };

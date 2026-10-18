@@ -376,7 +376,7 @@ pub(crate) fn predict_actions(
         cooldowns: b.cooldowns,
         charges: b.charges,
         mode: b.motion.map(|m| m.mode),
-        airborne: crate::machine::in_the_air(b.motion),
+        off_ground: crate::machine::off_ground(b.motion),
         leap: site,
         ..FighterView::new(&db, &b.fighter.moveset, &local, &b.intent.held, b.dead)
     };

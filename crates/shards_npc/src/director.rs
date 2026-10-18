@@ -179,7 +179,7 @@ pub(crate) fn npc_view<'a>(
         cooldowns: resources.1,
         charges: resources.2,
         mode: motion.map(|m| m.mode),
-        airborne: shards_action::in_the_air(motion),
+        off_ground: shards_action::off_ground(motion),
         leap: site,
         ..FighterView::new(db, &fighter.moveset, state, held, dead)
     }

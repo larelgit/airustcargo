@@ -355,8 +355,9 @@ pub struct FighterView<'a> {
     pub dead: bool,
     /// How the body moves now: the mode gate ([`MovesetDef::only_in`]) judges it. `None`: not judged.
     pub mode: Option<MotionMode>,
-    /// The body is in the air past its coyote time ([`in_the_air`]): a leap would launch nothing, so it does not start.
-    pub airborne: bool,
+    /// The body is somewhere the controller drops a launch ([`off_ground`]): a leap would launch
+    /// nothing, so it does not start. `None`: on the ground, within coyote time, or not judged.
+    pub off_ground: Option<MotionMode>,
     /// Where the body stands, for the landing a leap needs. `None`: a leap's landing is not judged.
     pub leap: Option<LeapSite<'a>>,
 }
@@ -365,7 +366,7 @@ impl<'a> FighterView<'a> {
     /// A view of a fighter with the moveset `moveset`, in `state`, holding `held`; every resource
     /// absent, the mode and the leap site not judged. Set the fields the caller has.
     pub fn new(db: &'a ContentDb, moveset: &'a str, state: &'a ActionState, held: &'a [String], dead: bool) -> Self {
-        Self { db, moveset, state, stamina: None, cooldowns: None, charges: None, held, dead, mode: None, airborne: false, leap: None }
+        Self { db, moveset, state, stamina: None, cooldowns: None, charges: None, held, dead, mode: None, off_ground: None, leap: None }
     }
 
     /// The fighter `entity` as the world has it now; `None` if it is no fighter.
@@ -381,7 +382,7 @@ impl<'a> FighterView<'a> {
             held: e.get::<Intent>().map_or(&[], |i| i.held.as_slice()),
             dead: e.contains::<Dead>(),
             mode: e.get::<MotionState>().map(|m| m.mode),
-            airborne: in_the_air(e.get::<MotionState>()),
+            off_ground: off_ground(e.get::<MotionState>()),
             leap: LeapSite::of(world, entity),
         })
     }
@@ -457,9 +458,10 @@ pub enum Blocker {
         min: f32,
         max: f32,
     },
-    /// A leap needs the ground: the body is in the air past its coyote time, where the controller
-    /// would drop the launch. Waiting does not help by the clock (`ready_in` is `None`); landing does.
-    InAir,
+    /// A leap needs the ground: the body is in `mode` (the air past its coyote time, water, a glide
+    /// or a climb), where the controller drops the launch. Waiting does not help by the clock
+    /// (`ready_in` is `None`); getting onto the ground does.
+    OffGround { mode: MotionMode },
 }
 
 impl Blocker {
@@ -486,7 +488,7 @@ impl Blocker {
             Blocker::NoCharges { charge, have, max } => format!("no {charge} charges ({have}/{max})"),
             Blocker::Mode { mode, tags, .. } => format!("not while in {}: only actions tagged {}", mode_name(*mode), tags.join(" or ")),
             Blocker::NoLanding { min, max } => format!("no landing spot within {}-{}m", fmt_m(*min), fmt_m(*max)),
-            Blocker::InAir => "in the air; a leap starts from the ground".into(),
+            Blocker::OffGround { mode } => format!("in {}; a leap starts from the ground", mode_name(*mode)),
         }
     }
 
@@ -530,15 +532,24 @@ impl Blocker {
                     fmt_m(*min)
                 )
             }
-            Blocker::InAir => "you are in the air; a leap starts from the ground, so land first".into(),
+            Blocker::OffGround { mode } => {
+                let then = if *mode == MotionMode::Air { "land first" } else { "get onto the ground first" };
+                format!("you are in {}; a leap starts from the ground, so {then}", mode_name(*mode))
+            }
         }
     }
 }
 
-/// Whether the body is in the air past its coyote time: the state in which the controller drops a
-/// [`Launch`] (`None`: no body, nothing to judge).
-pub fn in_the_air(motion: Option<&MotionState>) -> bool {
-    motion.is_some_and(|m| m.mode == MotionMode::Air && m.coyote_left <= 0.0)
+/// The mode the body is in when the controller would drop a [`Launch`]: anything but the ground
+/// and the air within coyote time of it (the controller's own rule). `None`: a launch would be
+/// taken, or there is no body to judge.
+pub fn off_ground(motion: Option<&MotionState>) -> Option<MotionMode> {
+    let m = motion?;
+    match m.mode {
+        MotionMode::Ground => None,
+        MotionMode::Air if m.coyote_left > 0.0 => None,
+        mode => Some(mode),
+    }
 }
 
 /// How a motion mode reads in a message: `water`, `the air`.
@@ -642,9 +653,11 @@ pub(crate) fn can_start_toward(v: &FighterView, input: &str, dt: f32, dir: Optio
         let tags = moveset.only_in.iter().filter(|(m, _)| *m == mode).flat_map(|(_, tags)| tags.iter().cloned()).collect();
         blockers.push(Blocker::Mode { mode, action: action.clone(), tags });
     }
-    // A leap launches from the ground (or within coyote time of it): in the air it would pay and slide with no arc.
-    if v.airborne && def.leap.is_some() {
-        blockers.push(Blocker::InAir);
+    // A leap launches from the ground (or within coyote time of it): anywhere else it would pay and slide with no arc.
+    if let Some(mode) = v.off_ground
+        && def.leap.is_some()
+    {
+        blockers.push(Blocker::OffGround { mode });
     }
     // A leap with a search starts only where it has a landing.
     if let (Some(leap), Some(site)) = (def.leap.as_ref(), v.leap.as_ref())
@@ -1137,7 +1150,7 @@ fn view<'a>(f: &'a FighterDataItem, db: &'a ContentDb, leap: Option<LeapSite<'a>
         cooldowns: Some(&f.cooldowns),
         charges: f.charges.as_deref(),
         mode: f.motion.map(|m| m.mode),
-        airborne: in_the_air(f.motion),
+        off_ground: off_ground(f.motion),
         ..FighterView::new(db, &f.fighter.moveset, &f.state, &f.intent.held, f.dead)
     }
 }

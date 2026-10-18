@@ -398,7 +398,7 @@ fn a_leap_pressed_in_the_air_is_refused_unpaid() {
     let view = FighterView::of(app.world(), hero).unwrap();
     for input in ["technique.1", "technique.8"] {
         let err = can_start(&view, input, DT).unwrap_err();
-        assert_eq!(err, Blocker::InAir, "{input}");
+        assert_eq!(err, Blocker::OffGround { mode: MotionMode::Air }, "{input}");
         assert_eq!(err.ready_in(), None);
     }
     // An action that is no leap is not judged by the ground.
@@ -431,5 +431,12 @@ fn a_leap_starts_on_the_ground_and_within_coyote_time() {
     }
     assert!(can_start(&FighterView::of(app.world(), hero).unwrap(), "technique.1", DT).is_ok(), "within coyote time");
     app.world_mut().get_mut::<MotionState>(hero).unwrap().coyote_left = 0.0;
-    assert_eq!(can_start(&FighterView::of(app.world(), hero).unwrap(), "technique.1", DT), Err(Blocker::InAir));
+    assert_eq!(can_start(&FighterView::of(app.world(), hero).unwrap(), "technique.1", DT), Err(Blocker::OffGround { mode: MotionMode::Air }));
+    // Anywhere else the controller drops a launch too: a glide, a climb.
+    for mode in [MotionMode::Glide, MotionMode::Mantle] {
+        app.world_mut().get_mut::<MotionState>(hero).unwrap().mode = mode;
+        let err = can_start(&FighterView::of(app.world(), hero).unwrap(), "technique.1", DT).unwrap_err();
+        assert_eq!(err, Blocker::OffGround { mode }, "{mode:?}");
+        assert!(err.reason().ends_with("; a leap starts from the ground"), "{}", err.reason());
+    }
 }
