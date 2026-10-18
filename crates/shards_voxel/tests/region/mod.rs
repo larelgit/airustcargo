@@ -503,8 +503,8 @@ fn content_errors_name_the_step_the_version_and_the_file() {
         .replace("chunk: (16, 16, 16)", "chunk: (16, 16, 8)")
         .replace("\"fill_water\": (level: 6),", "\"fill_water\": (level: 6), \"stray\": (),")
         .replace("checks: [\"plaza_dry\"]", "checks: [\"plaza_dryy\"]");
-    let folder = folder("errors", &bad);
-    let dir = folder.path().to_string_lossy().into_owned();
+    let errors = folder("errors", &bad);
+    let dir = errors.path().to_string_lossy().into_owned();
     let app = testing::test_app(move |config| config.asset_dir = dir, setup);
     let all: Vec<String> = app.world().resource::<ContentDb>().errors().map(ToString::to_string).collect();
     let has = |needle: &str| {
@@ -518,8 +518,8 @@ fn content_errors_name_the_step_the_version_and_the_file() {
     // A chunk lower than the volume, a sea out past where a position keeps its centimetres, and a
     // current at full strength farther in than where it starts.
     let bad = ISLE.replace("chunk: (16, 16, 16)", "chunk: (16, 8, 16)").replace("reach: 600.0", "reach: 200000.0").replace("starts: 6.0, full: 1.5", "starts: 1.0, full: 5.0");
-    let folder = folder("errors_far", &bad);
-    let dir = folder.path().to_string_lossy().into_owned();
+    let far = folder("errors_far", &bad);
+    let dir = far.path().to_string_lossy().into_owned();
     let app = testing::test_app(move |config| config.asset_dir = dir, setup);
     let all: Vec<String> = app.world().resource::<ContentDb>().errors().map(ToString::to_string).collect();
     for needle in ["chunk 16 x 8 x 16: as tall as the volume (16 cells)", "sea.reach 200000: above 0 and at most 100000 m", "sea.current: starts 1 and full 5: starts above 0"] {
@@ -593,7 +593,7 @@ fn the_region_api_answers_with_the_same_types_on_tiles_and_on_a_volume() {
     // The world module's test content (a meadow of tiles) and the island, in one game.
     let folder = folder("same_api", ISLE);
     copy_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../shards_world/tests/world/assets/content"), &folder.path().join("content"));
-    let saves = std::env::temp_dir().join(format!("shards_voxel_same_api_{}", std::process::id()));
+    let saves = std::env::temp_dir().join(format!("shards_voxel_same_api_saves_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&saves);
     let save_here = |app: &mut App| app.world_mut().resource_mut::<SaveConfig>().dir = saves.clone();
     let mut app = game(&folder);
@@ -605,12 +605,12 @@ fn the_region_api_answers_with_the_same_types_on_tiles_and_on_a_volume() {
         let info = ok(&mut app, "region_info", json!({"manifest": true}));
         let active = app.world().resource::<ActiveRegion>();
         // The same Rust types answer for both: the manifest, its POIs, the spawn point, the area.
-        let manifest: &RegionManifest = &active.manifest;
+        let built: &RegionManifest = &active.manifest;
         let spawn: Vec3 = active.spawn_point(0);
-        let area: Rect = manifest.area();
-        let poi: Option<&shards::world::manifest::ManifestPoi> = manifest.pois.first();
+        let area: Rect = built.area();
+        let poi: Option<&shards::world::manifest::ManifestPoi> = built.pois.first();
         assert!(poi.is_some() && spawn.is_finite() && area.contains(spawn.xz()), "{region}: the spawn {spawn} in {area:?}");
-        let mut types: Vec<String> = manifest.pois.iter().map(|p| p.poi.clone()).collect();
+        let mut types: Vec<String> = built.pois.iter().map(|p| p.poi.clone()).collect();
         types.sort();
         types.dedup();
         assert!(types.contains(&"camp".to_owned()) && types.contains(&"spawn".to_owned()), "{region}: {types:?}");
@@ -647,7 +647,7 @@ fn the_region_api_answers_with_the_same_types_on_tiles_and_on_a_volume() {
         let loaded = ok(&mut fresh, "load_game", json!({"what": "world", "slot": region}));
         assert!(text(&loaded).starts_with(&format!("ok: world/{region} loaded")), "{loaded}");
         assert_eq!(manifest(&fresh), saved, "{region}: the save's manifest built again");
-        let check = ok(&mut fresh, "save_check", json!({"slot": region}));
+        let check = ok(&mut fresh, "save_check", json!({"what": "world", "slot": region}));
         assert_eq!(check["world"]["file"]["same"].as_bool(), Some(true), "{region}: {check}");
         answers.push((shape(&info), shape(&info["manifest"]), kinds_of(&route, &["provider", "path", "turns", "waypoints"]), shape(&check["world"])));
     }
@@ -685,7 +685,8 @@ fn a_manifest_whose_grid_was_changed_is_refused_and_the_world_stays() {
     let mut app = game(&folder);
     ok(&mut app, "regen", json!({"region": "isle", "seed": 7}));
     let (m, hash) = (manifest(&app), terrain(&app).hash);
-    let forgeries: [(&str, fn(&mut RegionManifest)); 5] = [
+    type Forge = fn(&mut RegionManifest);
+    let forgeries: [(&str, Forge); 5] = [
         ("no chunks", |m| m.size = [0, 0]),
         ("chunks past counting", |m| m.size = [400_000, 400_000]),
         ("another chunk edge", |m| m.tile_size = 8.0),

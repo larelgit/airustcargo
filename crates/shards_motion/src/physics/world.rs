@@ -1414,6 +1414,7 @@ mod tests {
         };
         // Within this of a query's path, a box shares one of its cells (2 m, the first level).
         let near = |id: &ColliderId, lo: Vec3, hi: Vec3| {
+            #[expect(clippy::disallowed_methods, reason = "this world has boxes only, no voxel field")]
             let c = world.by_id(*id).unwrap();
             aabb_overlap(lo - Vec3::splat(LEVELS[0] + 0.1), hi + Vec3::splat(LEVELS[0] + 0.1), c.aabb_min, c.aabb_max)
         };

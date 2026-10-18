@@ -1278,18 +1278,18 @@ mod tests {
 
     /// State a module may not have (a voxel region's volume): what the optional check hashes.
     #[derive(Resource, Clone, Copy)]
-    struct Terrain(u64);
+    struct Volume(u64);
 
     #[test]
     fn an_optional_check_is_left_out_without_its_state_and_compares_presence_both_ways() {
         let with_check = |app: &mut App| {
-            app.add_optional_snapshot_check("toy.terrain", "the terrain differs", |w| w.get_resource::<Terrain>().map(|t| t.0));
+            app.add_optional_snapshot_check("toy.terrain", "the terrain differs", |w| w.get_resource::<Volume>().map(|t| t.0));
         };
         let mut bare = game_with(with_check);
         let without = capture(bare.world()).unwrap();
         assert!(!without.checks.contains_key("toy.terrain"), "no state, no value: {:?}", without.checks);
         let mut built = game_with(with_check);
-        built.world_mut().insert_resource(Terrain(7));
+        built.world_mut().insert_resource(Volume(7));
         let with = capture(built.world()).unwrap();
         assert_eq!(with.checks["toy.terrain"], "0000000000000007");
 
