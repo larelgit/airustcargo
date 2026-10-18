@@ -7,7 +7,7 @@
 jobs = 4
 
 [target.x86_64-pc-windows-msvc]
-# rust-lld ships with the Rust toolchain (rustlib/x86_64-pc-windows-msvc/bin) and links the sandbox in
+# rust-lld ships with the Rust toolchain (rustlib/x86_64-pc-windows-msvc/bin) and rebuilds and links the sandbox in
 # about 3 s instead of 7 s with MSVC's link.exe; the code the compiler generates is the same (the
 # reference replays are byte-identical). The environment overrides this line:
 # `CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=link.exe`.
