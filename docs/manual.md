@@ -3417,7 +3417,7 @@ over its whole database and reporting a divergence that is not there (a crash re
 checkout, say). This build reads the older versions (`shards-replay/3` and `/2`, `shards-snapshot/1`). A replay or snapshot without
 `check_parts` (every older file) was made when the content check hashed the whole database, and it plays, loads and verifies as
 before: the game computes the check over the whole database for that session (and for the snapshots it takes and the branches it
-saves), and says so in the journal (`replay: the recording does not list the parts of check `content`: …`); a divergence there
+saves), and says so in the journal (``replay: the recording does not list the parts of check `content`: …``); a divergence there
 reads `replay check content differs (recorded whole: the recording lists no parts of it)`. So old recordings and crash reports keep
 verifying with the content they were made with, and are recorded again only to stop depending on content they never read.
 
