@@ -104,9 +104,12 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   hash, replays or snapshots, and a game with it on records the same replay.
 - `shards_script::minimize` (`ddmin` over any list, with a budget) and `shards_script::regress` (the shrunk rounds of a fuzz run as a
   scenario: header, `seed S`, `act?` and `step` lines). `crates/sandbox/scenarios/regress/` holds such scenarios; `scenario_files.rs` runs each on a fresh game of its seed, forward only.
+- `shards fuzz --steer` (weights follow new coverage signatures) and `--minimize [--budget N]` (shrinks a session that halted, or whose chaos round trip did not come back, and writes `scenarios/regress/<date>-<stop>-seed<S>.scenario`); `shards_script::{stop, shrink}` and `shards::testing::fuzz_and_shrink` (each attempt on a fresh game, in heavy mode when the run had it). A regress file for a heavy stop says `# heavy: every=N span=K offset=O` in its header, and the runner plays it that way.
+- The nightly fuzz campaign: `crates/sandbox/tests/fuzz_campaign.rs` (`#[ignore]`; `SHARDS_FUZZ_SEED`, `_RUNS`, `_INPUTS`, `_HEAVY`, `_CHAOS`, `_BUDGET`, `_SHRINK_SECS`, `_MINUTES`, `_OUT`, `_REGRESS`) and the job `fuzz` of `nightly.yml`: 50 runs of 2000 rounds with chaos, steering and heavy mode, shrunk scenarios, replays and a coverage report as the artifact `fuzz`.
 
 ### Changed
 
+- The UI's journal lines (`ui: opened pause`, `ui: closed pause`, `ui: … pressed`, …) are `JournalKind::Local`, not `Event`: screens are outside the simulation and the snapshot, so a heavy twin never had them, and the first fuzz campaign stopped on `ui_close` for that. They are still in the journal and in `expect journal`.
 - `shards_script`: a tool call's `Outcome` carries `halted` (why the game stopped itself during the call), so a driver other than the CLI sees a halted `step`.
 - `soak.yml` runs every night (it ran on Mondays).
 - `shards_cli`: the test `a_stale_port_file_is_neither_a_member_nor_a_reason_to_give_up` no longer uses a port that was bound and released (another test's stand could be given it): the stale file names the discard port.

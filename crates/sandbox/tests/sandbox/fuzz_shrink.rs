@@ -25,7 +25,7 @@ fn planted() -> App {
 #[test]
 fn a_planted_bug_is_found_shrunk_and_written_as_a_scenario_that_fails_with_it_and_passes_without() {
     let plan = FuzzPlan { rounds: 300, chaos: 0.0, ..FuzzPlan::new(5) };
-    let fuzzed = fuzz_and_shrink(planted, &plan, 300).unwrap();
+    let fuzzed = fuzz_and_shrink(planted, &plan, 300, std::time::Duration::from_secs(300)).unwrap();
     let finding = fuzzed.finding.unwrap_or_else(|| panic!("the planted bug was not found: {} {:?}", fuzzed.report, fuzzed.report.calls));
     assert!(matches!(&finding.stop, Stop::Failure { name, .. } if name.contains("gives_way_when_winded")), "{:?}", finding.stop);
     assert!(finding.reproduced, "a fresh game stops on it too");
@@ -55,7 +55,7 @@ fn a_planted_bug_is_found_shrunk_and_written_as_a_scenario_that_fails_with_it_an
 #[test]
 fn a_run_that_does_not_stop_has_nothing_to_shrink() {
     let plan = FuzzPlan { rounds: 15, chaos: 0.0, ..FuzzPlan::new(3) };
-    let fuzzed = fuzz_and_shrink(|| sandbox::test_app(42), &plan, 50).unwrap();
+    let fuzzed = fuzz_and_shrink(|| sandbox::test_app(42), &plan, 50, std::time::Duration::from_secs(60)).unwrap();
     assert_eq!(fuzzed.report.ended, Ended::Done);
     assert!(fuzzed.finding.is_none());
 }
@@ -101,7 +101,7 @@ fn heavy_planted(fixed: bool) -> App {
 #[test]
 fn a_heavy_failure_is_shrunk_on_heavy_games_and_the_scenario_asks_for_heavy_mode() {
     let plan = FuzzPlan { rounds: 60, chaos: 0.0, ..FuzzPlan::new(9) };
-    let fuzzed = fuzz_and_shrink(|| heavy_planted(false), &plan, 100).unwrap();
+    let fuzzed = fuzz_and_shrink(|| heavy_planted(false), &plan, 100, std::time::Duration::from_secs(300)).unwrap();
     let finding = fuzzed.finding.expect("the planted heavy bug was not found");
     assert!(matches!(finding.stop, Stop::Heavy { .. }), "{:?}", finding.stop);
     assert!(finding.reproduced);
@@ -132,7 +132,7 @@ fn a_chaos_round_trip_that_does_not_come_back_is_shrunk_to_the_save_and_the_load
         app
     };
     let plan = FuzzPlan { rounds: 300, chaos: 0.3, stem: format!("shrink-drift-{}", std::process::id()), ..FuzzPlan::new(7) };
-    let fuzzed = fuzz_and_shrink(build, &plan, 200).unwrap();
+    let fuzzed = fuzz_and_shrink(build, &plan, 200, std::time::Duration::from_secs(300)).unwrap();
     let finding = fuzzed.finding.expect("the planted drift was not found");
     assert!(matches!(&finding.stop, Stop::Chaos { tool } if tool == "snapshot_load"), "{:?}", finding.stop);
     let calls: Vec<&str> = finding.shrunk.rounds.iter().flat_map(|r| r.calls.iter().map(|(t, _)| t.as_str())).collect();
