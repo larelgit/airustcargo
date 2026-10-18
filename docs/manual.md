@@ -19,7 +19,7 @@ session is recorded as a replay, and that replay checks a new build.
 **The engine has no LLM inside it**: no built-in agent, no local model, no API keys, no calls to models. The game is an
 environment. An agent starts it, watches it and acts on it from a terminal through the `shards` CLI (JSON-RPC methods
 `ai/*` over the Bevy Remote Protocol on 127.0.0.1), with no MCP layers. People, scripts and CI use the same CLI.
-Instructions for agents are in [AGENTS.md](../AGENTS.md). How to make your own game, step by step, is below and in
+Instructions for agents are in [AGENTS.md](../AGENTS.md) (the short core and an index) and the topic files in [docs/agents/](agents/). How to make your own game, step by step, is below and in
 [template/README.md](../template/README.md). Versions and how to depend on a tag are in [CHANGELOG.md](../CHANGELOG.md).
 
 ![sandbox: the guard winds up, and a red strike zone is on the ground](media/telegraph.png)
