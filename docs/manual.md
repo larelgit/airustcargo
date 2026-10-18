@@ -515,7 +515,7 @@ The game's numbers and definitions live in files, not in code: attacks, prefabs,
   `input_map`, levels `level`, world `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`, enemies `behavior`,
   `perception`, `director`, `attack_plan`, `npc_tuning` and `nav`, mesh looks `look` (see "Stylised materials (E10.1)"),
   foliage `scatter` (see "Foliage and small objects (E10.2)"), effects `effect` and `fx` (see "Effects and decals
-  (E10.3)"), with the `steam` feature, achievements `achievement` (see "Steam (E10.5)"). The game adds its own: the sandbox has `layout`, the template has
+  (E10.3)"), hit stop `hitstop` (see "Hit stop (C2)"), with the `steam` feature, achievements `achievement` (see "Steam (E10.5)"). The game adds its own: the sandbox has `layout`, the template has
   `arena`.
   `content_list` (the tool) shows the content kinds and the number of definitions.
 - `#[serde(deny_unknown_fields)]` on a struct turns a typo into an error with the line number; without it, a typo in an optional field silently keeps the default value.
@@ -3113,6 +3113,7 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `npc.state_known` | `NpcBrain.state` is a state of the NPC's behaviour. Three carve-outs, each a state the engine itself leaves behind: an empty state (before the NPC's first decided tick), an inactive NPC (dormant or dead: the brain passes it through, so a state a hot reload removed stays until it wakes), and an NPC whose behaviour is not in content (that is reported once as a content problem) |
 | `npc.strike_spacing` | two NPCs of one director whose `min_spacing` is set never began strikes less than that apart (in whole ticks), for the starts that went through the spacing rule: the planner's presses and checked combo continuations (`NpcStrike::gated`). Judged from the last strike each NPC noted. Three carve-outs: an NPC whose plan has `ignores_spacing` is not the one held to the rule (its starts still hold the others), a strike a state hook pressed itself is noted but neither held to the rule nor held against other NPCs (the hook may or may not have asked `strike_ready`, and may start between another NPC's planned press and its start), and an action with one of the director's `spacing_exempt_tags` is not noted at all. A director without a `min_spacing` is never judged |
 | `npc.tokens_within_limit` | after the director ran, no token is held by a dead body, and each director holds no more tokens than its limit for the living players, unless every holder beyond the limit has its attack in flight (an attack under way keeps its token to its end). It is judged right after the director, not at the end of the tick: a holder that dies in `Resolve` keeps its token until the next tick's director takes it back, so the end of the tick would fire on every kill. A small system next to the director writes what it found to the resource `TokenAudit`, which the rule reads; it is recomputed every tick and is not part of a snapshot or a replay |
+| `hitstop.no_ticks_inside` | no simulation tick has run since the real-time clock was stopped for a hit stop, and none ran inside a hold that has ended (`ClockHold`): a hold consumes zero ticks, and a violation names a system that ran the fixed schedule while the clock was held. Hit stop is the picture's, never the simulation's; alone with a picture only, since nothing else ever holds the clock |
 
 Each rule reports the lowest id first and `(+N more)`, in the style `e6 Health.current = 700 outside 0..=600`, and
 allocates nothing while the world is fine. The sandbox keeps its own `health_in_range` on purpose: it is the example of a
@@ -3148,6 +3149,7 @@ $ shards assert list
   npc.state_known  engine rule  armed
   npc.strike_spacing  engine rule  armed
   npc.tokens_within_limit  engine rule  armed
+  hitstop.no_ticks_inside  engine rule  armed
   health_in_range  game rule  armed
   bodies_in_world  game rule  armed
   hp  when field:e6:Health.current<500  armed
@@ -3635,7 +3637,7 @@ per world), and only for kinds the simulation depends on:
 - *Closed*: everything else. Frames (`Update`, `PostUpdate`, the render world, a window's input), query and control tools
   (`content_list`, `observe`, `npc_state`), validation without a game (`--check-content`). Queries are not replay events: a read
   they made could never be repeated by a playback, so it never counts.
-- *Kinds outside the simulation* (`ContentDef::SIMULATION = false`) never count, read anywhere: `look`, `effect`, `fx`,
+- *Kinds outside the simulation* (`ContentDef::SIMULATION = false`) never count, read anywhere: `look`, `effect`, `fx`, `hitstop`,
   `scatter`, `animset`, `sound`, `music`, `audio`, `theme`, `locale`, `devmenu`, `input_map` (a replay records `Intent`, not keys),
   `achievement`, `save` and `perf`. What only the picture, the sound, menus and services outside the session read. A game's own
   kind of that sort sets `const SIMULATION: bool = false;` in its `ContentDef`; one the simulation reads keeps the default `true`.

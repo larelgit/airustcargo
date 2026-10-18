@@ -85,6 +85,11 @@ impl ClockHold {
         self.until
     }
 
+    /// Ticks that ran since the clock stopped, while it is held (0 when the hold works).
+    pub fn ticks_since_held(&self, tick: u64) -> Option<u64> {
+        self.began.map(|(_, began)| tick.saturating_sub(began))
+    }
+
     /// The speed the player chose while the clock is held.
     pub fn player_speed(&self) -> Option<f32> {
         self.is_held().then_some(self.player_speed)
@@ -248,6 +253,7 @@ mod tests {
         for _ in 0..4 {
             app.update();
             assert_eq!(ticks(&app), before, "held: no tick");
+            assert_eq!(app.world().resource::<ClockHold>().ticks_since_held(ticks(&app)), Some(0), "none since it stopped");
             assert_eq!(sim::speed(app.world()), 2.0, "the player's speed is what is reported");
             assert!(!sim::is_paused(app.world()), "a hold is not a pause");
         }

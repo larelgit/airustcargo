@@ -52,6 +52,7 @@ use bevy::prelude::*;
 use serde_json::{json, Value};
 use shards_action::{Blocked, Damaged, GuardBroken, Parried, PerfectEvaded, Staggered};
 use shards_content::{ContentAppExt, ContentDb};
+use ai_core::SimTick;
 use shards_core::{EngineAppExt, LocalPlayer, NetRole};
 use shards_settings::groups::AccessibilitySettings;
 
@@ -141,6 +142,7 @@ impl Plugin for HitstopPlugin {
         app.add_content::<HitstopDef>()
             .init_resource::<HitStops>()
             .add_engine_module("hitstop", VERSION)
+            .add_engine_invariant("hitstop.no_ticks_inside", no_ticks_inside)
             .add_ai_status("hitstop", status)
             .add_dev_entry("combat", "hitstop", "Hit stop: the table, what is held, the last holds", ai_core::DevCommand::Run("hitstop".into()))
             .add_observer(on_hit_stopped)
@@ -183,6 +185,17 @@ impl Plugin for HitstopPlugin {
             });
         tools::register(app.world_mut());
     }
+}
+
+/// The engine rule `hitstop.no_ticks_inside`: a hold of the clock consumes zero ticks. No tick has run
+/// since the clock was stopped, and none ran inside a hold that has ended. A violation names a system
+/// that ran the fixed schedule on its own while the clock was held (a hold only stops the real-time
+/// clock; `sim::step` ends it first). Hit stop is the picture's: it must never be the simulation's.
+pub fn no_ticks_inside(world: &World) -> Option<String> {
+    let hold = world.get_resource::<ClockHold>()?;
+    let tick = world.get_resource::<SimTick>().map_or(0, |t| t.0);
+    let inside = hold.ticks_inside + hold.ticks_since_held(tick).unwrap_or(0);
+    (inside > 0).then(|| format!("{inside} simulation tick(s) ran while the clock was held for a hit stop; a hold consumes zero ticks"))
 }
 
 /// The game's hit stop table (the one `*.hitstop.ron`), if it has one.
@@ -358,4 +371,23 @@ fn status(world: &World) -> Value {
         "ticks_inside": clock.map_or(0, |c| c.ticks_inside),
         "clock_held_now": clock.is_some_and(ClockHold::is_held),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_rule_is_silent_until_a_tick_ran_inside_a_hold() {
+        let mut world = World::new();
+        assert_eq!(no_ticks_inside(&world), None, "no hold resource: nothing to judge");
+        world.init_resource::<ClockHold>();
+        world.init_resource::<SimTick>();
+        assert_eq!(no_ticks_inside(&world), None);
+        world.resource_mut::<ClockHold>().ticks_inside = 3;
+        assert_eq!(
+            no_ticks_inside(&world).as_deref(),
+            Some("3 simulation tick(s) ran while the clock was held for a hit stop; a hold consumes zero ticks")
+        );
+    }
 }

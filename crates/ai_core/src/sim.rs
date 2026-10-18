@@ -228,6 +228,8 @@ pub fn tick(world: &World) -> u64 {
 /// time (a system that reads `Res<Time>` in a tick sees the same elapsed time as in the
 /// original session).
 pub fn set_tick(world: &mut World, tick: u64) {
+    // A clock that jumps (a snapshot, a replay) ends a hold: no tick ran inside it.
+    hold::cancel_hold(world);
     let before = self::tick(world);
     world.resource_mut::<SimTick>().0 = tick;
     if let Some(clock) = world.get_resource::<TickClock>() {
