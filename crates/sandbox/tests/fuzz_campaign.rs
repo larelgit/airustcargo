@@ -16,7 +16,7 @@
 //! | `SHARDS_FUZZ_HEAVY` | 300 | heavy mode's period in ticks, 0 = off (60 costs about 4 minutes a run: see "Fuzzing" in docs/manual.md) |
 //! | `SHARDS_FUZZ_MINUTES` | 0 | no run starts after this many minutes (0 = no limit); the nightly passes 85 |
 //! | `SHARDS_FUZZ_STEER` | 1 | 0 plays the plain weights |
-//! | `SHARDS_FUZZ_BUDGET` | 300 | attempts a shrink may make |
+//! | `SHARDS_FUZZ_BUDGET` | 600 | attempts a shrink may make |
 //! | `SHARDS_FUZZ_CHAOS` | 0.02 | share of rounds that make a developer call |
 //! | `SHARDS_FUZZ_SHRINK_SECS` | 300 | wall-clock limit of one shrink |
 //! | `SHARDS_FUZZ_OUT` | `fuzz-campaign` | the coverage report and the unreproduced sessions |
@@ -146,7 +146,7 @@ fn the_nightly_fuzz_campaign() {
     let runs = env_u64("SHARDS_FUZZ_RUNS", 50);
     let inputs = env_u64("SHARDS_FUZZ_INPUTS", 2000);
     let heavy = env_u64("SHARDS_FUZZ_HEAVY", 300);
-    let budget = env_u64("SHARDS_FUZZ_BUDGET", 300) as u32;
+    let budget = env_u64("SHARDS_FUZZ_BUDGET", 600) as u32;
     let shrink_time = std::time::Duration::from_secs(env_u64("SHARDS_FUZZ_SHRINK_SECS", 300));
     let out = env_path("SHARDS_FUZZ_OUT", "fuzz-campaign");
     let regress_dir = env_path("SHARDS_FUZZ_REGRESS", "scenarios/regress");
@@ -176,7 +176,7 @@ fn the_nightly_fuzz_campaign() {
             ..FuzzPlan::new(run_seed)
         };
         let run_started = Instant::now();
-        let Fuzzed { report, finding, coverage } = fuzz_and_shrink(|| build(run_seed, heavy), &plan, budget, shrink_time)
+        let Fuzzed { report, finding, coverage } = fuzz_and_shrink(|with_heavy| build(run_seed, if with_heavy { heavy } else { 0 }), &plan, budget, shrink_time)
             .unwrap_or_else(|e| panic!("seed {run_seed}: the run could not be played: {e}"));
         println!("[{}/{runs}] seed {run_seed}: {report} ({:.1}s)", i + 1, run_started.elapsed().as_secs_f64());
         if let Some(coverage) = &coverage {

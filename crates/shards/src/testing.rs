@@ -527,18 +527,19 @@ pub struct Fuzzed {
 /// Plays `plan` on the game `build` makes (a test app, or a heavy one) and, if it stops on a
 /// broken rule, a failing system, a heavy check or a chaos round trip that did not come back, shrinks
 /// the session: each attempt plays candidate rounds on a **fresh** game from `build` (the same seed,
-/// the same heavy mode) and counts when it stops on the same thing
+/// the same heavy mode when the stop is a heavy check, none otherwise: `build(true)` makes the game as
+/// the run had it, `build(false)` one without heavy mode, which plays the same and costs far less) and counts when it stops on the same thing
 /// ([`Stop::same_as`](shards_script::stop::Stop::same_as)). At most `budget` attempts; the first
 /// one plays the whole session again, to see that a fresh game stops on it at all. Past `time` since the shrinking began, every attempt counts as not stopping (the
 /// result is then marked `exhausted`): an attempt on a long session in heavy mode costs seconds.
 pub fn fuzz_and_shrink(
-    mut build: impl FnMut() -> App,
+    mut build: impl FnMut(bool) -> App,
     plan: &shards_script::fuzz::FuzzPlan,
     budget: u32,
     time: Duration,
 ) -> Result<Fuzzed, String> {
     use shards_script::{fuzz, shrink, stop::Stop};
-    let mut app = build();
+    let mut app = build(true);
     let tools = ai_core::scenario::tool_list(app.world());
     let report = fuzz::run(&mut ai_core::scenario::WorldDriver { world: app.world_mut() }, plan, &tools)?;
     // What the run reached, asked of the game that played it.
@@ -561,7 +562,8 @@ pub fn fuzz_and_shrink(
             timed_out.set(true);
             return Ok(false);
         }
-        let mut fresh = build();
+        // Heavy mode only checks; a stop that is not a heavy check does not need it to be found again.
+        let mut fresh = build(matches!(stop, Stop::Heavy { .. }));
         shrink::replays_stop(&mut ai_core::scenario::WorldDriver { world: fresh.world_mut() }, &plan.agent, rounds, &stop)
     };
     let before = report.played.clone();
