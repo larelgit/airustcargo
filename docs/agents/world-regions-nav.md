@@ -6,7 +6,8 @@ Read this when you touch regions, tiles, levels, the generator, the navmesh or t
   points of interest) are **top-level entities with a world `Transform`**: that is how physics reads them and how `spawn_region` and
   `spawn_level` create them. A region is changed with tools (`regen`, `region_load`) or with `change_region`, through
   `EngineState::RegionLoading`, inside one call; it is not spawned or removed by hand. The starting region
-  (`start_region`) is built before `OnEnter(InGame)`, and its `AiId`s come first.
+  (`start_region`) is built by the engine (`build_start_region`) before `OnEnter(InGame)`, so its `AiId`s come first; the game's own
+  entities still spawn in `OnEnter(InGame)`, after it.
 - **Generation is a pure function of (seed, generator version, content).** The randomness of the steps is `GenContext::rng()` (`DetRng`),
   never `SimRng`, never the clock and never the order of `HashMap`/`HashSet` (the order comes from indices and `BTreeMap`). If you change the generator's output
   (steps, weights, solver rules), raise the region's `version`: the old seeds will give new worlds, and the saved manifests
