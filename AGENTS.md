@@ -14,9 +14,12 @@ is driven from outside: by you, through the `shards` CLI. Anything an agent need
 - System packages: `pkg-config libasound2-dev libudev-dev` (for a window under Xvfb, also `xvfb mesa-vulkan-drivers
   libxkbcommon-x11-0`).
 - `cargo build --workspace`, `cargo test --workspace`. The first build of Bevy is slow;
-  `.cargo/config.toml` limits it to four threads. `template/` is a separate workspace:
+  `.cargo/config.toml` limits it to 4 jobs (`CARGO_BUILD_JOBS=12` for a faster build when RAM is free). `template/` is a separate workspace:
   `cargo test --manifest-path template/Cargo.toml`. CI runs the tests with `cargo-nextest` (`cargo install cargo-nextest --locked`; a
   process per test, see "Checking changes"); `cargo test` stays a supported local command.
+- Iterating fast: a content, level, locale or scenario edit needs no rebuild (hot reload, `content_apply`, `level_reload`, `shards scenario`);
+  for Rust edits Windows links with `rust-lld` by default and `--features dynamic` (`cargo sandbox --features dynamic`) links Bevy as a DLL.
+  Optional `sccache` (`RUSTC_WRAPPER`). Numbers and the list of what needs no rebuild: `docs/manual.md`, "Building and iterating fast".
 - Crates: `shards` (the umbrella, the game's only dependency), `shards_core`, `shards_content`, `shards_motion`,
   `shards_action`, `shards_level` (levels from Blender), `shards_world` (regions, generation), `shards_npc` (enemies, navmesh),
   `shards_save` (saves: sections, slots, migrations, copies), `shards_ui` (screens and menus from content), `shards_locale`
