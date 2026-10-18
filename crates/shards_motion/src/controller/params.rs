@@ -174,15 +174,15 @@ pub struct CharacterParams {
     /// floating or landing. 0: the depth over the feet.
     #[serde(skip_serializing_if = "is_zero")]
     pub wade_depth_offset: f32,
-    /// Wading: the offset while airborne or gliding (with `wade_in_air`), when it differs from
+    /// Wading: the offset while airborne (with `wade_in_air`), when it differs from
     /// the standing one. A reference point fixed under the capsule bottom is `skin_width`
     /// closer to the feet in the air than for a standing body (the feet rest a skin above the
     /// floor only on the ground), so the in-air value is `wade_depth_offset - skin_width`.
     /// `None`: `wade_depth_offset` in every mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wade_air_depth_offset: Option<f32>,
-    /// Wading also slows a body in the air or gliding over water (the water is over the feet, not
-    /// on the ground). `false`: only on the ground.
+    /// Wading also slows a body in the air over water (the water is over the feet, not on the
+    /// ground). A glide is never slowed: modifiers do not scale it. `false`: only on the ground.
     #[serde(skip_serializing_if = "is_false")]
     pub wade_in_air: bool,
     /// Sprint speed grows with the input like a walk does: `sprint_speed * amount`, and any input
@@ -402,12 +402,12 @@ impl CharacterParams {
         1.0 + (self.wade_factor - 1.0) * k
     }
 
-    /// Whether water over the feet slows a body in `mode`: on the ground, and in the air or a
-    /// glide with [`wade_in_air`](Self::wade_in_air). A swimmer is not a wader.
+    /// Whether water over the feet slows a body in `mode`: on the ground, and in the air with
+    /// [`wade_in_air`](Self::wade_in_air). A swimmer is not a wader, and a glide is not scaled.
     pub fn wades_in(&self, mode: MotionMode) -> bool {
         self.wade_factor != 1.0
             && (mode == MotionMode::Ground
-                || (self.wade_in_air && matches!(mode, MotionMode::Air | MotionMode::Glide)))
+                || (self.wade_in_air && mode == MotionMode::Air))
     }
 
     /// The depth wading reads for feet at height `feet_y` in water with this `surface`: the water

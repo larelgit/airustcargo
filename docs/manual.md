@@ -767,7 +767,7 @@ unset and contribute the slow itself from a `Contribute` system that reads the s
 
 *Wading depth.* The depth wading reads is `surface - feet + wade_depth_offset` (never below 0), for a game that measures submersion at a reference point under the soles: the value
 to use is the gap from that point to the floor of a standing body, that is its distance below the capsule bottom plus `skin_width` (a point 0.1 m under the capsule bottom with
-the default skin is `0.12`). `wade_in_air` lets the water over the feet slow an airborne or gliding body too. A reference point fixed under the capsule bottom is a skin closer to the feet in the air than for a standing body (the feet
+the default skin is `0.12`). `wade_in_air` lets the water over the feet slow an airborne body too (a glide is not slowed: modifiers do not scale it). A reference point fixed under the capsule bottom is a skin closer to the feet in the air than for a standing body (the feet
 rest a skin above the floor only on the ground), so `wade_air_depth_offset` (default: the standing `wade_depth_offset`) sets the airborne value, `wade_depth_offset - skin_width` for such a point. `move_info` shows `wade_depth` (the depth used), `wade_factor`, `wade_depth_offset`, `wade_air_depth_offset` and `climb_out_reach`, and no wading outside the modes
 that wade. Wading and the offset affect only the speed, not floating, swimming or landing.
 

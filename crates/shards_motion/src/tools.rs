@@ -266,9 +266,11 @@ fn jump(
             let forward = tf.forward();
             let facing = Vec3::new(forward.x, 0.0, forward.z);
             let toward = if intent.move_dir.length_squared() > 1e-4 { intent.move_dir } else { facing };
-            let (distance, hazard) =
-                reach_toward(&physics, &params, tf.translation, state.water_surface, toward, 1.2, ai.safe_drop, Some(entity));
             let reach = params.climb_reach();
+            // Probe past the reach, so a ledge just out of it is named (and the reach itself is covered).
+            let probe = (reach + 0.9).max(1.2);
+            let (distance, hazard) =
+                reach_toward(&physics, &params, tf.translation, state.water_surface, toward, probe, ai.safe_drop, Some(entity));
             // The one rule for what is climbed (a swimmer's rise counts its skin), the same the
             // controller, the planner and `clearance` ask.
             match hazard {
