@@ -67,7 +67,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("ai_core::highlight::AiOverlay", "highlight drawing settings for screenshots: the picture"),
     ("ai_core::highlight::Highlights", "highlights queued for the next screenshot: the picture"),
     ("ai_core::hold::ClockHold", "the real-time clock held for a hit stop: it consumes zero ticks, and stepped, replayed and headless games never hold"),
-    ("ai_core::hold::PresentationHolds", "bodies whose picture stands still for real time (a co-op hit stop): read by the animation bridge only"),
+    ("ai_core::hold::PresentationHolds", "bodies whose picture stands still for real time (a co-op hit stop): read by the animation bridge and the drawn-pose interpolation (shards_motion, shards_net) only"),
     ("ai_core::id::AiIndex", "the id index, kept by the AiId hooks; snapshot::restore puts its counters back"),
     ("ai_core::invariants::AiInvariants", "rules and their firings, which are not part of the replay hash or the snapshot"),
     ("ai_core::journal::AiJournal", "the journal: what the AI reads about the game, outside it"),

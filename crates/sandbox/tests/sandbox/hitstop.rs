@@ -1,6 +1,8 @@
 //! Hit stop (C2) holds the picture and the real-time clock, never the simulation: a replay recorded
 //! while it held the clock verifies identical with it off, headless, and in a window that plays it.
 
+use std::time::Duration;
+
 use sandbox::SandboxPlugin;
 use shards::ai_core::display::Offscreen;
 use shards::ai_core::replay::{self, Replay};
@@ -148,4 +150,87 @@ fn a_tick_run_by_hand_inside_a_hold_breaks_the_rule() {
     assert!(app.world().resource::<SimTick>().0 > before, "the schedule ran a tick");
     let said = shards::hitstop::no_ticks_inside(app.world()).expect("a tick inside a hold is caught");
     assert!(said.contains("1 simulation tick(s) ran while the clock was held"), "{said}");
+}
+
+/// Where member `member` draws the entity `id`: its `GlobalTransform`, which the net's
+/// interpolation writes for a remote body on a client that draws.
+fn drawn_at(stand: &shards::net::Stand, member: usize, id: &str) -> Vec3 {
+    let world = stand.world(member);
+    let entity = world.resource::<shards::ai_core::AiIndex>().get(AiId::parse(id).unwrap()).unwrap();
+    world.get::<GlobalTransform>(entity).unwrap().translation()
+}
+
+/// One co-op session of two clients over 150 ms links; the second draws and, when `hold`, holds
+/// the first's body for 0.2 s of its real time. Returns the second client's state hash at the end.
+fn held_session(hold: bool) -> u64 {
+    use crate::net::{body, lossy, position, stand_with, C1, C2, HOST};
+    let mut stand = stand_with(2, lossy());
+    stand.world_mut(C2).insert_resource(Offscreen { image: Handle::default(), size: UVec2::new(320, 240) });
+    let mover = body(&stand, C1);
+    stand.run(30);
+    let start = position(&stand, C2, &mover);
+    let walking = stand.call(C1, "move", json!({"dir": "E", "meters": 40.0}));
+    assert!(walking.ok, "{}", walking.result);
+    // Wait until C2 shows the walker well under way, so its drawn pose moves every frame.
+    for _ in 0..120 {
+        frame(&mut stand);
+    }
+    assert!(drawn_at(&stand, C2, &mover).distance(start) > 1.5, "C2 draws the walker moving");
+    let before = drawn_at(&stand, C2, &mover);
+    frame(&mut stand);
+    frame(&mut stand);
+    assert!(drawn_at(&stand, C2, &mover).distance(before) > 0.01, "not held, the drawn body moves");
+
+    let id = AiId::parse(&mover).unwrap();
+    let now = stand.world(C2).resource::<Time<Real>>().elapsed();
+    let until = now + Duration::from_millis(200);
+    if hold {
+        stand.world_mut(C2).resource_mut::<shards::ai_core::PresentationHolds>().hold(id, now, until);
+    }
+    frame(&mut stand);
+    let frozen = drawn_at(&stand, C2, &mover);
+    let truth = position(&stand, C2, &mover);
+    let mut steps = vec![frozen];
+    let mut caught = frozen;
+    for _ in 0..40 {
+        frame(&mut stand);
+        let at = stand.world(C2).resource::<Time<Real>>().elapsed();
+        let drawn = drawn_at(&stand, C2, &mover);
+        if hold && at < until {
+            assert!(drawn.distance(frozen) < 1e-3, "held: {frozen} -> {drawn} at {at:?}");
+        } else {
+            steps.push(drawn);
+        }
+        caught = drawn;
+        if at >= until + Duration::from_millis(220) {
+            break;
+        }
+    }
+    assert!(position(&stand, C2, &mover).distance(truth) > 0.5, "the simulated body ran on");
+    if hold {
+        // Back to the live drawn pose, a good way past where it stood.
+        assert!(caught.distance(frozen) > 1.0, "caught up: {frozen} -> {caught}");
+        // No jump larger than the blend allows: the walker's own pace plus the gap closing over 0.2 s.
+        let worst = steps.windows(2).map(|w| w[0].distance(w[1])).fold(0.0, f32::max);
+        assert!(worst < 0.6, "a step of {worst} m while catching up");
+    }
+    // The host's copy is the simulation's, whatever C2 draws.
+    assert!(position(&stand, HOST, &mover).x >= position(&stand, C2, &mover).x - 0.01);
+    replay::state_hash(stand.world(C2))
+}
+
+#[test]
+fn a_client_draws_a_held_remote_body_standing_still_then_catching_up_and_the_simulation_is_the_same() {
+    let with = held_session(true);
+    let without = held_session(false);
+    assert_eq!(with, without, "a picture hold changes what is drawn, never the state hash");
+}
+
+/// One frame of the client that draws: a stand tick, then the real time of a tick passes on it and
+/// its `PostUpdate` runs (the stand runs ticks, not frames).
+fn frame(stand: &mut shards::net::Stand) {
+    stand.run(1);
+    let world = stand.world_mut(crate::net::C2);
+    world.resource_mut::<Time<Real>>().advance_by(Duration::from_micros(16_667));
+    world.run_schedule(PostUpdate);
 }

@@ -31,9 +31,15 @@
 //! left it), while the clock is paused (the picture shows the last tick, so `shots` after a
 //! `step` match `observe`), and on a client for bodies it does not predict: their
 //! interpolation in `shards_net` already blends host states, and blending twice would lag.
+//!
+//! **Picture holds** (co-op hit stop, `ai_core::PresentationHolds`): a held body is drawn at the pose
+//! it stood in when the hold began, then blends to the live drawn pose over as long as the hold
+//! lasted ([`PresentationHolds::drawn`]); the child and the follow camera show that pose, the body
+//! is never touched.
+//!
 //! Presentation only: nothing here reads or writes a game component.
 
-use ai_core::{AiId, SimTick};
+use ai_core::{AiId, PresentationHolds, SimTick};
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 use shards_core::{EngineConfig, NetRole, Predicted};
@@ -268,10 +274,13 @@ fn blend(
     virtual_time: Res<Time<Virtual>>,
     settings: Option<Res<GraphicsSettings>>,
     role: Option<Res<NetRole>>,
+    real: Res<Time<Real>>,
+    mut holds: Option<ResMut<PresentationHolds>>,
     mut visuals: Query<(&mut Interpolated, &mut Transform, &ChildOf), Without<CharacterController>>,
-    bodies: Query<(&Transform, Has<Predicted>), TopBody>,
+    bodies: Query<(&Transform, Has<Predicted>, Option<&AiId>), TopBody>,
 ) {
     let on = settings.is_none_or(|s| s.interpolation);
+    let now = real.elapsed();
     // A paused clock (and a `step`, which runs ticks without frames) shows the last tick: the
     // overstep left over is not time that is passing.
     let fraction = if virtual_time.is_paused() { 1.0 } else { fixed.overstep_fraction() };
@@ -283,19 +292,34 @@ fn blend(
             visual.applied = None;
         }
         let Some(rest) = visual.rest else { continue };
-        let blended = match body {
-            Some((body_tf, predicted)) if on && applies(role.as_deref(), predicted) => {
+        let mut blended = match body {
+            Some((body_tf, predicted, _)) if on && applies(role.as_deref(), predicted) => {
                 // The body moved since the last tick ended: it was placed between ticks.
                 if visual.cur.is_some_and(|cur| cur != Pose::of(body_tf)) {
-                    let now = Pose::of(body_tf);
+                    let here = Pose::of(body_tf);
                     visual.reset();
-                    visual.cur = Some(now);
-                    visual.prev = Some(now);
+                    visual.cur = Some(here);
+                    visual.prev = Some(here);
                 }
                 visual.at(fraction).map(|shown| (body_tf, shown))
             }
             _ => None,
         };
+        // A picture hold (a hit stop in co-op) freezes the drawn pose and then catches up to the
+        // live one; whatever was blended above (or the body's own pose, with the setting off) is
+        // the live one. Only bodies this machine draws itself: a remote body's drawn pose is made
+        // in `shards_net`'s interpolation, which asks the same holds.
+        if let (Some(holds), Some((body_tf, predicted, Some(id)))) = (holds.as_deref_mut(), body)
+            && applies(role.as_deref(), predicted)
+            && !holds.is_empty()
+        {
+            let live = blended.map_or(Pose::of(body_tf), |(_, shown)| shown);
+            let drawn = holds.drawn(*id, now, Transform { translation: live.translation, rotation: live.rotation, scale: Vec3::ONE });
+            let drawn = Pose::of(&drawn);
+            if blended.is_some() || drawn != live {
+                blended = Some((body_tf, drawn));
+            }
+        }
         let shown = blended.map(|(_, shown)| shown);
         if visual.shown != shown {
             visual.shown = shown;
@@ -515,6 +539,82 @@ mod tests {
         tick(&mut app, body, 2.0, 8);
         app.world_mut().run_schedule(PostUpdate);
         assert!(app.world().get::<Interpolated>(child).unwrap().shown().is_some());
+    }
+
+
+    fn real_to(app: &mut App, ms: u64) {
+        let mut real = app.world_mut().resource_mut::<Time<Real>>();
+        let to = Duration::from_millis(ms);
+        let by = to.saturating_sub(real.elapsed());
+        real.advance_by(by);
+    }
+
+    #[test]
+    fn a_held_body_is_drawn_standing_still_then_catches_up_over_as_long_as_the_hold_lasted() {
+        let (mut app, body, child) = rig(None);
+        app.init_resource::<PresentationHolds>();
+        app.world_mut().entity_mut(body).insert(AiId(3));
+        // A second body that is never held, moving the same way.
+        let other = app.world_mut().spawn((CharacterController::default(), Transform::default(), AiId(4))).id();
+        let other_child = app.world_mut().spawn((Transform::from_xyz(0.0, 1.0, 0.0), ChildOf(other))).id();
+        app.world_mut().run_schedule(PostUpdate);
+        let both = |app: &mut App, x: f32| {
+            app.world_mut().get_mut::<Transform>(body).unwrap().translation.x = x;
+            app.world_mut().get_mut::<Transform>(other).unwrap().translation.x = x;
+            app.world_mut().run_schedule(FixedLast);
+        };
+        real_to(&mut app, 1000);
+        for x in [0.0, 1.0, 2.0] {
+            both(&mut app, x);
+        }
+        // Drawn one tick behind (nothing owed): body 2 at 1.
+        app.world_mut().resource_mut::<PresentationHolds>().hold(AiId(3), Duration::from_millis(1000), Duration::from_millis(1100));
+        app.world_mut().run_schedule(PostUpdate);
+        assert!((world_x(&app, child) - 1.0).abs() < 1e-3);
+        // 50 ms into the hold the body has run on to 4; its picture has not moved, the other's has.
+        real_to(&mut app, 1050);
+        for x in [3.0, 4.0] {
+            both(&mut app, x);
+        }
+        app.world_mut().run_schedule(PostUpdate);
+        assert!((world_x(&app, child) - 1.0).abs() < 1e-3, "held: {}", world_x(&app, child));
+        assert!((world_x(&app, other_child) - 3.0).abs() < 1e-3, "not held: {}", world_x(&app, other_child));
+        assert_eq!(app.world().get::<Transform>(body).unwrap().translation.x, 4.0, "the body itself is the simulation's");
+        let shown = app.world().get::<Interpolated>(child).unwrap().shown().unwrap();
+        assert!((shown.translation.x - 1.0).abs() < 1e-3, "the camera follows the held picture");
+        // The hold ends at 1100; the catch-up takes the same 100 ms: halfway at 1150.
+        real_to(&mut app, 1150);
+        app.world_mut().run_schedule(PostUpdate);
+        assert!((world_x(&app, child) - 2.0).abs() < 1e-3, "half way from 1 to 3: {}", world_x(&app, child));
+        // Frame by frame to the end: no step larger than the blend allows (10 ms of 100 = 0.2).
+        let mut last = world_x(&app, child);
+        for ms in (1160..=1250).step_by(10) {
+            real_to(&mut app, ms);
+            app.world_mut().run_schedule(PostUpdate);
+            let x = world_x(&app, child);
+            assert!(x >= last && x - last <= 0.2 + 1e-3, "{last} -> {x} at {ms}");
+            last = x;
+        }
+        assert!((last - 3.0).abs() < 1e-3, "caught up: {last}");
+        assert!((world_x(&app, other_child) - 3.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_held_body_stands_still_with_the_interpolation_setting_off_too() {
+        let (mut app, body, child) = rig(Some(GraphicsSettings { interpolation: false, ..default() }));
+        app.init_resource::<PresentationHolds>();
+        app.world_mut().entity_mut(body).insert(AiId(3));
+        real_to(&mut app, 1000);
+        tick(&mut app, body, 1.0, 0);
+        app.world_mut().resource_mut::<PresentationHolds>().hold(AiId(3), Duration::from_millis(1000), Duration::from_millis(1100));
+        app.world_mut().run_schedule(PostUpdate);
+        assert!((world_x(&app, child) - 1.0).abs() < 1e-3);
+        tick(&mut app, body, 5.0, 0);
+        app.world_mut().run_schedule(PostUpdate);
+        assert!((world_x(&app, child) - 1.0).abs() < 1e-3, "held at 1: {}", world_x(&app, child));
+        real_to(&mut app, 1200);
+        app.world_mut().run_schedule(PostUpdate);
+        assert!((world_x(&app, child) - 5.0).abs() < 1e-3, "caught up: {}", world_x(&app, child));
     }
 
     #[test]

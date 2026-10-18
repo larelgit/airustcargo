@@ -22,7 +22,7 @@
 //!     camera and the input run on real time; everything on the simulation's clock, the pose
 //!     included, stands still. Zero ticks run inside it.
 //!   - **Co-op** (host and clients): the clock is never held. Only the pictures of the bodies in the
-//!     blow stand still ([`PresentationHolds`](ai_core::PresentationHolds), by `AiId`, read by the
+//!     blow stand still ([`PresentationHolds`](ai_core::PresentationHolds), by `AiId`, read by the drawn-pose interpolation and the
 //!     animation bridge).
 //!   - **Headless, `--paused`, a `step`, a replay playing back (`--verify`), a stand's driven clocks,
 //!     tests**: nothing is held. The event and the journal line still appear, and `hitstop` says why
@@ -337,7 +337,7 @@ fn decide(world: &mut World, stop: &HitStopped) -> (f32, Outcome) {
         }
         let mut holds = world.resource_mut::<PresentationHolds>();
         for id in &stop.ids {
-            holds.hold(*id, until);
+            holds.hold(*id, now, until);
         }
         Outcome::Picture
     };

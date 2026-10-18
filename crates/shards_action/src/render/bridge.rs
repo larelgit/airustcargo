@@ -1113,7 +1113,7 @@ mod tests {
 
         // Held for 0.25 s of real time: frames of 0.1 s.
         let until = rig.app.world().resource::<Time<Real>>().elapsed() + Duration::from_millis(250);
-        rig.app.world_mut().resource_mut::<PresentationHolds>().hold(AiId(7), until);
+        rig.app.world_mut().resource_mut::<PresentationHolds>().hold(AiId(7), until - Duration::from_millis(250), until);
         rig.app.update();
         let held_at = walk(&rig).1;
         assert!(rig.app.world().get::<AnimationPlayer>(rig.player).unwrap().all_paused());
@@ -1129,7 +1129,7 @@ mod tests {
         assert_eq!(rig.main_clip().as_deref(), Some("idle"));
         // Another body's hold does not touch this one.
         let until = rig.app.world().resource::<Time<Real>>().elapsed() + Duration::from_secs(5);
-        rig.app.world_mut().resource_mut::<PresentationHolds>().hold(AiId(9), until);
+        rig.app.world_mut().resource_mut::<PresentationHolds>().hold(AiId(9), until - Duration::from_secs(5), until);
         rig.app.update();
         assert!(!rig.app.world().get::<AnimationPlayer>(rig.player).unwrap().all_paused());
     }

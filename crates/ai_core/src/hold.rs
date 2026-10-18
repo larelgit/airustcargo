@@ -162,39 +162,107 @@ pub fn apply_hold(mut hold: ResMut<ClockHold>, real: Res<Time<Real>>, tick: Opti
     }
 }
 
+/// One body's picture hold: when it was asked for and when it ends (`Time<Real>`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Span {
+    from: Duration,
+    until: Duration,
+}
+
+/// A held body's drawn pose, kept for the hold and the catch-up after it.
+#[derive(Clone, Copy, Debug)]
+struct Frozen {
+    /// Where the body stood still.
+    pose: Transform,
+    span: Span,
+    /// What [`PresentationHolds::drawn`] returned last, where a new hold during a catch-up starts.
+    last: Transform,
+}
+
+impl Frozen {
+    /// The catch-up lasts as long as the hold did.
+    fn catch_up_ends(&self) -> Duration {
+        self.span.until + self.span.until.saturating_sub(self.span.from)
+    }
+}
+
 /// Bodies whose picture is held, by `AiId`, until a `Time<Real>`.
+///
+/// A held body is drawn standing still (the animation bridge pauses its player;
+/// [`drawn`](Self::drawn) freezes its position and rotation) and then catches up to where it
+/// really is over as long as the hold lasted. The simulation never sees any of it.
 #[derive(Resource, Debug, Default)]
 pub struct PresentationHolds {
-    until: BTreeMap<AiId, Duration>,
+    spans: BTreeMap<AiId, Span>,
+    frozen: BTreeMap<AiId, Frozen>,
     /// Holds asked for so far.
     pub count: u64,
 }
 
 impl PresentationHolds {
-    /// Holds `id`'s picture until `until` (the later end wins when it is held already).
-    pub fn hold(&mut self, id: AiId, until: Duration) {
-        let end = self.until.entry(id).or_insert(until);
-        *end = (*end).max(until);
+    /// Holds `id`'s picture from `from` (the real time it is asked at) until `until` (the later
+    /// end wins when it is held already).
+    pub fn hold(&mut self, id: AiId, from: Duration, until: Duration) {
+        let span = self.spans.entry(id).or_insert(Span { from, until });
+        if from >= span.until {
+            // The old hold was over: a new one.
+            *span = Span { from, until };
+        }
+        span.until = span.until.max(until);
         self.count += 1;
     }
 
     /// Whether `id`'s picture is held at `now`.
     pub fn is_held(&self, id: AiId, now: Duration) -> bool {
-        self.until.get(&id).is_some_and(|until| now < *until)
+        self.spans.get(&id).is_some_and(|span| now < span.until)
     }
 
     /// The bodies held at `now`, in id order, with the real time they are held until.
     pub fn held(&self, now: Duration) -> impl Iterator<Item = (AiId, Duration)> + '_ {
-        self.until.iter().filter(move |(_, until)| now < **until).map(|(id, until)| (*id, *until))
+        self.spans.iter().filter(move |(_, span)| now < span.until).map(|(id, span)| (*id, span.until))
     }
 
-    /// Forgets the holds that are over.
+    /// Forgets the holds that are over, and the catch-ups that are done.
     pub fn prune(&mut self, now: Duration) {
-        self.until.retain(|_, until| now < *until);
+        self.spans.retain(|_, span| now < span.until);
+        self.frozen.retain(|_, f| now < f.catch_up_ends());
     }
 
     pub fn is_empty(&self) -> bool {
-        self.until.is_empty()
+        self.spans.is_empty() && self.frozen.is_empty()
+    }
+
+    /// Where `id`'s body is drawn at `now` when it really is at `live`: standing where it was
+    /// drawn when the hold began for as long as the hold lasts, then blended (linearly, rotation
+    /// by slerp, the way render interpolation blends) from there to `live` over as long as the
+    /// hold lasted, so it catches up without a jump. A body never held is drawn at `live`. Call
+    /// it once per frame per body, where the body's drawn pose is made; scale is always `live`'s.
+    pub fn drawn(&mut self, id: AiId, now: Duration, live: Transform) -> Transform {
+        if let Some(span) = self.spans.get(&id).copied().filter(|span| now < span.until) {
+            let frozen = self.frozen.entry(id).or_insert(Frozen { pose: live, span, last: live });
+            if frozen.span.until <= now {
+                // A new hold while the last one was catching up: stand still where it was drawn.
+                *frozen = Frozen { pose: frozen.last, span, last: frozen.last };
+            }
+            frozen.span.until = span.until;
+            let pose = Transform { scale: live.scale, ..frozen.pose };
+            frozen.last = pose;
+            return pose;
+        }
+        let Some(frozen) = self.frozen.get_mut(&id) else { return live };
+        let length = frozen.span.until.saturating_sub(frozen.span.from).as_secs_f32();
+        let t = if length <= 0.0 { 1.0 } else { now.saturating_sub(frozen.span.until).as_secs_f32() / length };
+        if t >= 1.0 {
+            self.frozen.remove(&id);
+            return live;
+        }
+        let drawn = Transform {
+            translation: frozen.pose.translation.lerp(live.translation, t),
+            rotation: frozen.pose.rotation.slerp(live.rotation, t),
+            scale: live.scale,
+        };
+        frozen.last = drawn;
+        drawn
     }
 }
 
@@ -323,9 +391,9 @@ mod tests {
         let (a, b) = (AiId(5), AiId(2));
         {
             let mut holds = app.world_mut().resource_mut::<PresentationHolds>();
-            holds.hold(a, now + Duration::from_millis(100));
-            holds.hold(a, now + Duration::from_millis(40));
-            holds.hold(b, now + Duration::from_millis(40));
+            holds.hold(a, now, now + Duration::from_millis(100));
+            holds.hold(a, now, now + Duration::from_millis(40));
+            holds.hold(b, now, now + Duration::from_millis(40));
             assert!(holds.is_held(a, now) && holds.is_held(b, now));
             assert_eq!(holds.held(now).map(|(id, _)| id).collect::<Vec<_>>(), [b, a], "in id order");
         }
@@ -339,5 +407,53 @@ mod tests {
             app.update();
         }
         assert!(app.world().resource::<PresentationHolds>().is_empty());
+    }
+
+    fn at(x: f32) -> Transform {
+        Transform::from_xyz(x, 0.0, 0.0)
+    }
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    #[test]
+    fn a_held_body_is_drawn_where_it_stood_then_blended_to_the_live_pose_over_the_hold() {
+        let mut holds = PresentationHolds::default();
+        let id = AiId(3);
+        assert_eq!(holds.drawn(id, ms(0), at(9.0)), at(9.0), "never held: live");
+        holds.hold(id, ms(1000), ms(1100));
+        // Held: the pose of the first frame, whatever the live one does (the scale is the live one's).
+        assert_eq!(holds.drawn(id, ms(1000), at(1.0)), at(1.0));
+        assert_eq!(holds.drawn(id, ms(1060), at(5.0)), at(1.0));
+        let scaled = Transform { scale: Vec3::splat(2.0), ..at(7.0) };
+        assert_eq!(holds.drawn(id, ms(1099), scaled).translation, Vec3::X);
+        assert_eq!(holds.drawn(id, ms(1099), scaled).scale, Vec3::splat(2.0));
+        // The catch-up lasts as long as the hold did: half way at 1150, there at 1200.
+        assert!((holds.drawn(id, ms(1100), at(5.0)).translation.x - 1.0).abs() < 1e-5, "starts where it stood");
+        assert!((holds.drawn(id, ms(1150), at(5.0)).translation.x - 3.0).abs() < 1e-4);
+        assert_eq!(holds.drawn(id, ms(1200), at(5.0)), at(5.0));
+        holds.prune(ms(1200));
+        assert!(holds.is_empty(), "forgotten once done");
+        assert_eq!(holds.drawn(id, ms(1300), at(8.0)), at(8.0));
+    }
+
+    #[test]
+    fn a_hold_during_a_catch_up_stands_where_the_body_was_drawn_and_rotation_takes_the_short_way() {
+        let mut holds = PresentationHolds::default();
+        let id = AiId(1);
+        holds.hold(id, ms(0), ms(100));
+        holds.drawn(id, ms(0), at(0.0));
+        let half = holds.drawn(id, ms(150), at(4.0));
+        assert!((half.translation.x - 2.0).abs() < 1e-4);
+        holds.hold(id, ms(150), ms(250));
+        assert!((holds.drawn(id, ms(160), at(9.0)).translation.x - 2.0).abs() < 1e-4, "frozen where it was drawn");
+        // Turned a quarter: half way is an eighth.
+        let mut holds = PresentationHolds::default();
+        holds.hold(id, ms(0), ms(100));
+        holds.drawn(id, ms(0), Transform::IDENTITY);
+        let turned = Transform::from_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2));
+        let mid = holds.drawn(id, ms(150), turned);
+        assert!(mid.rotation.angle_between(Quat::from_rotation_y(std::f32::consts::FRAC_PI_4)) < 1e-4);
     }
 }
