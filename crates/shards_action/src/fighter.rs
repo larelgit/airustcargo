@@ -11,7 +11,9 @@ use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::Intent;
-use shards_motion::{Collider, LayerMask, MotionState};
+use shards_motion::{
+    CharacterController, CharacterParams, Collider, LayerMask, MotionMode, MotionState, MoveModifiers, SprintResume,
+};
 
 use crate::def::{CombatTuning, EPS};
 use crate::machine::{ActionState, InputBuffer};
@@ -97,6 +99,33 @@ impl Stamina {
     pub fn spend(&mut self, amount: f32) {
         self.current = (self.current - amount).max(0.0);
         self.since_use = 0.0;
+    }
+
+    /// Whether a sprint is held back right now: the bar is empty, or the lock a dry sprint set
+    /// has not opened under `rule` (see [`SprintResume`]). `held`: the sprint button is down.
+    /// The host's `settle_exhaustion` and a client's prediction agree through this.
+    pub fn sprint_blocked(&self, rule: SprintResume, held: bool) -> bool {
+        self.current <= EPS
+            || match rule {
+                SprintResume::OnRelease => self.exhausted && held,
+                SprintResume::Fraction(f) if f > 0.0 => self.exhausted && self.current < f * self.max,
+                // No lock under this rule: only an empty bar stops the sprint.
+                SprintResume::Fraction(_) => false,
+            }
+    }
+
+    /// Opens the lock a dry sprint set, when `rule` says it opens: the button let go
+    /// (`OnRelease`), or the bar back at its fraction (`Fraction`, held or not). A `Fraction(0)`
+    /// rule never consults the lock, so it leaves one set under another rule (a fast swim's) alone.
+    pub fn settle_exhaustion(&mut self, rule: SprintResume, held: bool) {
+        if !self.exhausted {
+            return;
+        }
+        match rule {
+            SprintResume::OnRelease => self.exhausted = held,
+            SprintResume::Fraction(f) if f > 0.0 => self.exhausted = self.current < f * self.max,
+            SprintResume::Fraction(_) => {}
+        }
     }
 }
 
@@ -250,20 +279,53 @@ pub struct Dead;
 #[reflect(Component, Default)]
 pub struct Invulnerable;
 
-/// What [`update_fighters`] reads and changes on a fighter.
-type Resources<'a> =
-    (Option<&'a mut Stamina>, Option<&'a mut Poise>, &'a mut Cooldowns, Option<&'a MotionState>, Has<Dead>);
+/// The rule that opens a sprint's stamina lock for a fighter now: the params' for a fast swim, the
+/// combat tuning's for a sprint on land.
+pub(crate) fn sprint_rule(
+    db: &ContentDb,
+    motion: Option<&MotionState>,
+    body: Option<(&CharacterController, Option<&CharacterParams>)>,
+) -> SprintResume {
+    if motion.is_some_and(|m| m.mode == MotionMode::Water) {
+        return body.map_or(SprintResume::OnRelease, |(c, own)| c.resolve(own, Some(db)).swim_fast_resume);
+    }
+    db.get::<CombatTuning>(CombatTuning::ID).map_or(SprintResume::OnRelease, |t| t.sprint_resume)
+}
 
-/// `SimSet::Resolve`, after hits: sprinting drains stamina, then stamina and poise
-/// regenerate after their delays, broken poise recovers, cooldowns run down.
+/// What [`update_fighters`] reads and changes on a fighter.
+type Resources<'a> = (
+    Option<&'a mut Stamina>,
+    Option<&'a mut Poise>,
+    &'a mut Cooldowns,
+    Option<&'a MotionState>,
+    Has<Dead>,
+    Option<&'a MoveModifiers>,
+    Option<(&'a CharacterController, Option<&'a CharacterParams>)>,
+);
+
+/// `SimSet::Resolve`, after hits: sprinting drains stamina (`sprint_stamina_per_s` times the
+/// character's `MoveModifiers::sprint_cost`; a fast swim drains the params' `swim_fast_drain`
+/// instead), then stamina and poise regenerate after their delays, broken poise recovers,
+/// cooldowns run down. A free sprint (cost 0) still holds the regeneration back.
 pub fn update_fighters(time: Res<Time>, db: Res<ContentDb>, mut fighters: Query<Resources, With<Fighter>>) {
     let dt = time.delta_secs();
     let drain = CombatTuning::of(&db).sprint_stamina_per_s;
-    for (stamina, poise, mut cooldowns, motion, dead) in &mut fighters {
+    for (stamina, poise, mut cooldowns, motion, dead, modifiers, body) in &mut fighters {
         if let Some(mut s) = stamina {
             if motion.is_some_and(|m| m.sprinting) && !dead {
-                s.spend(drain * dt);
-                s.exhausted |= s.current <= EPS;
+                let swimming = motion.is_some_and(|m| m.mode == MotionMode::Water);
+                let (amount, costly) = if swimming {
+                    let rate = body.map_or(0.0, |(c, own)| c.resolve(own, Some(&*db)).swim_fast_drain);
+                    (rate * dt, rate > 0.0)
+                } else {
+                    match modifiers.map_or(1.0, |m| m.sprint_cost) {
+                        1.0 => (drain * dt, true),
+                        cost => (drain * cost * dt, cost > 0.0),
+                    }
+                };
+                s.spend(amount);
+                // A sprint that costs nothing cannot run the stamina dry; a rule with no lock sets none.
+                s.exhausted |= costly && s.current <= EPS && sprint_rule(&db, motion, body).latches();
             } else {
                 regen_stamina(&mut s, dt);
             }
@@ -378,6 +440,45 @@ mod tests {
         assert!(p.is_broken() && p.current == 0.0);
         regen_poise(&mut p, 0.1);
         assert!(!p.is_broken() && p.current == 40.0);
+    }
+
+    /// A sprint dry at 100 max stamina: what each resume rule says, tick by tick.
+    #[test]
+    fn a_dry_sprint_opens_by_its_rule() {
+        let dry = |exhausted| Stamina { current: 0.0, exhausted, ..Stamina::new(100.0, 30.0, 0.8) };
+        // Today's rule: only the button's release opens it; any stamina is then enough.
+        let mut s = dry(true);
+        s.current = 60.0;
+        assert!(s.sprint_blocked(SprintResume::OnRelease, true), "held: still locked, however full");
+        s.settle_exhaustion(SprintResume::OnRelease, true);
+        assert!(s.exhausted);
+        s.settle_exhaustion(SprintResume::OnRelease, false);
+        assert!(!s.exhausted && !s.sprint_blocked(SprintResume::OnRelease, true));
+        assert!(dry(false).sprint_blocked(SprintResume::OnRelease, false), "an empty bar always blocks");
+
+        // A quarter lock (a fast swim): 24.9 is blocked held or not, 25 opens, letting go does nothing.
+        let quarter = SprintResume::Fraction(0.25);
+        let mut s = dry(true);
+        for current in [0.0, 12.0, 24.9] {
+            s.current = current;
+            s.settle_exhaustion(quarter, false);
+            assert!(s.exhausted && s.sprint_blocked(quarter, true) && s.sprint_blocked(quarter, false), "{current}");
+        }
+        s.current = 25.0;
+        assert!(!s.sprint_blocked(quarter, true), "the prediction opens at the same point");
+        s.settle_exhaustion(quarter, true);
+        assert!(!s.exhausted);
+
+        // No lock (a sprint on land): an empty bar stops it, the first drop of stamina resumes it,
+        // and a lock left by another rule is neither consulted nor cleared.
+        let none = SprintResume::Fraction(0.0);
+        assert!(!none.latches() && quarter.latches() && SprintResume::OnRelease.latches());
+        let mut s = dry(true);
+        assert!(s.sprint_blocked(none, true));
+        s.current = 0.5;
+        assert!(!s.sprint_blocked(none, true));
+        s.settle_exhaustion(none, true);
+        assert!(s.exhausted, "a fast swim's lock survives a walk on land");
     }
 
     #[test]

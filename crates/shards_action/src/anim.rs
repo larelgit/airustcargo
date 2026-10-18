@@ -533,18 +533,35 @@ impl<'a> ClipChoice<'a> {
 }
 
 /// What the body is, besides what [`MotionState`] says.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BodyStatus {
     /// The fighter has the `Dead` marker.
     pub dead: bool,
     /// The running action is the moveset's forced `stagger`.
     pub staggered: bool,
+    /// The factor the body's speeds are scaled by (`MoveModifiers::pace`): a slowed run is
+    /// still a run, played slower, not a walk. 1: no modifier.
+    pub pace: f32,
+}
+
+impl Default for BodyStatus {
+    fn default() -> Self {
+        Self { dead: false, staggered: false, pace: 1.0 }
+    }
 }
 
 /// The locomotion state of a character: by motion mode, then by how fast it moves on the
 /// ground (`idle` below `idle_below`, `walk` up to halfway to the run clip's speed, then
 /// `run`, or `sprint` while the controller sprints).
 pub fn locomotion_state(motion: &MotionState, speeds: &GroundSpeeds) -> Locomotion {
+    locomotion_state_at(motion, speeds, 1.0)
+}
+
+/// [`locomotion_state`] for a body whose speeds are scaled by `pace` (a status slow, wading):
+/// the ground speed is compared with the clips' speeds as it would be without the scale, so a
+/// slowed run still shows the `run` clip (at a lower playback speed). Standing still stays
+/// standing still.
+pub fn locomotion_state_at(motion: &MotionState, speeds: &GroundSpeeds, pace: f32) -> Locomotion {
     match motion.mode {
         MotionMode::Water => Locomotion::Swim,
         MotionMode::Glide => Locomotion::Glide,
@@ -554,8 +571,10 @@ pub fn locomotion_state(motion: &MotionState, speeds: &GroundSpeeds) -> Locomoti
             let v = Vec2::new(motion.velocity.x, motion.velocity.z).length();
             let walk_to_run = (speeds.walk + speeds.run) * 0.5;
             if v < speeds.idle_below {
-                Locomotion::Idle
-            } else if motion.sprinting && v > walk_to_run {
+                return Locomotion::Idle;
+            }
+            let v = if pace > EPS && pace != 1.0 { v / pace } else { v };
+            if motion.sprinting && v > walk_to_run {
                 Locomotion::Sprint
             } else if v < walk_to_run {
                 Locomotion::Walk
@@ -630,7 +649,7 @@ pub fn select_clip_for<'a>(
     {
         return ClipChoice::seeked(set, clip, p, true);
     }
-    let state = locomotion_state(motion, &set.speeds);
+    let state = locomotion_state_at(motion, &set.speeds, status.pace);
     let Some((resolved, clip)) = set.locomotion_clip(state) else { return ClipChoice::none(set) };
     if resolved == Locomotion::Mantle
         && let Some(mantle) = &motion.mantle

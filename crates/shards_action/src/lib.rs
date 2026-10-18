@@ -125,11 +125,11 @@ pub mod zone;
 use ai_core::{AiAppExt, SimSet};
 use bevy::prelude::*;
 use shards_content::ContentAppExt;
-use shards_core::{CoreSystems, EngineAppExt, NetSet};
-use shards_motion::{ControllerSystems, MotionPlugin, MotionSystems};
+use shards_core::{CoreSystems, EngineAppExt, NetSet, Predicted};
+use shards_motion::{ControllerSystems, ModifierSystems, MotionPlugin, MotionSystems};
 
 pub use anim::{
-    crossed_cues, locomotion_state, select_clip, select_clip_for, select_layer, ActionClip, AnimSet, Animated,
+    crossed_cues, locomotion_state, locomotion_state_at, select_clip, select_clip_for, select_layer, ActionClip, AnimSet, Animated,
     AnimationCue, BodyStatus, ClipChoice, ClipDef, CueDef, GroundSpeeds, LayerChoice, LayerDef, Locomotion, MAX_LAYERS,
 };
 pub use combat::{
@@ -150,6 +150,7 @@ pub use machine::{
 };
 pub use predict::{shown_state, ActionPredictor, PredictedAction, CONFIRM_SLACK};
 pub use status::{
+    statuses_to_modifiers, NoStatusSlow,
     add_status_buildup, StatusApplied, StatusDef, StatusEffects, StatusExpired, StatusHook, StatusHooks, StatusResist,
     Statuses,
 };
@@ -262,6 +263,7 @@ impl Plugin for ActionPlugin {
             .register_type::<Invulnerable>()
             .register_type::<Statuses>()
             .register_type::<StatusResist>()
+            .register_type::<NoStatusSlow>()
             .register_type::<Animated>()
             // Typed for the network layer, which forwards them to clients.
             .register_type::<ActionStarted>()
@@ -304,6 +306,7 @@ impl Plugin for ActionPlugin {
                 FixedUpdate,
                 (
                     ActionSystems::Orders.in_set(SimSet::Input).after(CoreSystems::FollowOrders),
+                    ModifierSystems::Reset.after(ActionSystems::Orders),
                     (ActionSystems::Machine, ActionSystems::Effects).chain().in_set(SimSet::Act).after(MotionSystems::Intent),
                     (ActionSystems::Hits, ActionSystems::Fighters, ActionSystems::Statuses, ActionSystems::Deaths)
                         .chain()
@@ -328,6 +331,8 @@ impl Plugin for ActionPlugin {
                     fighter::update_fighters.in_set(ActionSystems::Fighters),
                     machine::finish_actions.in_set(ActionSystems::Fighters),
                     status::update_statuses.in_set(ActionSystems::Statuses),
+                    status::statuses_to_modifiers::<()>.in_set(ModifierSystems::Statuses),
+                    status::statuses_to_modifiers::<With<Predicted>>.in_set(ModifierSystems::PredictStatuses),
                     combat::check_deaths.in_set(ActionSystems::Deaths),
                     orders::steer_attack_orders.in_set(ActionSystems::PredictOrders),
                     predict::predict_actions.in_set(ActionSystems::Predict),

@@ -1,3 +1,7 @@
 {
     "bleed": (threshold: 100, decay_per_s: 10, duration: 1.0, effect: "bleed"),
+    // Movement statuses: a plain slow, a root, a speed cap.
+    "slow": (threshold: 100, duration: 2.0, speed_factor: 0.6),
+    "root": (threshold: 100, duration: 1.0, root: true),
+    "burden": (threshold: 100, duration: 2.0, speed_cap: 3.0),
 }

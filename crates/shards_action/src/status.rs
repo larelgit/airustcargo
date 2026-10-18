@@ -15,9 +15,11 @@
 //! ```
 
 use ai_core::AiId;
+use bevy::ecs::query::QueryFilter;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_content::{ContentDb, ContentDef, Refs};
+use shards_motion::MoveModifiers;
 
 use crate::def::{CombatTuning, EPS};
 use crate::fighter::{report_once, Dead};
@@ -40,6 +42,31 @@ pub struct StatusDef {
     /// restarts the duration. Without it, buildup is ignored while active.
     #[serde(default)]
     pub stacks: bool,
+    /// While active, multiplies the speed of the afflicted character (0.75: a quarter slower;
+    /// a swim too). Several statuses multiply. 1: no change. Read by
+    /// [`statuses_to_modifiers`] into `MoveModifiers`.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub speed_factor: f32,
+    /// While active, no walk or run faster than this (m/s) on the ground; the lowest of all
+    /// active statuses counts. Applied before `speed_factor`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_cap: Option<f32>,
+    /// While active, the afflicted character cannot walk, jump, glide or climb; gravity and
+    /// pushes still move it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub root: bool,
+}
+
+fn one() -> f32 {
+    1.0
+}
+
+fn is_one(v: &f32) -> bool {
+    *v == 1.0
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 impl ContentDef for StatusDef {
@@ -52,6 +79,46 @@ impl ContentDef for StatusDef {
         for (name, v) in [("decay_per_s", self.decay_per_s), ("duration", self.duration)] {
             if !(v >= 0.0 && v.is_finite()) {
                 refs.error(format!("{name} must be a number >= 0 (is {v})"));
+            }
+        }
+        for (name, v) in [("speed_factor", Some(self.speed_factor)), ("speed_cap", self.speed_cap)] {
+            if v.is_some_and(|v| !(v >= 0.0 && v.is_finite())) {
+                refs.error(format!("{name} must be a number >= 0 (is {v:?})"));
+            }
+        }
+    }
+}
+
+/// A body that takes statuses but is not slowed by them: the `speed_factor` and `speed_cap` of its
+/// active statuses are not added to its `MoveModifiers` (a `root` still is). The buildup, the
+/// effect and everything else a status does still happen; `StatusResist` is for a body that
+/// should not take the status at all. A game can also leave `speed_factor` unset and contribute
+/// the slow itself from a `ModifierSystems::Contribute` system that reads the statuses and the
+/// body's kind.
+#[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[reflect(Component, Default)]
+pub struct NoStatusSlow;
+
+/// `ModifierSystems::Statuses`: the active statuses with a `speed_factor`, `speed_cap` or `root`
+/// add them to the character's [`MoveModifiers`] (in the order the statuses were applied, so the product is the
+/// same every run: that order is part of the snapshot and the replay).
+pub fn statuses_to_modifiers<F: QueryFilter + 'static>(
+    db: Res<ContentDb>,
+    mut characters: Query<(&Statuses, &mut MoveModifiers, Has<NoStatusSlow>), F>,
+) {
+    for (statuses, mut modifiers, exempt) in &mut characters {
+        for entry in statuses.0.iter().filter(|e| e.active > 0.0) {
+            let Some(def) = db.get::<StatusDef>(&entry.id) else { continue };
+            if def.speed_factor != 1.0 && !exempt {
+                modifiers.slow(def.speed_factor);
+            }
+            if let Some(cap) = def.speed_cap
+                && !exempt
+            {
+                modifiers.cap_at(cap);
+            }
+            if def.root {
+                modifiers.root();
             }
         }
     }
@@ -324,7 +391,16 @@ mod tests {
     use super::*;
 
     fn bleed() -> StatusDef {
-        StatusDef { threshold: 100.0, decay_per_s: 10.0, duration: 1.0, effect: None, stacks: false }
+        StatusDef {
+            threshold: 100.0,
+            decay_per_s: 10.0,
+            duration: 1.0,
+            effect: None,
+            stacks: false,
+            speed_factor: 1.0,
+            speed_cap: None,
+            root: false,
+        }
     }
 
     #[test]

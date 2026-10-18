@@ -75,6 +75,12 @@ enum Sample {
     Blocked(Block),
 }
 
+/// Whether a floor `rise` above a walker (from the height its feet float at, when swimming) is a
+/// ledge the controller climbs: by walking at it, or, for a swimmer, by jumping at it.
+fn climbable(p: &CharacterParams, rise: f32, swimming: bool) -> bool {
+    p.can_climb(rise, swimming) || (swimming && p.can_jump_out(rise))
+}
+
 /// What a character of `params` at `origin` (feet) finds in the eight directions, up to
 /// `range` meters. `swimming_at`: the water surface, when the character swims. `exclude`:
 /// entities whose colliders never count (the character, and whatever it looks around).
@@ -162,7 +168,7 @@ impl<'a> Marcher<'a> {
                     Sample::Stop(Hazard::Cliff { drop: Some(-dy) })
                 } else if dy > p.step_height + allowance {
                     // Up to what the controller climbs it is a ledge, above that a wall.
-                    Sample::Stop(if p.can_climb(dy, from.swim) { Hazard::Ledge { rise: dy } } else { Hazard::Wall })
+                    Sample::Stop(if climbable(p, dy, from.swim) { Hazard::Ledge { rise: dy } } else { Hazard::Wall })
                 } else {
                     Sample::Pass { y, up: normal.y, swim: false }
                 }
@@ -215,13 +221,13 @@ impl<'a> Marcher<'a> {
         if block != Block::Tight {
             return Hazard::Wall;
         }
-        if self.terrain.blocker_top(at.x, at.z, state.y).is_some_and(|top| !p.can_climb(top - state.y, state.swim)) {
+        if self.terrain.blocker_top(at.x, at.z, state.y).is_some_and(|top| !climbable(p, top - state.y, state.swim)) {
             return Hazard::Wall;
         }
         for k in 1..=2 {
             let ahead = at + dir * (STEP * k as f32);
             match self.terrain.probe(ahead.x, ahead.z, state.y) {
-                Probe::Floor { y, .. } if y - state.y > p.step_height && p.can_climb(y - state.y, state.swim) => {
+                Probe::Floor { y, .. } if y - state.y > p.step_height && climbable(p, y - state.y, state.swim) => {
                     return Hazard::Ledge { rise: y - state.y };
                 }
                 Probe::Floor { y, .. } if y - state.y < -self.safe_drop => return Hazard::Cliff { drop: Some(state.y - y) },

@@ -7,11 +7,36 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_content::{ContentDb, ContentDef, Refs};
 
-use super::CharacterController;
+use super::{CharacterController, MotionMode};
 use crate::physics::{Collider, CollisionLayers, Shape};
 
 /// How far above `mantle_height` a ledge may stand and still be climbed (m): float noise.
-const MANTLE_SLACK: f32 = 1e-3;
+pub(crate) const MANTLE_SLACK: f32 = 1e-3;
+/// A jump in water climbs out onto a ledge this close in front of the body (m), unless the
+/// params set `climb_out_reach`.
+pub(crate) const DEFAULT_CLIMB_OUT_REACH: f32 = 0.3;
+
+/// When a sprint that ran the stamina dry may start again. The rule is a content choice per kind
+/// of sprint (`CombatTuning::sprint_resume` on land, [`CharacterParams::swim_fast_resume`] in water).
+#[derive(Reflect, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
+pub enum SprintResume {
+    /// The sprint button must be let go once; then it works again as soon as there is any stamina
+    /// (the default, and the only rule before this option existed).
+    #[default]
+    OnRelease,
+    /// Back once the stamina is at least this fraction of its maximum, with the button held or
+    /// not; letting go does not end the lock. `Fraction(0.25)`: a lock that opens at a quarter.
+    /// `Fraction(0.0)`: no lock at all, the sprint stops at an empty bar and goes on as soon as
+    /// there is any (how some action games treat a sprint on land).
+    Fraction(f32),
+}
+
+impl SprintResume {
+    /// Whether an empty bar sets the lock this rule consults (`Fraction(0)` has none).
+    pub fn latches(self) -> bool {
+        !matches!(self, SprintResume::Fraction(f) if f <= 0.0)
+    }
+}
 
 /// How a character moves. Distances in meters, times in seconds, speeds in m/s.
 /// Missing fields in a file take the defaults; unknown ones are an error, so a typo
@@ -87,6 +112,119 @@ pub struct CharacterParams {
     pub glide_accel: f32,
     /// Turning speed (degrees per second); 0 turns instantly.
     pub turn_speed_deg: f32,
+    /// Swimming speed while `sprint` is held and the input is not zero (a fast swim). 0: sprint
+    /// does nothing in water. It costs [`swim_fast_drain`](Self::swim_fast_drain) stamina per
+    /// second (a fighter with `Stamina`), ends when there is none, and shows as
+    /// `MotionState::sprinting`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub swim_fast_speed: f32,
+    /// Stamina per second a fast swim costs. Not scaled by `MoveModifiers::sprint_cost`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub swim_fast_drain: f32,
+    /// How fast a swimmer speeds up toward its input (m/s²). 0: `acceleration`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub swim_acceleration: f32,
+    /// How fast a swimmer slows with no input (m/s²). 0: the same as `swim_acceleration`
+    /// (or `acceleration`).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub swim_deceleration: f32,
+    /// Turning speed of a swimmer (degrees per second). 0: `turn_speed_deg`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub swim_turn_speed_deg: f32,
+    /// Two-tier climb-out: a swimmer pushing against a ledge climbs onto it by itself when the
+    /// ledge top is at most this high **above the water surface** (m); a higher ledge (up to
+    /// `mantle_height` above the feet) needs a jump. `None`: every ledge `mantle_height` allows
+    /// is climbed by pushing, as before.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub climb_out_auto_height: Option<f32>,
+    /// Jump climb-out limit **above the water surface** (m): a swimmer that jumps at a ledge
+    /// climbs onto it when the ledge top is at most this far over the surface, however deep its
+    /// feet float; the probe reaches that high too. `None`: the jump uses `mantle_height` above
+    /// the feet like any climb (so only `mantle_height - float_depth` over the surface is
+    /// reachable). A game that wants a window like "up to 1.3 m over the water" sets this; the
+    /// land climb keeps `mantle_height`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub climb_out_max_height: Option<f32>,
+    /// Horizontal reach of the water climb-out (m): a swimmer that jumps at a ledge climbs onto
+    /// it when the ledge face is within this distance in front of the body. `None`: 0.3 m, as
+    /// before. A game whose swimmers climb out of ledges half a meter away sets it to that
+    /// distance; the `jump` tool and `clearance` ask the same number.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub climb_out_reach: Option<f32>,
+    /// Fast swim: when it may start again after the stamina ran dry. See [`SprintResume`]; the
+    /// land sprint has its own rule in the combat tuning.
+    #[serde(skip_serializing_if = "is_on_release")]
+    pub swim_fast_resume: SprintResume,
+    /// Wading: from this depth of water over the feet (m) the walk slows down. Needs
+    /// `wade_factor` below 1.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub wade_min_depth: f32,
+    /// Wading: at this depth and deeper the slowdown is the whole `wade_factor`; between
+    /// `wade_min_depth` and here it grows in a straight line from 1.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub wade_full_depth: f32,
+    /// Wading: the speed factor at `wade_full_depth`. 1: wading does not slow (the default).
+    #[serde(skip_serializing_if = "is_one")]
+    pub wade_factor: f32,
+    /// Wading: the depth is measured this far (m) below the feet (`surface - feet + offset`), for
+    /// a game whose rules read submersion at a reference point under the soles. The value to use
+    /// is the gap from that point to the floor of a standing body: its distance below the capsule
+    /// bottom plus `skin_width` (the feet rest a skin above the floor). A point 0.1 m under the
+    /// capsule bottom with the default skin is `0.12`. Only wading reads it, not swimming,
+    /// floating or landing. 0: the depth over the feet.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub wade_depth_offset: f32,
+    /// Wading: the offset while airborne (with `wade_in_air`), when it differs from
+    /// the standing one. A reference point fixed under the capsule bottom is `skin_width`
+    /// closer to the feet in the air than for a standing body (the feet rest a skin above the
+    /// floor only on the ground), so the in-air value is `wade_depth_offset - skin_width`.
+    /// `None`: `wade_depth_offset` in every mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wade_air_depth_offset: Option<f32>,
+    /// Wading also slows a body in the air over water (the water is over the feet, not on the
+    /// ground). A glide is never slowed: modifiers do not scale it. `false`: only on the ground.
+    #[serde(skip_serializing_if = "is_false")]
+    pub wade_in_air: bool,
+    /// Sprint speed grows with the input like a walk does: `sprint_speed * amount`, and any input
+    /// above zero is a sprint (not only above walking). `false`: full sprint speed above 0.5.
+    #[serde(skip_serializing_if = "is_false")]
+    pub sprint_scales_with_input: bool,
+    /// A speed cap (`MoveModifiers::cap` and `unsprinted_cap`) is the speed at full input, and
+    /// slower inputs scale with it (a cap of 4.5 on a run of 5.0 makes a half-stick walk 2.25),
+    /// like an analog stick against a lower top speed. `false`: the cap is an absolute ceiling.
+    #[serde(skip_serializing_if = "is_false")]
+    pub caps_scale_with_input: bool,
+    /// Horizontal speed changes by the acceleration step per axis (x and z each move toward their
+    /// own target by at most the step) instead of along the straight line to the target velocity.
+    #[serde(skip_serializing_if = "is_false")]
+    pub axis_stepping: bool,
+    /// `deceleration` applies only when there is no movement input; with input the speed always
+    /// changes at `acceleration`, even toward a slower target. `false`: deceleration whenever the
+    /// target is slower than the current speed.
+    #[serde(skip_serializing_if = "is_false")]
+    pub brake_only_without_input: bool,
+    /// Horizontal braking in the air with no input (m/s²). 0: the air keeps its horizontal speed.
+    /// `air_control` scales the speed-up with input; this is the slow-down without it.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub air_deceleration: f32,
+    /// Sprint is decided every tick in the air too: pressing sprint in the air starts the sprint
+    /// (speed and stamina drain) and letting go stops it, and a sprint that was on at take-off
+    /// ends with the button. A glide is no sprint. `false`: the sprint flag is decided on the
+    /// ground and in the water only, so a take-off sprint lasts the whole jump.
+    #[serde(skip_serializing_if = "is_false")]
+    pub sprint_in_air: bool,
+    /// Landing tiers after a jump: impact speeds (m/s, ascending). `Landed::tier` is how many of
+    /// them the impact reached (`[4.0, 6.5, 13.0]`: 0 below 4, 3 from 13). Empty (with
+    /// `landing_drop_tiers`): tier 0 always, and `Landed::jumped` is not tracked.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub landing_tiers: Vec<f32>,
+    /// The same for a fall that did not follow a jump (a ledge walked off). Empty: `landing_tiers`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub landing_drop_tiers: Vec<f32>,
+    /// No `Landed` while the feet stand in water deeper than this (m): the shallows break the
+    /// fall. `None`: every landing is reported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub landing_wade_limit: Option<f32>,
 }
 
 impl Default for CharacterParams {
@@ -118,6 +256,30 @@ impl Default for CharacterParams {
             glide_speed: 9.0,
             glide_accel: 8.0,
             turn_speed_deg: 720.0,
+            swim_fast_speed: 0.0,
+            swim_fast_drain: 0.0,
+            swim_acceleration: 0.0,
+            swim_deceleration: 0.0,
+            swim_turn_speed_deg: 0.0,
+            climb_out_auto_height: None,
+            climb_out_max_height: None,
+            climb_out_reach: None,
+            swim_fast_resume: SprintResume::OnRelease,
+            wade_min_depth: 0.0,
+            wade_full_depth: 0.0,
+            wade_factor: 1.0,
+            wade_depth_offset: 0.0,
+            wade_air_depth_offset: None,
+            wade_in_air: false,
+            sprint_scales_with_input: false,
+            caps_scale_with_input: false,
+            axis_stepping: false,
+            brake_only_without_input: false,
+            air_deceleration: 0.0,
+            sprint_in_air: false,
+            landing_tiers: Vec::new(),
+            landing_drop_tiers: Vec::new(),
+            landing_wade_limit: None,
         }
     }
 }
@@ -130,6 +292,22 @@ impl ContentDef for CharacterParams {
             refs.error(problems);
         }
     }
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+fn is_one(v: &f32) -> bool {
+    *v == 1.0
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
+fn is_on_release(v: &SprintResume) -> bool {
+    *v == SprintResume::OnRelease
 }
 
 /// What a character without content moves by: the code defaults.
@@ -180,6 +358,17 @@ impl CharacterParams {
         self.can_mantle(if swimming { rise + self.skin() } else { rise })
     }
 
+    /// Whether a swimmer's **jump** climbs onto a floor `rise` meters above the height its feet
+    /// float at: [`climb_out_max_height`](Self::climb_out_max_height) above the surface when set
+    /// (the feet float `float_depth` below it), else the ordinary [`can_climb`](Self::can_climb).
+    /// The controller's rule for the jump, and the one the `jump` tool and `clearance` ask.
+    pub fn can_jump_out(&self, rise: f32) -> bool {
+        match self.climb_out_max_height {
+            Some(limit) => rise - self.float_depth <= limit + MANTLE_SLACK,
+            None => self.can_climb(rise, true),
+        }
+    }
+
     /// Initial upward speed that peaks at `jump_height`.
     pub fn jump_speed(&self) -> f32 {
         (2.0 * self.gravity.max(0.0) * self.jump_height.max(0.0)).sqrt()
@@ -188,13 +377,72 @@ impl CharacterParams {
     /// Ground speed for an input of length `amount` (0..1), and whether it is a sprint.
     pub fn ground_speed(&self, amount: f32, sprint: bool) -> (f32, bool) {
         let amount = amount.clamp(0.0, 1.0);
-        if sprint && amount > 0.5 {
-            (self.sprint_speed, true)
-        } else if amount <= 0.5 {
+        if self.sprint_scales_with_input {
+            if sprint && amount > 0.0 {
+                return (self.sprint_speed * amount, true);
+            }
+        } else if sprint && amount > 0.5 {
+            return (self.sprint_speed, true);
+        }
+        if amount <= 0.5 {
             (self.walk_speed * amount * 2.0, false)
         } else {
             (self.walk_speed + (self.run_speed - self.walk_speed) * (amount - 0.5) * 2.0, false)
         }
+    }
+
+    /// The speed factor of wading in water `depth` meters over the feet: 1 up to
+    /// `wade_min_depth`, `wade_factor` from `wade_full_depth`, a straight line between.
+    pub fn wade_scale(&self, depth: f32) -> f32 {
+        if self.wade_factor == 1.0 || depth <= self.wade_min_depth {
+            return 1.0;
+        }
+        let span = self.wade_full_depth - self.wade_min_depth;
+        let k = if span > 1e-6 { ((depth - self.wade_min_depth) / span).clamp(0.0, 1.0) } else { 1.0 };
+        1.0 + (self.wade_factor - 1.0) * k
+    }
+
+    /// Whether water over the feet slows a body in `mode`: on the ground, and in the air with
+    /// [`wade_in_air`](Self::wade_in_air). A swimmer is not a wader, and a glide is not scaled.
+    pub fn wades_in(&self, mode: MotionMode) -> bool {
+        self.wade_factor != 1.0
+            && (mode == MotionMode::Ground
+                || (self.wade_in_air && mode == MotionMode::Air))
+    }
+
+    /// The depth wading reads for feet at height `feet_y` in water with this `surface`: the water
+    /// over the feet plus [`wade_depth_offset`](Self::wade_depth_offset), never below 0.
+    pub fn wade_depth(&self, surface: f32, feet_y: f32) -> f32 {
+        self.wade_depth_for(MotionMode::Ground, surface, feet_y)
+    }
+
+    /// [`wade_depth`](Self::wade_depth) for a body in `mode`: an airborne or gliding body uses
+    /// [`wade_air_depth_offset`](Self::wade_air_depth_offset) when the params have one.
+    pub fn wade_depth_for(&self, mode: MotionMode, surface: f32, feet_y: f32) -> f32 {
+        let offset = match mode {
+            MotionMode::Air | MotionMode::Glide => self.wade_air_depth_offset.unwrap_or(self.wade_depth_offset),
+            _ => self.wade_depth_offset,
+        };
+        if offset == 0.0 { (surface - feet_y).max(0.0) } else { (surface - feet_y + offset).max(0.0) }
+    }
+
+    /// How far in front of the body a water climb-out finds a ledge (m):
+    /// [`climb_out_reach`](Self::climb_out_reach), else 0.3.
+    pub fn climb_reach(&self) -> f32 {
+        self.climb_out_reach.unwrap_or(DEFAULT_CLIMB_OUT_REACH)
+    }
+
+    /// Whether landings are told apart (any tier thresholds): the controller then tracks
+    /// whether a fall followed a jump.
+    pub fn tracks_landings(&self) -> bool {
+        !self.landing_tiers.is_empty() || !self.landing_drop_tiers.is_empty()
+    }
+
+    /// The landing tier of an impact at `impact_speed` m/s: how many thresholds it reached.
+    pub fn landing_tier(&self, impact_speed: f32, jumped: bool) -> u8 {
+        let tiers =
+            if !jumped && !self.landing_drop_tiers.is_empty() { &self.landing_drop_tiers } else { &self.landing_tiers };
+        tiers.iter().filter(|t| impact_speed >= **t).count().min(u8::MAX as usize) as u8
     }
 
     /// Everything wrong with these numbers, so content errors name the field.
@@ -230,6 +478,72 @@ impl CharacterParams {
         }
         if self.skin_width >= self.radius * 0.5 {
             errors.push(format!("skin_width {} is too large for radius {}", self.skin_width, self.radius));
+        }
+        let non_negative = [
+            ("swim_fast_speed", self.swim_fast_speed),
+            ("swim_fast_drain", self.swim_fast_drain),
+            ("swim_acceleration", self.swim_acceleration),
+            ("swim_deceleration", self.swim_deceleration),
+            ("swim_turn_speed_deg", self.swim_turn_speed_deg),
+            ("wade_min_depth", self.wade_min_depth),
+            ("wade_full_depth", self.wade_full_depth),
+            ("wade_factor", self.wade_factor),
+            ("wade_depth_offset", self.wade_depth_offset),
+            ("air_deceleration", self.air_deceleration),
+        ];
+        for (name, v) in non_negative {
+            if !(v >= 0.0 && v.is_finite()) {
+                errors.push(format!("{name} must be >= 0 (is {v})"));
+            }
+        }
+        if self.wade_factor != 1.0 && self.wade_full_depth < self.wade_min_depth {
+            errors.push(format!(
+                "wade_full_depth {} is below wade_min_depth {}",
+                self.wade_full_depth, self.wade_min_depth
+            ));
+        }
+        if self.wade_factor > 1.0 {
+            errors.push(format!("wade_factor {} is above 1, wading would speed the body up", self.wade_factor));
+        }
+        if self.swim_fast_speed > 0.0 && self.swim_fast_speed < self.swim_speed {
+            errors.push(format!("swim_fast_speed {} is below swim_speed {}", self.swim_fast_speed, self.swim_speed));
+        }
+        if self.swim_fast_drain > 0.0 && self.swim_fast_speed <= 0.0 {
+            errors.push("swim_fast_drain is set but swim_fast_speed is 0, so the drain never applies".to_string());
+        }
+        if self.climb_out_auto_height.is_some_and(|h| h > self.mantle_height) {
+            errors.push(format!(
+                "climb_out_auto_height {:?} is above mantle_height {}, the second tier could never apply",
+                self.climb_out_auto_height, self.mantle_height
+            ));
+        }
+        if let (Some(auto), Some(max)) = (self.climb_out_auto_height, self.climb_out_max_height)
+            && auto > max
+        {
+            errors.push(format!(
+                "climb_out_auto_height {auto} is above climb_out_max_height {max}, the push would climb higher than the jump"
+            ));
+        }
+        if let SprintResume::Fraction(f) = self.swim_fast_resume
+            && !(0.0..=1.0).contains(&f)
+        {
+            errors.push(format!("swim_fast_resume Fraction({f}) must be between 0 and 1"));
+        }
+        for (name, tiers) in [("landing_tiers", &self.landing_tiers), ("landing_drop_tiers", &self.landing_drop_tiers)] {
+            if tiers.iter().any(|t| !(*t > 0.0 && t.is_finite())) || tiers.windows(2).any(|w| w[0] >= w[1]) {
+                errors.push(format!("{name} must be speeds > 0 in ascending order (is {tiers:?})"));
+            }
+        }
+        for (name, v) in [
+            ("climb_out_auto_height", self.climb_out_auto_height),
+            ("climb_out_max_height", self.climb_out_max_height),
+            ("climb_out_reach", self.climb_out_reach),
+            ("wade_air_depth_offset", self.wade_air_depth_offset),
+            ("landing_wade_limit", self.landing_wade_limit),
+        ] {
+            if v.is_some_and(|v| !(v >= 0.0 && v.is_finite())) {
+                errors.push(format!("{name} must be >= 0 (is {v:?})"));
+            }
         }
         if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
     }

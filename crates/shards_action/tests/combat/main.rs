@@ -5,6 +5,7 @@ mod actions;
 mod agents;
 mod common;
 mod hits;
+mod modifiers;
 mod replay;
 #[cfg(feature = "render")]
 mod render;
