@@ -637,3 +637,70 @@ fn check_flags_are_for_recording() {
     let both = refused(&["--check-every", "1"]);
     assert!(both.contains("the argument '--replay <FILE>' cannot be used with '--check-every <TICKS>'"), "{both}");
 }
+
+/// A game that draws, as far as the interpolation can tell (`EngineConfig::draws`), without a GPU:
+/// every character body gets a visual child, like the one a window's `dress` gives the model.
+fn drawing_app(seed: u64, interpolation: bool) -> App {
+    let mut app = sandbox::test_app(seed);
+    app.world_mut().resource_mut::<shards::EngineConfig>().offscreen = true;
+    app.insert_resource(shards::settings::GraphicsSettings { interpolation, ..default() });
+    let bodies: Vec<Entity> = {
+        let world = app.world_mut();
+        world.query_filtered::<Entity, With<shards::motion::CharacterController>>().iter(world).collect()
+    };
+    for body in bodies {
+        app.world_mut().spawn((Transform::from_xyz(0.0, 0.5, 0.0), ChildOf(body)));
+    }
+    app
+}
+
+/// Plays `replay` with a frame every ten ticks, so the picture's systems run between ticks.
+fn played_with_frames(mut app: App, replay: Replay) -> App {
+    let end = replay.end.tick;
+    replay::play(app.world_mut(), replay).unwrap();
+    app.update();
+    for _ in 0..end / 10 {
+        ok(&mut app, "step", json!({"ticks": 10}));
+        app.update();
+    }
+    ok(&mut app, "step", json!({"ticks": end % 10}));
+    app.update();
+    app
+}
+
+/// How many visual children are blended right now (`Interpolated::shown`), and how many have a history
+/// in which the body moved (the previous tick's pose differs from the last).
+fn blended(app: &mut App) -> (usize, usize) {
+    let world = app.world_mut();
+    let mut q = world.query::<(&shards::motion::Interpolated, &Transform)>();
+    let all: Vec<_> = q.iter(world).collect();
+    let shown = all.iter().filter(|(i, _)| i.shown().is_some()).count();
+    let moved = all.iter().filter(|(i, _)| i.previous() != i.current()).count();
+    (shown, moved)
+}
+
+#[test]
+fn render_interpolation_changes_no_game_state() {
+    let (original, replay) = recorded(42);
+    let want = replay::state_hash(original.world());
+
+    // Headless: the interpolation does nothing at all, and the replay verifies.
+    let mut headless = played_with_frames(sandbox::test_app(42), replay.clone());
+    assert!(report(&headless).identical(), "{}", report(&headless));
+    assert_eq!(replay::state_hash(headless.world()), want);
+    assert_eq!(blended(&mut headless), (0, 0));
+
+    // Drawing, interpolation on: bodies are blended between ticks, and the game is the same.
+    let mut on = played_with_frames(drawing_app(42, true), replay.clone());
+    assert!(report(&on).identical(), "{}", report(&on));
+    assert_eq!(replay::state_hash(on.world()), want);
+    let (shown, moved) = blended(&mut on);
+    assert!(shown > 0, "no body was blended: the test would prove nothing");
+    assert!(moved > 0, "no body moved between its last two ticks");
+
+    // Drawing, interpolation off: the same game, the children where the game left them.
+    let mut off = played_with_frames(drawing_app(42, false), replay);
+    assert!(report(&off).identical(), "{}", report(&off));
+    assert_eq!(replay::state_hash(off.world()), want);
+    assert_eq!(blended(&mut off), (0, 0));
+}

@@ -16,6 +16,7 @@ use super::math::{
 };
 use super::{CameraOffsets, CameraSettings, CameraShake, CameraSystems, CameraTuning, LockOnTarget, ThirdPersonCamera};
 use crate::input::{ControlState, ControlSystems};
+use crate::interp::{shown_translation, InterpSystems, Interpolated};
 use crate::physics::{LayerMask, PhysicsWorld, QueryFilter};
 
 /// The local player, as opposed to the camera that follows it.
@@ -25,7 +26,7 @@ type Lockable<'w, 's> =Query<'w, 's, (&'static AiId, &'static Transform), (With<
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(PreUpdate, lock_on.after(ControlSystems::Read))
-        .add_systems(PostUpdate, orbit_camera.in_set(CameraSystems::Orbit).before(TransformSystems::Propagate))
+        .add_systems(PostUpdate, orbit_camera.in_set(CameraSystems::Orbit).after(InterpSystems::Blend).before(TransformSystems::Propagate))
         .add_systems(Update, apply_motion_blur);
 }
 
@@ -166,6 +167,8 @@ fn orbit_camera(
     players: Query<(Entity, &Intent), LocalPlayerFilter>,
     followed: Query<&Transform, Without<ThirdPersonCamera>>,
     lockable: Lockable,
+    children: Query<&Children>,
+    visuals: Query<&Interpolated>,
     mut cameras: Query<(&mut ThirdPersonCamera, &mut Transform, Option<&mut Projection>)>,
 ) {
     let dt = time.delta_secs();
@@ -186,10 +189,11 @@ fn orbit_camera(
         let locked = player
             .and_then(|(_, intent)| intent.target)
             .and_then(|id| index.get(id))
-            .and_then(|e| followed.get(e).ok())
-            .map(chest);
+            .and_then(|e| followed.get(e).ok().map(|tf| (e, tf)))
+            .map(|(e, tf)| shown_translation(e, tf, &children, &visuals) + Vec3::Y);
 
-        let head = subject_tf.translation + Vec3::Y * camera.height;
+        let subject_at = shown_translation(subject.unwrap_or(Entity::PLACEHOLDER), subject_tf, &children, &visuals);
+        let head = subject_at + Vec3::Y * camera.height;
         let rate = 1.0 - ops::exp(-tuning.follow_rate.unwrap_or(camera.follow_rate) * dt);
         if camera.focus == Vec3::ZERO || camera.focus.distance(head) > tuning.snap_distance {
             // A jump (a teleport, a respawn): nothing of the old place to catch up from.

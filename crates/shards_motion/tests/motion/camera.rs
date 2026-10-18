@@ -68,7 +68,7 @@ fn frame(app: &mut App) {
 fn run_sim(s: &mut Scene, secs: f32) {
     s.app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(secs / 4.0)));
     s.app.world_mut().resource_mut::<Time<Virtual>>().set_max_delta(Duration::from_secs(5));
-    s.app.world_mut().resource_mut::<Time<Virtual>>().unpause();
+    ai_core::sim::resume(s.app.world_mut());
     for _ in 0..4 {
         s.app.update();
     }
@@ -478,4 +478,41 @@ fn the_arm_grows_back_after_a_wall_at_the_tunings_rate() {
     let (_, shut, one, _) = wall_then_free(None);
     assert!(shut < 2.0);
     assert!((one - 5.5).abs() < 0.05, "without a rate it is back at once, as the camera always did: {one}");
+}
+
+/// The player moved from x = 0 to x = 1 over the last tick, and half of the next is owed: the
+/// focus is where the body is drawn (x = 0.5), not where the tick left it.
+fn halfway_scene(interpolation: bool) -> Scene {
+    let mut s = scene();
+    s.app.insert_resource(shards_settings::GraphicsSettings { interpolation, ..default() });
+    s.app.world_mut().spawn((Transform::default(), ChildOf(s.player)));
+    s.app.update(); // the child is adopted
+    for (tick, x) in [(1, 0.0), (2, 1.0)] {
+        ai_core::sim::set_tick(s.app.world_mut(), tick);
+        s.app.world_mut().get_mut::<Transform>(s.player).unwrap().translation.x = x;
+        s.app.world_mut().run_schedule(FixedLast);
+    }
+    // A running clock that adds no time: frames, no ticks.
+    s.app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
+    ai_core::sim::resume(s.app.world_mut());
+    let half = s.app.world().resource::<Time<Fixed>>().timestep() / 2;
+    s.app.world_mut().resource_mut::<Time<Fixed>>().accumulate_overstep(half);
+    // The focus lands on the followed body at once instead of catching up.
+    s.app.world_mut().get_mut::<ThirdPersonCamera>(s.camera).unwrap().focus = Vec3::ZERO;
+    s.app.update();
+    s
+}
+
+#[test]
+fn the_camera_follows_the_body_where_it_is_drawn_between_ticks() {
+    let s = halfway_scene(true);
+    let focus = cam(&s).focus;
+    assert!((focus.x - 0.5).abs() < 1e-3, "{focus}");
+    assert_eq!(s.app.world().get::<Transform>(s.player).unwrap().translation.x, 1.0, "the body itself is the tick's");
+}
+
+#[test]
+fn with_interpolation_off_the_camera_follows_the_tick_pose() {
+    let s = halfway_scene(false);
+    assert!((cam(&s).focus.x - 1.0).abs() < 1e-3, "{}", cam(&s).focus);
 }

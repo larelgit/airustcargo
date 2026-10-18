@@ -55,3 +55,8 @@ Read this when you touch screens and menus, sound and music, mesh looks, particl
   (animset, clip)` is baked from the clip's root bone: **if you change the clip, bake it again** (`cargo sandbox --bake-motion`, tool
   `motion_bake`); otherwise `--check-content` names the stale curve. Do not edit such a curve by hand. A new bake changes
   the gameplay: the reference replays then diverge and are re-recorded.
+- **Render interpolation is presentation** (`shards_motion::interp`): a drawn child of a simulated body carries `Interpolated` and is moved in `PostUpdate`
+  (`InterpSystems::Blend`) between the body's last two tick poses. Never write a body's `Transform` for the picture's sake (physics reads it), never put
+  interpolation state on an entity with an `AiId`, and put a game system that reads where a body is *drawn* (a camera, a marker) after `InterpSystems::Blend`
+  and use `shown_translation`. A visual child that must stay at the tick's pose carries `NotInterpolated`. The `graphics.interpolation` setting off must
+  give exactly the old picture.

@@ -98,11 +98,23 @@ pub struct GraphicsSettings {
     /// How much of the foliage and small props the scatter module strews (0 none to 1 all of it,
     /// [`GraphicsSettings::foliage_density`]): fewer instances of the same scatter, never others.
     pub foliage: f64,
+    /// Draw bodies between their last two ticks (smooth at any refresh rate) instead of at the last
+    /// tick's pose (60 steps a second). Presentation only: the simulation, replays and saves do not
+    /// change. Off is the picture without interpolation, for an A/B.
+    pub interpolation: bool,
 }
 
 impl Default for GraphicsSettings {
     fn default() -> Self {
-        Self { fullscreen: false, vsync: true, resolution: "auto".into(), render_scale: 1.0, shadows: "high".into(), foliage: 1.0 }
+        Self {
+            fullscreen: false,
+            vsync: true,
+            resolution: "auto".into(),
+            render_scale: 1.0,
+            shadows: "high".into(),
+            foliage: 1.0,
+            interpolation: true,
+        }
     }
 }
 
