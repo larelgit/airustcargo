@@ -323,6 +323,59 @@ fn a_push_that_is_not_flat_or_never_slows_stops_the_game() {
 }
 
 #[test]
+fn a_lock_on_a_dead_or_missing_target_stops_the_game() {
+    use shards::action::LockSystems;
+    // Set after the lock-on check of tick 2 (which would have let go of it), the way a game
+    // system in `SimSet::Cleanup` that ran later would leave it; or before it.
+    fn lock(app: &mut App, target: u32, after_check: bool) {
+        let corrupt = move |world: &mut World| {
+            if ai_core::sim::tick(world) == 2 {
+                if target == 7 {
+                    let skeleton = body(world, 7);
+                    world.entity_mut(skeleton).insert(Dead);
+                }
+                let player = body(world, 5);
+                world.get_mut::<Intent>(player).unwrap().target = Some(AiId(target));
+            }
+        };
+        match after_check {
+            true => app.add_systems(FixedUpdate, corrupt.in_set(SimSet::Cleanup).after(LockSystems::Check)),
+            false => app.add_systems(FixedUpdate, corrupt.in_set(SimSet::Cleanup).before(LockSystems::Check)),
+        };
+    }
+    let mut app = sandbox::test_app(42);
+    lock(&mut app, 7, true);
+    let line = stops_on(&mut app, "action.lock_on_valid", 2);
+    assert!(line.contains("e5 Intent.target = e7, which is dead"), "{line}");
+
+    let mut app = sandbox::test_app(42);
+    lock(&mut app, 999, true);
+    let line = stops_on(&mut app, "action.lock_on_valid", 2);
+    assert!(line.contains("e5 Intent.target = e999, which no longer exists"), "{line}");
+
+    // Set before the check, the same lock is let go of on the same tick: nothing to report.
+    let mut app = sandbox::test_app(42);
+    lock(&mut app, 7, false);
+    assert_eq!(step(&mut app, 5), "ran 5 ticks (0 → 5)");
+    assert!(journal(&app, JournalKind::Event).iter().any(|l| l.contains("e5 lock lost: e7 dead")), "{:?}", journal(&app, JournalKind::Event));
+}
+
+#[test]
+fn a_living_target_the_engine_despawns_at_the_end_of_a_tick_is_let_go_of_without_a_stop() {
+    // The co-op despawn of a body whose rejoin grace is over runs in `SimSet::Cleanup` before
+    // `CoreSystems::ClearPresses`; the lock-on check runs after it, so it sees the body gone.
+    let mut app = sandbox::test_app(42);
+    let (player, skeleton) = (body(app.world(), 5), body(app.world(), 7));
+    app.world_mut().get_mut::<Intent>(player).unwrap().target = Some(AiId(7));
+    app.world_mut().entity_mut(skeleton).insert(shards::net::NetLeft { since: 0, until: 3 });
+    assert_eq!(step(&mut app, 5), "ran 5 ticks (0 → 5)");
+    assert!(app.world().get_entity(skeleton).is_err(), "the grace is over: the body went");
+    assert_eq!(app.world().get::<Intent>(player).unwrap().target, None);
+    let events = journal(&app, JournalKind::Event);
+    assert!(events.iter().any(|l| l.contains("e5 lock lost: e7 gone")), "{events:?}");
+}
+
+#[test]
 fn run_extras_of_another_run_stop_the_game() {
     use shards::action::RunExtras;
     // Extras left behind by a run that is over (nothing runs now).
@@ -344,6 +397,46 @@ fn run_extras_of_another_run_stop_the_game() {
     });
     let line = stops_on(&mut app, "action.extras_follow_run", 2);
     assert!(line.contains("e5 RunExtras extra = -1, closed = 0: finite numbers >= 0"), "{line}");
+}
+
+#[test]
+fn body_and_motion_state_that_does_not_belong_stops_the_game() {
+    use shards::action::LeapRun;
+    use shards::motion::{Ghost, Launch};
+    // A leap's state with no run.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.entity_mut(player).insert(LeapRun { instance: 999, ..default() });
+    });
+    let line = stops_on(&mut app, "action.leap_follows_run", 2);
+    assert!(line.contains("e5 LeapRun of instance 999 while it runs no action"), "{line}");
+
+    // A ghost that is not in a burrow.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.entity_mut(player).insert(Ghost);
+    });
+    let line = stops_on(&mut app, "action.ghost_follows_run", 2);
+    assert!(line.contains("e5 Ghost while it runs no action, which has no open ghost window"), "{line}");
+
+    // A launch with no height, and one on something that is no character.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.entity_mut(player).insert(Launch { height: f32::NAN });
+    });
+    let line = stops_on(&mut app, "motion.launch_sane", 2);
+    assert!(line.contains("e5 Launch height = NaN: a finite height above 0"), "{line}");
+
+    // A launch on something the controller does not move: nothing would ever read it.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        world.spawn((AiVisible, Launch { height: 1.0 }));
+    });
+    let line = stops_on(&mut app, "motion.launch_sane", 2);
+    assert!(line.contains("Launch on an entity with no CharacterController: nothing reads it"), "{line}");
 }
 
 #[test]

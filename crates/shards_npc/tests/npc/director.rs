@@ -390,3 +390,27 @@ fn an_early_chain_press_waits_for_the_combo_window() {
     assert_eq!(starts.iter().map(|s| s.1.as_str()).collect::<Vec<_>>(), ["link_plain"], "{starts:?}");
     assert_eq!(rejected.len(), 1, "the early press ran out: {rejected:?}");
 }
+
+/// A leap with no landing (the target is nearer than the search's minimum) is not an option: the
+/// planner grants no token and presses nothing, and the same NPC leaps once the target is farther.
+#[test]
+fn a_leap_with_no_landing_takes_no_token() {
+    let mut app = app();
+    record_starts(&mut app);
+    player(app.world_mut(), 0, Vec3::ZERO);
+    let plan = Npc::new("grunt", "leaper").with_plan("leaper").with_director("single");
+    let e = npc(app.world_mut(), "leaper", plan, Vec3::new(0.0, 0.0, -0.9), Vec3::Z);
+    for _ in 0..400 {
+        step(&mut app, 1);
+        assert!(!has_token(&app, e), "a token for a leap with no landing: {:#?}", journal(&app));
+    }
+    let leaps = |app: &App| app.world().resource::<Started>().0.iter().filter(|s| s.1 == e && s.2 == "pounce").count();
+    assert_eq!(leaps(&app), 0, "{:#?}", journal(&app));
+    assert!(lines(&app, "pounce rejected").is_empty(), "nothing was pressed: {:#?}", journal(&app));
+    // The NPC is 7 m off: a landing at the edge of its reach, and it leaps.
+    teleport(&mut app, e, Vec3::new(0.0, 0.0, -7.0));
+    for _ in 0..400 {
+        step(&mut app, 1);
+    }
+    assert!(leaps(&app) >= 1, "{:#?}", journal(&app));
+}

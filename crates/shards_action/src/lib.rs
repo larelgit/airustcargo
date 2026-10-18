@@ -113,6 +113,8 @@ pub mod cue;
 pub mod def;
 pub mod draw;
 pub mod fighter;
+pub mod leap;
+pub mod lock;
 pub mod machine;
 mod invariants;
 mod orders;
@@ -146,19 +148,21 @@ pub use body::{
 pub use cue::{ActionSound, SoundCue};
 pub use def::{
     ActionDef, AssistDef, BufferMode, CancelDef, ChargeDef, CombatTuning, Cost, Effect, GuardDef, HitDef, HitFlag, HitShape, HoldDef, Local, MotionBake,
-    ReactionDef, StaminaMode,
+    LeapDef, LeapSearch, ReactionDef, StaminaMode,
     Face, MovesetDef, Phase, Span, Steer, TelegraphDef, TimedEffect, Transition,
 };
 pub use fighter::{
     grant_protection, set_reaction_immunity, Armor, Charge, Charges, Cooldown, Cooldowns, Dead, Fighter, Health, Invulnerable, Knockback, Poise,
     Protection, Stamina, Team,
 };
+pub use leap::{plan_leap, LeapPlan, LeapSite};
 pub use machine::{
     action_progress, apply_effect, can_start, extend_recovery, force_action, press_life, ActionEffect, ActionEffects, ActionEnd, ActionEnded,
     ActionMissed, ActionRejected,
     ActionStarted,
-    ActionState, Blocker, FighterView, Healed, InputBuffer, Queued, RunExtras, Running, Start, Telegraph,
+    intangible, off_ground, state_intangible, ActionState, Blocker, FighterView, Healed, InputBuffer, LeapRun, Queued, RunExtras, Running, Start, Telegraph,
 };
+pub use lock::{LockLoss, LockLost, LockReleased, LockSight, LockSwitched, LockSystems};
 pub use predict::{shown_queue, shown_state, ActionPredictor, PredictedAction, CONFIRM_SLACK};
 pub use stance::{actions_to_modifiers, hold_regen_during_actions};
 pub use status::{
@@ -287,6 +291,7 @@ impl Plugin for ActionPlugin {
             .register_type::<DamageTakenExpired>()
             .register_type::<Knockback>()
             .register_type::<RunExtras>()
+            .register_type::<LeapRun>()
             .register_type::<Animated>()
             .register_type::<ActionMissed>()
             // Typed for the network layer, which forwards them to clients.
@@ -328,7 +333,9 @@ impl Plugin for ActionPlugin {
             .add_engine_invariant("action.barrier_sane", invariants::barrier_sane)
             .add_engine_invariant("action.damage_taken_sane", invariants::damage_taken_sane)
             .add_engine_invariant("action.knockback_sane", invariants::knockback_sane)
-            .add_engine_invariant("action.extras_follow_run", invariants::extras_follow_run);
+            .add_engine_invariant("action.extras_follow_run", invariants::extras_follow_run)
+            .add_engine_invariant("action.leap_follows_run", invariants::leap_follows_run)
+            .add_engine_invariant("action.ghost_follows_run", invariants::ghost_follows_run);
         coverage::plugin(app);
         app
             // The machine runs after motion's `Intent → LocomotionInput` step: it
@@ -386,6 +393,7 @@ impl Plugin for ActionPlugin {
             // Cosmetic: a game may add it in a window only, and replays must not care.
             .replay_ignore::<Animated>();
         predict::plugin(app);
+        lock::plugin(app);
         ai::register(app);
         tools::register(app);
         bake::register(app);

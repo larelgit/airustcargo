@@ -1097,3 +1097,35 @@ fn a_stick_with_a_bad_curve_or_scale_is_a_content_error_that_names_the_file() {
         assert!(out.contains("controls.input_map.ron") && out.contains(want), "{bad}: {out}");
     }
 }
+
+#[test]
+fn lock_switch_takes_an_axis_and_a_button_binding_is_refused_everywhere() {
+    let mut app = input_app();
+    local_player(&mut app);
+    frame(&mut app);
+    let needles = ["is a button", "`lock_switch` is read as an axis", "MouseWheel()", "KeyAxis(", "GamepadAxis(", "Stick("];
+    let has_all = |text: &str| needles.iter().for_each(|n| assert!(text.contains(n), "`{n}` in `{text}`"));
+    // The rebind tool, and the map's own rebind (both ways).
+    has_all(&fails(&mut app, "rebind", json!({"action": "lock_switch", "binding": "Key(KeyQ)"})));
+    has_all(&fails(&mut app, "rebind", json!({"action": "lock_switch", "binding": "Mouse(Middle)", "force": true})));
+    let mut map = InputMap::standard();
+    let before = map.clone();
+    has_all(&map.rebind("gameplay", "lock_switch", 0, Binding::Key(KeyCode::KeyQ)).unwrap_err().to_string());
+    has_all(&map.rebind_taking("gameplay", "lock_switch", 0, Binding::GamepadButton(bevy::input::gamepad::GamepadButton::South)).unwrap_err().to_string());
+    assert_eq!(map, before, "refused: unchanged");
+    // The controls settings.
+    has_all(&fails(&mut app, "settings_set", json!({"group": "controls", "key": "bindings.gameplay.lock_switch", "value": "[\"Key(KeyQ)\"]"})));
+    // An axis is taken: a key pair, the wheel, a gamepad axis.
+    for axis in ["KeyAxis(neg: KeyQ, pos: KeyE)", "MouseWheel()", "GamepadAxis(axis: RightStickX)"] {
+        let b = Binding::parse(axis).unwrap();
+        assert_eq!(b.refused_for("lock_switch"), None, "{axis}");
+        assert!(Binding::Key(KeyCode::KeyQ).refused_for("jump").is_none(), "a button is fine for other actions");
+    }
+    // The content check of an input map.
+    let dir = temp_dir("input_lock_switch_content");
+    write(&dir, "content/controls.input_map.ron", r#"{ "default": (contexts: [(name: "gameplay", actions: [
+        (action: "lock_switch", bindings: [Key(KeyQ)]) ])]) }"#);
+    let mut game = engine_app(&dir);
+    let out = ok(&mut game, "content_check", json!({}));
+    assert!(out.contains("context `gameplay`: action `lock_switch`") && out.contains("is a button") && out.contains("MouseWheel()"), "{out}");
+}

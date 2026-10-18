@@ -22,6 +22,10 @@ crates/shards_action/src/orders.rs :: targets: Query<(&Transform, Has<Dead>, Opt
 crates/shards_action/src/orders.rs :: collider: Option<&Collider>, :: the target's body, from the query above
 crates/shards_action/src/zone.rs :: physics.collider(*e).is_some_and(|c| self.contains(c.position, c.shape.half_extents().x.max(c.shape.half_extents().z))) :: hit zones ask the HURTBOX layer, which a field is never on
 crates/shards_motion/src/ai.rs :: let kind = world.get_resource::<PhysicsWorld>()?.collider(volume)?.volume.clone()?; :: the kind of a trigger volume: volumes are colliders, fields are never volumes
+crates/shards_motion/src/camera/lock.rs :: Some(body_point(tf, world.get::<Collider>(body), def.aim_height)) :: the aim point of a lock-on target, a body's own capsule
+crates/shards_motion/src/camera/lock.rs :: Some(body_point(tf, world.get::<Collider>(body), def.eye_height)) :: the eye of the body that locks on, its own capsule
+crates/shards_motion/src/camera/lock.rs :: let Some(mut q) = world.try_query::<(Entity, &AiId, &Transform, Option<&Collider>)>() else { return Vec::new() }; :: lock-on candidates are bodies with an `AiId` (a field has none); their own capsules set the aim points
+crates/shards_motion/src/camera/lock.rs :: pub fn body_point(tf: &Transform, collider: Option<&Collider>, fraction: f32) -> Vec3 { :: a point on a body's own capsule; the caller passes the body's collider
 crates/shards_motion/src/controller/mod.rs :: Collider = CharacterParams::default().collider(), :: builds a character's own collider from its numbers; reads nothing
 crates/shards_motion/src/controller/mod.rs :: .collider(); :: builds a character's own collider from its numbers; reads nothing
 crates/shards_motion/src/controller/mod.rs :: fit(&mut collider, &params.collider()); :: builds a character's own collider from its numbers; reads nothing
@@ -36,3 +40,7 @@ crates/shards_npc/src/nav/region.rs :: .colliders() :: kinematic WORLD colliders
 crates/shards_npc/src/nav/region.rs :: for c in physics.colliders().filter(|c| tracked(c)) { :: carving tracks static colliders and water; a field never changes after it is built
 crates/shards_npc/src/nav/region.rs :: boxes.push((old.aabb_min, old.aabb_max)); :: the box carving kept of a collider it tracked (its own record, not a query's hit)
 crates/shards_npc/src/perception.rs :: physics.collider(entity).map_or(feet + Vec3::Y, |c| c.position) :: an NPC's target is a character's collider; a field is never a target
+crates/shards_action/src/leap.rs :: .and_then(|t| Some((world.get::<Transform>(t)?.translation, radius_of(world.get::<Collider>(t))))); :: a leap's lock-on target is a character; its body's width sets where the leap lands short of it
+crates/shards_action/src/leap.rs :: pub(crate) fn radius_of(collider: Option<&Collider>) -> f32 { :: the width of a character's body (a field is never a lock-on target)
+crates/shards_action/src/machine.rs :: positions: Query<(&Transform, Option<&CharacterParams>, Option<&Collider>)>, :: the lock-on target is a character: its body's width sets a leap's landing
+crates/shards_action/src/predict.rs :: positions: Query<(&Transform, Option<&CharacterParams>, Option<&Collider>)>, :: the lock-on target is a character: its body's width sets a leap's landing (the prediction)

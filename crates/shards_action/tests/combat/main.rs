@@ -3,10 +3,12 @@
 
 mod actions;
 mod agents;
+mod body_motion;
 mod body_state;
 mod common;
 mod golden;
 mod hits;
+mod lock;
 mod modifiers;
 mod outcome;
 mod parity;

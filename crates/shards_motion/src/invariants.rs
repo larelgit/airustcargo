@@ -1,10 +1,10 @@
-//! The engine rules `motion.finite` and `voxel.body_in_solid`, both on by default (the second since
-//! its fuzz runs on the voxel arena).
+//! The engine rules `motion.finite`, `motion.launch_sane` and `voxel.body_in_solid`, all on by default (the last since its fuzz
+//! runs on the voxel arena).
 
 use ai_core::{with_query, AiId, AiVisible, Offenders};
 use bevy::prelude::*;
 
-use crate::controller::{CharacterController, Mantle, MotionState};
+use crate::controller::{CharacterController, Launch, Mantle, MotionState};
 use crate::physics::{Body, Collider};
 
 /// How far a rotation's length may be from 1 before it counts as not normalised.
@@ -104,6 +104,27 @@ pub fn body_in_solid(world: &World) -> Option<String> {
                     bad.note(*id, || format!("capsule centre {centre} is in solid cell {cell} of field {field_id}"));
                     break;
                 }
+            }
+        }
+    })?;
+    bad.report()
+}
+
+/// The engine rule `motion.launch_sane`: a [`Launch`] asks for a finite height above 0 and sits on
+/// a character the controller moves (`CharacterController`, which brings `MotionState`).
+///
+/// The controller takes a launch in the tick it is put (the action machine puts it in `SimSet::Act`,
+/// the controller reads it in `SimSet::Move`) and removes it; a launch on anything else is never
+/// read and never removed, and one with no height or a NaN one launches the body at nothing or
+/// into the sky. A game that launches by hand puts it before `SimSet::Move` on a character.
+pub fn launch_sane(world: &World) -> Option<String> {
+    let mut bad = Offenders::default();
+    with_query::<(Entity, &AiId, &Launch), (), _>(world, |query| {
+        for (entity, id, launch) in query.iter(world) {
+            if !(launch.height.is_finite() && launch.height > 0.0) {
+                bad.note(*id, || format!("Launch height = {}: a finite height above 0", launch.height));
+            } else if world.get::<CharacterController>(entity).is_none() {
+                bad.note(*id, || "Launch on an entity with no CharacterController: nothing reads it".to_owned());
             }
         }
     })?;

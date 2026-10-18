@@ -6,7 +6,7 @@
   "check_detail": "components",
   "end": {
     "tick": 353,
-    "hash": "3e867aa37ef1e713",
+    "hash": "54005de3508a179c",
     "parts": {
       "entities": {
         "e1": {
@@ -442,7 +442,7 @@
         }
       },
       "game": {
-        "content": "2958fb9316ee9112",
+        "content": "e28695f658ea2763",
         "level": "27c97e12837f822e"
       }
     }
@@ -766,7 +766,7 @@
   "checks": [
     {
       "tick": 60,
-      "hash": "5afd81ca98e6587d",
+      "hash": "5c4280bb6181b97e",
       "parts": {
         "entities": {
           "e1": {
@@ -1206,14 +1206,14 @@
           }
         },
         "game": {
-          "content": "2958fb9316ee9112",
+          "content": "e28695f658ea2763",
           "level": "c32b4cdf79e99ece"
         }
       }
     },
     {
       "tick": 120,
-      "hash": "6456b81cbc022c47",
+      "hash": "4f35a4355c53e084",
       "parts": {
         "entities": {
           "e1": {
@@ -1653,14 +1653,14 @@
           }
         },
         "game": {
-          "content": "2958fb9316ee9112",
+          "content": "e28695f658ea2763",
           "level": "c32b4cdf79e99ece"
         }
       }
     },
     {
       "tick": 180,
-      "hash": "d3abc40f838111a7",
+      "hash": "0d0a65ee4a8f4864",
       "parts": {
         "entities": {
           "e1": {
@@ -2100,14 +2100,14 @@
           }
         },
         "game": {
-          "content": "2958fb9316ee9112",
+          "content": "e28695f658ea2763",
           "level": "c32b4cdf79e99ece"
         }
       }
     },
     {
       "tick": 240,
-      "hash": "b567092ddfc1f8fa",
+      "hash": "3fbdbe4311abd34d",
       "parts": {
         "entities": {
           "e1": {
@@ -2547,14 +2547,14 @@
           }
         },
         "game": {
-          "content": "2958fb9316ee9112",
+          "content": "e28695f658ea2763",
           "level": "c32b4cdf79e99ece"
         }
       }
     },
     {
       "tick": 300,
-      "hash": "140b98b35c1cd4f2",
+      "hash": "5edc8ce04194a9a5",
       "parts": {
         "entities": {
           "e1": {
@@ -2994,7 +2994,7 @@
           }
         },
         "game": {
-          "content": "2958fb9316ee9112",
+          "content": "e28695f658ea2763",
           "level": "c32b4cdf79e99ece"
         }
       }
@@ -3014,6 +3014,7 @@
           "layout/arena": "091851d57d80f2e4",
           "layout/course": "f65397f9b47f46e1",
           "layout/watch": "dc738a5676554d89",
+          "lock_on/default": "0c3315c53fabe323",
           "locomotion/player": "25720e5c56082052",
           "locomotion/skeleton": "ba33bb652bf0630e",
           "locomotion/warden": "9a9e3ea79d7406f7",

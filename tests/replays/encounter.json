@@ -10,9 +10,9 @@
     "seed": 42,
     "tick_hz": 59.99999880000003,
     "engine": "0.4.0",
-    "state_hash": "4daaff23ff542655",
+    "state_hash": "b13b4b8e305e5132",
     "checks": {
-      "content": "5008e58b672e9f05",
+      "content": "895395b98956d706",
       "levels": "cbf29ce484222325",
       "static_colliders": "d26c9b0c76741835"
     },
@@ -33,6 +33,7 @@
         "layout/arena": "091851d57d80f2e4",
         "layout/course": "f65397f9b47f46e1",
         "layout/watch": "dc738a5676554d89",
+        "lock_on/default": "0c3315c53fabe323",
         "locomotion/player": "25720e5c56082052",
         "locomotion/skeleton": "ba33bb652bf0630e",
         "locomotion/warden": "9a9e3ea79d7406f7",
@@ -1992,11 +1993,14 @@
           "shards_world::zones::ActiveZone": {}
         }
       }
+    ],
+    "left_out": [
+      "shards::encounter_wiring::OurNetAlways (not registered for reflection)"
     ]
   },
   "end": {
     "tick": 2707,
-    "hash": "629db538e223911a",
+    "hash": "4a1848ed676d9219",
     "parts": {
       "entities": {
         "e1": {
@@ -2230,7 +2234,7 @@
         }
       },
       "game": {
-        "content": "5008e58b672e9f05"
+        "content": "895395b98956d706"
       }
     }
   },
@@ -2309,7 +2313,7 @@
   "checks": [
     {
       "tick": 540,
-      "hash": "f298ff3c76d44cb0",
+      "hash": "6d7a19c05fabdf76",
       "parts": {
         "entities": {
           "e1": {
@@ -2656,14 +2660,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "6ad79471e61f1f95"
+          "content": "895395b98956d706",
+          "encounters": "0b2991d1fa200606"
         }
       }
     },
     {
       "tick": 600,
-      "hash": "6427d37cee5f461b",
+      "hash": "0ed3eeda103eb5db",
       "parts": {
         "entities": {
           "e1": {
@@ -2972,14 +2976,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "f249e3d53dc63099"
+          "content": "895395b98956d706",
+          "encounters": "189ab463395b5d7a"
         }
       }
     },
     {
       "tick": 660,
-      "hash": "139d6b33b71847de",
+      "hash": "add25f338b1ca1e2",
       "parts": {
         "entities": {
           "e1": {
@@ -3288,14 +3292,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "9fb5ff14cd44719d"
+          "content": "895395b98956d706",
+          "encounters": "86ace9f1d155e9ae"
         }
       }
     },
     {
       "tick": 720,
-      "hash": "1e9587754e70b597",
+      "hash": "e89850b25e509c04",
       "parts": {
         "entities": {
           "e1": {
@@ -3604,14 +3608,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "0996c3c6ae1fef01"
+          "content": "895395b98956d706",
+          "encounters": "ce924df873106902"
         }
       }
     },
     {
       "tick": 780,
-      "hash": "75004892deba4254",
+      "hash": "16583eff5a134455",
       "parts": {
         "entities": {
           "e1": {
@@ -3920,14 +3924,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "e699d2d3943059fe"
+          "content": "895395b98956d706",
+          "encounters": "2391e8f8ed388989"
         }
       }
     },
     {
       "tick": 840,
-      "hash": "aba6297c25e195cc",
+      "hash": "e9d64666d0e12eee",
       "parts": {
         "entities": {
           "e1": {
@@ -4236,14 +4240,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "24e088959aa2d612"
+          "content": "895395b98956d706",
+          "encounters": "f1b8c0e99fffb77d"
         }
       }
     },
     {
       "tick": 900,
-      "hash": "35ef6c5bf8008b45",
+      "hash": "214da4b9962612a0",
       "parts": {
         "entities": {
           "e1": {
@@ -4552,14 +4556,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "b6e93d146f9bf5a6"
+          "content": "895395b98956d706",
+          "encounters": "2545f797dbdd0851"
         }
       }
     },
     {
       "tick": 960,
-      "hash": "aae3bac02f9cbd3f",
+      "hash": "fa4eab096af5d2fc",
       "parts": {
         "entities": {
           "e1": {
@@ -4868,14 +4872,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "c5e3ce97eb1465da"
+          "content": "895395b98956d706",
+          "encounters": "1c78ae8d1fa2ec05"
         }
       }
     },
     {
       "tick": 1020,
-      "hash": "9c2e4f5ef7352e33",
+      "hash": "1bd0831f60c0cb9d",
       "parts": {
         "entities": {
           "e1": {
@@ -5184,14 +5188,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "b4839256a3631b93"
+          "content": "895395b98956d706",
+          "encounters": "8cdeae2df5ebe134"
         }
       }
     },
     {
       "tick": 1080,
-      "hash": "767028abaaa54c70",
+      "hash": "cdf4a62f50532995",
       "parts": {
         "entities": {
           "e1": {
@@ -5500,14 +5504,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "4b7df8098020f507"
+          "content": "895395b98956d706",
+          "encounters": "92066c5301044d38"
         }
       }
     },
     {
       "tick": 1140,
-      "hash": "fd6ca2a0a0b817de",
+      "hash": "766b01eeafd5e092",
       "parts": {
         "entities": {
           "e1": {
@@ -5816,14 +5820,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "f02f3157446ce3bb"
+          "content": "895395b98956d706",
+          "encounters": "295168bdd2e4f19c"
         }
       }
     },
     {
       "tick": 1200,
-      "hash": "2e626eaefa7aae4b",
+      "hash": "686c4ebf92fd6560",
       "parts": {
         "entities": {
           "e1": {
@@ -6132,14 +6136,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "a09849cd3cf2a36f"
+          "content": "895395b98956d706",
+          "encounters": "eb6c7c8c89797b80"
         }
       }
     },
     {
       "tick": 1260,
-      "hash": "94609d492aae204f",
+      "hash": "99cc4234dbfa5dd7",
       "parts": {
         "entities": {
           "e1": {
@@ -6448,14 +6452,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "f08d36e547552c74"
+          "content": "895395b98956d706",
+          "encounters": "ed3a081f899ecbe7"
         }
       }
     },
     {
       "tick": 1320,
-      "hash": "dd1da77b451844c1",
+      "hash": "cd4c7be7789a0157",
       "parts": {
         "entities": {
           "e1": {
@@ -6764,14 +6768,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "3033a7cb7c8e6298"
+          "content": "895395b98956d706",
+          "encounters": "797756a4c470570b"
         }
       }
     },
     {
       "tick": 1380,
-      "hash": "170792e8a3438caf",
+      "hash": "0818de7b5a453225",
       "parts": {
         "entities": {
           "e1": {
@@ -7080,14 +7084,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "831e90a52b7a7bdc"
+          "content": "895395b98956d706",
+          "encounters": "9e3487706a7055ef"
         }
       }
     },
     {
       "tick": 1440,
-      "hash": "4e6ca80e5447fdc9",
+      "hash": "5672cf3cc0b86a63",
       "parts": {
         "entities": {
           "e1": {
@@ -7396,14 +7400,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "3f7752535984e1c0"
+          "content": "895395b98956d706",
+          "encounters": "0e2e7e83e7bb5ef3"
         }
       }
     },
     {
       "tick": 1500,
-      "hash": "cc03571bdd4260f5",
+      "hash": "6016827d6e44074f",
       "parts": {
         "entities": {
           "e1": {
@@ -7712,14 +7716,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "de2ab1adf9e38304"
+          "content": "895395b98956d706",
+          "encounters": "067a40579fe7d0b7"
         }
       }
     },
     {
       "tick": 1560,
-      "hash": "ee1fcfa55e60e8bd",
+      "hash": "b431f3138403169e",
       "parts": {
         "entities": {
           "e1": {
@@ -8028,14 +8032,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "e3f4eda87964daad"
+          "content": "895395b98956d706",
+          "encounters": "fb20d2d822e508be"
         }
       }
     },
     {
       "tick": 1620,
-      "hash": "6cbd2997a9a0f505",
+      "hash": "58f565ee0856afff",
       "parts": {
         "entities": {
           "e1": {
@@ -8344,14 +8348,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "76df2f68fff521c9"
+          "content": "895395b98956d706",
+          "encounters": "a66aee5118f288ea"
         }
       }
     },
     {
       "tick": 1680,
-      "hash": "b7d03700d05d1b20",
+      "hash": "fc9ecdd57deaa0f8",
       "parts": {
         "entities": {
           "e1": {
@@ -8660,14 +8664,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "3a37455e6ce96eb5"
+          "content": "895395b98956d706",
+          "encounters": "f7ade4526cde09a6"
         }
       }
     },
     {
       "tick": 1740,
-      "hash": "f40a74ef874b3786",
+      "hash": "64cad650073d312d",
       "parts": {
         "entities": {
           "e1": {
@@ -8976,14 +8980,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "7507f09350b0e3f1"
+          "content": "895395b98956d706",
+          "encounters": "4be916efaecbfb72"
         }
       }
     },
     {
       "tick": 1800,
-      "hash": "5c1171865910a7ac",
+      "hash": "724fb25c4d4174bb",
       "parts": {
         "entities": {
           "e1": {
@@ -9292,14 +9296,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "d94e81282e3389f6"
+          "content": "895395b98956d706",
+          "encounters": "5f841b7cfd701021"
         }
       }
     },
     {
       "tick": 1860,
-      "hash": "ad44fc6567b4f9a1",
+      "hash": "8258687c9d7307fb",
       "parts": {
         "entities": {
           "e1": {
@@ -9608,14 +9612,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "eb83033fdbf14842"
+          "content": "895395b98956d706",
+          "encounters": "71046a81c45f47ed"
         }
       }
     },
     {
       "tick": 1920,
-      "hash": "80d232921a25ff4f",
+      "hash": "7fbf7edef0110d35",
       "parts": {
         "entities": {
           "e1": {
@@ -9924,14 +9928,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "32ed58ba160a529e"
+          "content": "895395b98956d706",
+          "encounters": "06a729f9eaf75529"
         }
       }
     },
     {
       "tick": 1980,
-      "hash": "bdb5ae5ca74c1e6e",
+      "hash": "53bfcf7a122de06d",
       "parts": {
         "entities": {
           "e1": {
@@ -10240,14 +10244,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "11d4dc20c0d6aeca"
+          "content": "895395b98956d706",
+          "encounters": "b734aa68992e1eb5"
         }
       }
     },
     {
       "tick": 2040,
-      "hash": "17045e0990add817",
+      "hash": "697f981bf7d61b93",
       "parts": {
         "entities": {
           "e1": {
@@ -10556,14 +10560,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "92e1fc5dbaa95b0b"
+          "content": "895395b98956d706",
+          "encounters": "ae81e8a0936d892c"
         }
       }
     },
     {
       "tick": 2100,
-      "hash": "7638bf22ded7dab7",
+      "hash": "e61200c0fe6f91b0",
       "parts": {
         "entities": {
           "e1": {
@@ -10872,14 +10876,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "0b8ca259336e9fb7"
+          "content": "895395b98956d706",
+          "encounters": "29ed8efe8d3539a8"
         }
       }
     },
     {
       "tick": 2160,
-      "hash": "596f30c3ac1dbe8a",
+      "hash": "23c7952038d7c3e8",
       "parts": {
         "entities": {
           "e1": {
@@ -11188,14 +11192,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "689dd2f6c9b80ab3"
+          "content": "895395b98956d706",
+          "encounters": "b0ea3eb2c530f154"
         }
       }
     },
     {
       "tick": 2220,
-      "hash": "9ae4643d03df7d41",
+      "hash": "17c08b451e51d35c",
       "parts": {
         "entities": {
           "e1": {
@@ -11504,14 +11508,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "f54d2ae85beeb5df"
+          "content": "895395b98956d706",
+          "encounters": "983b611c53dfcd30"
         }
       }
     },
     {
       "tick": 2280,
-      "hash": "07c1d989dc86eefe",
+      "hash": "48aa771d29efb874",
       "parts": {
         "entities": {
           "e1": {
@@ -11820,14 +11824,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "0d7227e316e0c0ec"
+          "content": "895395b98956d706",
+          "encounters": "65721d3e51abad7f"
         }
       }
     },
     {
       "tick": 2340,
-      "hash": "9412248b9f0b64c8",
+      "hash": "7307641c8ecbe80f",
       "parts": {
         "entities": {
           "e1": {
@@ -12136,14 +12140,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "284492b9c0396d91"
+          "content": "895395b98956d706",
+          "encounters": "aa88558c7f03ff12"
         }
       }
     },
     {
       "tick": 2400,
-      "hash": "1440c66d59cdfe11",
+      "hash": "4e6ee0156ae5975e",
       "parts": {
         "entities": {
           "e1": {
@@ -12452,14 +12456,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "284492b9c0396d91"
+          "content": "895395b98956d706",
+          "encounters": "aa88558c7f03ff12"
         }
       }
     },
     {
       "tick": 2460,
-      "hash": "ca076aabccacac05",
+      "hash": "4230c86854deea9a",
       "parts": {
         "entities": {
           "e1": {
@@ -12768,14 +12772,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "284492b9c0396d91"
+          "content": "895395b98956d706",
+          "encounters": "aa88558c7f03ff12"
         }
       }
     },
     {
       "tick": 2520,
-      "hash": "59168c3fae3371a2",
+      "hash": "2bcffbfabd297529",
       "parts": {
         "entities": {
           "e1": {
@@ -13084,14 +13088,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "284492b9c0396d91"
+          "content": "895395b98956d706",
+          "encounters": "aa88558c7f03ff12"
         }
       }
     },
     {
       "tick": 2580,
-      "hash": "4521f72ec4b6c941",
+      "hash": "90361aa9ed81d12e",
       "parts": {
         "entities": {
           "e1": {
@@ -13400,14 +13404,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "284492b9c0396d91"
+          "content": "895395b98956d706",
+          "encounters": "aa88558c7f03ff12"
         }
       }
     },
     {
       "tick": 2640,
-      "hash": "4ee39e2267b75d1e",
+      "hash": "54431b2a096d6fbd",
       "parts": {
         "entities": {
           "e1": {
@@ -13716,14 +13720,14 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "284492b9c0396d91"
+          "content": "895395b98956d706",
+          "encounters": "aa88558c7f03ff12"
         }
       }
     },
     {
       "tick": 2700,
-      "hash": "e781f785a992619c",
+      "hash": "0395cca3e37af37b",
       "parts": {
         "entities": {
           "e1": {
@@ -14032,8 +14036,8 @@
           }
         },
         "game": {
-          "content": "5008e58b672e9f05",
-          "encounters": "284492b9c0396d91"
+          "content": "895395b98956d706",
+          "encounters": "aa88558c7f03ff12"
         }
       }
     }
@@ -14058,6 +14062,7 @@
           "layout/arena": "091851d57d80f2e4",
           "layout/course": "f65397f9b47f46e1",
           "layout/watch": "dc738a5676554d89",
+          "lock_on/default": "0c3315c53fabe323",
           "locomotion/player": "25720e5c56082052",
           "locomotion/skeleton": "ba33bb652bf0630e",
           "locomotion/warden": "9a9e3ea79d7406f7",

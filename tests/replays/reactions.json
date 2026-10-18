@@ -6,7 +6,7 @@
   "check_detail": "components",
   "end": {
     "tick": 1856,
-    "hash": "0af9dfe4c29282e9",
+    "hash": "558f836556853c97",
     "parts": {
       "entities": {
         "e1": {
@@ -229,7 +229,7 @@
         }
       },
       "game": {
-        "content": "d38c542625bea509"
+        "content": "c84bdbbe6f8fb000"
       }
     }
   },
@@ -1277,6 +1277,68 @@
     },
     {
       "call": {
+        "at": 1058,
+        "agent": "skeleton",
+        "scope": "dev",
+        "subject": 7,
+        "tool": "lock_on",
+        "args": {
+          "target": "e5"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1058,
+        "agent": "bot",
+        "scope": "player",
+        "subject": 5,
+        "tool": "lock_on",
+        "args": {
+          "target": "e7"
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 1058,
+        "id": 5,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": 7
+        }
+      }
+    },
+    {
+      "input": {
+        "at": 1058,
+        "id": 7,
+        "component": "Intent",
+        "value": {
+          "aim": null,
+          "held": [],
+          "move_dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orders": [],
+          "pressed": [],
+          "target": 5
+        }
+      }
+    },
+    {
+      "call": {
         "at": 1060,
         "agent": "skeleton",
         "scope": "dev",
@@ -1959,7 +2021,7 @@
   "checks": [
     {
       "tick": 60,
-      "hash": "ef221c87f89a2c96",
+      "hash": "c42f31384c37cc91",
       "parts": {
         "entities": {
           "e1": {
@@ -2182,13 +2244,13 @@
           }
         },
         "game": {
-          "content": "6a7ce1cecf3e9094"
+          "content": "9dde39ef59bc2eff"
         }
       }
     },
     {
       "tick": 120,
-      "hash": "f7b818e65408aa7a",
+      "hash": "4b6233eafe2407bd",
       "parts": {
         "entities": {
           "e1": {
@@ -2411,13 +2473,13 @@
           }
         },
         "game": {
-          "content": "6a7ce1cecf3e9094"
+          "content": "9dde39ef59bc2eff"
         }
       }
     },
     {
       "tick": 180,
-      "hash": "a5cdacb05d0fc55f",
+      "hash": "c2eb06ee2c0bb61f",
       "parts": {
         "entities": {
           "e1": {
@@ -2641,13 +2703,13 @@
           }
         },
         "game": {
-          "content": "b0c654ed72a6efca"
+          "content": "d280d6742a65ca81"
         }
       }
     },
     {
       "tick": 240,
-      "hash": "90fad59d057bf68b",
+      "hash": "ebaccd394f6a260b",
       "parts": {
         "entities": {
           "e1": {
@@ -2870,13 +2932,13 @@
           }
         },
         "game": {
-          "content": "b0c654ed72a6efca"
+          "content": "d280d6742a65ca81"
         }
       }
     },
     {
       "tick": 300,
-      "hash": "e91f488ceb6a7bd6",
+      "hash": "607c054e19d0321a",
       "parts": {
         "entities": {
           "e1": {
@@ -3099,13 +3161,13 @@
           }
         },
         "game": {
-          "content": "b0c654ed72a6efca"
+          "content": "d280d6742a65ca81"
         }
       }
     },
     {
       "tick": 360,
-      "hash": "d2ed63dae2858d4d",
+      "hash": "2d1c5fe2d9e24591",
       "parts": {
         "entities": {
           "e1": {
@@ -3328,13 +3390,13 @@
           }
         },
         "game": {
-          "content": "8eaf65db70202c12"
+          "content": "d28eb74e8d7ac0d9"
         }
       }
     },
     {
       "tick": 420,
-      "hash": "6dc1a5fcb88e4f05",
+      "hash": "68fb31d6e723fa59",
       "parts": {
         "entities": {
           "e1": {
@@ -3558,13 +3620,13 @@
           }
         },
         "game": {
-          "content": "8eaf65db70202c12"
+          "content": "d28eb74e8d7ac0d9"
         }
       }
     },
     {
       "tick": 480,
-      "hash": "57dec8328fb0c714",
+      "hash": "10b8093807223a47",
       "parts": {
         "entities": {
           "e1": {
@@ -3787,13 +3849,13 @@
           }
         },
         "game": {
-          "content": "f99ee51a0562c356"
+          "content": "1c3f19c8ee6155cd"
         }
       }
     },
     {
       "tick": 540,
-      "hash": "a2a72235ebbcaf49",
+      "hash": "8e791699bbf7c6a5",
       "parts": {
         "entities": {
           "e1": {
@@ -4016,13 +4078,13 @@
           }
         },
         "game": {
-          "content": "82b541010b678dd0"
+          "content": "4e0394d9771fc7d3"
         }
       }
     },
     {
       "tick": 600,
-      "hash": "81496517e3277c69",
+      "hash": "d70c349701d8eb85",
       "parts": {
         "entities": {
           "e1": {
@@ -4245,13 +4307,13 @@
           }
         },
         "game": {
-          "content": "82b541010b678dd0"
+          "content": "4e0394d9771fc7d3"
         }
       }
     },
     {
       "tick": 660,
-      "hash": "4f081ac843f3148f",
+      "hash": "1b0531d2b99e831f",
       "parts": {
         "entities": {
           "e1": {
@@ -4474,13 +4536,13 @@
           }
         },
         "game": {
-          "content": "82b541010b678dd0"
+          "content": "4e0394d9771fc7d3"
         }
       }
     },
     {
       "tick": 720,
-      "hash": "54479165c33f5cc9",
+      "hash": "4d5668d4a0f84e25",
       "parts": {
         "entities": {
           "e1": {
@@ -4703,13 +4765,13 @@
           }
         },
         "game": {
-          "content": "82b541010b678dd0"
+          "content": "4e0394d9771fc7d3"
         }
       }
     },
     {
       "tick": 780,
-      "hash": "ee37002284a3f743",
+      "hash": "a9027b8044083d63",
       "parts": {
         "entities": {
           "e1": {
@@ -4932,13 +4994,13 @@
           }
         },
         "game": {
-          "content": "82b541010b678dd0"
+          "content": "4e0394d9771fc7d3"
         }
       }
     },
     {
       "tick": 840,
-      "hash": "9a597bb13d94af0d",
+      "hash": "40d20666735444ae",
       "parts": {
         "entities": {
           "e1": {
@@ -5161,13 +5223,13 @@
           }
         },
         "game": {
-          "content": "cdcd9ad37ffccbef"
+          "content": "62c4a2d5c1310262"
         }
       }
     },
     {
       "tick": 900,
-      "hash": "ef03569d0b89b2ad",
+      "hash": "af045f5c51cc7f18",
       "parts": {
         "entities": {
           "e1": {
@@ -5220,6 +5282,7 @@
             "InputBuffer": "ef38bf400db90191",
             "Intent": "632e98909be48b75",
             "LocalPlayer": "9649be778570e9b6",
+            "LockSight": "772630f818290007",
             "LocomotionInput": "dc39d3b0919cdc68",
             "Look": "e44906346a412547",
             "MotionState": "7402741305f78e11",
@@ -5278,6 +5341,7 @@
             "InputBuffer": "ef38bf400db90191",
             "Intent": "edceddc0d3f66597",
             "LockOnTarget": "8e7e24c8d091cff2",
+            "LockSight": "481f24bbf4d7b4c1",
             "LocomotionInput": "031944208650e41a",
             "Look": "f94c630656387237",
             "MotionState": "674fe48e08bbd494",
@@ -5390,13 +5454,13 @@
           }
         },
         "game": {
-          "content": "cdcd9ad37ffccbef"
+          "content": "62c4a2d5c1310262"
         }
       }
     },
     {
       "tick": 960,
-      "hash": "e917b33191f74f44",
+      "hash": "9c94d61674d5de43",
       "parts": {
         "entities": {
           "e1": {
@@ -5449,6 +5513,7 @@
             "InputBuffer": "ef38bf400db90191",
             "Intent": "632e98909be48b75",
             "LocalPlayer": "9649be778570e9b6",
+            "LockSight": "3a6cf2e0d477080a",
             "LocomotionInput": "dc39d3b0919cdc68",
             "Look": "e44906346a412547",
             "MotionState": "7402741305f78e11",
@@ -5507,6 +5572,7 @@
             "InputBuffer": "ef38bf400db90191",
             "Intent": "edceddc0d3f66597",
             "LockOnTarget": "8e7e24c8d091cff2",
+            "LockSight": "1d215f4b8d58d66c",
             "LocomotionInput": "031944208650e41a",
             "Look": "f94c630656387237",
             "MotionState": "674fe48e08bbd494",
@@ -5619,13 +5685,13 @@
           }
         },
         "game": {
-          "content": "cdcd9ad37ffccbef"
+          "content": "62c4a2d5c1310262"
         }
       }
     },
     {
       "tick": 1020,
-      "hash": "37b2c369a6726855",
+      "hash": "943ee9b5eaaa962a",
       "parts": {
         "entities": {
           "e1": {
@@ -5676,9 +5742,9 @@
             "Fighter": "09fe6f3ab693f50e",
             "Health": "7a4bdd5c767454d8",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "632e98909be48b75",
+            "Intent": "38dab3b75de55ab8",
             "LocalPlayer": "9649be778570e9b6",
-            "LocomotionInput": "dc39d3b0919cdc68",
+            "LocomotionInput": "39e4de9fd83ac7a7",
             "Look": "e44906346a412547",
             "MotionState": "7402741305f78e11",
             "Name": "34a01a235b960c38",
@@ -5734,9 +5800,9 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "edceddc0d3f66597",
+            "Intent": "38dab3b75de55ab8",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "d9981bdaee5c410e",
+            "LocomotionInput": "39e4de9fd83ac7a7",
             "Look": "f94c630656387237",
             "MotionState": "674fe48e08bbd494",
             "Name": "69a7067b825ad410",
@@ -5848,13 +5914,13 @@
           }
         },
         "game": {
-          "content": "cdcd9ad37ffccbef"
+          "content": "62c4a2d5c1310262"
         }
       }
     },
     {
       "tick": 1080,
-      "hash": "d82d418904b21def",
+      "hash": "aaa797454156b004",
       "parts": {
         "entities": {
           "e1": {
@@ -6077,13 +6143,13 @@
           }
         },
         "game": {
-          "content": "cdcd9ad37ffccbef"
+          "content": "62c4a2d5c1310262"
         }
       }
     },
     {
       "tick": 1140,
-      "hash": "b1710296811a6a94",
+      "hash": "a6bf0760b77a2879",
       "parts": {
         "entities": {
           "e1": {
@@ -6307,13 +6373,13 @@
           }
         },
         "game": {
-          "content": "64a8286edc2d0bd0"
+          "content": "ca49d9a0679e51d3"
         }
       }
     },
     {
       "tick": 1200,
-      "hash": "f7e98bec2e3ff5d5",
+      "hash": "98d66151083a90a4",
       "parts": {
         "entities": {
           "e1": {
@@ -6536,13 +6602,13 @@
           }
         },
         "game": {
-          "content": "64a8286edc2d0bd0"
+          "content": "ca49d9a0679e51d3"
         }
       }
     },
     {
       "tick": 1260,
-      "hash": "2c4ac58980e24a13",
+      "hash": "4396fad694a0b4aa",
       "parts": {
         "entities": {
           "e1": {
@@ -6765,13 +6831,13 @@
           }
         },
         "game": {
-          "content": "64a8286edc2d0bd0"
+          "content": "ca49d9a0679e51d3"
         }
       }
     },
     {
       "tick": 1320,
-      "hash": "2318c91e81c2b4f5",
+      "hash": "ccf458004a02fe04",
       "parts": {
         "entities": {
           "e1": {
@@ -6994,13 +7060,13 @@
           }
         },
         "game": {
-          "content": "64a8286edc2d0bd0"
+          "content": "ca49d9a0679e51d3"
         }
       }
     },
     {
       "tick": 1380,
-      "hash": "fae46f5863c5110a",
+      "hash": "c514bba6b5431d27",
       "parts": {
         "entities": {
           "e1": {
@@ -7223,13 +7289,13 @@
           }
         },
         "game": {
-          "content": "eb41739fd2bb2138"
+          "content": "1333ce6009ec5f2b"
         }
       }
     },
     {
       "tick": 1440,
-      "hash": "586907fbc41227cc",
+      "hash": "fcf8866930baa209",
       "parts": {
         "entities": {
           "e1": {
@@ -7452,13 +7518,13 @@
           }
         },
         "game": {
-          "content": "eb41739fd2bb2138"
+          "content": "1333ce6009ec5f2b"
         }
       }
     },
     {
       "tick": 1500,
-      "hash": "b3a7879eda07e9ed",
+      "hash": "a156c9446d27c718",
       "parts": {
         "entities": {
           "e1": {
@@ -7681,13 +7747,13 @@
           }
         },
         "game": {
-          "content": "eb41739fd2bb2138"
+          "content": "1333ce6009ec5f2b"
         }
       }
     },
     {
       "tick": 1560,
-      "hash": "2eeeab42eb017a2d",
+      "hash": "ac61efeb15faba53",
       "parts": {
         "entities": {
           "e1": {
@@ -7910,13 +7976,13 @@
           }
         },
         "game": {
-          "content": "d38c542625bea509"
+          "content": "c84bdbbe6f8fb000"
         }
       }
     },
     {
       "tick": 1620,
-      "hash": "541bb8384fdbc1ec",
+      "hash": "bfd44391a372dd62",
       "parts": {
         "entities": {
           "e1": {
@@ -8140,13 +8206,13 @@
           }
         },
         "game": {
-          "content": "d38c542625bea509"
+          "content": "c84bdbbe6f8fb000"
         }
       }
     },
     {
       "tick": 1680,
-      "hash": "8a54daa9ece881c7",
+      "hash": "44caac4c35757d9d",
       "parts": {
         "entities": {
           "e1": {
@@ -8369,13 +8435,13 @@
           }
         },
         "game": {
-          "content": "d38c542625bea509"
+          "content": "c84bdbbe6f8fb000"
         }
       }
     },
     {
       "tick": 1740,
-      "hash": "fb1479777ffb71b1",
+      "hash": "5d2069fcd9f3096f",
       "parts": {
         "entities": {
           "e1": {
@@ -8598,13 +8664,13 @@
           }
         },
         "game": {
-          "content": "d38c542625bea509"
+          "content": "c84bdbbe6f8fb000"
         }
       }
     },
     {
       "tick": 1800,
-      "hash": "6c373274e83ab87f",
+      "hash": "3a90cd2820fd73a5",
       "parts": {
         "entities": {
           "e1": {
@@ -8827,7 +8893,7 @@
           }
         },
         "game": {
-          "content": "d38c542625bea509"
+          "content": "c84bdbbe6f8fb000"
         }
       }
     }
@@ -8847,6 +8913,7 @@
           "layout/arena": "091851d57d80f2e4",
           "layout/course": "f65397f9b47f46e1",
           "layout/watch": "dc738a5676554d89",
+          "lock_on/default": "0c3315c53fabe323",
           "locomotion/player": "25720e5c56082052",
           "locomotion/skeleton": "ba33bb652bf0630e",
           "locomotion/warden": "9a9e3ea79d7406f7",

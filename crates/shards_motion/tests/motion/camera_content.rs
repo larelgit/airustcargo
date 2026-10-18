@@ -82,3 +82,23 @@ fn a_typo_in_a_camera_definition_is_an_error() {
     let errors: Vec<String> = app.world().resource::<shards_content::ContentDb>().errors().map(ToString::to_string).collect();
     assert!(errors.iter().any(|e| e.contains("content/camera.camera.ron") && e.contains("pich")), "{errors:?}");
 }
+
+#[test]
+fn a_lock_on_definition_is_read_and_one_out_of_range_is_an_error_naming_its_file_and_field() {
+    use shards_motion::camera::LockOnDef;
+    let dir = temp_dir("lock_on_content");
+    write(&dir, "content/lock.lock_on.ron", r#"{ "default": (range: 25.0, weights: (danger: 2.0), obstruction_s: None) }"#);
+    let mut app = engine_app(&dir);
+    frames(&mut app, 2);
+    let db = app.world().resource::<shards_content::ContentDb>();
+    let def = LockOnDef::active(Some(db)).expect("the rules are on");
+    assert_eq!((def.range, def.weights.danger, def.weights.distance, def.obstruction_s), (25.0, 2.0, 1.0, None));
+
+    let dir = temp_dir("lock_on_bad");
+    write(&dir, "content/lock.lock_on.ron", r#"{ "default": (range: -1.0, aim_height: 1.5, weights: (view: -0.5)) }"#);
+    let app = engine_app(&dir);
+    let errors: Vec<String> = app.world().resource::<shards_content::ContentDb>().errors().map(ToString::to_string).collect();
+    for needle in ["range is -1", "aim_height is 1.5", "weights.view is -0.5"] {
+        assert!(errors.iter().any(|e| e.contains("content/lock.lock_on.ron") && e.contains(needle)), "{needle}: {errors:?}");
+    }
+}

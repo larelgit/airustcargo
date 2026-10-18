@@ -81,7 +81,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 133 definitions in 39 files
+cargo shards content check                 # ok: 178 definitions in 52 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -104,7 +104,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 133 definitions in 39 files
+# ok: 178 definitions in 52 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -484,7 +484,7 @@ starts at tick N: the main menu moved the world`), and the session's replay stil
 | `pressed` | presses since the last tick (`Press { input, dir }`); gameplay takes them, the rest are cleared at the end of the tick |
 | `orders` | orders that last many ticks: `Order::MoveTo { target, within }`, `Order::Attack { target, input, repeat }` |
 
-The engine's input names are in `shards::core::input_names` (`jump`, `sprint`, `glide`, `dodge`, `light`, `heavy`, `block`, `parry`, `technique.N`, `use_item`, `interact`, `lock_on`, and `assist_off`, held while the player has turned the attack assist off); the game adds its own. `Intent` is the replay input (the engine makes `replay_input::<Intent>()` itself): changes between ticks are recorded. `PlayerId` and `LocalPlayer` mark players, and `NetRole` (`Single` by default) is groundwork for networking.
+The engine's input names are in `shards::core::input_names` (`jump`, `sprint`, `glide`, `dodge`, `light`, `heavy`, `block`, `parry`, `technique.N`, `use_item`, `interact`, `lock_on`, `lock_switch` (C6: a press whose `dir.x` is the side, `+1` right), and `assist_off`, held while the player has turned the attack assist off); the game adds its own. `Intent` is the replay input (the engine makes `replay_input::<Intent>()` itself): changes between ticks are recorded. `PlayerId` and `LocalPlayer` mark players, and `NetRole` (`Single` by default) is groundwork for networking.
 
 **Groundwork for networking (phase C).** None of this changes a single-player game.
 
@@ -514,10 +514,11 @@ The game's numbers and definitions live in files, not in code: attacks, prefabs,
 
 - An id is a non-empty string without spaces or control characters; it is unique within its content kind across all files.
 - The engine registers its own content kinds: `prefab`, `locomotion`, `action`, `moveset`, `status`, `combat_tuning`, `animset`,
-  `input_map`, levels `level`, world `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`, enemies `behavior`,
-  `perception`, `director`, `attack_plan`, `npc_tuning` and `nav`, mesh looks `look` (see "Stylised materials (E10.1)"),
+  `input_map`, the camera `camera` and `lock_on`, levels `level`, world `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`,
+  voxels `voxel_palette` and `voxel_region`, enemies `behavior`, `perception`, `director`, `attack_plan`, `npc_tuning` and `nav`,
+  sound `audio`, `sound` and `music`, screens `screen` and `theme`, `locale`, `save`, `net`, `perf`, `devmenu`, mesh looks `look` (see "Stylised materials (E10.1)"),
   foliage `scatter` (see "Foliage and small objects (E10.2)"), effects `effect` and `fx` (see "Effects and decals
-  (E10.3)"), with the `steam` feature, achievements `achievement` (see "Steam (E10.5)"). The game adds its own: the sandbox has `layout`, the template has
+  (E10.3)"), with the `steam` feature, achievements `achievement` (see "Steam (E10.5)"). The game adds its own: the sandbox has `layout` and `bounds`, the template has
   `arena`.
   `content_list` (the tool) shows the content kinds and the number of definitions.
 - `#[serde(deny_unknown_fields)]` on a struct turns a typo into an error with the line number; without it, a typo in an optional field silently keeps the default value.
@@ -590,13 +591,14 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 133 definitions in 39 files
-  action  23
+content: 178 definitions in 52 files
+  action  46
   animset  1
   attack_plan  3
   audio  1
   behavior  2
   bounds  1
+  camera  0
   combat_tuning  1
   devmenu  4
   director  2
@@ -607,9 +609,10 @@ content: 133 definitions in 39 files
   layout  3
   level  1
   locale  2
+  lock_on  1
   locomotion  3
   look  15
-  moveset  4
+  moveset  10
   music  1
   nav  1
   net  0
@@ -625,17 +628,15 @@ content: 133 definitions in 39 files
   screen  3
   socket_rules  1
   sound  16
-  status  0
+  status  2
   theme  0
   tile  13
   tile_map  1
-$ shards act spawn_prefab id=skeleton x=5 z=5
-spawned e15 skeleton at (5.0, 5.0)
-CHANGES
-  + e15 Skeleton  hp 40/40  poise 20/20  8.6m NE
+  voxel_palette  1
+  voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 76 definitions in 26
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 178 definitions in 52
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -886,7 +887,7 @@ For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, spr
 
 - `InputMap { contexts }`: context (`gameplay`, `menu`, or the game's own) → actions → bindings. A binding is one of: `Key`, `Mouse`,
   `GamepadButton`, `GamepadAxis` (dead zone, scale), `KeyAxis`, `Keys2D` (WASD as a 2D axis), `Buttons2D` (the gamepad's D-pad as a 2D axis), `Stick`,
-  `MouseMotion`.
+  `MouseMotion`, `MouseWheel` (this frame's scroll as a 2D axis, `y` away from the player; the standard map binds it to `lock_switch`).
   `Stick` has `deadzone` (radial, the rest rescaled to 0..1), `scale` for both axes, and three optional fields for stick look (C9): `scale_x` / `scale_y` (`Some(3.2)`; a per-axis scale where set, `scale` where absent) and `curve` (the exponent on the magnitude after the dead zone, `m -> m^curve`, direction kept; default 1.0 is linear; it must be above 0 and finite, otherwise a content error names the file; `rebind` and a saved `controls` string are refused the same way). A look stick that turns 3.2 units per second of yaw and 2.0 of pitch (the scale is in the `look` action's units per second) with a 1.6 response is `Stick(stick: Right, deadzone: 0.2, scale_x: Some(3.2), scale_y: Some(2.0), curve: 1.6)`. The new fields are not written while they are default, so every old `input_map` file and saved `controls` string reads and writes as before; `rebind` takes the same text.
   Action mode: `Press` (one press), `Hold` (while held), `Toggle` (a press turns it on until the next press: "hold or press" for accessibility). `directional: true` — a press carries the direction the player is moving in (a roll towards where the stick points). Slot 0 is the main binding; slot 1 and up are spares.
 - The context stack `InputContexts`: only the top one fires; `menu` blocks `gameplay` until it is removed.
@@ -936,7 +937,7 @@ For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, spr
   ```
 - A real gamepad needs the feature `gamepad` (gilrs, needs libudev). Without the feature, `Gamepad` entities work if the game or a test creates them.
 
-**Camera** (`ThirdPersonCamera`, only with a window; the maths without one). Orbit with the mouse and the right stick; collision with walls (a ray from the head to the desired position pulls the camera in); lock-on: the `lock_on` key picks the target closest to the centre of the frame within the cone and range of `CameraSettings::{lock_cone_deg, lock_range}`, a look to one side switches to a neighbour, a target that leaves the range, dies or loses its `LockOnTarget` ends the lock; aim assist, and shake (`AddTrauma`; its strength, and the field of view, sensitivity and Y-axis inversion, come from the player's settings, see "Settings (E8.6)"). The chosen target is written to `Intent.target` between ticks (it is an input, and the replay records it), but the camera never clears someone else's target. **The camera is only a view:** gameplay and `observe` do not read it (`observe` sees through the eyes of the subject), so a window with the camera plays the same game as one without.
+**Camera** (`ThirdPersonCamera`, only with a window; the maths without one). Orbit with the mouse and the right stick; collision with walls (a ray from the head to the desired position pulls the camera in); lock-on: the `lock_on` key picks the target closest to the centre of the frame within the cone and range of `CameraSettings::{lock_cone_deg, lock_range}`, a look to one side switches to a neighbour, a target that leaves the range, dies or loses its `LockOnTarget` ends the lock (with a `lock_on` definition the rules of "Lock-on rules (C6)" below decide instead); aim assist, and shake (`AddTrauma`; its strength, and the field of view, sensitivity and Y-axis inversion, come from the player's settings, see "Settings (E8.6)"). The chosen target is written to `Intent.target` between ticks (it is an input, and the replay records it), but the camera never clears someone else's target. **The camera is only a view:** gameplay and `observe` do not read it (`observe` sees through the eyes of the subject), so a window with the camera plays the same game as one without.
 
 **Camera numbers and offsets (C7).** The camera's feel numbers are not constants in code (the two exceptions are named below: the 30..120 field-of-view limit and the shake's noise frequencies). They are the resource `CameraTuning` (content kind `camera`, `*.camera.ron`, one map of ids to definitions; the camera reads the id `default`, hot-reloaded; without one it runs on the code defaults, which are the numbers it always had, so a game without a camera definition sees no change; a definition that is removed puts the defaults back; a game may also set the resource from code, and content that exists wins whenever it loads or changes). Missing fields take the defaults, unknown ones are an error, and `--check-content` names the file and the field of an out-of-range number. A default serializes to nothing, so adding a field never changes the hash of a definition that does not set it.
 
@@ -966,11 +967,41 @@ The ranges of `pitch`, `follow_rate`, the rates, thresholds and amplitudes are c
 
 *Smoothing.* Every smoothing is the exact exponential `1 - exp(-rate * dt)` through `bevy::math::ops::exp`, so it does not depend on the frame rate (`damp`, `lock_framing`, `arm_reach`). `critically_damped_step(x, v, target, omega, dt)` is the closed form of a critically damped spring (for a landing dip: kick `v`, aim at 0); one step of `2 dt` equals two of `dt`. *The arm*: a wall pulls it in at once; once it lets go the shortfall below the nominal length shrinks at `arm.follow_rate` (the rate acts on the shortfall, so a plain zoom is smoothed once, by `arm_length`; `ThirdPersonCamera::arm_reach` is where it stood last frame, `arm_length` its nominal length), never past what is free and never closer than `arm.min_distance` (as far as the room allows). A jump of the focus (a teleport) resets it.
 
-*Flick.* The flick thresholds are in raw units, so they are the old constants only at the standard map, mouse sensitivity 1.0 and 60 Hz: before, the mouse flick read the scaled, sensitivity-adjusted axis (0.035 rad) and the stick flick also carried the frame time. Now the player's sensitivity and a binding's scale do not move the flick, and the stick flick does not depend on the frame rate. An inverted stick binding (negative scale) keeps its flipped side. If both devices flick in one frame the mouse wins and the stick is not asked. The mouse is measured in raw pixels and the stick in deflection, both from `ControlState` (`look_pointer_px()`, `look_stick()`); the `look` axis stays the scaled sum. The cooldown runs on the simulation clock, `Time<Virtual>`: a paused game does not run it down, a slowed one runs it down slowly. The mouse's sum drains on the frame clock (`Time<Real>`): that is input, not the game. Follow, framing, arm and shake stay on `Time<Real>`, so a paused game still shows its camera settle. There is no look grace after a spawn. Gameplay reads the stored `ThirdPersonCamera::yaw` (`input` turns the move axes by it): the shake only moves the camera's `Transform`.
+*Flick.* The flick thresholds are in raw units, so they are the old constants only at the standard map, mouse sensitivity 1.0 and 60 Hz: before, the mouse flick read the scaled, sensitivity-adjusted axis (0.035 rad) and the stick flick also carried the frame time. Now the player's sensitivity and a binding's scale do not move the flick, and the stick flick does not depend on the frame rate. A stick's flick reads its deflection before its response `curve` and its scales (`scale`, or C9's `scale_x` / `scale_y` per axis), so a look curve or a faster yaw does not move the stick threshold either. An inverted stick binding (a negative scale on that axis) keeps its flipped side. If both devices flick in one frame the mouse wins and the stick is not asked. The mouse is measured in raw pixels and the stick in deflection, both from `ControlState` (`look_pointer_px()`, `look_stick()`); the `look` axis stays the scaled sum. The cooldown runs on the simulation clock, `Time<Virtual>`: a paused game does not run it down, a slowed one runs it down slowly. The mouse's sum drains on the frame clock (`Time<Real>`): that is input, not the game. Follow, framing, arm and shake stay on `Time<Real>`, so a paused game still shows its camera settle. There is no look grace after a spawn. Gameplay reads the stored `ThirdPersonCamera::yaw` (`input` turns the move axes by it): the shake only moves the camera's `Transform`.
 
 *Offsets.* `CameraOffsets` (a resource, neutral by default) is what a game's systems add to the base values; `orbit_camera` reads it after them, every frame: `fov_add_deg` is added to the player's field of view before the engine's 30..120 limit (sprint widening, a finisher's punch); `focus_dip_m` lowers the camera and what it looks at together, so the picture drops without tilting (a landing dip; negative raises); `pitch_min` / `pitch_max` narrow the tuning's pitch range (an override outside it is held to it), and the stored pitch is clamped to the result (a swim cap: the camera stays above the water; lifting the cap does not push the pitch back up). **The writer owns its value**: the system that writes a field sets it on every frame it wants an effect and puts it back to `0.0` / `None` itself when it is done. The camera only reads: it never decays, sums or stores an offset, and it never writes `CameraSettings`, `ThirdPersonCamera::focus` or the stored pitch except through the clamp above, so an offset stays as its writer left it until the writer puts it back (a writer that stops without resetting
 leaves its effect on). Two systems that want the same field must be combined by the game into one writer. Write in `PostUpdate` before `CameraSystems::Orbit` to be seen on the same frame (the set is empty without the `render` feature, so the writers run and are testable headless).
 
+**Lock-on rules (C6).** With a `lock_on` definition (content kind `lock_on`, `*.lock_on.ron`, the id `default` (another id is a content error: the engine reads no other), hot reload; `shards::motion::camera::LockOnDef`), lock-on is a simulation rule rather than the camera's: the camera, the `lock_on` tool and the check of every lock use the same plain functions (`shards::motion::camera::lock`), so a window and a headless run decide alike. Without one, everything above holds as it was (the camera's own pick, switch and release, no check), and a game sees no change; the sandbox has one, the template none.
+
+```ron
+// assets/content/combat/lock.lock_on.ron (every field is optional: these are the defaults)
+{ "default": (range: 30.0, weights: (distance: 1.0, screen: 1.0, view: 0.5, danger: 0.5, current: 0.3),
+              aim_height: 0.6, eye_height: 0.9, obstruction_s: Some(2.0), switch_dead_band: 0.05, switch_min_distance: 0.1, frustum: true) }
+```
+
+| field | default | meaning |
+|---|---|---|
+| `range` | `30` | m, in 3D between the two bodies' positions: the pick and the switch look this far, and a lock farther than this is lost |
+| `weights.distance` | `1` | the pick's score (lower wins): distance per `range` |
+| `weights.screen` | `1` | the angle from the centre of the view to the aim point, per half the view's width (a body's own eyes: per half turn) |
+| `weights.view` | `0.5` | the angle on the ground between where the one locking looks and the candidate, from the one locking, per half turn |
+| `weights.danger` | `0.5` | taken off for a candidate whose attack would land on the one locking now (its hit zone, `zones_threatening`) |
+| `weights.current` | `0.3` | taken off for the current target, so a pick made while locked keeps it unless another is clearly better |
+| `aim_height` / `eye_height` | `0.6` / `0.9` | the target's aim point and the locker's eye, as fractions of the body's collider from its bottom (1.8 m without one): one lock point per body |
+| `obstruction_s` | `Some(2.0)` | a target hidden behind the world (a `WORLD` ray from the eye to the aim point, both bodies left out) this long in a row is lost; counted in ticks (120 at 60 Hz); `None`: never |
+| `switch_dead_band` | `0.05` | rad: a switch takes only a candidate past this angle on the side asked for |
+| `switch_min_distance` | `0.1` | m on the ground: nearer than this to the locker, a candidate has no direction and is never switched to |
+| `frustum` | `true` | the camera picks inside its frustum at the player's base field of view (`CameraSettings::fov_deg`, never the sprint's `CameraOffsets::fov_add_deg`) and the projection's aspect; `false`: the cone `CameraSettings::lock_cone_deg` |
+| `wheel_threshold` | `0` | the wheel axis' units (a line for a wheel, the pixels a touchpad sends): a scroll of this much or less in a frame counts as the wheel standing still, so a touchpad's tremor is no turn; `0` takes every turn (the behaviour before it was a number) |
+
+- *Pick* (`pick_lock`, `lock_score`): among the bodies the locker may lock on to (`LockHooks::lockable`; the action module: alive, and `LockOnTarget` or a fighter of another team) within `range` that it can see, the lowest score, the lower `AiId` on a tie. The camera looks from its own eye along its view (inside the frustum or the cone, a clear ray from the camera); the `lock_on` tool without `target` from the body's eye along its facing.
+- *Switch* (`switch_lock`, `switch_target`): measured from the locker, not the camera: the signed angle around up from the direction to the current target to each candidate's (left positive); `right` takes those past `-switch_dead_band`, `left` past `+switch_dead_band`; the nearest angle wins, then the lower `AiId`; only what the locker's eye sees. It is the press `lock_switch` (`input_names::LOCK_SWITCH`, `dir.x` the side: `+1` right), used up by `LockSystems::Switch` (`SimSet::Act`, before `MotionSystems::Intent`, so the body faces the new target on that tick; it works without a definition too, by the defaults with `CombatTuning::lock_on_range`). The camera sends it for a look flick (C7's flick thresholds and cooldown; only when the rule finds somebody on that side) and for the mouse wheel (toward the player is right; one switch per turn of the wheel: after a switch the wheel must stand still for a frame, so a touchpad's long or coasting scroll is one switch; the cooldown holds it too); the tool is `lock_on side=left|right`. `lock_switch` is read as an axis: bind it to `MouseWheel()`, `KeyAxis(neg: KeyQ, pos: KeyE)`, a `GamepadAxis` or a `Stick`. A button bound to it is refused with an error that names these: by `InputMap::rebind` (the `rebind` tool), by the controls settings (`settings_set`, a saved file) and by the content check of an `input_map` (`Binding::refused_for`); a keyboard "next target" action is a later addition if a game asks. The standard map binds the wheel to it in every game; without a definition the camera does not read it, so the wheel does nothing there.
+- *Check* (`LockSystems::Check`, `SimSet::Cleanup` after `CoreSystems::ClearPresses`, so after the tick's deaths and the engine's despawns, such as the co-op body whose rejoin grace is over, in `AiId` order): every body's `Intent.target` is checked, the player's and every agent-driven body's alike (an NPC brain keeps its own target and does not write `Intent.target`), so an agent that steers a monster through `lock_on` loses that lock to a wall too. A lock is lost when its target is gone, dead (`Dead`), beyond `range` or hidden for `obstruction_s`, and let go of (`e5 lock released: e6`) when its target stops being something the locker may lock on to by the pick's own rule (`LockHooks::lockable`: an ally, a body that is neither a fighter of another team nor a `LockOnTarget`), so an ally a co-op client sends as its target, or a game system sets, does not stay: the host checks it like any other body's. A `lock_on` definition with errors is not in force (the game runs as without one until the content is fixed). A game system that despawns a body that may be locked on to runs before the check (`.before(LockSystems::Check)`, or before `ClearPresses`), so the lock goes on that tick; one after it leaves a lock on nobody, and `action.lock_on_valid` stops the game; `LockSight { target, ticks, secs }` is on the locker only while its target is hidden (it is in the replay and the snapshot), and a tick in sight takes it away, so the count starts again. The camera lets go of a lock only when the player cancels it.
+- *Journal*: `e5 lock lost: e6 dead` (`gone`, `out of range (31.0m > 30.0m)`, `obstructed 2.0s`); `e5 locks e6` from the `lock_on` tool and `e5 lock released: e6` from its `off` (from the camera, the same texts as `local` lines: a replay sets the target from the recorded input, without the camera); `e5 locks e7 (switched right from e6)`. *`observe` and `inspect`*: `lock e6`, and `lock e6 (obstructed 0.8s)` while hidden.
+- *The tool*: with a definition, `lock_on target=eN` is refused for what the check would take away at once (a dead target, one beyond `range`) and for what the pick would never name (yourself, an ally or anything else that is neither a fighter of another team nor a `LockOnTarget`, a body with no position). Without one an id is taken as before.
+- *The rule* `action.lock_on_valid`: with a definition, no body's `Intent.target` names a missing or dead entity after a tick (a game system after `LockSystems::Check` that sets one, or that despawns a body that is locked on to, breaks it).
+- *Co-op*: `Intent.target` and the `lock_switch` press are input; the check and the switch run where the simulation runs, never in a client's prediction. A client takes over a lock its host changed (lost, switched, taken by an attack order) once the host has every held state it sent (`InputCapture::adopt_target`): otherwise its next state would put the old target back. Stand scenario `crates/sandbox/scenarios/stand/lock_on.scenario`; single-game scenario `crates/sandbox/scenarios/lock_on.scenario`.
 **Render interpolation (C8).** The simulation steps at 60 Hz and a body's `Transform` is the value of the last tick, so on a 144 Hz display a body would move in 60 Hz steps and the follow camera would inherit them. `shards_motion::interp` draws bodies between their last two ticks. It is presentation only: it never writes a body's `Transform` (physics reads it), and it adds nothing to a simulated entity.
 
 - **Where the state lives.** `Interpolated` sits on a *visual child* of a `CharacterController` body (the model, a held prop: any child without an `AiId`); the engine adds it by itself (`adopt_visuals`, `PostUpdate`), so a game that dresses its bodies with a model child needs no code. `NotInterpolated` on a child opts it out. Adoption is opt-out on purpose (a game gets smooth models without code; the few children gameplay reads carry `AiId` or `NotInterpolated`). `body_snap_distance` stays in the `camera` kind for now: it is presentation tuning, and that kind is non-simulation (`SIMULATION = false`), so it never enters a replay's content check. It has no `AiId` and is not in snapshots, replays or the state audit.
@@ -1126,7 +1157,7 @@ A new curve changes gameplay (the lunge, the roll): replays recorded with the ol
 **What the AI sees.** In describe: `windup slam 0.78s (zone circle 4.5m) hyper-armor`, `stam 75/100`, `poise broken 0.8s`, `bleed 60%`, `queued light 0.13s`, `roll roll 0.33s i-frames`. Under the `YOU` line, the hint `ALERT in hit zone of e6 shockwave (lands in 0.50s): move 1.3m E to leave it`. In the journal: `e2 winds up slam (0.80s) ⚠
 circle 4.5m`, `e1 -> e2 heavy -45 (hp 55)`, `e1 blocked e2 swipe: -2 hp, -15 stamina (hp 98)`, `e2 staggered (parried)`.
 
-**Tools** (for the player, only through `Intent`): `light_attack`, `heavy_attack`, `block on=…`, `parry`, `dodge dir=…|away_from=…`, `use_technique slot=1`, `use_item item=flask`, `lock_on target=…|off=true`, `attack target=… input=… repeat=true`. For the developer: `god`, `heal`, `stagger`, `react id=… tier=1..3`, `barrier id=… amount=… seconds=…`, `damage_taken id=… key=… mult=… seconds=…`, `combat_overlay`. One-shot tools answer by `can_start`:
+**Tools** (for the player, only through `Intent`): `light_attack`, `heavy_attack`, `block on=…`, `parry`, `dodge dir=…|away_from=…`, `use_technique slot=1`, `use_item item=flask`, `lock_on target=…|side=left|right|off=true` (with a `lock_on` definition: the scored pick; a dead, too far or unlockable target is refused, see "Lock-on rules (C6)"), `attack target=… input=… repeat=true`. For the developer: `god`, `heal`, `stagger`, `react id=… tier=1..3`, `combat_overlay`. One-shot tools answer by `can_start`:
 
 ```text
 $ shards act dodge
@@ -1578,6 +1609,69 @@ seed ─► Points ─► Roads ─► Cells ─► Fill (socket solver) ─► 
   points   roads    cells     tiles with rotations   more points     decor      rules
               any step or check fails ─► next attempt ─► … ─► fallback map (tile_map)
 ```
+
+### Body and motion: leap, walking spans, mode gate, intangible (B2c)
+
+What an action does to the body, as data. Everything is off by default and unserialized at its default (content hashes and the reference replays of older content do not change).
+
+```ron
+{
+    "leap": (
+        net_id: 126,
+        phases: [("crouch", 0.3), ("air", 0.7), ("land", 0.4)],
+        displacement: [(0.3, 0.0), (1.0, 6.0)],         // the longest leap; stretched to the landing chosen
+        leap: (height: 1.2, at: 0.3, search: (min: 1.5, max: 6.0, step: 0.5, max_rise: 0.6, max_drop: 1.5,
+               probe_height: 1.0, lift: 0.05, toward_target: true, max_water_depth: 1.0)),
+    ),
+    "spin": (net_id: 127, phases: [("windup", 0.2), ("spin", 1.2), ("recovery", 0.3)], walk: [(Phase("spin"), 0.35)]),
+    "burrow": (net_id: 128, phases: [("dig", 0.4), ("under", 0.7), ("emerge", 0.5)], intangible: [Phase("under")], ghost: true),
+    "stroke": (net_id: 129, phases: [("stroke", 0.5)], tags: ["afloat"]),
+}
+// moveset: only_in: [(Water, ["afloat"])]
+```
+
+**Leap.** `leap: (height, at, search)`: at `at` seconds the machine puts `Launch { height }` on the body
+(`shards_motion`): the controller launches it up with its own gravity so that it peaks `height` metres above the take-off
+(`v = sqrt(2 * gravity * height)`, whatever the gravity), in the same tick, even while the action owns the body, and removes
+the component. It only launches a body on the ground or within `coyote_time` of it (a jump's test, without its buffer): on
+a body that is not grounded the launch does nothing, so a leap does not start from there at all: wherever the controller would drop the launch (anything but the ground and the air within coyote time of it: the air past it, water, a glide, a climb) `can_start` answers `Blocker::OffGround { mode }` (`in the air; a leap starts from the ground`, or `in water`, `in a glide`, `in a climb`; `ready_in: None`), the tools refuse, the host and a client's predictor judge it alike, and a press made anyway waits in the buffer and is rejected with that reason, unpaid (a press made on the ground, or within coyote time of it, leaps; a queued leap with no landing waits until its ttl, then is rejected unpaid). A forced action (`force_action`) skips the check and launches nothing in the air. A launch counts as a jump for landing tiers
+(`JumpedFlight`) but is no `Jumped` event. The run's flat movement is its `displacement`; without `search` the authored
+distance is used. With `search`, the distance is chosen when the action starts ([`plan_leap`]): candidates from the aimed distance
+down by `step` to `min`, the first whose landing point passes wins: the wall ray at `probe_height` above the feet to the same
+height above the landing is clear (`WORLD`), the floor ray finds a floor at most `max_rise` above and `max_drop` below the feet,
+the body's capsule `lift` above that floor overlaps no `WORLD` collider, and the water there is no deeper than `max_water_depth`
+(the top of the highest water volume at the landing minus the floor; no limit when the field is left out; the volumes are
+`PhysicsWorld::water_surface_at`, so voxel terrain is not involved). The aimed distance is `max`, or with `toward_target` and a
+lock-on target more than 5 cm away: the flat distance to it minus both body radii, within `max`, and the run points at it. The
+run's `displacement` is scaled by `distance / displacement_at(length)` (`LeapRun::scale`). No candidate from there down to `min`:
+`can_start` answers `Blocker::NoLanding { min, max }` (`no landing spot within 1.5-6m`, `ready_in: None`), so the tools refuse,
+the attack order is dropped, an NPC's planner does not grant a token for it, and a press made anyway is rejected with the
+reason, unpaid; the machine judges the landing from the body's own position in the tick (a queued leap with no landing does not take the start slot of a press behind it), and a client's predictor judges it the same way. The refusal says that a target nearer than `min` is too close. The content check refuses a leap together with a `hold` loop, and a leap with a `search` together with `turn` spans or an `assist` (the run would turn away from the searched direction); an `only_in` tag that no input's action carries is an error (a typo would leave the body unable to act in that mode). A game that refuses a leap for the world
+(a challenge, say) removes the press from `Intent::pressed` before the machine, as for any technique.
+
+`LeapRun { instance, scale, launched }` is a lazy component beside `RunExtras` (a fighter that never leaps has none; it is a
+component of its own so that the replays of fighters that never leap keep the state they have). It follows its run
+(`action.leap_follows_run`).
+
+**Walking spans.** `walk: [(span, share)]`: while a span is open the body is not locked: it walks at `share` of its walking speed
+(the largest share of the spans open in the tick), the action's `displacement` on top, no sprint; outside the spans the action owns
+the body. Not together with `move_speed`.
+
+**Mode gate.** `MovesetDef::only_in: [(mode, [tags])]`: while the body's motion mode (`MotionState::mode`, as the controller left
+it) is a listed one, only actions with one of the tags start (`Blocker::Mode`, `not while in water: only actions tagged afloat`,
+`ready_in: None`), and a running action without one ends the moment the mode is entered, as `ActionEnd::Interrupted` with no
+cooldown share. Forced actions (a stagger, a death) are never cut. `Water` is the swimming mode: wading stays `Ground`.
+
+**Intangible and ghost.** `intangible: [span]`: hits find nothing of the body while a span is open in the tick (no hit, no ledger
+mark, so a hit window that is still open when it comes out hits it then), a perception neither sees nor hears it (an NPC that knew it remembers where it was until its `memory` runs out, as for a body out of sight), and
+`intangible(world, entity)` says so (computed from the running action, never read from how the body looks; the condition
+`intangible` is true while any fighter is). `ghost: true` (needs `intangible`): the body also carries `Ghost` while intangible,
+and the separation pass skips every pair it is in, so characters pass through each other. On a fighter the `Ghost` is the
+action machine's (`action.ghost_follows_run`); it comes off at once when the run is cut.
+
+Prediction: the client's predictor searches the landing on its own colliders, launches its own body, applies the mode gate and
+the ghost, and adopts the host's scale of the leap; `Ghost` is a predicted component. Engine rules: `motion.launch_sane`,
+`action.leap_follows_run`, `action.ghost_follows_run`.
 
 ### Content formats
 
@@ -3344,6 +3438,10 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `action.damage_taken_sane` | every `DamageTaken` (B2b) holds finite multipliers `>= 0`, finite times and its keys sorted and unique. `set_damage_taken` inserts in key order and replaces a key; two entries under one key would multiply twice and make `clear` leave one behind |
 | `action.knockback_sane` | every `Knockback` (a push in progress, B1) has a finite flat velocity (`y` is 0) and a finite `decel` above 0: a push that does not slow down never stops |
 | `action.extras_follow_run` | every `RunExtras` (what a charging, turning or miss-recovering run keeps, B2a) belongs to the run its fighter is running (the same `instance`), with a finite `extra >= 0` and a finite `closed >= 0`. The machine puts extras in when such a run starts and takes them out on every way a run ends, so extras left behind would hand a later run a stale hold, hit or recovery |
+| `motion.launch_sane` | every `Launch` (the one-shot that launches a body up, B2c) asks for a finite height above 0 and sits on a character (`CharacterController`). The controller takes it in the tick it is put and removes it |
+| `action.leap_follows_run` | every `LeapRun` (what a leap keeps, B2c) belongs to the run its fighter is running (the same `instance`) of an action that leaps, with a finite `scale >= 0` |
+| `action.ghost_follows_run` | a fighter carries `Ghost` only while its running action has `ghost` and an `intangible` span open in the tick. On a fighter the ghost is the machine's |
+| `action.lock_on_valid` | with a `lock_on` definition, no body's `Intent.target` names an entity that no longer exists or is dead: the lock-on check (`LockSystems::Check`, after `CoreSystems::ClearPresses`) lets go of such a lock at the end of every tick, after the deaths and the engine's despawns of that tick, so a violation names a lock set later in the tick or a body taken away after the check (a game system in `SimSet::Cleanup` after the check: it belongs before it). Without a definition locks are not checked and the rule passes (C6) |
 | `npc.state_known` | `NpcBrain.state` is a state of the NPC's behaviour. Three carve-outs, each a state the engine itself leaves behind: an empty state (before the NPC's first decided tick), an inactive NPC (dormant or dead: the brain passes it through, so a state a hot reload removed stays until it wakes), and an NPC whose behaviour is not in content (that is reported once as a content problem) |
 | `npc.strike_spacing` | two NPCs of one director whose `min_spacing` is set never began strikes less than that apart (in whole ticks), for the starts that went through the spacing rule: the planner's presses and checked combo continuations (`NpcStrike::gated`). Judged from the last strike each NPC noted. Three carve-outs: an NPC whose plan has `ignores_spacing` is not the one held to the rule (its starts still hold the others), a strike a state hook pressed itself is noted but neither held to the rule nor held against other NPCs (the hook may or may not have asked `strike_ready`, and may start between another NPC's planned press and its start), and an action with one of the director's `spacing_exempt_tags` is not noted at all. A director without a `min_spacing` is never judged |
 | `npc.tokens_within_limit` | after the director ran, no token is held by a dead body, and each director holds no more tokens than its limit for the living players, unless every holder beyond the limit has its attack in flight (an attack under way keeps its token to its end). It is judged right after the director, not at the end of the tick: a holder that dies in `Resolve` keeps its token until the next tick's director takes it back, so the end of the tick would fire on every kill. A small system next to the director writes what it found to the resource `TokenAudit`, which the rule reads; it is recomputed every tick and is not part of a snapshot or a replay |
@@ -3368,10 +3466,11 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-18 rules, checked after every tick
+22 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
+  motion.launch_sane  engine rule  armed
   voxel.body_in_solid  engine rule  armed
   action.resources_in_range  engine rule  armed
   action.running_sane  engine rule  armed
@@ -3380,6 +3479,9 @@ $ shards assert list
   action.damage_taken_sane  engine rule  armed
   action.knockback_sane  engine rule  armed
   action.extras_follow_run  engine rule  armed
+  action.leap_follows_run  engine rule  armed
+  action.ghost_follows_run  engine rule  armed
+  action.lock_on_valid  engine rule  armed
   npc.state_known  engine rule  armed
   npc.strike_spacing  engine rule  armed
   npc.tokens_within_limit  engine rule  armed
@@ -5731,6 +5833,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 | `characters/bodies.locomotion.ron` | how the player, the skeleton and the guard walk |
 | `combat/player.action.ron` | the combo `light_1`–`light_3`, `heavy`, the roll (i-frames 0.18 s), the block with a perfect block, the flask |
 | `combat/warden.action.ron` | the guard's four attacks (`slash`, `slam`, `sweep`, `shockwave`), calm and enraged |
+| `combat/body.action.ron`, `combat/body.moveset.ron` | body and motion (B2c): `spar_leap` (a landing search toward the lock-on target, no landing in water over 1 m), `spar_spin` (walks while it spins), `burrow` (intangible, a ghost), `spar_stroke` (`afloat`), the movesets `mover` and `burrower`; net ids 126-129 |
 | `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters; for the action timeline (B2a), `spar_heavy` (charges into `spar_heavy_full` when held 0.25 s; a light or a dodge pressed in its windup waits for its recovery), `spar_lunge` and `spar_lunge_far` (one `lunge` cooldown slot; the lunge turns at 360°/s within 45°, at most 0.4 m closer for the turning and not toward a target behind a wall, recovers 0.6 s longer on a whiff and keeps 40% of its cooldown when cut in its windup), `spar_channel` (`while_held`), `spar_roll_keep` (`face: Keep`), and the moveset `timeline` (a single slot by priority), which `timeline.scenario` lends to the player; for body state (B2b), `spar_ward` (a barrier of half the caster's health for 8 s), `spar_frost` and `spar_zap` (jabs that carry a full bar of chill or jolt), the moveset `bodystate`, and in `combat/sparring.status.ron` the statuses `spar_chill` (a 2 s proc gate, no cooling and a restart while active, a refused proc empties the bar) and `spar_jolt` (an instant status outside the cap), which `body_state.scenario` lends to the player |
 | `combat/skeleton.action.ron`, `combat/fighters.moveset.ron`, `combat/tuning.combat_tuning.ron` | the skeleton's claw, the movesets, the input buffer |
 | `npc/monsters.behavior.ron`, `monsters.perception.ron`, `monsters.director.ron`, `monsters.attack_plan.ron` | how the monsters think: the `skeleton` and `warden` state machines (with a `calm` state that the scenarios do not let the monster leave), sight, the `default` director (two tokens for one player) and the `boss` director (the guard strikes on its own), the guard's attack plans |

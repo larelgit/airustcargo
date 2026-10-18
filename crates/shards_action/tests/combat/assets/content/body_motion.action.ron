@@ -1,0 +1,87 @@
+// Body and motion (B2c): a leap and its landing search, walking while a span is open, the mode gate
+// (`afloat`), burrowing (intangible, ghost). Net ids 100-119.
+{
+    // Leaps 1.2 m up at 0.2 s and, searched, up to 6 m ahead, down to 1 m, in steps of 0.5.
+    "b_leap": (
+        net_id: 200,
+        phases: [("crouch", 0.2), ("air", 0.6), ("land", 0.2)],
+        cost: (stamina: 10, cooldown: 2.0),
+        displacement: [(0.2, 0.0), (0.8, 6.0)],
+        leap: (height: 1.2, at: 0.2, search: (min: 1.0, max: 6.0, step: 0.5, max_rise: 0.6, max_drop: 1.5, probe_height: 1.0, lift: 0.05)),
+    ),
+    // The same, toward the lock-on target as far as its edge.
+    "b_leap_to": (
+        net_id: 201,
+        phases: [("crouch", 0.2), ("air", 0.6), ("land", 0.2)],
+        displacement: [(0.2, 0.0), (0.8, 6.0)],
+        leap: (height: 1.2, at: 0.2, search: (min: 1.0, max: 6.0, step: 0.5, max_rise: 0.6, max_drop: 1.5, probe_height: 1.0, lift: 0.05, toward_target: true)),
+    ),
+    // A landing in water deeper than 1 m is refused.
+    "b_leap_wet": (
+        net_id: 202,
+        phases: [("crouch", 0.2), ("air", 0.6), ("land", 0.2)],
+        displacement: [(0.2, 0.0), (0.8, 6.0)],
+        leap: (height: 1.2, at: 0.2, search: (min: 1.0, max: 6.0, step: 0.5, max_rise: 0.6, max_drop: 1.5, probe_height: 1.0, lift: 0.05, max_water_depth: 1.0)),
+    ),
+    // Only one distance will do: 3 m.
+    "b_leap_far": (
+        net_id: 203,
+        phases: [("crouch", 0.2), ("air", 0.6), ("land", 0.2)],
+        cost: (stamina: 10, cooldown: 2.0),
+        displacement: [(0.2, 0.0), (0.8, 3.0)],
+        leap: (height: 1.2, at: 0.2, search: (min: 3.0, max: 3.0, step: 0.5, max_rise: 0.6, max_drop: 1.5, probe_height: 1.0, lift: 0.05)),
+    ),
+    // A hop with no search: the authored 2 m, launched at 0.1 s.
+    "b_hop": (
+        net_id: 204,
+        phases: [("crouch", 0.1), ("air", 0.5), ("land", 0.1)],
+        displacement: [(0.1, 0.0), (0.6, 2.0)],
+        leap: (height: 1.0, at: 0.1),
+    ),
+    // Walks at 35% of its speed while it spins.
+    "b_spin": (
+        net_id: 205,
+        phases: [("windup", 0.2), ("spin", 1.0), ("recovery", 0.2)],
+        hits: [(span: Phase("spin"), shape: Circle(radius: 1.8), damage: 1, group: 0)],
+        walk: [(Phase("spin"), 0.35)],
+    ),
+    // Underground for 0.6 s: nothing hits it, and it passes through bodies.
+    "b_burrow": (
+        net_id: 206,
+        phases: [("dig", 0.3), ("under", 0.6), ("emerge", 0.3)],
+        intangible: [Phase("under")],
+        ghost: true,
+    ),
+    // The same without passing through anything.
+    "b_hide": (
+        net_id: 207,
+        phases: [("dig", 0.3), ("under", 0.6), ("emerge", 0.3)],
+        intangible: [Phase("under")],
+    ),
+    // A swing whose window stays open for 1.5 s, longer than a burrow.
+    "b_sweep": (
+        net_id: 208,
+        phases: [("sweep", 1.5)],
+        hits: [(span: Phase("sweep"), shape: Circle(radius: 2.5), damage: 10)],
+    ),
+    // A quick swing.
+    "b_slam": (
+        net_id: 209,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.2)],
+        hits: [(span: Phase("active"), shape: Circle(radius: 2.5), damage: 10)],
+    ),
+    // A roll (no `afloat` tag) with a long cooldown that a cut windup would keep 40% of.
+    "b_roll": (
+        net_id: 210,
+        phases: [("windup", 0.5), ("roll", 0.5)],
+        cost: (cooldown: 3.0, cooldown_if_interrupted: 0.4),
+        steer: Move,
+    ),
+    // The one thing a swimmer does.
+    "b_stroke": (
+        net_id: 211,
+        phases: [("stroke", 0.4)],
+        tags: ["afloat"],
+    ),
+    "b_stagger": (net_id: 212, phases: [("stagger", 0.5)]),
+}

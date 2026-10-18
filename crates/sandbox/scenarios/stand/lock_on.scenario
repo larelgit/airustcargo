@@ -1,0 +1,57 @@
+# The lock-on rules on a stand (C6): a client's lock is its input (`Intent.target`), the host checks
+# it like any other, and a lock the host lets go of is let go of on the client too. Otherwise the
+# client's next held state (a walk, an order) would carry the old target back, and the host would
+# lock its body on it again (and lose it again, every time the client moves).
+#
+# Puts back: the arena calm and the bodies healed at the start; the skeleton goes back to its post.
+stand clients=2
+seed 42
+
+# --- setup (dev, on the host): bodies e5 (the host's player), e15 (c1's), e16 (c2's, which looks on)
+@host act npc_set_state id=e6 state=calm
+@host act npc_set_state id=e7 state=calm
+@host act npc_set_state id=e8 state=calm
+@host act npc_set_state id=e14 state=calm
+@host act heal id=e5
+@host act heal id=e15
+@host act heal id=e16
+@host act heal id=e7
+@host act teleport id=e5 x=0 z=12 y=0
+@host act teleport id=e15 x=-18 z=18 y=0
+@host act teleport id=e16 x=4 z=12 y=0
+@host act teleport id=e7 x=-18 z=13 y=0
+@host act stop
+@c1 act stop
+@c2 act stop
+step 60
+invariant !journal "desync"
+
+# --- c1's player locks on to the skeleton: the host holds the same lock
+@c1 session --agent bot --scope player --player 1
+@c1 act lock_on target=e7
+@c1 expect result contains "ok: locked on e7"
+step 30
+@host act inspect id=e15
+@host expect result contains "lock e7"
+
+# --- it is put 50 m away on the host: the host's check lets go, and the client takes that over
+@host act teleport id=e7 x=18 z=-18 y=0
+step 30
+@host expect journal "e15 lock lost: e7 out of range"
+@c1 act inspect id=e15
+@c1 expect result !contains "lock e7"
+@c2 act inspect id=e15
+@c2 expect result !contains "lock e7"
+
+# --- the client walks on: its new state does not lock the host's body on it again
+mark
+@c1 act move_to target='{"x":-16,"z":18}'
+step 120
+@host expect !journal "lock lost"
+@host act inspect id=e15
+@host expect result !contains "lock e7"
+
+# --- back as it was found
+@host act teleport id=e7 x=-12 z=2 y=0
+@c1 act stop
+step 10
