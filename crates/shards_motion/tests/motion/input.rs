@@ -464,7 +464,7 @@ fn an_inverted_look_stick_keeps_its_flipped_side_in_the_flick() {
     local_player(&mut app);
     app.world_mut()
         .resource_mut::<InputMap>()
-        .rebind("gameplay", "look", 1, Binding::Stick { stick: shards_motion::input::Stick::Right, deadzone: 0.15, scale: -2.8 })
+        .rebind("gameplay", "look", 1, Binding::Stick { stick: shards_motion::input::Stick::Right, deadzone: 0.15, scale: -2.8, scale_x: None, scale_y: None, curve: 1.0 })
         .unwrap();
     let pad = app.world_mut().spawn(Gamepad::default()).id();
     app.world_mut().get_mut::<Gamepad>(pad).unwrap().analog_mut().set(GamepadInput::Axis(GamepadAxis::RightStickX), 0.9);
