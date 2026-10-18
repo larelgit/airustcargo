@@ -43,7 +43,7 @@ use crate::def::{touches, ActionDef, CombatTuning, HitFlag, MovesetDef, EPS};
 use crate::fighter::{
     grant_protection, hostile, set_reaction_immunity, Armor, Dead, Fighter, Health, Invulnerable, Knockback, Poise, Protection, Stamina, Team,
 };
-use crate::machine::{force_action, interrupted, ActionEnd, ActionEnded, ActionState, InputBuffer, RunExtras};
+use crate::machine::{force_action, intangible, interrupted, ActionEnd, ActionEnded, ActionState, InputBuffer, RunExtras};
 use crate::status::add_status_buildup;
 use crate::zone::WorldShape;
 
@@ -339,6 +339,8 @@ fn detect(world: &mut World) -> Vec<Detected> {
                 .filter(|t| world.get::<Health>(*t).is_some() && world.get::<Dead>(*t).is_none())
                 .filter(|t| hostile(team, world.get::<Team>(*t)))
                 .filter(|t| may_hit(world, attacker, run.instance, *t))
+                // Burrowed: nothing to hit, so no hit, no mark (it may be hit once it is out, still in the window).
+                .filter(|t| !intangible(world, *t))
                 .map(|t| (order_key(world, t), t))
                 .collect();
             targets.sort();

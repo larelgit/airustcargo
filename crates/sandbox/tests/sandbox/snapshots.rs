@@ -136,6 +136,32 @@ fn mid_charge_and_after_a_whiff() {
     });
 }
 
+/// Body and motion (B2c): mid-leap (launched, in the air, its displacement stretched by the landing it
+/// chose) and under the ground (a ghost).
+#[test]
+fn mid_leap_and_under_the_ground() {
+    let mut app = face_to_face();
+    ok(&mut app, "set", json!({"id": PLAYER, "component": "Fighter", "path": "moveset", "value": "mover"}));
+    ok(&mut app, "use_technique", json!({"slot": 1}));
+    step(&mut app, 30);
+    assert_eq!(action(&app, PLAYER), "spar_leap");
+    assert!(get::<shards::action::LeapRun>(&app, PLAYER).launched, "launched");
+    assert!(get::<shards::motion::MotionState>(&app, PLAYER).velocity.y.abs() > 0.1, "in the air");
+    assert_continues_alike("mid-leap", app, |app| {
+        step(app, 60);
+    });
+
+    let mut app = face_to_face();
+    ok(&mut app, "set", json!({"id": PLAYER, "component": "Fighter", "path": "moveset", "value": "mover"}));
+    ok(&mut app, "use_technique", json!({"slot": 4}));
+    step(&mut app, 40);
+    let ghost = app.world().resource::<shards::ai_core::AiIndex>().get(shards::ai_core::AiId::parse(PLAYER).unwrap()).unwrap();
+    assert!(app.world().get::<shards::motion::Ghost>(ghost).is_some(), "a ghost");
+    assert_continues_alike("under the ground", app, |app| {
+        step(app, 60);
+    });
+}
+
 #[test]
 fn mid_combo() {
     let mut app = face_to_face();

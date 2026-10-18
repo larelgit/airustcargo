@@ -116,6 +116,7 @@ pub mod cue;
 pub mod def;
 pub mod draw;
 pub mod fighter;
+pub mod leap;
 pub mod lock;
 pub mod machine;
 mod invariants;
@@ -154,18 +155,19 @@ pub use context::{
 pub use cue::{ActionSound, SoundCue};
 pub use def::{
     ActionDef, AssistDef, BindingDef, BufferMode, CancelDef, ChargeDef, CombatTuning, Cost, Effect, Forget, GuardDef, GuardPress, HitDef, HitFlag,
-    HitShape, HoldDef, Local, MemoryDef, MotionBake, PairDef, PairSelect, PairState, PairTeam, ReactionDef, Recall, StaminaMode, When,
+    HitShape, HoldDef, LeapDef, LeapSearch, Local, MemoryDef, MotionBake, PairDef, PairSelect, PairState, PairTeam, ReactionDef, Recall, StaminaMode, When,
     Face, MovesetDef, Phase, Span, Steer, TelegraphDef, TimedEffect, Transition,
 };
 pub use fighter::{
     grant_protection, set_reaction_immunity, Armor, Charge, Charges, Cooldown, Cooldowns, Dead, Fighter, Health, Invulnerable, Knockback, Poise,
     Protection, Stamina, Team,
 };
+pub use leap::{plan_leap, LeapPlan, LeapSite};
 pub use machine::{
     action_progress, apply_effect, can_start, extend_recovery, force_action, press_life, ActionEffect, ActionEffects, ActionEnd, ActionEnded,
     ActionMissed, ActionRejected,
     ActionStarted,
-    ActionState, Blocker, FighterView, Healed, InputBuffer, Queued, RunExtras, Running, Start, Telegraph,
+    intangible, off_ground, state_intangible, ActionState, Blocker, FighterView, Healed, InputBuffer, LeapRun, Queued, RunExtras, Running, Start, Telegraph,
 };
 pub use lock::{LockLoss, LockLost, LockReleased, LockSight, LockSwitched, LockSystems};
 pub use predict::{shown_queue, shown_state, ActionPredictor, PredictedAction, CONFIRM_SLACK};
@@ -318,6 +320,7 @@ impl Plugin for ActionPlugin {
             .register_type::<RunHalted>()
             .register_type::<PairStarted>()
             .register_type::<PairEnded>()
+            .register_type::<LeapRun>()
             .register_type::<Animated>()
             .register_type::<ActionMissed>()
             // Typed for the network layer, which forwards them to clients.
@@ -363,7 +366,9 @@ impl Plugin for ActionPlugin {
             .add_engine_invariant("action.knockback_sane", invariants::knockback_sane)
             .add_engine_invariant("action.extras_follow_run", invariants::extras_follow_run)
             .add_engine_invariant("action.pairs_match", invariants::pairs_match)
-            .add_engine_invariant("action.memory_sane", invariants::memory_sane);
+            .add_engine_invariant("action.memory_sane", invariants::memory_sane)
+            .add_engine_invariant("action.leap_follows_run", invariants::leap_follows_run)
+            .add_engine_invariant("action.ghost_follows_run", invariants::ghost_follows_run);
         coverage::plugin(app);
         app
             // The machine runs after motion's `Intent → LocomotionInput` step: it

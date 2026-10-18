@@ -44,7 +44,7 @@ act lock_on target=e7
 expect result contains "ok: locked on e7"
 session --agent scenario
 # (the locked body turns to its target at the lock turn speed: let it finish before the pair looks at the angle)
-step 30
+step 31
 
 # --- 1. the skeleton's poise breaks: the light attack is the finisher, and the skeleton finishable
 mark
@@ -97,7 +97,7 @@ act light_attack
 expect result contains "ok: spar_counter"
 act block on=false
 session --agent scenario
-step 30
+step 31
 expect journal "e5 -> e7 spar_counter -14"
 act inspect id=e5
 expect result !contains "remembers parried"

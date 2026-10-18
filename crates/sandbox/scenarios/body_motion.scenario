@@ -1,0 +1,134 @@
+# Body and motion (B2c): a leap that lands short of its target and peaks 1.2 m up, a spin that walks, a
+# burrow a slam passes through (the burrower is a ghost, intangible), and the pool: in water only a stroke
+# (`afloat`) starts, and a roll under way is cut when the swimmer enters.
+#
+# The player e5 borrows the `mover` moveset and the skeleton e8 the `burrower` one
+# (`content/combat/body.*.ron`) and they get their own back at the end; e8 burrows when its `Intent` is
+# told to press `light`, as a brain would. The player's presses come from a player-scope agent through
+# the same controls a human has.
+
+seed 42
+
+# --- the arena as the game spawns it, whatever was played in it before: everyone stands down
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god on=false
+step 150
+act heal id=e5
+act heal id=e6
+act heal id=e7
+act heal id=e8
+act set id=e5 component=Fighter path=moveset value=mover
+act set id=e8 component=Fighter path=moveset value=burrower
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=0 z=-5 y=0
+act teleport id=e6 x=0 z=-14 y=0
+act teleport id=e8 x=14 z=14 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+step 2
+invariant field e5 Health.current > 0
+
+# --- 1. a leap toward the skeleton to the north, 5 m away: it comes down at the skeleton's edge, 4.2 m
+# on (6 m is the farthest it may go), peaking 1.2 m up
+session --agent bot --scope player
+act lock_on target=e7
+expect result contains "ok: locked on e7"
+mark
+act use_technique slot=1
+expect result contains "ok: spar_leap"
+session --agent scenario
+step 15
+expect shows e5 "crouch spar_leap"
+step 100
+expect journal "e5 -> e7 spar_leap -12"
+act inspect id=e5
+expect result !contains "LeapRun"
+
+# --- 2. the spin walks: the body is not locked while it spins
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=-12 z=2 y=0
+step 150
+session --agent bot
+act lock_on off=true
+act use_technique slot=2
+expect result contains "ok: spar_spin"
+session --agent scenario
+step 20
+expect shows e5 "spin spar_spin"
+step 100
+
+# --- 3. a burrow: e8 under the ground cannot be hit, passes through bodies, and is hit once it is out
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e8 x=0 z=-2.5 y=0
+step 150
+session --agent bot
+act lock_on target=e8
+session --agent scenario
+mark
+act set id=e8 component=Intent path=pressed value='[{"input":"light","dir":null}]'
+step 25
+expect shows e8 "intangible, passes through bodies"
+session --agent bot
+act heavy_attack
+expect result contains "ok: spar_slam"
+session --agent scenario
+step 60
+expect !journal "e5 -> e8 spar_slam"
+act inspect id=e8
+expect result !contains "Ghost"
+step 100
+mark
+session --agent bot
+act heavy_attack
+session --agent scenario
+step 60
+expect journal "e5 -> e8 spar_slam -15"
+
+# --- 4. the pool: a roll under way is cut when the swimmer enters the water, and in water only a stroke starts
+session --agent bot
+act lock_on off=true
+session --agent scenario
+act teleport id=e5 x=54 z=0 y=3.3
+step 60
+mark
+session --agent bot
+act dodge dir=E
+expect result contains "ok: spar_roll"
+session --agent scenario
+step 3
+act teleport id=e5 x=61 z=0 y=3.2
+step 30
+expect shows e5 "MotionState: water"
+act inspect id=e5
+expect result !contains "spar_roll"
+session --agent bot
+act? light_attack
+expect result contains "cannot start while in water: only actions tagged afloat"
+act? use_technique slot=1
+expect result contains "cannot start while in water: only actions tagged afloat"
+act use_technique slot=3
+expect result contains "ok: spar_stroke"
+session --agent scenario
+step 40
+
+# --- the arena as it was
+act teleport id=e5 x=0 z=12 y=0
+act set id=e5 component=Fighter path=moveset value=player
+act set id=e8 component=Fighter path=moveset value=skeleton
+act heal id=e5
+act heal id=e6
+act heal id=e7
+act heal id=e8
+act teleport id=e7 x=-12 z=2 y=0
+act teleport id=e6 x=0 z=-6 y=0
+act teleport id=e8 x=12 z=-2 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+step 150
+act inspect id=e5
+expect result !contains "LeapRun"

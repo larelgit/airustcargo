@@ -19,12 +19,13 @@
 use ai_core::{AiId, AiIndex, DetRng, SimRng, SimTick};
 use bevy::prelude::*;
 use shards_action::{can_start, ActionDef, FighterView, MovesetDef};
+use shards_motion::PhysicsWorld;
 use shards_content::ContentDb;
 use shards_core::flat;
 
 use crate::brain::{clamp_to_leash, salt};
 use crate::def::{AttackPlanDef, DirectorDef, SequenceBan};
-use crate::director::{order, target_of, Fighting, Grant, Targets};
+use crate::director::{npc_site, npc_view, order, target_of, Fighting, Grant, Targets};
 use crate::strike::{chain_note, note_list, pool, spacing_ticks, strike_pressed, waiting};
 
 /// An NPC's attack history and timers: gameplay state, kept in replays.
@@ -286,6 +287,7 @@ pub(crate) fn plan_attacks(
     rng: SimRng,
     db: Res<ContentDb>,
     index: Res<AiIndex>,
+    physics: Res<PhysicsWorld>,
     targets: Targets,
     mut npcs: Query<Fighting>,
 ) {
@@ -324,17 +326,8 @@ pub(crate) fn plan_attacks(
         // With `press_on_decision` a new choice, like the press, waits for the NPC's decision tick.
         let decides = !plan_def.press_on_decision || f.think.is_none_or(|t| t.decided == Some(tick.0));
         let chosen = {
-            let view = FighterView {
-                db: &db,
-                moveset: &f.fighter.moveset,
-                state: f.state,
-                stamina: f.stamina,
-                cooldowns: f.cooldowns,
-                charges: f.charges,
-                held: &f.drive.held,
-                dead: f.dead,
-                context: None,
-            };
+            let site = npc_site(&physics, &db, f.entity, f.transform, f.intent, f.body, Some((target, radius)));
+            let view = npc_view(&db, f.fighter, f.state, &f.drive.held, f.dead, (f.stamina, f.cooldowns, f.charges), f.motion, site);
             let ok = |o: &Resolved| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director, spaced_out, f.options);
             let kept = grant.attack.as_ref().and_then(|name| options.iter().position(|o| o.name == *name));
             // In range only: choose again every tick among what fits (a boss picks what
@@ -380,17 +373,8 @@ pub(crate) fn plan_attacks(
             f.drive.within = 0.2;
         } else {
             f.drive.goal = None;
-            let view = FighterView {
-                db: &db,
-                moveset: &f.fighter.moveset,
-                state: f.state,
-                stamina: f.stamina,
-                cooldowns: f.cooldowns,
-                charges: f.charges,
-                held: &f.drive.held,
-                dead: f.dead,
-                context: None,
-            };
+            let site = npc_site(&physics, &db, f.entity, f.transform, f.intent, f.body, Some((target, radius)));
+            let view = npc_view(&db, f.fighter, f.state, &f.drive.held, f.dead, (f.stamina, f.cooldowns, f.charges), f.motion, site);
             let starts = can_start(&view, &o.input, dt).is_ok();
             let fits = budget.is_none_or(|left| o.cost <= left + 1e-4)
                 && overlapping.iter().all(|tags| director.may_overlap(&o.tags, tags));

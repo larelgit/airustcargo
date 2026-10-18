@@ -970,3 +970,120 @@ fn a_predicted_guard_shows_the_hosts_perfect_window() {
     assert_eq!(desyncs(&stand, C1), 0);
     verify_host(&stand);
 }
+// --- body and motion (B2c) -------------------------------------------------------------------
+
+/// The client's body gets the `mover` moveset (a leap, a spin, a burrow, a stroke) on the host and is
+/// put on open ground far from everyone.
+fn mover_stand() -> (Stand, String, Entity) {
+    let mut stand = stand_with(1, lossy());
+    calm(&mut stand);
+    let id = body(&stand, C1);
+    let out = stand.call(HOST, "set", json!({"id": id, "component": "Fighter", "path": "moveset", "value": "mover"}));
+    assert!(out.ok, "{}", out.result);
+    put(&mut stand, &id, -20.0, 0.0, 20.0);
+    stand.run(60);
+    let mine = own(&stand, C1);
+    assert_eq!(stand.world(C1).get::<shards::action::Fighter>(mine).unwrap().moveset, "mover");
+    (stand, id, mine)
+}
+
+#[test]
+fn predicted_leap_matches_the_host() {
+    let (mut stand, id, mine) = mover_stand();
+    let out = stand.call(C1, "use_technique", json!({"slot": 1}));
+    assert!(text(&out).starts_with("ok: spar_leap"), "{}", out.result);
+    // The client launches its own body: it is in the air while the leap is shown, and the run's
+    // landing search gave the same stretch as the host's.
+    let mut top = f32::MIN;
+    let start = position(&stand, C1, &id).y;
+    for _ in 0..120 {
+        stand.run(1);
+        top = top.max(position(&stand, C1, &id).y - start);
+    }
+    assert!(top > 1.0, "the predicted body left the ground: {top}");
+    assert!(shown(&stand, mine).is_none(), "the leap ended");
+    stand.run(60);
+    let (here, there) = (position(&stand, C1, &id), position(&stand, HOST, &id));
+    assert!(here.distance(there) < 0.1, "{here} vs {there}");
+    assert!(there.distance(Vec3::new(-20.0, 0.0, 20.0)) > 4.0, "it went somewhere: {there}");
+    assert_eq!(prediction(&stand, C1).mispredicted, 0, "{:#?}", journal(&stand, C1));
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+    verify_host(&stand);
+}
+
+#[test]
+fn predicted_burrow_ghosts_like_the_host() {
+    let (mut stand, id, mine) = mover_stand();
+    let out = stand.call(C1, "use_technique", json!({"slot": 4}));
+    assert!(text(&out).starts_with("ok: burrow"), "{}", out.result);
+    let theirs = entity(&stand, HOST, &id).unwrap();
+    // 0.4 s of digging, then 0.7 s under: both ends hold the ghost at the same time.
+    run_until(&mut stand, 200, "the host is under", |s| s.world(HOST).get::<shards::motion::Ghost>(theirs).is_some());
+    stand.run(10);
+    assert!(stand.world(C1).get::<shards::motion::Ghost>(mine).is_some(), "the client's own body ghosts too");
+    run_until(&mut stand, 200, "the host is out", |s| s.world(HOST).get::<shards::motion::Ghost>(theirs).is_none());
+    stand.run(30);
+    assert!(stand.world(C1).get::<shards::motion::Ghost>(mine).is_none());
+    assert_eq!(prediction(&stand, C1).mispredicted, 0, "{:#?}", journal(&stand, C1));
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+    verify_host(&stand);
+}
+
+#[test]
+fn a_leap_with_no_landing_starts_on_neither_side() {
+    let (mut stand, id, mine) = mover_stand();
+    // On the far deck, 1.6 m from the lane's wall to the north (the way a body faces when it stands):
+    // every landing from the 1.5 m minimum on is in the wall.
+    put(&mut stand, &id, 68.0, 3.4, -2.4);
+    let theirs = entity(&stand, HOST, &id).unwrap();
+    let before = stand.world(HOST).get::<shards::action::Stamina>(theirs).unwrap().current;
+    let out = stand.call(C1, "use_technique", json!({"slot": 1}));
+    assert!(!out.ok && out.result.to_string().contains("no landing spot within 1.5-6m"), "{}", out.result);
+    stand.run(60);
+    assert!(shown(&stand, mine).is_none(), "nothing was shown");
+    assert!(!stand.world(HOST).get::<ActionState>(theirs).unwrap().is("spar_leap"), "nothing started on the host");
+    assert_eq!(stand.world(HOST).get::<shards::action::Stamina>(theirs).unwrap().current, before, "nothing was paid");
+    assert_eq!(prediction(&stand, C1).mispredicted, 0, "{:#?}", journal(&stand, C1));
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+}
+
+#[test]
+fn a_spin_is_cut_on_both_sides_when_the_body_enters_water() {
+    let (mut stand, id, mine) = mover_stand();
+    let theirs = entity(&stand, HOST, &id).unwrap();
+    // On the deck by the pool (2.7 m deep at x 56..66): spinning, then put into the water, where the body swims in a few ticks.
+    put(&mut stand, &id, 54.5, 3.4, 0.0);
+    let out = stand.call(C1, "use_technique", json!({"slot": 2}));
+    assert!(text(&out).starts_with("ok: spar_spin"), "{}", out.result);
+    let into = stand.call(HOST, "teleport", json!({"id": id, "x": 61.0, "y": 2.0, "z": 0.0}));
+    assert!(into.ok, "{}", into.result);
+    run_until(&mut stand, 200, "the body swims", |s| {
+        s.world(HOST).get::<shards::motion::MotionState>(theirs).is_some_and(|m| m.mode == shards::motion::MotionMode::Water)
+    });
+    run_until(&mut stand, 120, "the spin is cut on the host", |s| !s.world(HOST).get::<ActionState>(theirs).unwrap().is("spar_spin"));
+    run_until(&mut stand, 120, "and on the client", |s| shown(s, mine).is_none());
+    // In water only an `afloat` action starts, here on the client too.
+    let refused = stand.call(C1, "use_technique", json!({"slot": 2}));
+    assert!(!refused.ok && refused.result.to_string().contains("only actions tagged afloat"), "{}", refused.result);
+    assert!(text(&stand.call(C1, "use_technique", json!({"slot": 3}))).starts_with("ok: spar_stroke"));
+    stand.run(60);
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+}
+
+#[test]
+fn a_leap_in_the_air_is_refused_on_both_sides() {
+    let (mut stand, id, mine) = mover_stand();
+    let theirs = entity(&stand, HOST, &id).unwrap();
+    // Thrown high above open ground: in the air, past coyote time, on both machines.
+    let up = stand.call(HOST, "teleport", json!({"id": id, "x": -20.0, "y": 40.0, "z": 20.0}));
+    assert!(up.ok, "{}", up.result);
+    stand.run(20);
+    let before = stand.world(HOST).get::<shards::action::Stamina>(theirs).unwrap().current;
+    let out = stand.call(C1, "use_technique", json!({"slot": 1}));
+    assert!(!out.ok && out.result.to_string().contains("in the air; a leap starts from the ground"), "{}", out.result);
+    stand.run(20);
+    assert!(shown(&stand, mine).is_none(), "nothing was shown");
+    assert!(!stand.world(HOST).get::<ActionState>(theirs).unwrap().is("spar_leap"), "nothing started on the host");
+    assert_eq!(stand.world(HOST).get::<shards::action::Stamina>(theirs).unwrap().current, before, "nothing was paid");
+    assert_eq!(prediction(&stand, C1).mispredicted, 0, "{:#?}", journal(&stand, C1));
+}

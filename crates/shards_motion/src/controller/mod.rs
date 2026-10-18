@@ -209,6 +209,27 @@ pub struct Landed {
 #[reflect(Component, Default)]
 pub struct JumpedFlight;
 
+/// One-shot: the controller launches the body up so that it peaks `height` metres above the
+/// take-off, with the body's own gravity (`v = sqrt(2 * gravity * height)`), then removes this.
+/// The body must stand on the ground (or be within its coyote time of it, as a jump asks); a body
+/// in the air or in water is not launched and the component goes all the same. It launches even
+/// while an action owns the body (`LocomotionInput::locked`): an action's leap is the one that asks.
+/// Put by whoever owns the body's state (the action machine for a `leap`), in `SimSet::Act`, so
+/// that the controller reads it in the same tick. A launch is a jump for landing tiers
+/// ([`JumpedFlight`]) but not a [`Jumped`] event: no one pressed jump.
+#[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq)]
+#[reflect(Component, Default)]
+pub struct Launch {
+    pub height: f32,
+}
+
+/// The body passes through other characters: the separation pass skips every pair it is a member
+/// of. Put on and taken off by whoever owns the body's state (the action machine for the
+/// `ghost` windows of an action). It does not change what the body collides with in the world.
+#[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[reflect(Component, Default)]
+pub struct Ghost;
+
 #[derive(Event, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ModeChanged {
     pub entity: Entity,
@@ -255,6 +276,10 @@ impl Plugin for ControllerPlugin {
             .register_type::<JumpedFlight>()
             // Like the glide latch: the own body's on a client.
             .net_predicted::<JumpedFlight>()
+            .register_type::<Launch>()
+            .register_type::<Ghost>()
+            // The host's `Ghost` does not reach a client's own body: the client puts and takes it itself.
+            .net_predicted::<Ghost>()
             .register_type::<MotionState>()
             // A client moves its own body itself and is corrected toward the host's.
             .net_predicted::<Transform>()
@@ -298,6 +323,8 @@ type CharacterQuery<'w, 's, F = ()> = Query<
         &'static mut Collider,
         Option<&'static MoveModifiers>,
         Has<JumpedFlight>,
+        Option<&'static Launch>,
+        Has<Ghost>,
     ),
     F,
 >;
@@ -310,6 +337,8 @@ struct Placed {
     height: f32,
     /// Climbing: follows its checked path, others give way.
     pinned: bool,
+    /// Passes through other characters ([`Ghost`]).
+    ghost: bool,
     params: CharacterParams,
 }
 
@@ -335,7 +364,7 @@ pub fn move_characters<F: QueryFilter + 'static>(
     order.sort_unstable();
     let mut placed = Vec::with_capacity(order.len());
     for &(_, entity) in &order {
-        let Ok((_, _, controller, own, mut input, mut state, mut tf, mut collider, modifiers, flight)) =
+        let Ok((_, _, controller, own, mut input, mut state, mut tf, mut collider, modifiers, flight, launch, ghost)) =
             characters.get_mut(entity)
         else {
             continue;
@@ -352,6 +381,10 @@ pub fn move_characters<F: QueryFilter + 'static>(
             });
         }
         let params = controller.resolve(own, db);
+        if launch.is_some() {
+            // Taken or not, a launch is for this tick only.
+            commands.entity(entity).try_remove::<Launch>();
+        }
         fit(&mut collider, &params.collider());
         let mut now = sanitized(&input);
         // A root takes the body from the walker the way an action does; `external` and gravity stay.
@@ -377,6 +410,7 @@ pub fn move_characters<F: QueryFilter + 'static>(
             dt,
             facing,
             jumped_flight: flight,
+            launch: launch.map(|l| l.height),
             notes: Vec::new(),
         };
         let feet = step.run(tf.translation);
@@ -393,11 +427,11 @@ pub fn move_characters<F: QueryFilter + 'static>(
         }
         let pinned = state.mode == MotionMode::Mantle;
         let (radius, height) = (mover.radius, params.height.max(2.0 * mover.radius));
-        placed.push(Placed { entity, feet, radius, height, pinned, params: params.clone() });
+        placed.push(Placed { entity, feet, radius, height, pinned, ghost, params: params.clone() });
     }
     separate(&physics, &mut characters, &placed);
     for body in &placed {
-        if let Ok((.., mut state, tf, _, _, _)) = characters.get_mut(body.entity) {
+        if let Ok((.., mut state, tf, _, _, _, _, _)) = characters.get_mut(body.entity) {
             state.placed = Some(tf.translation);
         }
     }
@@ -424,6 +458,11 @@ fn trigger(commands: &mut Commands, entity: Entity, note: Note, tracks: bool) {
                 commands.entity(entity).try_remove::<JumpedFlight>();
             }
             commands.trigger(ModeChanged { entity, from, to })
+        }
+        Note::Launched => {
+            if tracks {
+                commands.entity(entity).try_insert(JumpedFlight);
+            }
         }
         Note::Jumped => {
             if tracks {
@@ -501,6 +540,9 @@ fn separate<F: QueryFilter>(physics: &PhysicsWorld, characters: &mut CharacterQu
     for i in 0..placed.len() {
         for j in (i + 1)..placed.len() {
             let (a, b) = (&placed[i], &placed[j]);
+            if a.ghost || b.ghost {
+                continue;
+            }
             if a.feet.y >= b.feet.y + b.height || b.feet.y >= a.feet.y + a.height {
                 continue;
             }
@@ -525,7 +567,7 @@ fn separate<F: QueryFilter>(physics: &PhysicsWorld, characters: &mut CharacterQu
         if push == Vec3::ZERO {
             continue;
         }
-        let Ok((.., mut tf, collider, _, _)) = characters.get_mut(body.entity) else {
+        let Ok((.., mut tf, collider, _, _, _, _)) = characters.get_mut(body.entity) else {
             continue;
         };
         let mover = Mover::new(physics, &body.params, body.entity, collider.layers);
