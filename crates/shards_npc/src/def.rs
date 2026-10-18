@@ -273,6 +273,13 @@ pub struct PerceptionDef {
     pub hearing: f32,
     /// Seconds a target stays known after it was last seen or heard.
     pub memory: f32,
+    /// A target already known keeps being seen up to this far (m, at least `sight_range`)
+    /// while the ray to it is clear: its place is refreshed, so the NPC chases what it sees
+    /// and not a stale point. `sight_range` then governs only noticing a target anew (an
+    /// aggro that is lost farther out than it is gained). `None`: a known target is seen
+    /// within `sight_range` like any other.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keep_range: Option<f32>,
 }
 
 impl Default for PerceptionDef {
@@ -285,6 +292,7 @@ impl Default for PerceptionDef {
             line_of_sight: true,
             hearing: 1.0,
             memory: 5.0,
+            keep_range: None,
         }
     }
 }
@@ -304,6 +312,14 @@ impl ContentDef for PerceptionDef {
         }
         if !(self.fov_deg > 0.0 && self.fov_deg <= 360.0) {
             refs.error(format!("fov_deg must be in (0, 360] degrees (is {})", self.fov_deg));
+        }
+        if let Some(keep) = self.keep_range
+            && !(keep >= self.sight_range && keep.is_finite())
+        {
+            refs.error(format!(
+                "keep_range {keep} must be at least sight_range {} (it is how far a known target stays seen); leave it out for none",
+                self.sight_range
+            ));
         }
     }
 }
@@ -784,6 +800,19 @@ mod tests {
             "content/b.behavior.ron: behavior `b`: states.idle.transitions[0].to names an unknown state `chace` (did you mean `chase`?); states: chase, idle",
         ];
         assert_eq!(errors, expected);
+    }
+
+    #[test]
+    fn keep_range_must_reach_at_least_as_far_as_sight() {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<PerceptionDef>();
+        let text = r#"{ "ok": (sight_range: 10, keep_range: Some(16)), "short": (sight_range: 10, keep_range: Some(8)) }"#;
+        let db = ContentDb::build(&kinds, &[shards_content::db::Source { path: "content/p.perception.ron".into(), text: text.into() }]);
+        let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("perception `short`: keep_range 8 must be at least sight_range 10"), "{errors:?}");
+        assert_eq!(PerceptionDef::default().keep_range, None);
+        assert!(!serde_json::to_string(&PerceptionDef::default()).unwrap().contains("keep_range"), "a default stays out of the file");
     }
 
     #[test]

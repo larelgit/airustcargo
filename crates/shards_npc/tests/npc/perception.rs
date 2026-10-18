@@ -208,3 +208,55 @@ fn a_hit_by_a_friend_is_a_place_to_look_at_not_the_friends_position() {
     let noise = app.world().get::<Perceived>(watcher).unwrap().noise.expect("the hit is something to look at");
     assert!((noise.pos - feet(&app, hero)).length() < 0.05, "at the hit, not at the attacker: {noise:?}");
 }
+
+// --- keep range ----------------------------------------------------------------------------
+
+/// A known target stays seen (its place refreshed) out to `keep_range`; a new one is noticed
+/// only within `sight_range`; without `keep_range` nothing changes.
+#[test]
+fn a_known_target_stays_seen_out_to_the_keep_range() {
+    for (perception, kept) in [("keeper", true), ("plain", false)] {
+        let mut app = app();
+        let world = app.world_mut();
+        let watcher = npc(world, "grunt", Npc::new("watcher", perception), Vec3::ZERO, N);
+        let hero = player(world, 0, Vec3::new(0.0, 0.0, -14.0));
+        step(&mut app, 2);
+        assert!(!sees(&app, watcher, hero), "{perception}: 14 m is beyond the 10 m it notices anew");
+        assert!(knows(&app, watcher, hero).is_none());
+        teleport(&mut app, hero, Vec3::new(0.0, 0.0, -9.0));
+        step(&mut app, 1);
+        assert!(sees(&app, watcher, hero), "{perception}: noticed at 9 m");
+        // Out to 14 m: a keeper sees it and follows it; the plain eyes lose it at once and
+        // chase a point where it was.
+        teleport(&mut app, hero, Vec3::new(0.0, 0.0, -14.0));
+        step(&mut app, 1);
+        assert_eq!(sees(&app, watcher, hero), kept, "{perception}: 14 m, known");
+        let k = knows(&app, watcher, hero).unwrap();
+        assert_eq!(k.age == 0.0 && (k.pos.z + 14.0).abs() < 0.01, kept, "{perception}: place refreshed only when kept: {k:?}");
+        // Beyond the keep range it is gone from sight either way, and fades with the memory.
+        teleport(&mut app, hero, Vec3::new(0.0, 0.0, -17.0));
+        step(&mut app, 1);
+        assert!(!sees(&app, watcher, hero), "{perception}: 17 m is beyond the keep range");
+        step(&mut app, 125);
+        assert!(knows(&app, watcher, hero).is_none(), "{perception}: forgotten after the memory");
+        // Forgotten, it has to come within the sight range again.
+        teleport(&mut app, hero, Vec3::new(0.0, 0.0, -14.0));
+        step(&mut app, 1);
+        assert!(!sees(&app, watcher, hero), "{perception}: a forgotten target is noticed anew within 10 m only");
+    }
+}
+
+#[test]
+fn a_kept_target_is_still_hidden_by_a_wall() {
+    let mut app = app();
+    let world = app.world_mut();
+    let watcher = npc(world, "grunt", Npc::new("watcher", "keeper"), Vec3::ZERO, N);
+    let hero = player(world, 0, Vec3::new(0.0, 0.0, -9.0));
+    step(&mut app, 1);
+    assert!(sees(&app, watcher, hero));
+    wall(app.world_mut(), Vec3::new(-3.0, 0.0, -11.0), Vec3::new(3.0, 3.0, -10.5));
+    teleport(&mut app, hero, Vec3::new(0.0, 0.0, -14.0));
+    step(&mut app, 1);
+    assert!(!sees(&app, watcher, hero), "the ray is blocked: not kept");
+    assert!(knows(&app, watcher, hero).is_some(), "but remembered");
+}

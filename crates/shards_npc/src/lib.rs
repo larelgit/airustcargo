@@ -121,7 +121,7 @@ pub use nav::{
     NavTile,
 };
 pub use overlay::NpcOverlay;
-pub use perception::{sees, sight_clear, HeardAt, Noise, Perceived, Sensed, Sound};
+pub use perception::{sees, sees_within, sight_clear, HeardAt, Noise, Perceived, Sensed, Sound};
 pub use planner::{banned, choose, pick_weighted, resolve, NpcPlan, PastAttack, Resolved};
 
 /// Version of the NPC module.
