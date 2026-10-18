@@ -68,6 +68,12 @@ fn a_panic_stops_the_step_at_its_tick() {
     let line = format!("50 [error] system {SYSTEM} panicked at tick 50: the ice gave way");
     assert!(journal(&app, JournalKind::Error).contains(&line), "{:?}", journal(&app, JournalKind::Error));
     assert!(out.journal.contains(&line), "the step reports it too: {:?}", out.journal);
+    // The handler takes the panic inside the schedule: the tick ran to its end and closed the
+    // simulation's scope, so what the game reads between ticks (a frame, a query) is not counted
+    // as the simulation's.
+    assert!(!shards::ai_core::scope::is_open(app.world()), "the scope of the tick that panicked is closed");
+    app.update();
+    assert!(!shards::ai_core::scope::is_open(app.world()));
 }
 
 #[test]

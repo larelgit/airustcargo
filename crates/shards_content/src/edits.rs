@@ -10,6 +10,8 @@
 //!
 //! A hot reload adopts its file, so its change is not an edit: a fresh game reads the same file.
 
+use std::collections::BTreeSet;
+
 use ai_core::Snapshot;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -95,6 +97,7 @@ pub(crate) fn snapshot_prepare(world: &mut World, snapshot: &Snapshot) -> Result
     };
     let current = world.get_resource::<ContentEdits>().cloned().unwrap_or_default();
     if saved == current {
+        put_back_reads(world, snapshot);
         return Ok(None);
     }
     let changes = saved.edits.iter().map(ContentEdit::change).collect::<Result<Vec<_>, _>>()?;
@@ -102,13 +105,27 @@ pub(crate) fn snapshot_prepare(world: &mut World, snapshot: &Snapshot) -> Result
         let kinds = world.resource::<ContentKinds>();
         files_of(kinds, world.resource::<ContentDb>()).with_changes(kinds, &[], &changes)?
     };
-    world.insert_resource(next);
+    crate::install(world, next);
     refresh(world);
+    put_back_reads(world, snapshot);
     Ok(Some(match changes.len() {
         0 => "the definitions are the content files' again".to_owned(),
         1 => "1 definition as the snapshot's session had it, over the content files".to_owned(),
         n => format!("{n} definitions as the snapshot's session had them, over the content files"),
     }))
+}
+
+/// What the simulation has read becomes what it had read in the session the snapshot was taken
+/// in, so the `content` check after the prepare compares those definitions, and the session goes
+/// on reading what that one did (a playback from the snapshot, a heavy-mode twin, a refused load
+/// putting the world back). A snapshot without the parts was taken where the check hashed every
+/// definition (a file from before them, or a session that went on from one): the session goes
+/// on hashing every definition, what it reads counts for nothing, and it starts from no reads,
+/// whatever the session had read before the load (a refused load puts back the game's own
+/// snapshot, which is such a one when the game hashed every definition).
+fn put_back_reads(world: &World, snapshot: &Snapshot) {
+    let names: BTreeSet<&str> = snapshot.check_parts.get("content").map(|parts| parts.keys().map(String::as_str).collect()).unwrap_or_default();
+    world.resource::<ContentDb>().set_used(&names);
 }
 
 /// The edits a snapshot carries, as changes (for a module that looks ahead at what a replay's

@@ -10,7 +10,7 @@ use serde_json::json;
 use shards_action::prelude::*;
 use shards_action::status::{add_status_buildup, StatusEntry};
 use shards_action::{
-    clear_barrier, clear_damage_taken, deal_damage, extend_damage_taken, grant_barrier, set_damage_taken, ActionAppExt, Barrier,
+    clear_barrier, clear_damage_taken, deal_damage, extend_damage_taken, grant_barrier, kill, revive, set_damage_taken, ActionAppExt, Barrier,
     BarrierGranted, DamageCtx, DamageTaken, DamageTakenExpired, ProcGates, StatusApplied, StatusExpired,
 };
 
@@ -596,4 +596,30 @@ fn deal_damage_does_nothing_on_a_client() {
     assert!(app.world().get::<Dead>(victim).is_none());
     app.world_mut().remove_resource::<shards_core::NetRole>();
     assert_eq!(deal_damage(app.world_mut(), victim, 10.0, None), 90.0);
+}
+
+#[test]
+fn the_dead_barrier_multipliers_and_gates_are_frozen_until_a_revive() {
+    let (mut app, attacker, victim) = arena("b_victim");
+    grant_barrier(app.world_mut(), victim, 30.0, 1.0);
+    set_damage_taken(app.world_mut(), victim, "core", 2.0, Some(1.0));
+    buildup(&mut app, victim, "b_chill", 100.0);
+    let gate_before = app.world().get::<ProcGates>(victim).unwrap().0.clone();
+    kill(app.world_mut(), victim, Some(attacker), None);
+    let (barrier_at_death, taken_at_death) = (barrier(&app, victim).unwrap(), app.world().get::<DamageTaken>(victim).unwrap().clone());
+    // Far past every timer: nothing ran down on the corpse, nothing expired.
+    step(&mut app, 300);
+    assert_eq!(barrier(&app, victim), Some(barrier_at_death));
+    assert_eq!(*app.world().get::<DamageTaken>(victim).unwrap(), taken_at_death);
+    assert!(app.world().get::<ProcGates>(victim).is_some());
+    assert!(log(&app).expired.is_empty());
+    // A revive resumes them where they stood.
+    app.world_mut().get_mut::<Health>(victim).unwrap().current = 100.0;
+    assert!(revive(app.world_mut(), victim));
+    let resumed = barrier(&app, victim).unwrap();
+    assert_eq!(resumed.left, 1.0, "frozen at its full time through 300 ticks");
+    assert_eq!(app.world().get::<ProcGates>(victim).unwrap().0, gate_before, "the gate did not run down either");
+    step(&mut app, 70);
+    assert!(barrier(&app, victim).is_none() && app.world().get::<DamageTaken>(victim).is_none());
+    assert_eq!(log(&app).expired.len(), 1);
 }

@@ -249,19 +249,21 @@ fn merge_patch(target: &mut Value, patch: &Value) {
 
 /// `skeleton_captain` and the prefabs it extends, root first.
 fn chain<'a>(db: &'a ContentDb, id: &str) -> Result<Vec<&'a PrefabDef>, String> {
-    let mut chain: Vec<(&str, &PrefabDef)> = Vec::new();
+    let mut chain: Vec<(String, &PrefabDef)> = Vec::new();
     let mut next = Some(id.to_owned());
     while let Some(name) = next {
         if chain.iter().any(|(seen, _)| *seen == name) {
             return Err(format!("prefab `{id}` extends itself in a circle"));
         }
-        let Some((key, def)) = db.iter::<PrefabDef>().find(|(key, _)| *key == name) else {
-            let hint = closest(&name, db.ids::<PrefabDef>()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
-            let known: Vec<&str> = db.ids::<PrefabDef>().collect();
+        // By id: a spawn reads its prefab and what it extends, not every prefab (the error
+        // only lists them).
+        let Some(def) = db.get::<PrefabDef>(&name) else {
+            let hint = closest(&name, db.peek_ids::<PrefabDef>()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
+            let known: Vec<&str> = db.peek_ids::<PrefabDef>().collect();
             return Err(format!("unknown prefab `{name}`{hint}; known: {}", known.join(", ")));
         };
         next = def.extends.clone();
-        chain.push((key, def));
+        chain.push((name, def));
     }
     Ok(chain.into_iter().rev().map(|(_, def)| def).collect())
 }

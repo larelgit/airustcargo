@@ -235,10 +235,11 @@ fn run_down(left: f32, dt: f32) -> f32 {
 /// `ActionSystems::Fighters`, after `tick_protection`: barriers, timed multipliers and proc gates
 /// run down by the tick, each component goes when it is empty, and a multiplier that ran out
 /// triggers [`DamageTakenExpired`]. In `AiId` order (the events come out in it, then in key order).
+/// A dead fighter's are frozen, as its statuses are, and a revive resumes them.
 pub fn tick_body_state(world: &mut World) {
     let dt = world.resource::<Time>().delta_secs();
     let mut order: Vec<(u32, Entity)> = world
-        .query_filtered::<(Entity, Option<&AiId>), Or<(With<Barrier>, With<DamageTaken>, With<ProcGates>)>>()
+        .query_filtered::<(Entity, Option<&AiId>), (Or<(With<Barrier>, With<DamageTaken>, With<ProcGates>)>, Without<Dead>)>()
         .iter(world)
         .map(|(e, id)| (id.map_or(u32::MAX, |i| i.0), e))
         .collect();
