@@ -2,7 +2,7 @@
 // per-hit guard costs, a perfect guard with a price, perfect evades, walls, the stamina
 // overdraft) on neutral numbers. `reactions.scenario` borrows two fighters of the arena and
 // switches their movesets to `sparring` and `duelist` (`sparring.moveset.ron`) for its length;
-// nothing in the starting world uses them. Net ids 100-119.
+// nothing in the starting world uses them. Net ids 100-119; the action timeline (B2a) below, 120-139.
 {
     // A quick jab that asks for a light reaction; pressed again in its recovery it chains.
     "spar_jab": (
@@ -60,5 +60,64 @@
         net_id: 109,
         phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.3)],
         hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 10, reaction: 3, flags: [GuardBreak])],
+    ),
+
+    // The action timeline (B2a), for the `timeline` moveset and `timeline.scenario`. Net ids 120-139.
+    // A heavy swing that, held 0.25 s from the press, turns into its charged version (20 stamina
+    // more); a light pressed while it winds up waits for the window that opens with its recovery.
+    "spar_heavy": (
+        net_id: 120,
+        phases: [("windup", 0.5), ("active", 0.15), ("recovery", 0.5)],
+        cost: (stamina: 15),
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 12, poise: 5)],
+        charge: (after: 0.25, into: "spar_heavy_full"),
+        cancels: [(span: Phase("recovery"), into: [Input("light"), Input("dodge")], queue: Phases("windup", "recovery"))],
+        track_until: 0.3,
+    ),
+    "spar_heavy_full": (
+        net_id: 121,
+        phases: [("windup", 0.5), ("active", 0.15), ("recovery", 0.5)],
+        cost: (stamina: 35),
+        hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 25, poise: 15, reaction: 2, knockback: 2.0)],
+        cancels: [(span: Phase("recovery"), into: [Input("light"), Input("dodge")], queue: Phases("windup", "recovery"))],
+        track_until: 0.3,
+    ),
+    // A lunge that turns toward its target at 360 degrees a second while it winds up, never more than
+    // 45 degrees off where it started, at most 0.4 m closer for the turning, and not toward a target
+    // behind a wall; a whiff recovers 0.6 s longer. Its cooldown is the slot
+    // `lunge`, shared with `spar_lunge_far`; cut in its windup it keeps 40% of it.
+    "spar_lunge": (
+        net_id: 122,
+        phases: [("windup", 0.25), ("active", 0.15), ("recovery", 0.3)],
+        cost: (stamina: 10, cooldown: 3.0, cooldown_key: "lunge", cooldown_if_interrupted: 0.4),
+        hits: [(span: Phase("active"), shape: Cone(range: 2.4, angle: 100), damage: 10, poise: 5)],
+        displacement: [(0.25, 0.0), (0.4, 1.5)],
+        turn: [(Phase("windup"), 360)],
+        assist: (angle: 45, close: 0.4, sight: true),
+        miss_recovery: 0.6,
+    ),
+    "spar_lunge_far": (
+        net_id: 123,
+        phases: [("windup", 0.3), ("active", 0.15), ("recovery", 0.3)],
+        cost: (stamina: 10, cooldown: 3.0, cooldown_key: "lunge"),
+        hits: [(span: Phase("active"), shape: Cone(range: 3.2, angle: 80), damage: 8, poise: 5)],
+        displacement: [(0.3, 0.0), (0.45, 2.5)],
+    ),
+    // A channel that lasts while its button is held, up to 3 s.
+    "spar_channel": (
+        net_id: 124,
+        phases: [("channel", 3.0)],
+        while_held: "technique.3",
+        move_speed: 0.3,
+    ),
+    // A roll that moves the body without turning it: locked on, it keeps looking at its target.
+    "spar_roll_keep": (
+        net_id: 125,
+        phases: [("roll", 0.4), ("recover", 0.1)],
+        cost: (stamina: 22, stamina_mode: Any),
+        iframes: [Secs(0.07, 0.25)],
+        displacement: [(0.35, 2.5)],
+        steer: Move,
+        face: Keep,
     ),
 }

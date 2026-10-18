@@ -1,10 +1,11 @@
 //! Controller and stamina options for an exact action-RPG rulebook (C4): a backstep, a stance's
 //! turning speed, regeneration holds per source and the crawl lock, tick by tick. Each option is
-//! content; the defaults are pinned by the reference replays and `golden.rs`.
+//! content; the defaults are pinned by the reference replays and `golden.rs`. With the action
+//! timeline (B2a): a backstep that keeps the body's facing, and turn spans next to a stance rate.
 
 use bevy::prelude::*;
 use serde_json::json;
-use shards_action::Stamina;
+use shards_action::{ActionState, Stamina};
 use shards_core::Intent;
 use shards_motion::{
     CharacterParams, Collider, CollisionLayers, ModifierSystems, MotionMode, MotionState, MoveModifiers, Shape, SprintResume,
@@ -92,6 +93,57 @@ fn a_backstep_is_back_from_the_body_facing_not_from_the_world() {
     assert!(feet(&app, hero).dot(-E) > 1.0, "{}", feet(&app, hero));
 }
 
+/// The yaw of a flat direction in degrees, as the controller turns bodies (north 0, east -90).
+fn yaw_of(d: Vec3) -> f32 {
+    ops::atan2(-d.x, -d.z).to_degrees()
+}
+
+fn run_facing(app: &App, e: Entity) -> Vec3 {
+    app.world().get::<ActionState>(e).unwrap().current.as_ref().expect("an action runs").facing
+}
+
+#[test]
+fn a_backstep_with_face_keep_goes_back_and_keeps_the_body_facing() {
+    let mut app = arena();
+    let hero = crate::common::hero(app.world_mut(), "stancer_keep", Vec3::ZERO, N);
+    assert_eq!(ok(&mut app, "dodge", json!({})), "ok: back_roll_keep (back)");
+    // Tick by tick: the run points south and the body goes south, never forward, while its facing
+    // (the `Transform` the next action steers from, not only the model) stays north.
+    let mut last = feet(&app, hero);
+    for tick in 1..=29 {
+        step(&mut app, 1);
+        assert_eq!(action(&app, hero), "back_roll_keep", "tick {tick}");
+        assert!(run_facing(&app, hero).dot(S) > 0.999, "tick {tick}: the run points back: {}", run_facing(&app, hero));
+        assert!(turned(&app, hero) < 1e-3, "tick {tick}: the body turned {}", turned(&app, hero));
+        let at = feet(&app, hero);
+        assert!((at - last).dot(N) < 1e-5, "tick {tick}: it never steps forward: {last} -> {at}");
+        last = at;
+    }
+    step(&mut app, 5);
+    let first = feet(&app, hero);
+    assert!(first.dot(S) > 3.5 && first.x.abs() < 0.05, "it hopped back 4 m: {first}");
+    assert!(turned(&app, hero) < 1e-3, "{}", turned(&app, hero));
+    // So a second standing backstep goes the same way again.
+    app.world_mut().get_mut::<Stamina>(hero).unwrap().current = 100.0;
+    press(&mut app, hero, "dodge");
+    step(&mut app, 35);
+    assert!(feet(&app, hero).dot(S) > first.dot(S) + 3.5, "back again: {} after {first}", feet(&app, hero));
+    assert!(turned(&app, hero) < 1e-3, "{}", turned(&app, hero));
+
+    // `face: Run` (the plain `back_roll`): the body turns around, so the next backstep comes back.
+    let mut app = arena();
+    let hero = crate::common::hero(app.world_mut(), "stancer", Vec3::ZERO, N);
+    press(&mut app, hero, "dodge");
+    step(&mut app, 35);
+    let first = feet(&app, hero);
+    assert!(first.dot(S) > 3.5, "{first}");
+    assert!((turned(&app, hero) - 180.0).abs() < 1.0, "the body faces the way it went: {}", turned(&app, hero));
+    app.world_mut().get_mut::<Stamina>(hero).unwrap().current = 100.0;
+    press(&mut app, hero, "dodge");
+    step(&mut app, 35);
+    assert!(feet(&app, hero).dot(S) < first.dot(S) - 3.5, "back the other way: {} after {first}", feet(&app, hero));
+}
+
 // --- turn rate of a stance ------------------------------------------------------------------
 
 #[test]
@@ -122,6 +174,53 @@ fn a_guard_turns_at_its_own_rate_while_it_is_up() {
     step(&mut app, 60);
     assert_eq!(action(&app, hero), "idle");
     assert!(app.world().get::<MoveModifiers>(hero).unwrap().turn_speed_deg.is_none());
+}
+
+// --- turn spans and a stance rate together (B2a with C4) ------------------------------------
+
+/// A swing steered east by the stick from facing north: `(run, body)` yaw in degrees after each of
+/// `ticks` ticks (the run's facing, which its hits and displacement follow, and the body's).
+fn swing(input: &str, ticks: usize) -> Vec<(f32, f32)> {
+    let mut app = arena();
+    let hero = crate::common::hero(app.world_mut(), "stancer_keep", Vec3::ZERO, N);
+    app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = E;
+    press(&mut app, hero, input);
+    (0..ticks)
+        .map(|_| {
+            step(&mut app, 1);
+            let body = *app.world().get::<Transform>(hero).unwrap().forward();
+            (yaw_of(run_facing(&app, hero)), yaw_of(body))
+        })
+        .collect()
+}
+
+#[test]
+fn turn_spans_turn_the_run_and_a_stance_rate_the_body_never_both_the_body() {
+    // 360 degrees a second is 6 a tick for the run; the body follows at the free 720 (12 a tick),
+    // so it is where the run points on every tick.
+    let free = swing("technique.2", 30);
+    for (tick, &(run, body)) in free.iter().enumerate() {
+        let want = (-6.0 * (tick + 1) as f32).max(-90.0);
+        assert!((run - want).abs() < 1e-3, "tick {}: the run at {run}, want {want}", tick + 1);
+        assert!((body - run).abs() < 1e-3, "tick {}: the body at {body}, the run at {run}", tick + 1);
+    }
+
+    // With `turn_speed_deg: 90` the run still turns at the spans' 6 a tick, and the body follows it
+    // at 1.5 a tick from the second tick on (the first still turns at the free rate: the action is
+    // seen from the next tick on). The body never passes the run and never turns faster.
+    let stance = swing("technique.1", 30);
+    for (tick, &(run, _)) in stance.iter().enumerate() {
+        let want = (-6.0 * (tick + 1) as f32).max(-90.0);
+        assert!((run - want).abs() < 1e-3, "tick {}: the spans alone turn the run: {run}, want {want}", tick + 1);
+    }
+    assert!((stance[0].1 + 6.0).abs() < 1e-3, "the first tick, at the free rate: {}", stance[0].1);
+    for (tick, pair) in stance.windows(2).enumerate() {
+        let ((_, before), (run, body)) = (pair[0], pair[1]);
+        assert!((before - body).abs() <= 1.5 + 1e-3, "tick {}: the body turned {} in a tick", tick + 2, before - body);
+        assert!(body >= run - 1e-3, "tick {}: the body ({body}) passed the run ({run})", tick + 2);
+    }
+    let (run, body) = stance[29];
+    assert!((run + 90.0).abs() < 1e-3 && (body + 49.5).abs() < 0.01, "after the windup: run {run}, body {body}");
 }
 
 // --- regeneration holds ------------------------------------------------------------------

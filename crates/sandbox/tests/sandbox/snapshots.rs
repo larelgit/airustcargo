@@ -105,6 +105,37 @@ fn mid_dodge() {
     });
 }
 
+/// The action timeline (B2a): a heavy held from the press, before it turns (its `RunExtras` hold the
+/// hold), and a lunge whose whiff lengthened it.
+#[test]
+fn mid_charge_and_after_a_whiff() {
+    let mut app = face_to_face();
+    ok(&mut app, "set", json!({"id": PLAYER, "component": "Fighter", "path": "moveset", "value": "timeline"}));
+    let out = ok(&mut app, "heavy_attack", json!({"hold": true}));
+    assert_eq!(text(&out), "ok: spar_heavy (holding)");
+    step(&mut app, 8);
+    assert_eq!(action(&app, PLAYER), "spar_heavy", "held, not yet turned");
+    assert!(get::<shards::action::RunExtras>(&app, PLAYER).held, "the hold is in the extras");
+    assert_continues_alike("mid-charge", app, |app| {
+        step(app, 10);
+        assert_eq!(action(app, PLAYER), "spar_heavy_full", "turned after the load as before it");
+        ok(app, "heavy_attack", json!({"hold": false}));
+        step(app, 80);
+    });
+
+    let mut app = face_to_face();
+    ok(&mut app, "set", json!({"id": PLAYER, "component": "Fighter", "path": "moveset", "value": "timeline"}));
+    ok(&mut app, "lock_on", json!({"off": true}));
+    ok(&mut app, "teleport", json!({"id": PLAYER, "x": 10, "z": 10}));
+    step(&mut app, 2);
+    ok(&mut app, "use_technique", json!({"slot": 1}));
+    step(&mut app, 30);
+    assert!(!lines(&app, "spar_lunge missed: +0.60s recovery").is_empty(), "{:?}", events(&app));
+    assert_continues_alike("after a whiff", app, |app| {
+        step(app, 60);
+    });
+}
+
 #[test]
 fn mid_combo() {
     let mut app = face_to_face();
