@@ -25,6 +25,26 @@ fn one() -> f32 {
     1.0
 }
 
+fn is_one(v: &f32) -> bool {
+    *v == 1.0
+}
+
+/// The value of a stick: the radial dead zone is cut out and the rest rescaled to 0..=1,
+/// the magnitude `m` becomes `m^curve` (direction kept; `curve` 1.0 leaves it alone), and
+/// each axis is multiplied by its own scale (`scale_x`/`scale_y`, or `scale` where absent).
+pub fn stick_response(raw: Vec2, deadzone: f32, scale: f32, scale_x: Option<f32>, scale_y: Option<f32>, curve: f32) -> Vec2 {
+    let len = raw.length();
+    if len <= deadzone {
+        return Vec2::ZERO;
+    }
+    let mut m = ((len - deadzone) / (1.0 - deadzone).max(1e-3)).min(1.0);
+    if curve != 1.0 {
+        m = ops::powf(m, curve);
+    }
+    let dir = raw / len * m;
+    Vec2::new(dir.x * scale_x.unwrap_or(scale), dir.y * scale_y.unwrap_or(scale))
+}
+
 /// One physical input. Buttons give an action its pressed state; axes give it a value
 /// (`move` and `look` are 2D axes the engine routes to `Intent` and the camera).
 #[derive(Reflect, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -47,13 +67,22 @@ pub enum Binding {
     Keys2D { up: KeyCode, down: KeyCode, left: KeyCode, right: KeyCode },
     /// Four gamepad buttons as a 2D axis (the D-pad): `up` is +y.
     Buttons2D { up: GamepadButton, down: GamepadButton, left: GamepadButton, right: GamepadButton },
-    /// A gamepad stick as a 2D axis, its dead zone cut out of the middle.
+    /// A gamepad stick as a 2D axis, its dead zone cut out of the middle. `scale` applies to
+    /// both axes unless `scale_x` / `scale_y` (written `Some(3.2)`) set one of them; `curve`
+    /// is the exponent on the magnitude after the dead zone (1.0, the default, is linear;
+    /// 1.6 gives a finer centre). `curve` must be above 0 and finite, scales finite.
     Stick {
         stick: Stick,
         #[serde(default = "deadzone")]
         deadzone: f32,
         #[serde(default = "one")]
         scale: f32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale_x: Option<f32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale_y: Option<f32>,
+        #[serde(default = "one", skip_serializing_if = "is_one")]
+        curve: f32,
     },
     /// Mouse movement as a 2D axis (look); `scale` converts pixels to the action's units.
     MouseMotion {
@@ -157,7 +186,7 @@ impl Binding {
                 "`{text}` is not a binding ({e}); write Key(KeyE), Mouse(Left), GamepadButton(South), \
                  GamepadAxis(axis: LeftStickX), KeyAxis(neg: KeyA, pos: KeyD), \
                  Keys2D(up: KeyW, down: KeyS, left: KeyA, right: KeyD), \
-                 Buttons2D(up: DPadUp, down: DPadDown, left: DPadLeft, right: DPadRight), Stick(stick: Left) or MouseMotion()"
+                 Buttons2D(up: DPadUp, down: DPadDown, left: DPadLeft, right: DPadRight), Stick(stick: Left) (optionally deadzone, scale, scale_x: Some(n), scale_y: Some(n), curve) or MouseMotion()"
             )
         })
     }
@@ -494,6 +523,26 @@ impl ContentDef for InputMap {
     /// The default controls: `content/**/*.input_map.ron`, one map with id `default`.
     fn validate(&self, _: &str, refs: &mut Refs) {
         for ctx in &self.contexts {
+            for action in &ctx.actions {
+                for binding in &action.bindings {
+                    if let Binding::Stick { stick, scale, scale_x, scale_y, curve, .. } = binding {
+                        if !(curve.is_finite() && *curve > 0.0) {
+                            refs.error(format!(
+                                "context `{}`: action `{}`: {stick:?} stick `curve` is {curve}; it must be finite and above 0 (1.0 is linear)",
+                                ctx.name, action.action
+                            ));
+                        }
+                        for (name, v) in [("scale", Some(*scale)), ("scale_x", *scale_x), ("scale_y", *scale_y)] {
+                            if v.is_some_and(|v| !v.is_finite()) {
+                                refs.error(format!(
+                                    "context `{}`: action `{}`: {stick:?} stick `{name}` is not a finite number",
+                                    ctx.name, action.action
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
             if ctx.name.is_empty() {
                 refs.error("a context has no name");
             }
@@ -539,12 +588,12 @@ impl InputMap {
                 [
                     keys(KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD),
                     keys(KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ArrowLeft, KeyCode::ArrowRight),
-                    Binding::Stick { stick: Stick::Left, deadzone: 0.15, scale: 1.0 },
+                    Binding::Stick { stick: Stick::Left, deadzone: 0.15, scale: 1.0, scale_x: None, scale_y: None, curve: 1.0 },
                 ],
             ),
             ActionBinding::new(
                 "look",
-                [Binding::MouseMotion { scale: 0.0025 }, Binding::Stick { stick: Stick::Right, deadzone: 0.15, scale: 2.8 }],
+                [Binding::MouseMotion { scale: 0.0025 }, Binding::Stick { stick: Stick::Right, deadzone: 0.15, scale: 2.8, scale_x: None, scale_y: None, curve: 1.0 }],
             ),
             ActionBinding::new("jump", [Key(KeyCode::Space), Pad(GamepadButton::South)]),
             ActionBinding::new("sprint", [Key(KeyCode::ShiftLeft), Pad(GamepadButton::LeftThumb)]).held(),
@@ -569,7 +618,7 @@ impl InputMap {
                 [
                     keys(KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD),
                     keys(KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ArrowLeft, KeyCode::ArrowRight),
-                    Binding::Stick { stick: Stick::Left, deadzone: 0.3, scale: 1.0 },
+                    Binding::Stick { stick: Stick::Left, deadzone: 0.3, scale: 1.0, scale_x: None, scale_y: None, curve: 1.0 },
                     Binding::Buttons2D {
                         up: GamepadButton::DPadUp,
                         down: GamepadButton::DPadDown,
@@ -613,7 +662,7 @@ mod tests {
             Binding::Key(KeyCode::Space),
             Binding::Mouse(MouseButton::Left),
             Binding::GamepadButton(GamepadButton::South),
-            Binding::Stick { stick: Stick::Left, deadzone: 0.2, scale: 1.0 },
+            Binding::Stick { stick: Stick::Left, deadzone: 0.2, scale: 1.0, scale_x: None, scale_y: None, curve: 1.0 },
             Binding::Keys2D { up: KeyCode::KeyW, down: KeyCode::KeyS, left: KeyCode::KeyA, right: KeyCode::KeyD },
             Binding::KeyAxis { neg: KeyCode::KeyA, pos: KeyCode::KeyD },
             Binding::Buttons2D {
@@ -665,7 +714,7 @@ mod tests {
                 left: GamepadButton::West,
                 right: GamepadButton::East,
             },
-            Binding::Stick { stick: Stick::Left, deadzone: 0.15, scale: 1.0 },
+            Binding::Stick { stick: Stick::Left, deadzone: 0.15, scale: 1.0, scale_x: None, scale_y: None, curve: 1.0 },
         ]
         .iter()
         .map(Binding::label)
@@ -677,7 +726,7 @@ mod tests {
                 "Pad D-Up", "WASD", "Up/Left/Down/Right", "Pad D-Pad", "Pad North/West/South/East", "Left Stick",
             ]
         );
-        assert!(Binding::GamepadButton(GamepadButton::North).is_gamepad() && Binding::Stick { stick: Stick::Right, deadzone: 0.1, scale: 1.0 }.is_gamepad());
+        assert!(Binding::GamepadButton(GamepadButton::North).is_gamepad() && Binding::Stick { stick: Stick::Right, deadzone: 0.1, scale: 1.0, scale_x: None, scale_y: None, curve: 1.0 }.is_gamepad());
         assert!(!Binding::Key(KeyCode::KeyF).is_gamepad() && !Binding::Mouse(MouseButton::Left).is_gamepad());
     }
 
@@ -721,5 +770,75 @@ mod tests {
         assert_eq!(rebuilt, mine);
         // A text round trip loses nothing.
         assert_eq!(InputMap::from_text(&overrides.to_text().unwrap()).unwrap(), overrides);
+    }
+
+    #[test]
+    fn stick_curve_one_is_exactly_the_old_response() {
+        // The old formula, written out: curve 1.0 and no per-axis scales must match it bit for bit.
+        let old = |raw: Vec2, deadzone: f32, scale: f32| {
+            let len = raw.length();
+            if len <= deadzone { Vec2::ZERO } else { raw / len * ((len - deadzone) / (1.0 - deadzone).max(1e-3)).min(1.0) * scale }
+        };
+        for xi in -10..=10 {
+            for yi in -10..=10 {
+                let raw = Vec2::new(xi as f32 / 10.0, yi as f32 / 10.0);
+                for (deadzone, scale) in [(0.15, 1.0), (0.2, 2.8), (0.3, -1.5), (0.0, 1.0)] {
+                    let got = stick_response(raw, deadzone, scale, None, None, 1.0);
+                    assert_eq!(got.to_array().map(f32::to_bits), old(raw, deadzone, scale).to_array().map(f32::to_bits), "{raw} dz {deadzone} scale {scale}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stick_curve_shapes_the_magnitude_after_the_dead_zone() {
+        // Deadzone 0.2: a stick at 0.6 is (0.6 - 0.2) / 0.8 = 0.5 past it; 0.5^1.6 is about 0.3299.
+        let v = stick_response(Vec2::new(0.6, 0.0), 0.2, 1.0, None, None, 1.6);
+        assert!((v.x - ops::powf(0.5_f32, 1.6)).abs() < 1e-5 && (v.x - 0.3299).abs() < 1e-3 && v.y == 0.0, "{v}");
+        // The direction is kept on a diagonal; full deflection stays 1; inside the dead zone is 0.
+        let d = stick_response(Vec2::new(0.6, 0.6) * 0.5, 0.2, 1.0, None, None, 1.6);
+        assert!((d.x - d.y).abs() < 1e-6 && d.x > 0.0);
+        assert!((stick_response(Vec2::new(1.0, 0.0), 0.2, 1.0, None, None, 1.6).x - 1.0).abs() < 1e-6);
+        assert_eq!(stick_response(Vec2::new(0.1, 0.1), 0.2, 1.0, None, None, 1.6), Vec2::ZERO);
+    }
+
+    #[test]
+    fn stick_scales_per_axis_and_falls_back_to_scale() {
+        let raw = Vec2::new(1.0, 1.0).normalize();
+        let both = stick_response(raw, 0.2, 2.0, None, None, 1.0);
+        let split = stick_response(raw, 0.2, 2.0, Some(3.2), Some(-2.0), 1.0);
+        assert!((split.x - both.x * 1.6).abs() < 1e-5 && (split.y + both.y).abs() < 1e-5, "{both} {split}");
+        // One absent: that axis keeps `scale`.
+        let x_only = stick_response(raw, 0.2, 2.0, Some(3.2), None, 1.0);
+        assert!((x_only.x - split.x).abs() < 1e-6 && x_only.y == both.y);
+    }
+
+    #[test]
+    fn old_stick_forms_parse_and_serialize_unchanged_and_new_ones_round_trip() {
+        let old = Binding::Stick { stick: Stick::Left, deadzone: 0.15, scale: 1.0, scale_x: None, scale_y: None, curve: 1.0 };
+        // Every old spelling reads as before...
+        assert_eq!(Binding::parse("Stick(stick: Left)"), Ok(old.clone()));
+        assert_eq!(Binding::parse("Stick(stick: Left, deadzone: 0.15, scale: 1.0)"), Ok(old.clone()));
+        // ...and writes the same bytes as before the new fields existed.
+        assert_eq!(old.text(), "Stick(stick:Left,deadzone:0.15,scale:1.0)");
+        let right = Binding::Stick { stick: Stick::Right, deadzone: 0.15, scale: 2.8, scale_x: None, scale_y: None, curve: 1.0 };
+        assert_eq!(right.text(), "Stick(stick:Right,deadzone:0.15,scale:2.8)");
+        // A whole old map file round trips with no new field in it.
+        let map = InputMap::standard();
+        let text = map.to_text().unwrap();
+        assert!(!text.contains("curve") && !text.contains("scale_x"), "{text}");
+        assert_eq!(InputMap::from_text(&text).unwrap(), map);
+        // The new fields go both ways through the text form.
+        let look = Binding::Stick { stick: Stick::Right, deadzone: 0.2, scale: 1.0, scale_x: Some(3.2), scale_y: Some(2.0), curve: 1.6 };
+        assert_eq!(look.text(), "Stick(stick:Right,deadzone:0.2,scale:1.0,scale_x:Some(3.2),scale_y:Some(2.0),curve:1.6)");
+        assert_eq!(Binding::parse(&look.text()), Ok(look.clone()));
+        assert_eq!(Binding::parse("Stick(stick: Right, deadzone: 0.2, scale_x: Some(3.2), scale_y: Some(2.0), curve: 1.6)"), Ok(look.clone()));
+        let only_curve = Binding::parse("Stick(stick: Left, curve: 1.6)").unwrap();
+        assert!(matches!(only_curve, Binding::Stick { curve, scale_x: None, scale_y: None, .. } if curve == 1.6));
+        assert_eq!(Binding::parse(&only_curve.text()), Ok(only_curve));
+        // In a map file too.
+        let mut custom = InputMap::standard();
+        custom.rebind("gameplay", "look", 1, look.clone()).unwrap();
+        assert_eq!(InputMap::from_text(&custom.to_text().unwrap()).unwrap(), custom);
     }
 }
