@@ -6,11 +6,11 @@ use ai_core::spatial::compass;
 use ai_core::{label, AiAppExt};
 use bevy::prelude::*;
 
-use crate::combat::{Blocked, Damaged, Died, Evaded, GuardBroken, Parried, Staggered};
+use crate::combat::{Blocked, Damaged, Died, Evaded, GuardBroken, Parried, PerfectEvaded, Reacted, Staggered};
 use crate::def::EPS;
 use crate::fighter::{
     describe_charges, describe_cooldowns, describe_health, describe_poise, describe_stamina, Charges, Cooldowns, Dead,
-    Health, Invulnerable, Poise, Stamina,
+    Health, Invulnerable, Knockback, Poise, Protection, Stamina,
 };
 use crate::machine::{describe_action, describe_buffer, ActionRejected, ActionState, Healed, InputBuffer, Telegraph};
 use crate::status::{describe_statuses, StatusApplied, StatusExpired, Statuses};
@@ -27,6 +27,8 @@ pub(crate) fn register(app: &mut App) {
         .register_ai_component::<Charges>(describe_charges)
         .register_ai_component::<Cooldowns>(describe_cooldowns)
         .register_ai_component::<Invulnerable>(|_| "god mode".into())
+        .register_ai_component::<Protection>(describe_protection)
+        .register_ai_component::<Knockback>(describe_knockback)
         .register_ai_advice(advice)
         .journal_event::<Telegraph>(|e, w| {
             let zone = e.zone.map(|z| format!(" {}", z.shape)).unwrap_or_default();
@@ -35,7 +37,7 @@ pub(crate) fn register(app: &mut App) {
         .journal_event::<Damaged>(|e, w| {
             let (a, t) = (label(w, e.attacker), label(w, e.target));
             Some(match e.invulnerable {
-                true => format!("{a} -> {t} {} -0 (hp {:.0}, god mode)", e.action, e.hp_left),
+                true => format!("{a} -> {t} {} -0 (hp {:.0}, {})", e.action, e.hp_left, e.ignore_reason.describe()),
                 false => format!("{a} -> {t} {} -{:.0} (hp {:.0})", e.action, e.amount, e.hp_left),
             })
         })
@@ -51,7 +53,20 @@ pub(crate) fn register(app: &mut App) {
             ))
         })
         .journal_event::<Parried>(|e, w| {
-            Some(format!("{} parried {} {}", label(w, e.defender), label(w, e.attacker), e.action))
+            let cost = if e.stamina > 0.0 { format!(", -{:.0} stamina", e.stamina) } else { String::new() };
+            Some(format!("{} parried {} {}{cost}", label(w, e.defender), label(w, e.attacker), e.action))
+        })
+        .journal_event::<PerfectEvaded>(|e, w| {
+            Some(format!("{} perfectly evaded {} {}", label(w, e.defender), label(w, e.attacker), e.action))
+        })
+        .journal_event::<Reacted>(|e, w| {
+            let tier = match e.tier {
+                1 => "light",
+                2 => "heavy",
+                _ => "knockdown",
+            };
+            let by = e.attacker.map(|a| format!(" ({} {})", label(w, a), e.action)).unwrap_or_default();
+            Some(format!("{} reacts {tier}{by}", label(w, e.entity)))
         })
         .journal_event::<Evaded>(|e, w| {
             Some(format!("{} evaded {} {}", label(w, e.defender), label(w, e.attacker), e.action))
@@ -121,4 +136,21 @@ pub fn advice(world: &World, me: Entity) -> Vec<String> {
         ));
     }
     lines
+}
+
+/// `protected 0.82s` (hits of tiers 1-2 cause no reaction), `poise protected 2.40s`.
+fn describe_protection(p: &Protection) -> String {
+    let mut parts = Vec::new();
+    if p.reactions > EPS {
+        parts.push(format!("protected {:.2}s", p.reactions));
+    }
+    if p.poise > EPS {
+        parts.push(format!("poise protected {:.2}s", p.poise));
+    }
+    parts.join("  ")
+}
+
+/// `pushed 3.2m/s`.
+fn describe_knockback(k: &Knockback) -> String {
+    format!("pushed {:.1}m/s", k.velocity.length())
 }

@@ -6,17 +6,19 @@
 //! in `SimSet::Resolve`, after hits, so a hit this tick resets its delay first.
 
 use ai_core::journal::{self, JournalKind};
+use ai_core::AiId;
 use bevy::ecs::lifecycle::HookContext;
 use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 use shards_content::ContentDb;
-use shards_core::Intent;
+use shards_core::{Intent, NetRole};
 use shards_motion::{
-    CharacterController, CharacterParams, Collider, LayerMask, MotionMode, MotionState, MoveModifiers, SprintResume,
+    CharacterController, CharacterParams, Collider, LayerMask, LocomotionInput, MotionMode, MotionState, MoveModifiers,
+    SprintResume,
 };
 
-use crate::def::{CombatTuning, EPS};
-use crate::machine::{ActionState, InputBuffer};
+use crate::def::{CombatTuning, MovesetDef, EPS};
+use crate::machine::{ActionEnded, ActionState, InputBuffer};
 use crate::status::Statuses;
 
 /// Makes an entity a fighter driven by moveset `moveset` (a content id). Its
@@ -279,6 +281,126 @@ pub struct Dead;
 #[reflect(Component, Default)]
 pub struct Invulnerable;
 
+/// Timers that shield a fighter. Inserted when one is granted ([`grant_protection`]), removed when
+/// both run out ([`tick_protection`]); a fighter that never had a reaction or a break has none.
+#[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq)]
+#[reflect(Component, Default)]
+pub struct Protection {
+    /// Seconds hits of tiers 1-2 cause no reaction.
+    pub reactions: f32,
+    /// Seconds poise damage is ignored.
+    pub poise: f32,
+}
+
+/// A push in progress: `velocity` (m/s, flat) slows by `decel` (m/s per s) until it stops
+/// ([`push_bodies`]).
+#[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq)]
+#[reflect(Component, Default)]
+pub struct Knockback {
+    pub velocity: Vec3,
+    pub decel: f32,
+}
+
+/// Shields `entity` for `reactions` seconds against reactions of tiers 1-2 and `poise` seconds
+/// against poise damage; a timer already running keeps the longer time. Inserts [`Protection`]
+/// when there is none.
+pub fn grant_protection(world: &mut World, entity: Entity, reactions: f32, poise: f32) {
+    if world.get_entity(entity).is_err() || !(reactions > 0.0 || poise > 0.0) {
+        return;
+    }
+    match world.get_mut::<Protection>(entity) {
+        Some(mut p) => {
+            let (r, s) = (p.reactions.max(reactions), p.poise.max(poise));
+            if (r, s) != (p.reactions, p.poise) {
+                (p.reactions, p.poise) = (r, s);
+            }
+        }
+        None => {
+            world.entity_mut(entity).insert(Protection { reactions: reactions.max(0.0), poise: poise.max(0.0) });
+        }
+    }
+}
+
+/// `ActionSystems::Fighters`, after [`update_fighters`] and `finish_actions`: protection timers
+/// run down by the tick, after this tick's checks (a timer of `s` seconds set in tick `N` acts on
+/// the checks of ticks `N` to `N + ceil(60 s) - 1`), and the component goes when both are out.
+pub fn tick_protection(time: Res<Time>, mut commands: Commands, mut fighters: Query<(Entity, &mut Protection)>) {
+    let dt = time.delta_secs();
+    for (entity, mut p) in &mut fighters {
+        let next = Protection { reactions: run_down(p.reactions, dt), poise: run_down(p.poise, dt) };
+        if next.reactions <= EPS && next.poise <= EPS {
+            commands.entity(entity).remove::<Protection>();
+        } else if *p != next {
+            *p = next;
+        }
+    }
+}
+
+/// Observer of [`ActionEnded`]: when a reaction or a stagger stops, for any reason, the moveset's
+/// `reaction_protection` begins (tiers 1-2 cause no new reaction for a while). Host only: a
+/// client has no `ActionEnded` and would grant it twice.
+pub(crate) fn protect_after_reaction(
+    ended: On<ActionEnded>,
+    role: Option<Res<NetRole>>,
+    db: Res<ContentDb>,
+    fighters: Query<&Fighter>,
+    mut commands: Commands,
+) {
+    if !role.is_none_or(|r| r.simulates()) {
+        return;
+    }
+    let Ok(fighter) = fighters.get(ended.entity) else { return };
+    let Some(m) = db.get::<MovesetDef>(&fighter.moveset) else { return };
+    if m.reaction_protection > 0.0
+        && (m.reactions.iter().any(|r| r.action == ended.action) || m.stagger.as_deref() == Some(ended.action.as_str()))
+    {
+        let (entity, secs) = (ended.entity, m.reaction_protection);
+        commands.queue(move |world: &mut World| grant_protection(world, entity, secs, 0.0));
+    }
+}
+
+/// `left` after a tick of `dt`; a NaN stays one, for the invariant to name.
+fn run_down(left: f32, dt: f32) -> f32 {
+    if left.is_nan() { left } else { (left - dt).max(0.0) }
+}
+
+/// What `push_bodies` reads and changes on a pushed fighter.
+type Pushed<'a> = (Entity, Option<&'a AiId>, &'a mut Knockback, Option<&'a mut LocomotionInput>, Has<Dead>);
+
+/// `ActionSystems::Push`, after the machine and its effects: a pushed body moves by the decayed
+/// speed of the tick (`v1 = max(0, v0 - decel * dt)`, then `external += dir * v1 * dt`, Euler order),
+/// into `LocomotionInput::external` the machine just wrote, so a wall stops the push. Fighters in
+/// `AiId` order; the push ends at `v1 <= EPS`, and with a dead body.
+pub fn push_bodies(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut pushed: Query<Pushed, With<Fighter>>,
+) {
+    let dt = time.delta_secs();
+    if dt <= 0.0 {
+        return;
+    }
+    let mut order: Vec<(u32, Entity)> = pushed.iter().map(|(e, id, ..)| (id.map_or(u32::MAX, |i| i.0), e)).collect();
+    order.sort();
+    for (_, entity) in order {
+        let Ok((_, _, mut push, loco, dead)) = pushed.get_mut(entity) else { continue };
+        if dead {
+            commands.entity(entity).remove::<Knockback>();
+            continue;
+        }
+        let Some(mut loco) = loco else { continue };
+        let v0 = push.velocity.length();
+        let v1 = (v0 - push.decel * dt).max(0.0);
+        let dir = push.velocity.normalize_or_zero();
+        loco.external += dir * v1 * dt;
+        if v1 <= EPS {
+            commands.entity(entity).remove::<Knockback>();
+        } else {
+            push.velocity = dir * v1;
+        }
+    }
+}
+
 /// The rule that opens a sprint's stamina lock for a fighter now: the params' for a fast swim, the
 /// combat tuning's for a sprint on land.
 pub(crate) fn sprint_rule(
@@ -294,6 +416,8 @@ pub(crate) fn sprint_rule(
 
 /// What [`update_fighters`] reads and changes on a fighter.
 type Resources<'a> = (
+    Entity,
+    &'a Fighter,
     Option<&'a mut Stamina>,
     Option<&'a mut Poise>,
     &'a mut Cooldowns,
@@ -307,10 +431,15 @@ type Resources<'a> = (
 /// character's `MoveModifiers::sprint_cost`; a fast swim drains the params' `swim_fast_drain`
 /// instead), then stamina and poise regenerate after their delays, broken poise recovers,
 /// cooldowns run down. A free sprint (cost 0) still holds the regeneration back.
-pub fn update_fighters(time: Res<Time>, db: Res<ContentDb>, mut fighters: Query<Resources, With<Fighter>>) {
+pub fn update_fighters(
+    time: Res<Time>,
+    db: Res<ContentDb>,
+    mut commands: Commands,
+    mut fighters: Query<Resources, With<Fighter>>,
+) {
     let dt = time.delta_secs();
     let drain = CombatTuning::of(&db).sprint_stamina_per_s;
-    for (stamina, poise, mut cooldowns, motion, dead, modifiers, body) in &mut fighters {
+    for (entity, fighter, stamina, poise, mut cooldowns, motion, dead, modifiers, body) in &mut fighters {
         if let Some(mut s) = stamina {
             if motion.is_some_and(|m| m.sprinting) && !dead {
                 let swimming = motion.is_some_and(|m| m.mode == MotionMode::Water);
@@ -331,7 +460,15 @@ pub fn update_fighters(time: Res<Time>, db: Res<ContentDb>, mut fighters: Query<
             }
         }
         if let Some(mut p) = poise {
+            let was_broken = p.is_broken();
             regen_poise(&mut p, dt);
+            // A break that ran out grants the moveset's protection: poise damage is ignored for a while.
+            if was_broken
+                && !p.is_broken()
+                && let Some(secs) = db.get::<MovesetDef>(&fighter.moveset).map(|m| m.break_protection).filter(|s| *s > 0.0)
+            {
+                commands.queue(move |world: &mut World| grant_protection(world, entity, 0.0, secs));
+            }
         }
         if !cooldowns.0.is_empty() {
             for c in &mut cooldowns.0 {

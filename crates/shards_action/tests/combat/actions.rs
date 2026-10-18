@@ -268,3 +268,53 @@ fn a_sound_effect_reflects_for_the_network_layer() {
     let effect: Effect = ron::from_str(r#"Sound("whoosh")"#).unwrap();
     assert_eq!(effect, Effect::Sound("whoosh".into()));
 }
+
+#[test]
+fn action_ended_names_every_end() {
+    use shards_action::{kill, stagger, ActionEnd, StaggerCause};
+
+    use crate::reactions::{bout, seen};
+
+    let ends = |app: &App, action: &str| -> Vec<ActionEnd> {
+        seen(app).ended.iter().filter(|e| e.2 == action).map(|e| e.3).collect()
+    };
+    let (mut app, attacker, victim) = bout("r_plain");
+
+    // Its time ran out.
+    press(&mut app, attacker, "technique.7");
+    step(&mut app, 30);
+    assert_eq!(ends(&app, "r_hit_plain"), [ActionEnd::Finished]);
+
+    // Another action started through a cancel window.
+    let mut app2 = crate::common::app_with(crate::reactions::record);
+    let hero = hero(app2.world_mut(), "hero", Vec3::ZERO, N);
+    press(&mut app2, hero, "light");
+    step(&mut app2, 20);
+    press(&mut app2, hero, "light");
+    step(&mut app2, 5);
+    assert_eq!(ends(&app2, "light_1"), [ActionEnd::Cancelled]);
+    assert_eq!(action(&app2, hero), "light_2");
+
+    // The engine forced another one over it.
+    press(&mut app, victim, "light"); // r_armored, a long one
+    step(&mut app, 5);
+    assert!(stagger(app.world_mut(), victim, StaggerCause::Dev));
+    assert_eq!(ends(&app, "r_armored"), [ActionEnd::Interrupted]);
+
+    // A kill with no death action cuts the run short, and so does a revival.
+    step(&mut app, 60);
+    press(&mut app, victim, "light");
+    step(&mut app, 5);
+    kill(app.world_mut(), victim, None, None);
+    assert_eq!(action(&app, victim), "idle");
+    assert_eq!(ends(&app, "r_armored"), [ActionEnd::Interrupted, ActionEnd::Interrupted]);
+
+    // Its definition left content: the machine drops the run (a hot reload does the same).
+    let (mut app, _, victim) = bout("r_plain");
+    press(&mut app, victim, "light");
+    step(&mut app, 5);
+    app.world_mut().get_mut::<ActionState>(victim).unwrap().current.as_mut().unwrap().action = "ghost".into();
+    step(&mut app, 1);
+    assert_eq!(ends(&app, "ghost"), [ActionEnd::Removed]);
+    assert_eq!(action(&app, victim), "idle");
+}

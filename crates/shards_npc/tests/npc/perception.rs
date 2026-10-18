@@ -106,6 +106,11 @@ fn hits_and_sprints_make_noise() {
         poise: 0.0,
         hp_left: 95.0,
         invulnerable: false,
+        ignore_reason: Default::default(),
+        weight: Default::default(),
+        reaction: None,
+        absorbed: 0.0,
+        source: None,
     };
     app.world_mut().trigger(hit);
     // The hit's noise is a command of the observer: heard on the first tick that applies it.
@@ -143,6 +148,11 @@ fn a_hit_heard_does_not_move_an_attacker_in_sight() {
         poise: 0.0,
         hp_left: 95.0,
         invulnerable: false,
+        ignore_reason: Default::default(),
+        weight: Default::default(),
+        reaction: None,
+        absorbed: 0.0,
+        source: None,
     };
     app.world_mut().trigger(hit);
     let mut heard = false;
@@ -175,6 +185,11 @@ fn a_hit_from_an_attacker_out_of_sight_tells_where_it_stands() {
             poise: 0.0,
             hp_left: 95.0,
             invulnerable: false,
+            ignore_reason: Default::default(),
+            weight: Default::default(),
+            reaction: None,
+            absorbed: 0.0,
+            source: None,
         };
         app.world_mut().trigger(hit);
         step(&mut app, 2);
@@ -201,6 +216,11 @@ fn a_hit_by_a_friend_is_a_place_to_look_at_not_the_friends_position() {
         poise: 0.0,
         hp_left: 95.0,
         invulnerable: false,
+        ignore_reason: Default::default(),
+        weight: Default::default(),
+        reaction: None,
+        absorbed: 0.0,
+        source: None,
     };
     app.world_mut().trigger(hit);
     step(&mut app, 2);

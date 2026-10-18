@@ -13,7 +13,7 @@ use shards_content::ContentDb;
 use shards_core::input_names::{BLOCK, DODGE, HEAVY, LIGHT, PARRY, TECHNIQUE, USE_ITEM};
 use shards_core::{flat, Intent, Order, Predicted};
 
-use crate::combat::{revive, stagger, StaggerCause};
+use crate::combat::{react, revive, stagger, Reaction, StaggerCause};
 use crate::def::{ActionDef, CombatTuning, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team};
 use crate::machine::{can_start, fits_buffer, ActionState, FighterView, Healed};
@@ -33,6 +33,8 @@ pub(crate) fn register(app: &mut App) {
         .add_ai_tool("god", Scope::Dev, god)
         .add_ai_tool("heal", Scope::Dev, heal)
         .add_ai_tool("stagger", Scope::Dev, stagger_tool)
+        .add_ai_tool("react", Scope::Dev, react_tool)
+        .add_ai_condition("reacting", reacting)
         .add_dev_entry("combat", "god", "Immortality on / off", DevCommand::Live(god_line))
         .add_dev_entry("combat", "heal", "Heal / revive", DevCommand::Run("heal".into()));
 }
@@ -456,4 +458,47 @@ fn stagger_tool(In(call): In<Call<StaggerArgs>>, world: &mut World) -> ToolResul
         return Err(format!("{} cannot stagger: its moveset `{moveset}` has no `stagger` action", call.args.id));
     }
     Ok(format!("{} staggered", call.args.id))
+}
+
+/// Force a reaction on a fighter, as a hit of that tier would: ignoring its armour and its
+/// immunity (it starts none), pushed backwards from where it faces.
+#[derive(Deserialize, JsonSchema)]
+pub struct ReactArgs {
+    pub id: Id,
+    /// 1 light, 2 heavy, 3 knockdown.
+    pub tier: u8,
+}
+
+fn react_tool(In(call): In<Call<ReactArgs>>, world: &mut World) -> ToolResult {
+    let e = call.args.id.entity(world)?;
+    let tier = call.args.tier;
+    if !(1..=3).contains(&tier) {
+        return Err(format!("tier {tier} is not a reaction; use 1 (light), 2 (heavy) or 3 (knockdown)"));
+    }
+    let moveset = world
+        .get::<Fighter>(e)
+        .map(|f| f.moveset.clone())
+        .ok_or_else(|| format!("{} is not a fighter", call.args.id))?;
+    if world.get::<Dead>(e).is_some() {
+        return Err(format!("{} is dead", call.args.id));
+    }
+    let back = world.get::<Transform>(e).map_or(Vec3::Z, |t| -flat(*t.forward()));
+    if !react(world, e, Reaction::forced(tier, None, back)) {
+        return Err(format!(
+            "{} cannot react: it is in a stagger or a death, or its moveset `{moveset}` has no reaction or `hit` action",
+            call.args.id
+        ));
+    }
+    let word = ["light", "heavy", "knockdown"][usize::from(tier) - 1];
+    Ok(format!("ok: {} reacts {word}", call.args.id))
+}
+
+/// `step --until named:reacting`: some fighter runs one of its moveset's reaction actions.
+fn reacting(world: &World) -> bool {
+    let db = world.resource::<ContentDb>();
+    let Some(mut fighters) = world.try_query::<(&Fighter, &ActionState)>() else { return false };
+    fighters.iter(world).any(|(fighter, state)| {
+        let (Some(run), Some(m)) = (&state.current, db.get::<crate::MovesetDef>(&fighter.moveset)) else { return false };
+        m.reactions.iter().any(|r| r.action == run.action)
+    })
 }

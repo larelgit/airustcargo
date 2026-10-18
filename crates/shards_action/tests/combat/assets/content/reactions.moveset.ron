@@ -1,0 +1,57 @@
+{
+    "r_attacker": (
+        stagger: "r_stagger",
+        inputs: {
+            "light": "r_hit_light",
+            "heavy": "r_hit_heavy",
+            "technique.1": "r_hit_down",
+            "technique.2": "r_hit_poise",
+            "technique.3": "r_hit_los",
+            "technique.4": "r_hit_zone",
+            "technique.5": "r_hit_status",
+            "technique.6": "r_hit_break",
+            "technique.7": "r_hit_plain",
+            "technique.8": "r_hit_free",
+        },
+    ),
+    "r_victim": (
+        inputs: {"block": "r_guard", "dodge": "r_roll", "light": "r_armored", "heavy": "r_hyper", "technique.1": "r_blink"},
+        stagger: "r_stagger",
+        hit: "r_flinch",
+        reactions: [
+            (action: "r_react_light", push: 2.0, decel: 12.0),
+            (action: "r_react_heavy", push: 4.0, decel: 12.0),
+            (action: "r_react_down", push: 4.0, decel: 12.0),
+        ],
+        reaction_immunity: 0.2,
+        reaction_protection: 1.0,
+        break_protection: 3.0,
+        guard_broken: "r_guard_broken",
+        guard_broken_push: (0.2, 10.0),
+    ),
+    // The old kit: no reactions, a flinch and a stagger.
+    "r_plain": (
+        inputs: {"block": "r_guard", "light": "r_armored"},
+        stagger: "r_stagger",
+        hit: "r_flinch",
+    ),
+    // Reaction armour 1 for good.
+    "r_heavyweight": (
+        inputs: {},
+        stagger: "r_stagger",
+        hit: "r_flinch",
+        reactions: [
+            (action: "r_react_light", push: 2.0, decel: 12.0),
+            (action: "r_react_heavy", push: 4.0, decel: 12.0),
+            (action: "r_react_down", push: 4.0, decel: 12.0),
+        ],
+        reaction_armor: 1,
+    ),
+    // A victim that can walk while guarding, with a guard-break push.
+    "r_walker": (
+        inputs: {"block": "r_guard_walk"},
+        stagger: "r_stagger",
+        guard_broken: "r_guard_broken",
+        guard_broken_push: (0.2, 10.0),
+    ),
+}

@@ -76,7 +76,7 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
 - Engine tools (`shards tools`): **movement** — `move_to` (`path=true` follows `path_to`), `move`, `stop`, `jump`,
   `sprint`, `glide`, the `clearance` and `path_to` queries (in a region over the navmesh: `path_to` names the `provider`, `clearance` —
   `closed`, where the navmesh ends before the physics does), `input_bindings`, `rebind`; **combat** — `light_attack`, `heavy_attack`,
-  `block`, `parry`, `dodge`, `use_item`, `use_technique`, `lock_on`, `attack`, `god`, `heal`, `stagger`, `motion_bake`
+  `block`, `parry`, `dodge`, `use_item`, `use_technique`, `lock_on`, `attack`, `god`, `heal`, `stagger`, `react`, `motion_bake`
   (the same as `--bake-motion`); **content** —
   `content_list`, `content_get`, `content_check`, `content_reload`, `spawn_prefab`; **world** — `regen`, `region_load`,
   `goto_tile`, `region_info`, `worldgen_report`, `spawn_level`, `level_info`, `level_reload`; **NPCs and navigation** —
@@ -107,7 +107,7 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   the panel for `shot`. The game puts its own items in content (`*.devmenu.ron`), and a module does it with `add_dev_entry`. **Exit** — `quit`
   (`shards quit`: exit hooks run, the token and the port file are removed). Conditions for
   `step --until named:…`: `near_poi`, `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_avoiding`,
-  `npc_engaged`, `npc_near`; the game adds its own (in the sandbox `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`; in the template
+  `npc_engaged`, `npc_near`, `reacting`; the game adds its own (in the sandbox `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`; in the template
   `arena_cleared`, `foe_near`, `in_fight`).
 - Sound is resolved on the simulation clock and is the same without a window: listen to the game through `audio` and the `MUSIC` line in `observe`, not through
   the speakers (except the sound of the `AnimationCue` clip marker: it exists only if a model is drawn). Music changes go

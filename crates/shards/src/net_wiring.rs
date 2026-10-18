@@ -5,7 +5,7 @@ use ai_core::AiAppExt;
 use bevy::prelude::*;
 use serde_json::json;
 use shards_motion::{ColliderId, ColliderIds};
-use shards_action::combat::{Blocked, Damaged, Died, Evaded, GuardBroken, Parried, Staggered};
+use shards_action::combat::{Blocked, Damaged, Died, Evaded, GuardBroken, Parried, PerfectEvaded, Reacted, Staggered};
 use shards_action::machine::{ActionRejected, ActionStarted, Healed, Telegraph};
 use shards_action::ActionSound;
 use shards_net::{NetEventAppExt, NetHooks};
@@ -25,6 +25,8 @@ impl Plugin for EngineNetPlugin {
             .net_event::<Blocked>()
             .net_event::<Parried>()
             .net_event::<Evaded>()
+            .net_event::<PerfectEvaded>()
+            .net_event::<Reacted>()
             .net_event::<GuardBroken>()
             .net_event::<Staggered>()
             .net_event::<Died>()
