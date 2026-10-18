@@ -51,6 +51,7 @@ pub mod controller;
 mod coverage;
 pub mod input;
 mod intent;
+mod interp;
 mod invariants;
 mod modifiers;
 #[cfg(feature = "render")]
@@ -74,6 +75,7 @@ pub use controller::{
 };
 pub use input::{BindMode, Binding, ControlState, ControlSystems, InputContext, InputContexts, InputMap, InputSettings};
 pub use intent::{intent_to_locomotion, GlideUntilLanded, MotionSystems};
+pub use interp::{adopt_visuals, shown_translation, InterpSystems, Interpolated, NotInterpolated, Pose, visual_offset};
 pub use modifiers::{ModifierSystems, MoveModifiers, StanceSpeed};
 pub use physics::{
     current_at, edge_distance, Body, Collider, ColliderId, ColliderIds, ColliderInfo, CollisionLayers, Current, LayerMask, Penetration, PhysicsPlugin,
@@ -124,6 +126,7 @@ impl Plugin for MotionPlugin {
         perception::plugin(app);
         input::plugin(app);
         camera::plugin(app);
+        interp::plugin(app);
         #[cfg(feature = "render")]
         overlay::plugin(app);
     }
