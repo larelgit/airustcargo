@@ -822,6 +822,8 @@ pub(crate) fn check_action_clip(id: &str, anim: &str, tags: &[String], refs: &mu
 
 impl ContentDef for AnimSet {
     const KIND: &'static str = "animset";
+    // Only what a machine shows or plays, or what lies outside a session: never in the replay check.
+    const SIMULATION: bool = false;
 
     fn validate(&self, _id: &str, refs: &mut Refs) {
         if self.source.is_empty() {

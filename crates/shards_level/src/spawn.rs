@@ -118,6 +118,8 @@ pub fn spawn_level(world: &mut World, level: &LevelAsset, at: Transform) -> Resu
 /// [`spawn_level`] under `label` (the level's content id; `FromLevel::level`), returning
 /// the instance number and the visual root too.
 pub fn spawn_level_as(world: &mut World, level: &LevelAsset, at: Transform, label: &str) -> Result<SpawnedLevel, String> {
+    // It builds the simulation's world: what it reads is the simulation's ([`ai_core::SimScope`]).
+    let _sim = ai_core::scope::open(world);
     let plans = prepare(world, level)?;
     let instance = world.get_resource_or_init::<LevelCounter>().next_id();
     place(world, level, &plans, at, label, instance)

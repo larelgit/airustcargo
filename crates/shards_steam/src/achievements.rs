@@ -52,6 +52,8 @@ pub const MAX_STEAM_NAME: usize = 128;
 
 impl ContentDef for AchievementDef {
     const KIND: &'static str = "achievement";
+    // Only what a machine shows or plays, or what lies outside a session: never in the replay check.
+    const SIMULATION: bool = false;
 
     fn validate(&self, id: &str, refs: &mut Refs) {
         if self.steam.is_empty() {

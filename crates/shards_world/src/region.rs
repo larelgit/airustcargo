@@ -558,6 +558,8 @@ fn check_prefabs(world: &World, manifest: &RegionManifest, plans: &[TilePlan]) -
 /// Builds `manifest` in the world (it does not generate anything). Nothing is left behind
 /// when it fails.
 pub fn spawn_region(world: &mut World, manifest: &RegionManifest) -> Result<RegionSpawned, String> {
+    // It builds the simulation's world: what it reads is the simulation's ([`ai_core::SimScope`]).
+    let _sim = ai_core::scope::open(world);
     let plans = plan(world, manifest)?;
     let mut spawned = Vec::new();
     match spawn_parts(world, manifest, &plans, &mut spawned) {
@@ -820,6 +822,7 @@ fn can_change_state(world: &World) -> bool {
 /// `InGame` (or held by the loading gate while another module still loads). Refuses, changing
 /// nothing, a manifest whose tiles or prefabs content lacks.
 pub fn change_region(world: &mut World, manifest: RegionManifest) -> Result<RegionSpawned, String> {
+    let _sim = ai_core::scope::open(world);
     plan(world, &manifest)?;
     let trip = matches!(state(world), Some(EngineState::InGame | EngineState::MainMenu)) && can_change_state(world);
     if trip {
@@ -1027,6 +1030,8 @@ pub(crate) fn build_start_region(world: &mut World) {
     if !seed_ready(world) {
         return;
     }
+    // The start region is the simulation's world, generated before its first tick.
+    let _sim = ai_core::scope::open(world);
     let seed = world.get_resource::<SimSeed>().map_or(0, |s| s.0);
     let outcome = regen(world, &region, seed);
     let next = match outcome {

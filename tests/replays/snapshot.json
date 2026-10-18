@@ -1,20 +1,46 @@
 {
-  "format": "shards-replay/3",
+  "format": "shards-replay/4",
   "seed": 42,
   "tick_hz": 59.99999880000003,
   "check_every": 60,
   "check_detail": "components",
   "start": {
-    "format": "shards-snapshot/1",
+    "format": "shards-snapshot/2",
     "tick": 121,
     "seed": 42,
     "tick_hz": 59.99999880000003,
-    "engine": "0.2.0",
-    "state_hash": "37184db193ecc26d",
+    "engine": "0.4.0",
+    "state_hash": "6e610d38e32aa18b",
     "checks": {
-      "content": "b39a82e581fe50a7",
+      "content": "6a7ce1cecf3e9094",
       "levels": "cbf29ce484222325",
       "static_colliders": "b16a4682932b69b4"
+    },
+    "check_parts": {
+      "content": {
+        "attack_plan/skeleton": "ae670062e200e500",
+        "attack_plan/warden": "68e4d9a58c9130e5",
+        "behavior/skeleton": "0ca103408741deda",
+        "behavior/warden": "7b30285714479162",
+        "combat_tuning/default": "7fc354d607b29452",
+        "director/boss": "9938c1890b3c4d09",
+        "layout (all)": "0000000000000000",
+        "layout/arena": "091851d57d80f2e4",
+        "layout/course": "f65397f9b47f46e1",
+        "layout/watch": "dc738a5676554d89",
+        "locomotion/player": "25720e5c56082052",
+        "locomotion/skeleton": "ba33bb652bf0630e",
+        "locomotion/warden": "9a9e3ea79d7406f7",
+        "moveset/player": "e4c47a54d6754e1d",
+        "moveset/skeleton": "b6201dac07a1f664",
+        "moveset/warden": "425a35b2df390679",
+        "perception/boss": "112d106d316a39d7",
+        "perception/skeleton": "2cd6b58f2255fd1b",
+        "prefab/frost_warden": "396192b3dab6d75f",
+        "prefab/pillar": "47858a8acf05b851",
+        "prefab/player": "7c4beeeaf906c152",
+        "prefab/skeleton": "0bffca73f472ecd8"
+      }
     },
     "ids": {
       "next": 15,
@@ -1602,7 +1628,7 @@
   },
   "end": {
     "tick": 369,
-    "hash": "21dd7510a001db3e",
+    "hash": "6236399262aaa966",
     "parts": {
       "entities": {
         "e1": {
@@ -1825,7 +1851,7 @@
         }
       },
       "game": {
-        "content": "b39a82e581fe50a7"
+        "content": "dbfc4c5006ed47b5"
       }
     }
   },
@@ -1908,7 +1934,7 @@
   "checks": [
     {
       "tick": 180,
-      "hash": "2066caf225fef1a2",
+      "hash": "8e386af33d4af45b",
       "parts": {
         "entities": {
           "e1": {
@@ -2131,13 +2157,13 @@
           }
         },
         "game": {
-          "content": "b39a82e581fe50a7"
+          "content": "bc2068a1f725b88e"
         }
       }
     },
     {
       "tick": 240,
-      "hash": "ac366105d9925b16",
+      "hash": "ce901e6e6a11d3f9",
       "parts": {
         "entities": {
           "e1": {
@@ -2360,13 +2386,13 @@
           }
         },
         "game": {
-          "content": "b39a82e581fe50a7"
+          "content": "59b93f339ae1c303"
         }
       }
     },
     {
       "tick": 300,
-      "hash": "9ddec99e8ed96025",
+      "hash": "fa6d43b6e7ff7591",
       "parts": {
         "entities": {
           "e1": {
@@ -2589,13 +2615,13 @@
           }
         },
         "game": {
-          "content": "b39a82e581fe50a7"
+          "content": "dbfc4c5006ed47b5"
         }
       }
     },
     {
       "tick": 360,
-      "hash": "cc2d75891b13e8cb",
+      "hash": "502f6240bcc2101f",
       "parts": {
         "entities": {
           "e1": {
@@ -2818,9 +2844,61 @@
           }
         },
         "game": {
-          "content": "b39a82e581fe50a7"
+          "content": "dbfc4c5006ed47b5"
         }
       }
     }
-  ]
+  ],
+  "check_parts": {
+    "content": [
+      {
+        "tick": 180,
+        "set": {
+          "action/light_1": "9aa61d0f52a80f83",
+          "action/shockwave_enraged": "8dc29f9f33684ec8",
+          "action/slam_enraged": "f63459510633ff4f",
+          "action/slash_enraged": "6d651ad5b85204d9",
+          "action/sweep_enraged": "b6d531de3734959f",
+          "attack_plan/skeleton": "ae670062e200e500",
+          "attack_plan/warden": "68e4d9a58c9130e5",
+          "attack_plan/warden_enraged": "d891d2cccdc1dfd8",
+          "behavior/skeleton": "0ca103408741deda",
+          "behavior/warden": "7b30285714479162",
+          "combat_tuning/default": "7fc354d607b29452",
+          "director/boss": "9938c1890b3c4d09",
+          "layout (all)": "0000000000000000",
+          "layout/arena": "091851d57d80f2e4",
+          "layout/course": "f65397f9b47f46e1",
+          "layout/watch": "dc738a5676554d89",
+          "locomotion/player": "25720e5c56082052",
+          "locomotion/skeleton": "ba33bb652bf0630e",
+          "locomotion/warden": "9a9e3ea79d7406f7",
+          "moveset/player": "e4c47a54d6754e1d",
+          "moveset/skeleton": "b6201dac07a1f664",
+          "moveset/warden": "425a35b2df390679",
+          "moveset/warden_enraged": "a7c87007d75df40a",
+          "perception/boss": "112d106d316a39d7",
+          "perception/skeleton": "2cd6b58f2255fd1b",
+          "prefab/frost_warden": "396192b3dab6d75f",
+          "prefab/pillar": "47858a8acf05b851",
+          "prefab/player": "7c4beeeaf906c152",
+          "prefab/skeleton": "0bffca73f472ecd8"
+        }
+      },
+      {
+        "tick": 240,
+        "set": {
+          "action/player_stagger": "216d7ac173a2683a"
+        }
+      },
+      {
+        "tick": 300,
+        "set": {
+          "action/light_2": "2fe08892a5546950",
+          "action/light_3": "3b75cacf4ff81ad3",
+          "action/warden_stagger": "4fe05aeab72572d3"
+        }
+      }
+    ]
+  }
 }

@@ -301,6 +301,9 @@ pub(crate) fn plugin(app: &mut App, replays: bool) {
 /// After every tick: runs the armed rules and fires the broken ones.
 fn check_after_tick(world: &mut World) {
     let tick = sim::tick(world);
+    // Rules only watch: what they read is not the simulation's (engine rules are off in a `dist`
+    // build, and the content a session read must not depend on that).
+    let _quiet = crate::scope::suspend(world);
     let Some(invariants) = world.get_resource::<AiInvariants>() else {
         return;
     };

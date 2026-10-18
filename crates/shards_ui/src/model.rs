@@ -350,6 +350,28 @@ pub fn focusables(world: &World, root: Entity) -> Vec<Entity> {
     out
 }
 
+/// A press on screen `screen` (a click, a value set, a step of navigation): what a press does is
+/// the screen's content, so the simulation counts its definition as read (showing a screen does
+/// not: [`screen_def`] peeks).
+pub fn mark_pressed(world: &World, screen: &str) {
+    if let Some(db) = world.get_resource::<ContentDb>() {
+        let _ = db.get::<ScreenDef>(screen);
+    }
+}
+
+/// The name of the screen `root` is the root of.
+pub fn screen_name(world: &World, root: Entity) -> Option<&str> {
+    world.get_resource::<UiStack>()?.screens().find(|(_, e)| *e == root).map(|(name, _)| name)
+}
+
+/// A press on widget `e` ([`mark_pressed`] on the screen it belongs to, found from the widget
+/// itself, not from its id).
+pub fn mark_widget_pressed(world: &World, e: Entity) {
+    if let Some(name) = screen_of(world, e).and_then(|root| screen_name(world, root)) {
+        mark_pressed(world, name);
+    }
+}
+
 /// The screen that takes input: the newest of the highest layer above the HUD.
 pub fn top_screen(world: &World) -> Option<Entity> {
     let stack = world.get_resource::<UiStack>()?;
@@ -430,10 +452,11 @@ fn focus_note(world: &World, root: Entity) -> String {
 /// Screen `name` as content has it, or what screens there are.
 pub fn screen_def(world: &World, name: &str) -> Result<ScreenDef, String> {
     let db = world.get_resource::<ContentDb>().ok_or("no content database")?;
-    if let Some(def) = db.get::<ScreenDef>(name) {
+    // Showing a screen is not the simulation: only a press counts its screen as read ([`mark_pressed`]).
+    if let Some(def) = db.peek::<ScreenDef>(name) {
         return Ok(def.clone());
     }
-    let names: Vec<&str> = db.ids::<ScreenDef>().collect();
+    let names: Vec<&str> = db.peek_ids::<ScreenDef>().collect();
     Err(if names.is_empty() {
         format!("no screen `{name}`: this game has no screens (content `*.screen.ron`)")
     } else {
@@ -1140,7 +1163,7 @@ pub fn format_number(v: f32) -> String {
 /// `OnEnter(EngineState::InGame)`: the screens content opens at the start (a HUD), by id.
 pub(crate) fn open_start_screens(world: &mut World) {
     let Some(db) = world.get_resource::<ContentDb>() else { return };
-    let start: Vec<String> = db.iter::<ScreenDef>().filter(|(_, d)| d.open_at_start).map(|(id, _)| id.to_owned()).collect();
+    let start: Vec<String> = db.peek_iter::<ScreenDef>().filter(|(_, d)| d.open_at_start).map(|(id, _)| id.to_owned()).collect();
     for name in start {
         if let Err(e) = open(world, &name) {
             warn!("ui: {e}");
@@ -1151,7 +1174,7 @@ pub(crate) fn open_start_screens(world: &mut World) {
 /// `OnEnter(EngineState::MainMenu)`: the game's main menu (`main_menu: true`), by id.
 pub(crate) fn open_main_menu(world: &mut World) {
     let Some(db) = world.get_resource::<ContentDb>() else { return };
-    let menus: Vec<String> = db.iter::<ScreenDef>().filter(|(_, d)| d.main_menu).map(|(id, _)| id.to_owned()).collect();
+    let menus: Vec<String> = db.peek_iter::<ScreenDef>().filter(|(_, d)| d.main_menu).map(|(id, _)| id.to_owned()).collect();
     if menus.is_empty() {
         warn!("ui: the game is in its main menu, and no screen is one (`main_menu: true` in a `*.screen.ron`)");
     }
@@ -1231,7 +1254,7 @@ pub(crate) fn rebuild_edited_screens(world: &mut World) {
     let open: Vec<(String, Entity)> = world.resource::<UiStack>().screens().map(|(n, e)| (n.to_owned(), e)).collect();
     for (name, root) in open {
         let Some(old) = world.get::<UiScreen>(root).cloned() else { continue };
-        match world.resource::<ContentDb>().get::<ScreenDef>(&name).cloned() {
+        match world.resource::<ContentDb>().peek::<ScreenDef>(&name).cloned() {
             Some(def) if def == old.def => {}
             Some(def) => {
                 let at = world.resource::<UiStack>().open.iter().position(|(_, e)| *e == root);

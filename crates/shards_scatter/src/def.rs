@@ -275,6 +275,8 @@ impl ScatterDef {
 
 impl ContentDef for ScatterDef {
     const KIND: &'static str = "scatter";
+    // Only what a machine shows or plays, or what lies outside a session: never in the replay check.
+    const SIMULATION: bool = false;
 
     fn validate(&self, _: &str, refs: &mut Refs) {
         if !(self.density.is_finite() && (0.0..=MAX_DENSITY).contains(&self.density)) {

@@ -514,9 +514,16 @@ fn read_input(
                 for binding in action.bindings.iter().filter(|b| b.is_axis()) {
                     match binding {
                         Binding::MouseMotion { .. } => frame.look_pointer_px += Vec2::new(devices.motion.x, -devices.motion.y),
-                        Binding::Stick { scale, .. } if *scale != 0.0 => {
-                            // Divided by the size of the scale, not the scale: an inverted binding (negative scale) keeps its flipped side, as the look axis does.
-                            let deflection = devices.value(binding) / scale.abs();
+                        &Binding::Stick { stick, deadzone, scale, scale_x, scale_y, .. } => {
+                            // The deflection past the deadzone, before the response curve and the scales,
+                            // keeping only each scale's sign: an inverted binding keeps its flipped side, as
+                            // the look axis does, and an axis scaled to 0 stays off.
+                            let side = |s: Option<f32>| {
+                                let s = s.unwrap_or(scale);
+                                Some(if s == 0.0 { 0.0 } else { s.signum() })
+                            };
+                            let raw = Binding::Stick { stick, deadzone, scale: 1.0, scale_x: side(scale_x), scale_y: side(scale_y), curve: 1.0 };
+                            let deflection = devices.value(&raw);
                             if deflection.length_squared() > frame.look_stick.length_squared() {
                                 frame.look_stick = deflection;
                             }
