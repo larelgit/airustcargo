@@ -91,6 +91,7 @@ pub use shards_settings as settings;
 #[cfg(feature = "steam")]
 pub use shards_steam as steam;
 pub use shards_ui as ui;
+pub use shards_voxel as voxel;
 pub use shards_world as world;
 
 pub use ai_core::HeavyConfig;

@@ -159,6 +159,11 @@ pub struct EngineConfig {
     /// rule), and by `--no-engine-invariants`. Test apps, `--verify`, fuzz and soak keep it on.
     /// Read when the plugins are built, so set it before.
     pub engine_invariants: bool,
+    /// The engine's rules that are off by default, turned on by name (`--engine-invariant NAME`,
+    /// once a rule): `voxel.body_in_solid` (shards_motion), which waits for fuzz runs on voxel
+    /// terrain before it is on by default. Only while [`engine_invariants`](Self::engine_invariants)
+    /// is on. Empty by default.
+    pub opt_in_invariants: Vec<String>,
     /// State coverage (`--coverage`): the `coverage` tool lists the states the session reached and what
     /// content declares that it never did ([`ai_core::coverage`]). Off by default; it only reads the
     /// world, so a game plays the same either way.
@@ -337,6 +342,7 @@ impl Default for EngineConfig {
             without: Vec::new(),
             heavy: None,
             engine_invariants: !cfg!(feature = "dist"),
+            opt_in_invariants: Vec::new(),
             coverage: false,
         }
     }
@@ -452,6 +458,13 @@ pub trait EngineAppExt {
     /// modules; a game adds its own with `add_ai_invariant`. Panics on a bad name.
     fn add_engine_invariant(&mut self, name: &str, rule: ai_core::invariants::Invariant) -> &mut Self;
 
+    /// Registers one of the engine's rules that are off by default, as
+    /// [`add_engine_invariant`](Self::add_engine_invariant) does, only when
+    /// [`EngineConfig::opt_in_invariants`] names it and the engine's rules are on. An app without
+    /// an `EngineConfig` does not get it. For a rule that may still fire on legitimate states (it
+    /// waits for fuzz runs); its doc comment says what turns it on by default.
+    fn add_opt_in_engine_invariant(&mut self, name: &str, rule: ai_core::invariants::Invariant) -> &mut Self;
+
     /// Whether the engine's invariant rules are on for this app ([`EngineConfig::engine_invariants`]; on
     /// when there is no `EngineConfig`). For a module whose rule needs a system of its own.
     fn engine_invariants_on(&self) -> bool;
@@ -482,6 +495,17 @@ impl EngineAppExt for App {
             && let Err(e) = self.world_mut().get_resource_or_init::<ai_core::AiInvariants>().add_engine_rule(name, rule)
         {
             panic!("add_engine_invariant: {e}");
+        }
+        self
+    }
+
+    fn add_opt_in_engine_invariant(&mut self, name: &str, rule: ai_core::invariants::Invariant) -> &mut Self {
+        let wanted = self
+            .world()
+            .get_resource::<EngineConfig>()
+            .is_some_and(|c| c.engine_invariants && c.opt_in_invariants.iter().any(|n| n == name));
+        if wanted {
+            self.add_engine_invariant(name, rule);
         }
         self
     }

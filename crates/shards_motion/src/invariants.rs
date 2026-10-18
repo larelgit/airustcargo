@@ -1,9 +1,11 @@
-//! The engine rule `motion.finite`.
+//! The engine rules `motion.finite` (on by default) and `voxel.body_in_solid` (opt-in: off unless a game
+//! or a run turns it on with `--engine-invariant voxel.body_in_solid`).
 
 use ai_core::{with_query, AiId, AiVisible, Offenders};
 use bevy::prelude::*;
 
-use crate::controller::{Mantle, MotionState};
+use crate::controller::{CharacterController, Mantle, MotionState};
+use crate::physics::{Body, Collider};
 
 /// How far a rotation's length may be from 1 before it counts as not normalised.
 const ROTATION_TOLERANCE: f32 = 1e-3;
@@ -62,4 +64,49 @@ fn motion_problem(m: &MotionState) -> Option<String> {
 fn mantle_problem(m: &Mantle) -> Option<String> {
     let finite = m.from.is_finite() && m.corner.is_finite() && m.to.is_finite() && m.t.is_finite() && m.duration.is_finite();
     (!finite).then(|| format!("MotionState.mantle = {m:?} is not finite"))
+}
+
+/// The name of [`body_in_solid`].
+pub const BODY_IN_SOLID: &str = "voxel.body_in_solid";
+
+/// The engine rule `voxel.body_in_solid`: no character (`CharacterController`, `Body::Kinematic`)
+/// has the centre of its capsule (the `Transform` plus the collider's offset) in a solid cell of a
+/// [`VoxelField`](crate::physics::VoxelField) it collides with. The controller keeps bodies out of
+/// solids, so a centre in rock is a collision bug: a sweep that missed a cell seam, a
+/// depenetration that pushed into the next cell. The centre is judged, not the feet, which rest on
+/// a top face.
+///
+/// Carve-out: a body the controller did not place where it is now (`MotionState::placed` is not
+/// its translation, or it has not been placed yet): a `teleport`, a spawn or a region change put it
+/// there this tick, and the next tick's depenetration starts from there.
+///
+/// **Off by default.** Mantle, slide and sloped-step ticks may put the centre in a cell for a tick
+/// (a body hugging a ledge corner), so the motion plugin offers the rule with
+/// `add_opt_in_engine_invariant`: it is checked only when `EngineConfig::opt_in_invariants` names
+/// it (`--engine-invariant voxel.body_in_solid`, for the fuzz runs on voxel terrain). It becomes an
+/// ordinary engine rule, on by default, once those runs have passed (the voxel design, 6.4: twenty
+/// seeds of `shards fuzz` on the voxel arena, each stop explained and carved out here with a test).
+/// A world without fields never breaks it.
+pub fn body_in_solid(world: &World) -> Option<String> {
+    let physics = world.get_resource::<crate::physics::PhysicsWorld>()?;
+    // A world without fields: nothing to judge.
+    physics.fields().next()?;
+    let mut bad = Offenders::default();
+    type Character = (&'static AiId, &'static Transform, &'static MotionState, &'static Collider, &'static Body);
+    with_query::<Character, With<CharacterController>, _>(world, |query| {
+        for (id, tf, state, collider, body) in query.iter(world) {
+            if *body != Body::Kinematic || state.placed != Some(tf.translation) {
+                continue;
+            }
+            let centre = tf.translation + tf.rotation * collider.offset;
+            for (_, field_id, field) in physics.fields() {
+                let cell = field.cell_at(centre);
+                if field.layers().memberships.intersects(collider.layers.filters) && field.solid(cell) {
+                    bad.note(*id, || format!("capsule centre {centre} is in solid cell {cell} of field {field_id}"));
+                    break;
+                }
+            }
+        }
+    })?;
+    bad.report()
 }

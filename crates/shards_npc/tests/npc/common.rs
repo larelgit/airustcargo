@@ -156,6 +156,7 @@ pub fn home(world: &mut World, e: Entity, at: Vec3, leash: f32) {
 pub fn step(app: &mut App, ticks: u64) {
     let report = ai_core::sim::step(app.world_mut(), ticks, Duration::from_secs(300), |_| None).unwrap();
     assert!(!matches!(report.end, StepEnd::SystemFailed(_)), "a system failed: {:?}", report.end);
+    assert!(!matches!(report.end, StepEnd::InvariantViolated(_)), "a rule was violated: {:?}", report.end);
 }
 
 /// Calls `tool` as agent `dev` (dev scope, the player's body).

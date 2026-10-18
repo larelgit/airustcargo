@@ -104,6 +104,58 @@ fn a_transform_or_motion_state_with_nan_stops_the_game() {
     assert!(line.contains("e5 MotionState.velocity = ") && line.ends_with("is not finite"), "{line}");
 }
 
+/// A block of solid voxel cells under the canyon floor (inside the world's bounds, away from the
+/// arena): 16 m of 1 m cells around (120, -20, 0).
+fn block(app: &mut App) {
+    use shards::motion::{VoxelCollider, VoxelField};
+    app.world_mut().spawn(VoxelCollider::new(VoxelField::new(Vec3::new(112.0, -28.0, -8.0), 1.0, UVec3::splat(16), |_| true)));
+}
+
+/// Teleports the player into the block: its feet at the block's middle, its capsule centre in cell
+/// (8, 8, 8), placed by something other than the controller (as `teleport` does).
+fn bury(world: &mut World) {
+    let player = body(world, 5);
+    world.get_mut::<Transform>(player).unwrap().translation = Vec3::new(120.5, -20.0, 0.5);
+}
+
+/// The sandbox with `voxel.body_in_solid` on (`--engine-invariant voxel.body_in_solid`), or not.
+fn voxel_rule(on: bool) -> App {
+    sandbox::test_app_with(|config| {
+        config.seed = 42;
+        if on {
+            config.opt_in_invariants = vec![shards::motion::BODY_IN_SOLID.into()];
+        }
+    })
+}
+
+#[test]
+fn a_body_in_a_solid_voxel_cell_stops_the_game_once_the_rule_is_on() {
+    use shards::motion::{body_in_solid, BODY_IN_SOLID};
+    let names = |app: &App| app.world().resource::<AiInvariants>().rule_names().join(",");
+    // Off by default: not even listed, and a body in rock goes unjudged.
+    let mut app = voxel_rule(false);
+    assert!(!names(&app).contains(BODY_IN_SOLID), "{}", names(&app));
+    block(&mut app);
+    plant(&mut app, 3, bury);
+    let out = called(&mut app, "step", json!({"ticks": 20}));
+    assert!(out.halted.is_none(), "{}", text(&out));
+
+    // On. A world without fields is not judged.
+    let app = voxel_rule(true);
+    assert!(names(&app).starts_with("ai.index_consistent") && names(&app).contains(BODY_IN_SOLID), "{}", names(&app));
+    assert_eq!(body_in_solid(app.world()), None);
+
+    // Teleported into the rock: not on that tick (the controller did not put it there); on the
+    // next, the controller has run and placed the body where it is, still deep in a block no
+    // depenetration gets out of in a tick: a real controller tick that leaves the centre in a
+    // solid cell, named with the body, its centre and the cell.
+    let mut app = voxel_rule(true);
+    block(&mut app);
+    plant(&mut app, 3, bury);
+    let line = stops_on(&mut app, BODY_IN_SOLID, 4);
+    assert!(line.contains("e5 capsule centre [") && line.contains("] is in solid cell [") && line.contains(" of field "), "{line}");
+}
+
 #[test]
 fn an_id_written_in_place_breaks_the_index() {
     let mut app = sandbox::test_app(42);
@@ -219,6 +271,33 @@ fn an_npc_in_a_state_its_behavior_lacks_stops_the_game() {
         brain.active = false;
     });
     assert_eq!(step(&mut app, 10), "ran 10 ticks (0 → 10)");
+}
+
+#[test]
+fn two_planned_strikes_closer_than_the_spacing_stop_the_game() {
+    use shards::npc::NpcStrike;
+    // The skeletons' director spaces strikes 0.7 s apart; two of them are found to have begun
+    // planned strikes 10 ticks apart. The rule's own cases are tested where it lives (shards_npc).
+    let mut app = sandbox::test_app(42);
+    called(
+        &mut app,
+        "content_apply",
+        json!({"changes": [{"kind": "director", "id": "default",
+            "before": {"patience": 3.0, "tokens": {"1": 2, "2": 3, "3": 4}, "waiting": [
+                {"distance": 3.5, "orbit": 1.2, "period": 2.0, "role": "Circle", "speed": 0.5},
+                {"distance": 3.0, "orbit": 1.0, "period": 1.5, "role": "Strafe", "speed": 0.5},
+                {"distance": 5.0, "orbit": 1.0, "period": 2.0, "role": "Hold", "speed": 0.5}
+            ]},
+            "def": {"tokens": {"1": 2, "2": 3, "3": 4}, "waiting": [{"role": "Circle", "distance": 3.5, "orbit": 1.2}], "patience": 3.0, "min_spacing": 0.7}}]}),
+    );
+    plant(&mut app, 3, |world| {
+        for (id, at) in [(7, 100), (8, 110)] {
+            let e = body(world, id);
+            world.entity_mut(e).insert(NpcStrike { last_start: at, gated: true, pool: "default".into() });
+        }
+    });
+    let line = stops_on(&mut app, "npc.strike_spacing", 3);
+    assert!(line.contains("e8 NpcStrike: began a strike on tick 110, 10 ticks after e7's on tick 100"), "{line}");
 }
 
 #[test]

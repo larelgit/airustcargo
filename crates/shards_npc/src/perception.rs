@@ -11,6 +11,9 @@
 //!   the noise is: a hit gives its attacker's place, not the victim's); any other leaves a
 //!   point to investigate.
 //! - **Memory**: what was sensed stays known for `memory` seconds at its last known place.
+//! - **Keep range** ([`PerceptionDef::keep_range`]): a target that is still known stays seen
+//!   (its place refreshed) up to this far, with the same field of view and a clear ray;
+//!   `sight_range` only decides what is noticed anew.
 //!
 //! The **focus** (the NPC's target) sticks to what it has while it is known, unless another
 //! target is seen much closer; else the nearest seen, else the most recently sensed.
@@ -100,6 +103,7 @@ impl Perceived {
 const SWITCH: f32 = 0.6;
 
 /// The body point sight aims at: the collider's centre, else a meter above the feet.
+#[expect(clippy::disallowed_methods, reason = "the entity is a body (an NPC's target), whose collider is its capsule; a voxel field is never a target")]
 fn body_point(physics: &PhysicsWorld, entity: Entity, feet: Vec3) -> Vec3 {
     physics.collider(entity).map_or(feet + Vec3::Y, |c| c.position)
 }
@@ -116,9 +120,23 @@ pub fn sight_clear(physics: &PhysicsWorld, eye: Vec3, point: Vec3) -> bool {
 /// Whether an NPC at `feet` facing `facing` with perception `def` sees a body at `point`
 /// (feet `target_feet`).
 pub fn sees(physics: &PhysicsWorld, def: &PerceptionDef, feet: Vec3, facing: Vec3, target_feet: Vec3, point: Vec3) -> bool {
+    sees_within(physics, def, def.sight_range, feet, facing, target_feet, point)
+}
+
+/// [`sees`] with the range spelled out: a known target is seen up to
+/// [`PerceptionDef::keep_range`], a new one up to `sight_range`.
+pub fn sees_within(
+    physics: &PhysicsWorld,
+    def: &PerceptionDef,
+    range: f32,
+    feet: Vec3,
+    facing: Vec3,
+    target_feet: Vec3,
+    point: Vec3,
+) -> bool {
     let to = flat(target_feet - feet);
     let distance = to.length();
-    if distance > def.sight_range {
+    if distance > range {
         return false;
     }
     if distance > def.near && def.fov_deg < 360.0 {
@@ -218,7 +236,12 @@ fn sense(
     };
     let hostiles = candidates.iter().filter(|c| c.entity != entity && c.id != me && hostile(team, c.team.as_ref()));
     for c in hostiles.clone() {
-        let seen = sees(physics, def, feet, facing, c.feet, c.point);
+        // A target still known is kept in sight farther out than a new one is noticed.
+        let range = match def.keep_range {
+            Some(keep) if next.known.iter().any(|k| k.id == c.id && k.age <= def.memory + 1e-4) => keep.max(def.sight_range),
+            _ => def.sight_range,
+        };
+        let seen = sees_within(physics, def, range, feet, facing, c.feet, c.point);
         let heard = c.sprinting && flat(c.feet - feet).length() <= tuning.sprint_noise * def.hearing;
         if seen || heard {
             sensed(c.id, c.feet, seen, heard, &mut next.known);

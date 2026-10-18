@@ -167,6 +167,8 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("shards_save::section::SaveRegistry", "the save sections, registered at build time"),
     // shards_scatter
     ("shards_scatter::ScatterState", "strewn foliage: the picture, without AiId or colliders"),
+    // shards_voxel
+    ("shards_voxel::worldgen::VoxelSteps", "the voxel generation steps and checks, registered at build time"),
     // shards_settings
     ("shards_settings::", "the player's settings and their registry"),
     // shards_ui

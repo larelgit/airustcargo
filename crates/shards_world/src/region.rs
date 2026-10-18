@@ -746,7 +746,8 @@ pub fn ground_below(world: &mut World, at: Vec3, exclude: &[Entity]) -> Option<f
         if hit.distance > 0.0 {
             return Some(hit.point.y);
         }
-        from.y = physics.collider(hit.entity)?.aabb_max.y + 0.05;
+        // Above the solid the ray started in: a collider's box top, a voxel field's run of cells.
+        from.y = physics.extent_at(hit.entity, hit.point)?.1 + 0.05;
     }
     None
 }
@@ -1038,4 +1039,39 @@ pub(crate) fn build_start_region(world: &mut World) {
         Err(why) => StartRegion::Failed(format!("start region: {why}")),
     };
     world.insert_resource(next);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shards_motion::{VoxelCollider, VoxelField};
+
+    /// A floor (top 0), a plateau 3..5 over x 2..6 (a tunnel under it) and a pillar 0..10 at
+    /// x 8..9, of 0.5 m cells; or the same as boxes.
+    fn world(field: bool) -> World {
+        let mut world = World::new();
+        world.init_resource::<ColliderIds>();
+        world.init_resource::<PhysicsWorld>();
+        if field {
+            let solid = |c: IVec3| c.y < 2 || ((4..12).contains(&c.x) && (8..12).contains(&c.y)) || ((16..18).contains(&c.x) && c.y < 22);
+            world.spawn(VoxelCollider::new(VoxelField::new(Vec3::new(0.0, -1.0, 0.0), 0.5, UVec3::new(20, 24, 8), solid)));
+        } else {
+            for (centre, half) in [(Vec3::new(5.0, -0.5, 2.0), Vec3::new(5.0, 0.5, 2.0)), (Vec3::new(4.0, 4.0, 2.0), Vec3::new(2.0, 1.0, 2.0)), (Vec3::new(8.5, 5.0, 2.0), Vec3::new(0.5, 5.0, 2.0))] {
+                world.spawn((Collider::new(Shape::cuboid(half)), Transform::from_translation(centre)));
+            }
+        }
+        world
+    }
+
+    #[test]
+    fn the_ground_below_is_the_run_of_cells_a_ray_meets_or_climbs_out_of() {
+        for field in [true, false] {
+            let mut world = world(field);
+            let mut ground = |x: f32, y: f32| ground_below(&mut world, Vec3::new(x, y, 2.25), &[]);
+            assert_eq!(ground(1.25, 0.0), Some(0.0), "the floor");
+            assert_eq!(ground(4.25, 0.5), Some(0.0), "in the tunnel: its floor, not the plateau above");
+            assert_eq!(ground(4.25, 4.5), Some(5.0), "on the plateau");
+            assert_eq!(ground(8.25, 7.0), Some(10.0), "from inside the pillar: out over its top");
+        }
+    }
 }
