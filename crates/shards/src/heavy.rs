@@ -42,6 +42,7 @@ pub fn twin_config(config: &EngineConfig) -> EngineConfig {
         world_slot: None,
         steam: SteamLaunch { connect: false, host: false, server: false, ..config.steam.clone() },
         heavy: None,
+        coverage: false,
         ..config.clone()
     }
 }

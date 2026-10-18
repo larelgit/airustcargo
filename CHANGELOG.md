@@ -96,9 +96,20 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   a test plays the same run in-process. The schema of `Id` says `"format": "entity_id"`, which is how the generator finds the arguments that take an entity id.
 - The sandbox test `tool_contracts`: every query and action tool, and `step`, is called 30 times (20 valid by schema, 10 invalid on purpose); no gameplay system fails, no tool panics, an error is not empty and
   names the signature or the bad argument, and the session's replay plays back from tick 0, which proves every successful action call was recorded. Control tests plant each bug class and show the checker names it.
+- State coverage (`ai_core::coverage`): `--coverage` (`EngineConfig::coverage`, off by default) counts one signature per visible entity per tick,
+  made of the parts modules register with `add_coverage_part` (the engine's: `kind`, `motion`, `action`, `statuses`, `stamina`, `npc`), and
+  `add_coverage_catalog` names what content declares so the tools can say what was never reached. The `coverage` query (`shards coverage
+  [--top N] [--since K]`, `json=true`) lists the totals, the rarest signatures, what is new since an earlier `distinct`, and the actions,
+  statuses and behaviour states never reached; `coverage_reset` (`shards coverage reset`) clears it. Only reads the world: not in the
+  hash, replays or snapshots, and a game with it on records the same replay.
+- `shards_script::minimize` (`ddmin` over any list, with a budget) and `shards_script::regress` (the shrunk rounds of a fuzz run as a
+  scenario: header, `seed S`, `act?` and `step` lines). `crates/sandbox/scenarios/regress/` holds such scenarios; `scenario_files.rs` runs each on a fresh game of its seed, forward only.
+- `shards fuzz --steer` (weights follow new coverage signatures) and `--minimize [--budget N]` (shrinks a session that halted, or whose chaos round trip did not come back, and writes `scenarios/regress/<date>-<stop>-seed<S>.scenario`); `shards_script::{stop, shrink}` and `shards::testing::fuzz_and_shrink` (each attempt on a fresh game, in heavy mode when the run had it). A regress file for a heavy stop says `# heavy: every=N span=K offset=O` in its header, and the runner plays it that way.
+- The nightly fuzz campaign: `crates/sandbox/tests/fuzz_campaign.rs` (`#[ignore]`; `SHARDS_FUZZ_SEED`, `_RUNS`, `_INPUTS`, `_HEAVY`, `_CHAOS`, `_BUDGET`, `_SHRINK_SECS`, `_MINUTES`, `_OUT`, `_REGRESS`) and the job `fuzz` of `nightly.yml`: 50 runs of 2000 rounds with chaos, steering and heavy mode, shrunk scenarios, replays and a coverage report as the artifact `fuzz`.
 
 ### Changed
 
+- The UI's journal lines (`ui: opened pause`, `ui: closed pause`, `ui: … pressed`, …) are `JournalKind::Local`, not `Event`: screens are outside the simulation and the snapshot, so a heavy twin never had them, and the first fuzz campaign stopped on `ui_close` for that. They are still in the journal and in `expect journal`.
 - `shards_script`: a tool call's `Outcome` carries `halted` (why the game stopped itself during the call), so a driver other than the CLI sees a halted `step`.
 - `soak.yml` runs every night (it ran on Mondays).
 - `shards_cli`: the test `a_stale_port_file_is_neither_a_member_nor_a_reason_to_give_up` no longer uses a port that was bound and released (another test's stand could be given it): the stale file names the discard port.

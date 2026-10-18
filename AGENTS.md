@@ -52,6 +52,9 @@ cargo sandbox --replay FILE --verify    # replay without a window; add --windowe
 cargo sandbox --replay FILE --verify --heavy 30   # also: from every 30th tick's snapshot, a fresh game goes on the same (heavy mode)
 cargo shards assert add hp 'field:6:Health.current<300'   # rule: the game stops when it is broken (`step` → exit code 3)
 cargo shards fuzz --seed 7 --steps 300 --chaos 0.02 --invalid 0.05  # random player inputs from the tool schemas, 2% developer calls, 5% broken on purpose, until a rule is broken
+cargo shards fuzz --seed 7 --steps 300 --chaos 0.02 --steer --minimize  # needs a game started with --coverage; on a stop, shrinks the session and writes scenarios/regress/<date>-<stop>-seed7.scenario
+cargo sandbox --coverage --headless --paused --port 0 --port-file /tmp/g.port &   # also counts the states the session reaches
+cargo shards coverage [--since K]       # distinct signatures, the rarest, what is new since K, what content declares and was never reached; `coverage reset` clears it
 cargo shards soak --minutes 30 --regen wilds   # stand: agents with a seed play for all participants, until the first desync
 kill <pid>                              # pid from `wait`; on Windows (and everywhere) — cargo shards quit
 cargo shards package --manifest-path template/Cargo.toml   # build for players in template/dist/ and its check (`--smoke`, DLL)
@@ -332,6 +335,8 @@ It is written when a panic happens on another thread (the render thread, a task)
   (nextest does not run doctests); the template: `cargo nextest run --manifest-path template/Cargo.toml --locked --profile ci`. nextest runs each test in
   its own process, so an in-test `static Mutex` serialises nothing there: a test that writes a fixed file name belongs in a test group of
   `.config/nextest.toml` (`snapshot-file`, `shards-snapshots`), with the lock kept for `cargo test`. Without the profile (`cargo nextest run`) there are no retries.
+- A scenario a fuzz run shrank is a regression test: `crates/sandbox/scenarios/regress/<YYYYMMDD>-<stop>-seed<S>.scenario`, which fails while its
+  bug exists and is committed with the fix (`scenario_files.rs` runs each on a fresh game of its seed, forward only; see "Fuzzing" in `docs/manual.md`).
 - Put behaviour that you can describe with `shards` commands into a scenario file in `<crate>/scenarios/`
   (`*.scenario`, format in `docs/manual.md`, "Scenarios (E11)"). The sandbox's `tests/scenario_files.rs` runs each file
   in-process (forward, then back, in one game), and `shards scenario` runs against a live game. The file must run on a fresh game and after

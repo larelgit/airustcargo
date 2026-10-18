@@ -51,6 +51,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("bevy_world_serialization::", "the scene spawner"),
     // ai_core
     ("ai_core::builtin::AiConditions", "the registry of named conditions, filled at build time"),
+    ("ai_core::coverage::CoverageParts", "the coverage parts and catalogs, registered at build time (AiCoverage itself exists only with coverage on)"),
     ("ai_core::crash::GameInfo", "the game's name and version for crash reports, set at build time"),
     ("ai_core::crash::Reported", "the panics a crash report was written for already"),
     ("ai_core::crash::Watched", "the crash reporter's count of panic hooks it has seen"),

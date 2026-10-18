@@ -48,6 +48,7 @@
 pub mod ai;
 pub mod camera;
 pub mod controller;
+mod coverage;
 pub mod input;
 mod intent;
 mod invariants;
@@ -112,6 +113,7 @@ impl Plugin for MotionPlugin {
         app.add_engine_module("motion", VERSION);
         app.add_engine_invariant("motion.finite", motion_finite);
         ai::plugin(app);
+        coverage::plugin(app);
         intent::plugin(app);
         tools::plugin(app);
         perception::plugin(app);

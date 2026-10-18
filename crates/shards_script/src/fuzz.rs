@@ -130,6 +130,10 @@ pub struct FuzzPlan {
     pub stem: String,
     /// Save the session as a replay at the end (or when the game halts).
     pub save_replay: bool,
+    /// Steer by coverage (`--steer`): a tool's weight grows with the new coverage signatures that
+    /// appeared in the rounds it was called in, decaying round by round. Needs a game with
+    /// coverage on. It tilts the weights of `--weights`; same seed, same game, same draws.
+    pub steer: bool,
 }
 
 impl FuzzPlan {
@@ -145,8 +149,71 @@ impl FuzzPlan {
             agent: "fuzz".to_owned(),
             stem: format!("fuzz-seed{seed}"),
             save_replay: false,
+            steer: false,
         }
     }
+}
+
+/// How much of a tool's credit stays after a round.
+const STEER_DECAY: f64 = 0.995;
+/// The most a tool's weight grows by, as a multiple of its base weight.
+const STEER_CAP: f64 = 15.0;
+/// Integer weights per unit of base weight: room for the steered share to be a fraction.
+const STEER_SCALE: f64 = 16.0;
+
+/// What `--steer` has learned: for each tool, how many new coverage signatures showed up in the
+/// rounds it was called in, decayed. Deterministic: plain arithmetic, tools in name order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Steering {
+    credit: BTreeMap<String, f64>,
+}
+
+impl Steering {
+    /// A round is over: every credit decays, and each tool called in it is credited with the
+    /// `new` signatures that appeared.
+    pub fn credit_round(&mut self, called: &[&str], before: &[&str], new: u64) {
+        for credit in self.credit.values_mut() {
+            *credit *= STEER_DECAY;
+        }
+        if new == 0 {
+            return;
+        }
+        let mut tools: Vec<&str> = called.to_vec();
+        tools.sort_unstable();
+        tools.dedup();
+        for tool in tools {
+            *self.credit.entry(tool.to_owned()).or_default() += new as f64;
+        }
+        // What led into the round shares the credit, half of it: a state is often a sequence (a heavy
+        // attack, then a dodge in its windup), and the tool before it opened the way.
+        let mut lead: Vec<&str> = before.to_vec();
+        lead.sort_unstable();
+        lead.dedup();
+        for tool in lead {
+            *self.credit.entry(tool.to_owned()).or_default() += new as f64 / 2.0;
+        }
+    }
+
+    /// The weight of `tool` whose base weight is `base`: grows with its credit, up to sixteen times.
+    pub fn weight(&self, tool: &str, base: u64) -> u64 {
+        let credit = self.credit.get(tool).copied().unwrap_or(0.0).min(STEER_CAP);
+        (base as f64 * STEER_SCALE * (1.0 + credit)) as u64
+    }
+
+    pub fn credit(&self, tool: &str) -> f64 {
+        self.credit.get(tool).copied().unwrap_or(0.0)
+    }
+}
+
+/// `coverage`'s answer to `since`: the distinct signatures so far and how many are new since.
+fn coverage_poll(driver: &mut dyn Driver, agent: &str, since: Option<usize>) -> Result<(usize, u64), String> {
+    let out = driver.call(agent, "coverage", json!({"json": true, "top": 0, "since": since}))?;
+    if !out.ok {
+        return Err(format!("--steer needs the game to keep coverage: {}", out.text()));
+    }
+    let answer: Value = serde_json::from_str(&out.text()).map_err(|e| format!("the coverage tool answered something else than JSON: {e}"))?;
+    let distinct = answer["distinct"].as_u64().ok_or("the coverage answer has no `distinct`")? as usize;
+    Ok((distinct, answer["new_since"].as_u64().unwrap_or(0)))
 }
 
 /// The default share of calls with an argument broken on purpose.
@@ -458,6 +525,13 @@ pub fn run(driver: &mut dyn Driver, plan: &FuzzPlan, tools: &[ToolDesc]) -> Resu
         Alphabet::Schema => vocabulary(&mut *run.driver, &plan.agent)?,
         Alphabet::Classic => Vec::new(),
     };
+    let mut steering = Steering::default();
+    // The tools of the round before, which share the credit of the round after.
+    let mut led_into: Vec<String> = Vec::new();
+    let mut distinct = match plan.steer {
+        true => coverage_poll(&mut *run.driver, &plan.agent, None)?.0,
+        false => 0,
+    };
     let mut first = true;
     for round in 1..=plan.rounds {
         run.round.clear();
@@ -486,7 +560,13 @@ pub fn run(driver: &mut dyn Driver, plan: &FuzzPlan, tools: &[ToolDesc]) -> Resu
                 }
                 Alphabet::Schema => {
                     let hints = Hints { ids: &ids, words: &words };
-                    let tool = weighted[pick_weighted(&mut rng, &weighted)].0;
+                    let tool = match plan.steer {
+                        true => {
+                            let steered: Vec<(&ToolDesc, u64)> = weighted.iter().map(|(t, w)| (*t, steering.weight(&t.name, *w))).collect();
+                            steered[pick_weighted(&mut rng, &steered)].0
+                        }
+                        false => weighted[pick_weighted(&mut rng, &weighted)].0,
+                    };
                     if chance(&mut rng, plan.invalid) {
                         (tool.name.clone(), invalid_args(&tool.schema, &mut rng, hints).args, true)
                     } else {
@@ -506,7 +586,17 @@ pub fn run(driver: &mut dyn Driver, plan: &FuzzPlan, tools: &[ToolDesc]) -> Resu
         run.report.rounds = round;
         let ticks = 1 + rng.below(plan.max_ticks);
         let step = run.call("step", json!({"ticks": ticks}))?;
-        let calls = std::mem::take(&mut run.round);
+        // The step is the round's `ticks`, not one of its calls: whoever plays the round again steps once.
+        let mut calls = std::mem::take(&mut run.round);
+        calls.pop_if(|(tool, _)| tool == "step");
+        if plan.steer {
+            let (now, new) = coverage_poll(&mut *run.driver, &plan.agent, Some(distinct))?;
+            distinct = now;
+            let called: Vec<&str> = calls.iter().map(|(t, _)| t.as_str()).collect();
+            let before: Vec<&str> = led_into.iter().map(String::as_str).collect();
+            steering.credit_round(&called, &before, new);
+            led_into = called.iter().map(|t| (*t).to_owned()).collect();
+        }
         run.report.played.push(Round { calls, ticks });
         if let Some(tick) = step.tick {
             run.report.to_tick = tick;
@@ -694,6 +784,15 @@ mod tests {
     }
 
     #[test]
+    fn a_played_round_holds_its_calls_and_the_length_of_its_step_not_the_step_call() {
+        let report = run(&mut Recorder::default(), &plan(4), &tools()).unwrap();
+        assert!(!report.played.is_empty());
+        for round in &report.played {
+            assert!(round.ticks > 0 && round.calls.iter().all(|(t, _)| t != "step"), "{round:?}");
+        }
+    }
+
+    #[test]
     fn the_same_seed_and_tools_make_the_same_calls() {
         let tools = tools();
         let plan = FuzzPlan { chaos: 0.2, ..plan(7) };
@@ -864,5 +963,112 @@ mod tests {
     fn a_game_without_player_actions_is_told_what_to_do() {
         let err = run(&mut Recorder::default(), &plan(1), &[]).unwrap_err();
         assert!(err.contains("--alphabet classic"), "{err}");
+    }
+
+    /// A game that keeps coverage and finds something new only when `zap` is played.
+    #[derive(Default)]
+    struct Rewarding {
+        distinct: usize,
+        zapped: bool,
+        tick: u64,
+        polls: usize,
+    }
+
+    impl Driver for Rewarding {
+        fn call(&mut self, _agent: &str, tool: &str, args: Value) -> Result<Outcome, String> {
+            let mut out = match tool {
+                "observe" => Outcome::ok(OBSERVATION),
+                "content_list" => Outcome::err("none"),
+                "zap" => {
+                    self.zapped = true;
+                    Outcome::ok("ok")
+                }
+                "step" => {
+                    self.tick += args["ticks"].as_u64().unwrap();
+                    Outcome::ok("ok")
+                }
+                "coverage" => {
+                    self.polls += 1;
+                    let since = args["since"].as_u64().map(|s| s as usize);
+                    if std::mem::take(&mut self.zapped) {
+                        self.distinct += 3;
+                    }
+                    let new = since.map(|s| self.distinct.saturating_sub(s));
+                    Outcome::ok(json!({"distinct": self.distinct, "new_since": new}).to_string())
+                }
+                _ => Outcome::ok("ok"),
+            };
+            out.tick = Some(self.tick);
+            Ok(out)
+        }
+
+        fn session(&mut self, _: &str, _: &SessionConfig) -> Result<Outcome, String> {
+            unreachable!()
+        }
+
+        fn status(&mut self) -> Result<Status, String> {
+            unreachable!()
+        }
+
+        fn journal_since(&mut self, _: u64) -> Result<JournalRead, String> {
+            unreachable!()
+        }
+    }
+
+    fn zaps(plan: &FuzzPlan) -> (u64, Vec<Round>) {
+        let tools = vec![
+            tool("zap", "player", "action", json!({"type": "object", "properties": {}})),
+            tool("aim", "player", "action", json!({"type": "object", "properties": {}})),
+            tool("jab", "player", "action", json!({"type": "object", "properties": {}})),
+            tool("hop", "player", "action", json!({"type": "object", "properties": {}})),
+        ];
+        let report = run(&mut Rewarding::default(), plan, &tools).unwrap();
+        (report.calls.get("zap").copied().unwrap_or(0), report.played)
+    }
+
+    #[test]
+    fn steering_credits_the_tools_called_in_a_round_that_found_something_new() {
+        let mut steering = Steering::default();
+        assert_eq!(steering.weight("zap", 1), 16);
+        steering.credit_round(&["zap", "aim", "zap"], &[], 2);
+        assert_eq!(steering.credit("zap"), 2.0);
+        assert_eq!(steering.credit("hop"), 0.0);
+        assert_eq!(steering.weight("zap", 1), 48);
+        assert_eq!(steering.weight("zap", 0), 0, "weight 0 drops a tool whatever it earned");
+        // Credit fades, and is capped.
+        steering.credit_round(&["aim"], &[], 0);
+        assert!(steering.credit("zap") < 2.0);
+        steering.credit_round(&["zap"], &[], 1000);
+        assert_eq!(steering.weight("zap", 1), 16 * 16);
+    }
+
+    #[test]
+    fn the_tool_before_a_round_that_found_something_new_shares_half_its_credit() {
+        let mut steering = Steering::default();
+        steering.credit_round(&["dodge"], &["heavy_attack"], 4);
+        assert_eq!((steering.credit("dodge"), steering.credit("heavy_attack")), (4.0, 2.0));
+    }
+
+    #[test]
+    fn steering_shifts_the_draws_toward_the_tool_that_pays_and_is_deterministic() {
+        let base = FuzzPlan { rounds: 200, chaos: 0.0, invalid: 0.0, ..FuzzPlan::new(11) };
+        let (plain, _) = zaps(&base);
+        let steered_plan = FuzzPlan { steer: true, ..base.clone() };
+        let (steered, played) = zaps(&steered_plan);
+        // Of four equal tools, about a quarter are zaps; steering finds the paying one.
+        assert!(plain < 80, "{plain}");
+        assert!(steered > plain + 20, "steered {steered} against {plain}");
+        // The same seed against the same game draws the same.
+        assert_eq!(zaps(&steered_plan).1, played);
+        // Another seed draws another run, steered the same way.
+        assert_ne!(zaps(&FuzzPlan { steer: true, ..FuzzPlan { seed: 12, ..base } }).1, played);
+    }
+
+    #[test]
+    fn steering_without_coverage_says_how_to_turn_it_on() {
+        let tools = tools();
+        let plan = FuzzPlan { steer: true, ..plan(1) };
+        let err = run(&mut Recorder { refuse: vec!["coverage"], ..Recorder::default() }, &plan, &tools).unwrap_err();
+        assert!(err.contains("--steer needs the game to keep coverage"), "{err}");
     }
 }

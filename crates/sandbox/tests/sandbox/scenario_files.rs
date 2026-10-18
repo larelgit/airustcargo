@@ -287,3 +287,106 @@ step 30
         "session coach on host: there is no player 7 with a body now; players: 0 (e5), 1 (e15), 2 (e16)"
     );
 }
+
+// --- regression scenarios -----------------------------------------------------------
+//
+// `scenarios/regress/*.scenario` are the sessions a fuzz run shrank (`shards_script::regress`).
+// Each runs on a fresh game started with the seed its `seed` line names, forward only, never in
+// the shared game of the tests above: it was written for a game that starts at tick 0. A file
+// fails while its bug exists and is committed with the fix.
+
+/// The folder of the regression scenarios (may hold none).
+fn regress_dir() -> PathBuf {
+    single_game_dir().join("regress")
+}
+
+/// The `*.scenario` files directly in `dir`, in file-name order; none is fine.
+fn regress_files(dir: &Path) -> Vec<PathBuf> {
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = read
+        .filter_map(|entry| Some(entry.ok()?.path()))
+        .filter(|path| path.extension().is_some_and(|ext| ext == "scenario"))
+        .collect();
+    files.sort();
+    files
+}
+
+/// Runs a regression scenario on a fresh game of the seed it names (42 without a `seed` line), in heavy
+/// mode when its header asks for it.
+fn run_regress_file(file: &Path) -> shards::script::Report {
+    let text = std::fs::read_to_string(file).unwrap_or_else(|e| panic!("cannot read {}: {e}", file.display()));
+    let name = file.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    let seed = Script::parse(&name, &text).ok().and_then(|script| script.seed()).unwrap_or(42);
+    // A heavy stop needs heavy mode on to happen; the file's header says which.
+    let mut app = match shards::script::regress::heavy_of(&text) {
+        Some((every, span, offset)) => shards::testing::heavy_app(
+            move |config| config.seed = seed,
+            |app| {
+                app.add_plugins(sandbox::SandboxPlugin);
+            },
+            shards::HeavyConfig { every, span, offset },
+        ),
+        None => sandbox::test_app(seed),
+    };
+    run_file(app.world_mut(), file)
+}
+
+#[test]
+fn every_regression_scenario_passes_on_a_fresh_game() {
+    let _turn = snapshot_file_turn();
+    let mut failed = Vec::new();
+    for file in regress_files(&regress_dir()) {
+        let report = run_regress_file(&file);
+        if !report.passed {
+            failed.push(report.to_string());
+        }
+    }
+    assert!(failed.is_empty(), "{} regression scenario(s) fail; fix the bug they name:\n\n{}", failed.len(), failed.join("\n\n"));
+}
+
+fn temp_regress_dir(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("sandbox_regress_{tag}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// The runner: a file that passes, one whose planted rule halts the game inside a step (a step
+/// cut short fails a scenario), and one whose expectation is wrong; the folder is read in name
+/// order and a seed other than 42 starts a game of that seed.
+#[test]
+fn the_regression_runner_passes_a_good_file_and_fails_a_planted_one() {
+    let dir = temp_regress_dir("runner");
+    let good = dir.join("20261017-fine-seed42.scenario");
+    std::fs::write(&good, "seed 42\nact? heal\nstep 10\nexpect field e5 Health.current > 0\n").unwrap();
+    // Written the way the fuzzer writes one: the rule fires inside a step.
+    let planted = dir.join("20261017-planted-seed9.scenario");
+    std::fs::write(
+        &planted,
+        "seed 9\nact? assert_add name=planted when='{\"gone\":999}'\nact? heal\nstep 10\n",
+    )
+    .unwrap();
+    let wrong = dir.join("20261017-wrong-seed42.scenario");
+    std::fs::write(&wrong, "seed 42\nstep 5\nexpect result contains \"never printed\"\n").unwrap();
+    let names: Vec<String> = regress_files(&dir).iter().map(|f| f.file_name().unwrap().to_string_lossy().into_owned()).collect();
+    assert_eq!(names, ["20261017-fine-seed42.scenario", "20261017-planted-seed9.scenario", "20261017-wrong-seed42.scenario"]);
+
+    let report = run_regress_file(&good);
+    assert!(report.passed, "{report}");
+    let report = run_regress_file(&planted);
+    assert!(!report.passed, "a step cut short must fail the file:\n{report}");
+    assert!(report.to_string().contains("planted"), "{report}");
+    let report = run_regress_file(&wrong);
+    assert!(!report.passed, "{report}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The folder in the repository is there (with a README saying what goes in it) and holds
+/// only files the runner reads.
+#[test]
+fn the_regression_folder_exists_and_explains_itself() {
+    let readme = std::fs::read_to_string(regress_dir().join("README.md")).expect("scenarios/regress/README.md");
+    assert!(readme.contains("fuzz"), "{readme}");
+}

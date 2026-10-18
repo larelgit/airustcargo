@@ -477,3 +477,101 @@ pub fn run_stand_str(setup: impl Fn(&mut App), name: &str, text: &str) -> StandR
 
 /// The host of a stand, as a scenario names it.
 const HOST_MEMBER: &str = shards_script::HOST;
+
+// --- fuzzing with shrinking ----------------------------------------------------------
+
+/// A fuzz run that stopped on something, shrunk to the few rounds that still stop on it.
+#[derive(Clone, Debug)]
+pub struct Finding {
+    pub stop: shards_script::stop::Stop,
+    /// The game's own words for it: the halt reason, or the refused call and its answer.
+    pub text: String,
+    /// The rounds as played.
+    pub before: Vec<shards_script::fuzz::Round>,
+    /// What is left. Equal to `before` when the session did not stop again on a fresh game
+    /// (`reproduced` is `false`), so there was nothing to shrink with.
+    pub shrunk: shards_script::shrink::Shrunk,
+    /// A fresh game stopped on the same thing when it played all of `before`.
+    pub reproduced: bool,
+}
+
+impl Finding {
+    /// The scenario file for the shrunk session, started with game seed `seed`; `heavy` is the heavy
+    /// mode the run had on, as `(every, span, offset)`.
+    pub fn scenario(&self, seed: u64, heavy: Option<(u64, u64, u64)>) -> String {
+        let strict = match &self.stop {
+            shards_script::stop::Stop::Chaos { tool } => Some(tool.as_str()),
+            _ => None,
+        };
+        let title = self.stop.title();
+        let header = shards_script::regress::Header { seed, stop: &self.text, stop_kind: &title, before: &self.before, heavy, strict };
+        shards_script::regress::scenario_text(&header, &self.shrunk.rounds)
+    }
+
+    /// `<YYYYMMDD>-<stop>-seed<S>.scenario`.
+    pub fn file_name(&self, date: &str, seed: u64) -> String {
+        shards_script::regress::file_name(date, &self.stop.slug(), seed)
+    }
+}
+
+/// What [`fuzz_and_shrink`] did.
+#[derive(Debug)]
+pub struct Fuzzed {
+    pub report: shards_script::fuzz::FuzzReport,
+    /// Set when the run stopped on a halt or a broken chaos round trip.
+    pub finding: Option<Finding>,
+    /// The `coverage` tool's JSON answer for the run (every signature), when the game keeps coverage.
+    pub coverage: Option<Value>,
+}
+
+/// Plays `plan` on the game `build` makes (a test app, or a heavy one) and, if it stops on a
+/// broken rule, a failing system, a heavy check or a chaos round trip that did not come back, shrinks
+/// the session: each attempt plays candidate rounds on a **fresh** game from `build` (the same seed,
+/// the same heavy mode when the stop is a heavy check, none otherwise: `build(true)` makes the game as
+/// the run had it, `build(false)` one without heavy mode, which plays the same and costs far less) and counts when it stops on the same thing
+/// ([`Stop::same_as`](shards_script::stop::Stop::same_as)). At most `budget` attempts; the first
+/// one plays the whole session again, to see that a fresh game stops on it at all. Past `time` since the shrinking began, every attempt counts as not stopping (the
+/// result is then marked `exhausted`): an attempt on a long session in heavy mode costs seconds.
+pub fn fuzz_and_shrink(
+    mut build: impl FnMut(bool) -> App,
+    plan: &shards_script::fuzz::FuzzPlan,
+    budget: u32,
+    time: Duration,
+) -> Result<Fuzzed, String> {
+    use shards_script::{fuzz, shrink, stop::Stop};
+    let mut app = build(true);
+    let tools = ai_core::scenario::tool_list(app.world());
+    let report = fuzz::run(&mut ai_core::scenario::WorldDriver { world: app.world_mut() }, plan, &tools)?;
+    // What the run reached, asked of the game that played it.
+    let coverage = {
+        let answer = call_tool(app.world_mut(), &plan.agent, "coverage", serde_json::json!({"json": true, "top": 1_000_000}));
+        answer.result.as_str().filter(|_| answer.ok).and_then(|text| serde_json::from_str(text).ok())
+    };
+    let Some(stop) = Stop::of(&report.ended) else {
+        return Ok(Fuzzed { report, finding: None, coverage });
+    };
+    let text = match &report.ended {
+        fuzz::Ended::Halted { reason, .. } => reason.clone(),
+        fuzz::Ended::ChaosBroke { call, why } => format!("{call} was refused: {why}"),
+        _ => String::new(),
+    };
+    let began = Instant::now();
+    let timed_out = std::cell::Cell::new(false);
+    let mut attempt = |rounds: &[fuzz::Round]| {
+        if began.elapsed() > time {
+            timed_out.set(true);
+            return Ok(false);
+        }
+        // Heavy mode only checks; a stop that is not a heavy check does not need it to be found again.
+        let mut fresh = build(matches!(stop, Stop::Heavy { .. }));
+        shrink::replays_stop(&mut ai_core::scenario::WorldDriver { world: fresh.world_mut() }, &plan.agent, rounds, &stop)
+    };
+    let before = report.played.clone();
+    let reproduced = attempt(&before)?;
+    let shrunk = match reproduced {
+        true => shrink::shrink(&before, budget.saturating_sub(1), &mut attempt)?,
+        false => shrink::Shrunk { rounds: before.clone(), attempts: 1, exhausted: false },
+    };
+    let shrunk = shrink::Shrunk { attempts: shrunk.attempts + u32::from(reproduced), exhausted: shrunk.exhausted || timed_out.get(), ..shrunk };
+    Ok(Fuzzed { report, finding: Some(Finding { stop, text, before, shrunk, reproduced }), coverage })
+}

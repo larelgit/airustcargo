@@ -4,13 +4,12 @@
 #   heavy      every reference replay with `--verify --heavy 10 --heavy-span 30` from the seed's offset (heavy mode)
 #   worldgen   the generator's check on 100000 seeds: the sandbox's `wilds` and the template's `valley`
 #   gpu        the #[ignore]d tests that need a GPU, on Mesa's software Vulkan driver under Xvfb
+#   fuzz       the fuzz campaign: seeded runs with chaos, coverage steering and heavy mode; a run that stops is
+#              shrunk to a regression scenario (artifact `fuzz`: scenarios, replays, coverage report)
 #   perf       a release build and the performance tests `reference` and `reference96`, ticks only;
 #              the output is an artifact, there is no gate yet
 #   issue      if any job above fails: an issue labelled `nightly` (or a comment on the open one) with
 #              the failed job and step, the seed, and the links to the run and its artifacts
-#
-# The fuzz campaign is added to this file by the PR that builds it (the fuzzer): a job in this list
-# and in `needs` of the `issue` job.
 #
 # Elsewhere: soak.yml (half an hour of a live stand, every night), cross.yml (weekly).
 
@@ -22,10 +21,16 @@ on:
   workflow_dispatch:
     inputs:
       seed:
-        description: Seed of the night (empty - today's date, YYYYMMDD); used by the fuzz campaign and the heavy replays once they join, named in the issue
+        description: Seed of the night (empty - today's date, YYYYMMDD); first seed of the fuzz campaign and offset of the heavy replays, named in the issue
         default: ""
       minutes:
         description: Minutes of game time for the jobs that play (empty - each job's own default); no job in this file plays yet
+        default: ""
+      fuzz_runs:
+        description: Runs of the fuzz campaign (empty - 50)
+        default: ""
+      fuzz_inputs:
+        description: Rounds per fuzz run (empty - 2000)
         default: ""
 
 permissions:
@@ -260,11 +265,76 @@ jobs:
           name: nightly-perf
 
   # ---------------------------------------------------------------------------------------
+  # The fuzz campaign (docs/manual.md, "Fuzzing"): many seeded runs of the sandbox in process, each with
+  # chaos (2% developer calls), coverage steering and heavy mode, every run that stops shrunk on fresh
+  # games to a regression scenario. A dev build: the fuzzer's cost is the heavy twins (building a game
+  # again at every point), which a release build does not make cheaper. `SHARDS_FUZZ_MINUTES` stops it from
+  # starting a run after that long, so the job ends inside its 120 minutes whatever the runner's speed.
+  # The night's seed is the first run's seed (run i plays seed + i). Fails if any run stopped; the
+  # shrunk scenarios (to commit with the fix, in crates/sandbox/scenarios/regress/), the sessions'
+  # replays and the coverage report are the artifact `fuzz`.
+  fuzz:
+    name: fuzz
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      SHARDS_FUZZ_SEED: ${{ needs.plan.outputs.seed }}
+      SHARDS_FUZZ_RUNS: ${{ inputs.fuzz_runs }}
+      SHARDS_FUZZ_INPUTS: ${{ inputs.fuzz_inputs }}
+      SHARDS_FUZZ_MINUTES: "85"
+      SHARDS_FUZZ_OUT: ${{ github.workspace }}/fuzz-out
+      SHARDS_FUZZ_REGRESS: ${{ github.workspace }}/fuzz-out/regress
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: dev
+          save: "false"
+      - name: The campaign
+        run: |
+          mkdir -p "$SHARDS_FUZZ_OUT"
+          echo "seed $SHARDS_FUZZ_SEED, runs '${SHARDS_FUZZ_RUNS:-default}', rounds '${SHARDS_FUZZ_INPUTS:-default}'"
+          set -o pipefail
+          cargo test --locked -p sandbox --test fuzz_campaign -- --ignored --nocapture 2>&1 | tee "$SHARDS_FUZZ_OUT/campaign.log"
+      - name: Summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "### Fuzz campaign (seed $SHARDS_FUZZ_SEED)"
+            echo
+            echo '```text'
+            tail -n 3 "$SHARDS_FUZZ_OUT/campaign.log" || true
+            cat "$SHARDS_FUZZ_OUT/coverage.txt" || true
+            echo '```'
+            echo
+            echo "Scenarios written:"
+            ls "$SHARDS_FUZZ_OUT/regress" 2>/dev/null || echo "none"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: fuzz
+          path: |
+            fuzz-out/
+            crates/sandbox/replays/
+            crates/sandbox/crashes/
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Keep what the run wrote
+        if: failure()
+        uses: ./.github/actions/upload-failure
+        with:
+          name: nightly-fuzz
+
+  # ---------------------------------------------------------------------------------------
   # The counterpart of an email to the authors of the last commits: the failure reaches the
   # tracker. One open issue labelled `nightly` collects the nights (a comment per failed night).
   issue:
     name: issue
-    needs: [plan, heavy, worldgen, gpu, perf]
+    needs: [plan, heavy, worldgen, gpu, perf, fuzz]
     if: ${{ failure() }}
     # The only job that writes to the tracker.
     permissions:

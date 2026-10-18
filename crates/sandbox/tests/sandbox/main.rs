@@ -6,6 +6,8 @@
 mod actions;
 mod common;
 mod content;
+mod fuzz_shrink;
+mod coverage;
 mod course;
 mod fuzz;
 // `gltf` takes its math from `ops` (each includer reaches Bevy by its own path).

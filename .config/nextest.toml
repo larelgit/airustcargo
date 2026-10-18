@@ -11,7 +11,7 @@
 #   - sandbox `system_failures` `ONE_AT_A_TIME`: the process-global panic memory, which a process of
 #     its own per test makes harmless; but the same tests write crashes/ and replays/crash-tick50.json
 #     in crates/sandbox/: group `snapshot-file`.
-#   - sandbox `tool_contracts` and `fuzz` (tools write snapshots/ and replays/ in crates/sandbox/, and a
+#   - sandbox `tool_contracts`, `fuzz` and `fuzz_shrink` (tools write snapshots/ and replays/ in crates/sandbox/, and a
 #     test that ends removes an empty snapshots/): group `snapshot-file`.
 #   - sandbox `log_capture` `ONE_AT_A_TIME`: the process-global tracing subscriber; a process per
 #     test needs no group.
@@ -30,13 +30,14 @@ shards-snapshots = { max-threads = 1 }
 filter = '''
 binary_id(sandbox::system_failures)
 | (binary_id(sandbox::sandbox) & (
-    test(/^scenario_files::(every_scenario_file_passes|the_scenarios_also_pass)/)
+    test(/^scenario_files::(every_scenario_file_passes|the_scenarios_also_pass|every_regression_scenario)/)
     | test(/^snapshots::/)
     | test(=invariants::a_snapshot_restart_rearms_the_rules_and_keeps_the_session_ones)
     | test(=invariants::the_replay_saved_at_a_violation_breaks_the_rule_at_the_same_tick)
     | test(=reference_replays::record_reference_replays)
     | test(/^tool_contracts::/)
     | test(/^fuzz::/)
+    | test(/^fuzz_shrink::/)
   ))
 '''
 test-group = 'snapshot-file'

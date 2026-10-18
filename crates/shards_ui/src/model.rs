@@ -415,7 +415,7 @@ pub fn open(world: &mut World, name: &str) -> Result<String, String> {
     world.resource_mut::<UiStack>().open.push((name.to_owned(), root));
     ensure_focus(world, root);
     if def.layer != Layer::Hud {
-        journal::log(world, JournalKind::Event, format!("ui: opened {name}"));
+        journal::log(world, JournalKind::Local, format!("ui: opened {name}"));
     }
     world.trigger(UiScreenChanged { screen: name.to_owned(), open: true });
     sync_pause(world);
@@ -569,7 +569,7 @@ pub fn close(world: &mut World, root: Entity) -> String {
     world.resource_mut::<UiStack>().open.retain(|(_, e)| *e != root);
     world.entity_mut(root).despawn();
     if !hud {
-        journal::log(world, JournalKind::Event, format!("ui: closed {name}"));
+        journal::log(world, JournalKind::Local, format!("ui: closed {name}"));
     }
     world.trigger(UiScreenChanged { screen: name.clone(), open: false });
     sync_pause(world);
@@ -801,7 +801,7 @@ fn press(world: &mut World, e: Entity, path: &str, action: &str, agent: &str) ->
                 .map_err(|err| format!("{path} ({name}): {err}"))?
         }
     };
-    journal::log(world, JournalKind::Event, format!("ui: {path} pressed ({action})"));
+    journal::log(world, JournalKind::Local, format!("ui: {path} pressed ({action})"));
     world.trigger(UiPressed { widget: path.to_owned(), action: action.to_owned() });
     Ok(format!("pressed {path}: {done}"))
 }
@@ -914,7 +914,7 @@ pub fn set_value(world: &mut World, e: Entity, text: &str, agent: &str) -> Resul
         // The new page's widgets can take focus; the tabs keep it.
         ensure_focus(world, root);
     }
-    journal::log(world, JournalKind::Event, format!("ui: {} {was} → {shown}", w.path));
+    journal::log(world, JournalKind::Local, format!("ui: {} {was} → {shown}", w.path));
     world.trigger(UiChanged { widget: w.path.clone(), value: shown.clone() });
     Ok(format!("{} {was} → {shown}", w.path))
 }
@@ -938,7 +938,7 @@ pub fn binding_state(world: &World, e: Entity) -> (bool, Option<String>) {
 /// Stops the binding widget of the screen at `root` that waits for an input, if one does.
 fn cancel_capture(world: &mut World, root: Entity) -> Option<String> {
     let path = world.get_mut::<UiScreen>(root)?.capture.take()?;
-    journal::log(world, JournalKind::Event, format!("ui: {path} stopped waiting for an input"));
+    journal::log(world, JournalKind::Local, format!("ui: {path} stopped waiting for an input"));
     Some(path)
 }
 
@@ -964,7 +964,7 @@ fn start_capture(world: &mut World, e: Entity, w: &UiWidget) -> Result<String, S
         screen.capture = Some(w.path.clone());
         screen.note = None;
     }
-    journal::log(world, JournalKind::Event, format!("ui: {} waits for an input", w.path));
+    journal::log(world, JournalKind::Local, format!("ui: {} waits for an input", w.path));
     world.trigger(UiPressed { widget: w.path.clone(), action: "capture".to_owned() });
     Ok(format!("{} waits for an input: {how}", w.path))
 }
@@ -1108,7 +1108,7 @@ fn set_binding(world: &mut World, e: Entity, w: &UiWidget, text: &str, agent: &s
     if let Some(mut stored) = world.get_mut::<UiWidget>(e) {
         stored.value = UiValue::Bindings(after);
     }
-    journal::log(world, JournalKind::Event, format!("ui: {} {was} → {shown}", w.path));
+    journal::log(world, JournalKind::Local, format!("ui: {} {was} → {shown}", w.path));
     world.trigger(UiChanged { widget: w.path.clone(), value: shown.clone() });
     Ok(format!("{} {was} → {shown}", w.path))
 }
