@@ -1928,10 +1928,10 @@ rolling hills of 128 x 128 columns of 0.5 m cells, 16 bodies; µs a query, least
                 std::hint::black_box(sum);
                 started.elapsed().as_secs_f64() * 1e6 / (100.0 * bodies.len() as f64)
             };
-            let mut samples = [[0.0; 7]; 3];
-            for i in 0..7 {
-                for (w, world) in [&voxels, &unmerged, &boxes].into_iter().enumerate() {
-                    samples[w][i] = time(world);
+            let mut samples: [Vec<f64>; 3] = Default::default();
+            for _ in 0..7 {
+                for (s, world) in samples.iter_mut().zip([&voxels, &unmerged, &boxes]) {
+                    s.push(time(world));
                 }
             }
             let [merged, cells, boxed] = samples.map(|mut s| {
