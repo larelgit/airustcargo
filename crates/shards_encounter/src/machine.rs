@@ -8,7 +8,7 @@
 //! | State | Each tick, in this order | Next |
 //! |---|---|---|
 //! | `Idle` | the start condition is false | `Armed` |
-//! | `Armed` | the start condition is true, or a member of the placed wave is out, hurt or has a target | the placed wave has members: `Running`; else `Between` for the next wave (`Running` when there is none, so the normal clear path runs) |
+//! | `Armed` | the start condition is true, or a member of the placed wave is out, hurt or hunts a standing participant within the radius | the placed wave has members: `Running`; else `Between` for the next wave (`Running` when there is none, so the normal clear path runs) |
 //! | `Running` | 1. every counted member of wave `wave` is out | last wave: `Won`; else `Between` |
 //! | | 2. all participants out | wipe, `Wiped { None }` |
 //! | | 3. the absence clock is due | reset, `Resetting` |

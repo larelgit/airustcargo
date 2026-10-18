@@ -22,6 +22,7 @@ pub(crate) fn register(world: &mut World) {
     register_tool(world, "encounter", Scope::Player, ToolKind::Query, encounter);
     register_tool(world, "encounter_start", Scope::Dev, ToolKind::Action, encounter_start);
     register_tool(world, "encounter_reset", Scope::Dev, ToolKind::Action, encounter_reset);
+    register_tool(world, "encounter_clear", Scope::Dev, ToolKind::Action, encounter_clear);
 }
 
 fn secs(world: &World, ticks: u32) -> f32 {
@@ -251,4 +252,38 @@ pub(crate) fn status(world: &World) -> Value {
         .map(|r| format!("encounter {} wave {}/{} {}", r.key, r.wave, def_of(world, &r.encounter).map_or(0, |d| d.waves.len()), r.state.name()))
         .collect();
     if lines.is_empty() { Value::Null } else { json!(lines) }
+}
+
+/// Kills the counted members of the wave in progress, the way their health running out would
+/// (no killer): the run sees them out on the tick's step. For tests and scenarios, which cannot
+/// name the members before they spawn.
+#[derive(Deserialize, JsonSchema)]
+pub struct ClearArgs {
+    /// Run key, e.g. "yard/ring".
+    pub key: String,
+}
+
+fn encounter_clear(In(call): In<Call<ClearArgs>>, world: &mut World) -> ToolResult {
+    let key = call.args.key;
+    let run = world.get_resource::<EncounterRuns>().and_then(|r| r.get(&key)).cloned().ok_or_else(|| crate::no_run(world, &key))?;
+    let mut killed = Vec::new();
+    for m in run.members.iter().filter(|m| m.counted && m.wave == run.wave) {
+        let Some(entity) = world.get_resource::<AiIndex>().and_then(|i| i.get(m.id)) else { continue };
+        if world.get::<Dead>(entity).is_some() {
+            continue;
+        }
+        // A fighter dies the engine's way (its health ran out, no killer); anything else is marked.
+        let fighter = world.get::<shards_action::Fighter>(entity).is_some();
+        match world.get_mut::<shards_action::Health>(entity) {
+            Some(mut health) if fighter => health.current = 0.0,
+            _ => {
+                world.entity_mut(entity).insert(Dead);
+            }
+        }
+        killed.push(m.id.to_string());
+    }
+    if killed.is_empty() {
+        return Err(format!("run {key} has no living counted member in wave {} to clear", run.wave));
+    }
+    Ok(format!("cleared wave {} of {key}: {}", run.wave, killed.join(" ")))
 }

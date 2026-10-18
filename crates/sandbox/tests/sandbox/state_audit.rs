@@ -224,7 +224,7 @@ fn unclassified(names: &BTreeSet<String>) -> Vec<&str> {
 #[test]
 fn every_resource_is_saved_or_said_to_be_outside_the_simulation() {
     let mut seen = BTreeSet::new();
-    for name in ["combat_prototype.json", "region.json", "voxel_arena.json"] {
+    for name in ["combat_prototype.json", "region.json", "voxel_arena.json", "encounter.json"] {
         let app = played(name);
         let names = not_saved(app.world());
         let unknown = unclassified(&names);

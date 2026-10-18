@@ -1,0 +1,39 @@
+// The sandbox's encounters, with neutral names. `ring_waves` follows the shape of an arena trial: a trigger volume that every player
+// must stand in, three waves of 1, 2 and 1 members at fixed points facing the ring's center, a warning before each,
+// a captain whose home is the ring's center, a wipe that rewinds a wave, a reset after 30 s alone, won once.
+// `yard_pack` is a placed pack on markers for the pack, reset and disturbance tests.
+{
+    "ring_waves": (
+        radius: 20.0,
+        start: Trigger(volume: "yard_ring", all_players_in: true),
+        waves: [
+            (delay: 1.2, warn: Some((message: Some("@encounter-wave"), effect: Some("parry_flash"), sound: Some("whoosh"))),
+             members: [(prefab: "yard_skeleton", at: Offsets([(0.0, 0.0, -6.0)]))]),
+            (delay: 2.5, warn: Some((message: Some("@encounter-wave"), sound: Some("whoosh"))),
+             members: [(prefab: "yard_skeleton", count: 2, at: Offsets([(4.0, 0.0, -8.0), (-4.0, 0.0, -8.0)]))]),
+            (delay: 2.5, warn: Some((message: Some("@encounter-wave"), sound: Some("whoosh"))),
+             members: [(prefab: "yard_captain", at: Offsets([(0.0, 0.0, -12.0)]), home: Anchor, leash: Some(18.0))]),
+        ],
+        tags: ["special_arena"],
+        budget: Some(3),
+        rules: Some("default"),
+        resume_after: 2.0,
+        reset_after: Some(30.0),
+        pull_back: (heal: true, state: Some("home"), deadline: 6.0),
+        once: true,
+        net_always: true,
+        blocks_join: true,
+    ),
+    "yard_pack": (
+        radius: 12.0,
+        start: Near(within: 10.0),
+        waves: [(placed: true, members: [
+            (prefab: "yard_skeleton", count: 2, up_to: Some(3), at: Marker("pack"),
+             avoid_behind: Some((within: 18.0, angle: 90.0))),
+        ])],
+        budget: Some(3),
+        rules: Some("default"),
+        reset_after: Some(30.0),
+        pull_back: (heal: true, state: Some("home"), deadline: 6.0),
+    ),
+}

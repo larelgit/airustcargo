@@ -1,0 +1,20 @@
+// The yard: a small fixed region for the encounter module, east of the arena (x 200..296, z -200..-168,
+// clear of the arena, the wilds, the expanse and the voxel arena). Three cells of 32 m, all fixed: the
+// gate (the spawn) at cell (0, 0), the ring of `ring_waves` at (1, 0) and the pack of `yard_pack` at
+// (2, 0). `regen region=yard seed=1` goes there; the seed changes nothing (every tile is fixed) but the
+// pack's count and its choice of markers.
+{
+    "yard": (
+        size: (3, 1),
+        tile_size: 32.0,
+        version: 1,
+        tiles: ["#yard"],
+        origin: (200.0, -200.0),
+        fixed: [(at: (0, 0), tile: "yard_gate", rot: 0), (at: (1, 0), tile: "yard_ring", rot: 0), (at: (2, 0), tile: "yard_pack", rot: 0)],
+        pois: [(poi: "spawn", cells: [(0, 0)])],
+        checks: (isolated_roads: false),
+        // Monsters farther than this from every player rest (dormant).
+        active_radius: 60.0,
+        edge_wall: 4.0,
+    ),
+}

@@ -2394,8 +2394,8 @@ is not out. Every timer is a count of whole ticks, set and counted down in the s
   happen.
 - **The edge.** A run starts on a rising edge: `Idle` waits for the start condition to be false once, so a run made under a
   player's feet (a load, a reset inside the volume) does not start at once.
-- **A placed pack is disturbed.** A placed wave goes from `Armed` to `Running` also when one of its members is out, hurt or has a
-  target: enemies see farther than `within`, and a pack that is being fought is not waiting. A placed pack whose members were all
+- **A placed pack is disturbed.** A placed wave goes from `Armed` to `Running` also when one of its members is out, hurt or hunts a
+  standing participant within `radius`: enemies see farther than `within`, and a pack that is being fought is not waiting. A placed pack whose members were all
   out before the start is cleared (and won, if it is the last wave) on its first visit instead of waiting for ever.
 - **Wipe (WP08).** The participants are every player body, wherever it stands (solo included). A participant is out when it is dead,
   or when an out rule registered with `add_encounter_out_rule` says so (a downed state plugs in there). On a wipe the adds are
@@ -2460,6 +2460,7 @@ with no members and no events; everything else starts over). The phase of a figh
 | `encounter key=K` | The run in full: state and timers, the start condition now (`all_players_in: 1/2 standing participants inside yard_ring`), members with their `eN`, wave, counted, out, distance from home, the definition's waves, budget and tags, the lock. |
 | `encounter_start key=K [wave=N]` | Dev: starts a run in `Idle` or `Armed` as its start condition would; `wave=N` skips to wave `N`. |
 | `encounter_reset key=K\|all [forget=true]` | Dev: resets (`why: Dev`); `forget` also drops the run and its remembered key. |
+| `encounter_clear key=K` | Dev: kills the counted members of the wave in progress the way their health running out would (a fighter dies the engine's way, with no killer); for scenarios, which cannot name members before they spawn. |\|all [forget=true]` | Dev: resets (`why: Dev`); `forget` also drops the run and its remembered key. |
 
 Conditions for `step --until named:...`: `encounter_active` (a run in a fighting state), `encounter_between`, `encounter_wiped`,
 `encounter_won`. The NPC condition `encounter_returning` is true while a member walks home after a pull-back (a behaviour can use it to
@@ -2477,6 +2478,13 @@ Engine invariants: `encounter.members_tracked` (every entity with `EncounterMemb
 `counted`; every listed member that resolves carries it), `encounter.state_sane` (the wave within the definition, timers within what
 the definition can set, runs sorted with unique keys, a won `once` run remembered, a won run lists no living counted member) and
 `encounter.lock_matches` (the lock stands exactly in `Running` and `Between`).
+
+### In the sandbox
+
+`region=yard`: a 3 x 1 region of 32 m tiles at x 200..296, z -200..-168 (`regen region=yard seed=1`). Its ring tile holds the trigger
+volume `yard_ring` and the anchor of `ring_waves` (three waves of 1, 2 and 1 members, a special arena, `once`), and its pack tile the
+three markers `pack` and the anchor of `yard_pack` (a placed pack of 2 to 3 skeletons, never behind a player). The scenario
+`encounter.scenario` plays it end to end; `encounter.json` is its reference replay.
 
 ### Limitations
 

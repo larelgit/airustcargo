@@ -1,0 +1,64 @@
+# Encounters over the net (G9): a host and two clients on 150 ms links with 2% loss in the yard
+# (`content/region/yard.region.ron`). The ring starts only when every standing player is inside its
+# trigger volume; the clients see the run, the waves and the host's journal lines; one body down is not
+# a wipe. Bodies: e5 is the host's player, e15 c1's, e16 c2's (the join order).
+#
+# Against a live stand (CI does exactly this):
+#   cargo sandbox --stand 2 --headless --paused --port 0 --port-file F --net-sim latency=150,loss=0.02 &
+#   SHARDS_PORT_FILE=F cargo shards wait --peer all
+#   SHARDS_PORT_FILE=F cargo shards scenario crates/sandbox/scenarios/stand/encounter.scenario
+#   SHARDS_PORT_FILE=F cargo shards stand stop
+stand clients=2 latency=150 loss=0.02
+seed 42
+
+# --- setup (dev, on the host): the yard, the three bodies healed and unhurtable at its gate
+@host act regen region=yard seed=1
+@host act heal id=e5
+@host act heal id=e15
+@host act heal id=e16
+@host act stop
+@c1 act stop
+@c2 act stop
+@host act encounter_reset key=all forget=true
+step 120
+invariant !journal "desync"
+mark
+
+# --- 1. two of the three are in the ring: the start waits for the third
+@host act teleport id=e5 x=248 z=-182 y=0
+@host act teleport id=e15 x=250 z=-182 y=0
+step 60
+@host act encounter key=yard/ring
+@host expect result contains "all_players_in: 2/3 standing participants inside yard_ring"
+@host expect !journal "yard/ring (ring_waves) started"
+
+# --- 2. the third steps in: the run starts, on the host and in the clients' journals
+@host act teleport id=e16 x=246 z=-182 y=0
+@host step 600 --until named:encounter_active
+step 100
+@host expect journal "encounter yard/ring (ring_waves) started: 3/3 players in"
+@c1 expect journal "encounter yard/ring (ring_waves) started: 3/3 players in"
+@c2 expect journal "encounter yard/ring: wave 1/3 in 1.2 s"
+@c1 act encounters
+@c1 expect result contains "yard/ring ring_waves Running wave 1/3"
+@c2 act encounters
+@c2 expect result contains "yard/ring ring_waves Running wave 1/3"
+@c1 expect journal "encounter yard/ring: wave 1/3 spawned"
+
+# --- 3. one body down is not a wipe: the other two stand
+mark
+@host act set id=e16 component=Health path=current value=0
+step 120
+@host expect !journal "wiped"
+@c1 expect !journal "wiped"
+
+# --- clean up
+@host act encounter_reset key=all forget=true
+@host act heal id=e5
+@host act heal id=e15
+@host act heal id=e16
+@host act teleport id=e5 x=0 z=12 y=0
+@host act teleport id=e15 x=2 z=12 y=0
+@host act teleport id=e16 x=4 z=12 y=0
+step 60
+invariant !journal "desync"

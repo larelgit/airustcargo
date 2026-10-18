@@ -86,7 +86,7 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   points are grounded, checked against the navmesh where the region has one, and kept out of the rear cone of a participant's facing
   (lock-on target, aim, forward: simulation state, never the camera); randomness is a `DetRng` keyed by the seed, tick, run key, wave,
   group and purpose. Events `EncounterStarted`, `WaveWarned`, `WaveStarted`, `WaveCleared`, `EncounterCompleted`, `EncounterWiped`,
-  `EncounterResumed`, `EncounterReset`; tools `encounters`, `encounter`, `encounter_start`, `encounter_reset`; conditions
+  `EncounterResumed`, `EncounterReset`; tools `encounters`, `encounter`, `encounter_start`, `encounter_clear`, `encounter_reset`; conditions
   `encounter_active`, `encounter_between`, `encounter_wiped`, `encounter_won` and the NPC condition `encounter_returning`; the engine
   rules `encounter.members_tracked`, `encounter.state_sane` and `encounter.lock_matches`; the dev menu entries; the snapshot resource
   and replay check `encounters` (absent without runs, so other snapshots and replays keep their bytes) and a snapshot prepare that
@@ -99,6 +99,14 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   (`default_join_policy`) consults; a gate's reason makes a newcomer wait. A request whose player already has a body (a rejoin within the
   grace) skips them. `gates_say` for a game with a policy of its own.
 
+- Sandbox: the yard (`regen region=yard seed=1`), a 3 x 1 region of 32 m tiles east of the arena (`yard.region.ron`, `yard.tile.ron`, `yard.prefab.ron`;
+  new tile bakes in `assets/nav/`): a ring tile with the trigger volume `yard_ring` and the anchor of `ring_waves` (three waves of 1, 2
+  and 1 skeletons, a special arena, `once`) and a pack tile with three `pack` markers and the anchor of `yard_pack` (a placed pack of 2 to 3,
+  never behind a player); `content/encounter/yard.encounter.ron` and `default.encounter_rules.ron`; the message `encounter-wave` in
+  English and Russian; `yard_skeleton` and `yard_captain` (extend the arena's, with an `EncounterRole`). `encounter.scenario` and the stand
+  scenario `stand/encounter.scenario`; the reference replay `encounter.json`. The other reference replays are unchanged except
+  `region.json` and `npc_navmesh.json`, which read the tile kind whole and were recorded again for the three new tile definitions (only
+  their `hash`, `content` and `check_parts` lines changed). `fate::boss_phases` runs before the encounter step.
 - Voxel regions (`shards_voxel`, G1, A2c): a region kind of its own behind the same region API as tiles. `shards_world` gains
   `Layout::Volume` (`"volume"`) and a registry of region kinds (`RegionKind`, `app.add_region_kind`, `WorldGen::kinds`,
   `kind::generation_problems`); the manifest gains `steps` (the steps with versions that made it, written only when set, so other

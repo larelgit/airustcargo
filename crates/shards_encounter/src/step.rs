@@ -285,7 +285,11 @@ fn observe(world: &mut World, run: &mut Run, def: &EncounterDef, parts: &[Part],
             let Some(entity) = index.and_then(|i| i.get(m.id)) else { return MemberObs { out: true, disturbed: true } };
             let out = world.get::<Dead>(entity).is_some();
             let hurt = world.get::<Health>(entity).is_some_and(|h| h.current < h.max - 1e-4);
-            let hunting = world.get::<NpcBrain>(entity).is_some_and(|b| b.target.is_some());
+            // Hunting someone standing within the radius: a member that still holds the target of a
+            // fight the players have walked away from (a pull-back) is not a pack being fought.
+            let hunting = world.get::<NpcBrain>(entity).and_then(|b| b.target).and_then(|t| index.and_then(|i| i.get(t))).is_some_and(|target| {
+                parts.iter().any(|p| p.entity == target && !p.out && flat(p.pos - run.at).length() <= def.radius)
+            });
             MemberObs { out, disturbed: out || hurt || hunting }
         })
         .collect();

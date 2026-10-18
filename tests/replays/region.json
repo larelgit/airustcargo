@@ -6,7 +6,7 @@
   "check_detail": "components",
   "end": {
     "tick": 353,
-    "hash": "6809679630af414e",
+    "hash": "3e867aa37ef1e713",
     "parts": {
       "entities": {
         "e1": {
@@ -442,7 +442,7 @@
         }
       },
       "game": {
-        "content": "b13411d364ba07df",
+        "content": "2958fb9316ee9112",
         "level": "27c97e12837f822e"
       }
     }
@@ -766,7 +766,7 @@
   "checks": [
     {
       "tick": 60,
-      "hash": "da17147a77e4e360",
+      "hash": "5afd81ca98e6587d",
       "parts": {
         "entities": {
           "e1": {
@@ -1206,14 +1206,14 @@
           }
         },
         "game": {
-          "content": "b13411d364ba07df",
+          "content": "2958fb9316ee9112",
           "level": "c32b4cdf79e99ece"
         }
       }
     },
     {
       "tick": 120,
-      "hash": "e0c76643f2f96c86",
+      "hash": "6456b81cbc022c47",
       "parts": {
         "entities": {
           "e1": {
@@ -1653,14 +1653,14 @@
           }
         },
         "game": {
-          "content": "b13411d364ba07df",
+          "content": "2958fb9316ee9112",
           "level": "c32b4cdf79e99ece"
         }
       }
     },
     {
       "tick": 180,
-      "hash": "bb75864d12dcfb26",
+      "hash": "d3abc40f838111a7",
       "parts": {
         "entities": {
           "e1": {
@@ -2100,14 +2100,14 @@
           }
         },
         "game": {
-          "content": "b13411d364ba07df",
+          "content": "2958fb9316ee9112",
           "level": "c32b4cdf79e99ece"
         }
       }
     },
     {
       "tick": 240,
-      "hash": "ccc7d1e3fcd58ccf",
+      "hash": "b567092ddfc1f8fa",
       "parts": {
         "entities": {
           "e1": {
@@ -2547,14 +2547,14 @@
           }
         },
         "game": {
-          "content": "b13411d364ba07df",
+          "content": "2958fb9316ee9112",
           "level": "c32b4cdf79e99ece"
         }
       }
     },
     {
       "tick": 300,
-      "hash": "8dbe2469a54bd0e7",
+      "hash": "140b98b35c1cd4f2",
       "parts": {
         "entities": {
           "e1": {
@@ -2994,7 +2994,7 @@
           }
         },
         "game": {
-          "content": "b13411d364ba07df",
+          "content": "2958fb9316ee9112",
           "level": "c32b4cdf79e99ece"
         }
       }
@@ -3047,6 +3047,9 @@
           "tile/road_straight": "0d62aa5e23506fa2",
           "tile/road_t": "5299559aa46d9693",
           "tile/ruin": "9e2d81b9dd8d54aa",
+          "tile/yard_gate": "83b130fb61cdb27f",
+          "tile/yard_pack": "0c7cb515bbe2ac5c",
+          "tile/yard_ring": "2dfd923e33e83db6",
           "tile_map/wilds_safe": "fd30d1861a02dde1"
         }
       }

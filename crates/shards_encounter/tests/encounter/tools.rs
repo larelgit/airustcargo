@@ -113,3 +113,18 @@ fn the_status_and_the_describer_show_a_fight() {
     let observed = ok(&mut app, "observe", json!({}));
     assert!(observed.contains("encounter world/m wave 1"), "{observed}");
 }
+
+#[test]
+fn encounter_clear_kills_the_wave_in_progress_without_naming_it() {
+    let mut app = app(1);
+    let _p0 = player(&mut app, 0, Vec3::new(0.0, 0.0, 6.0));
+    let key = place(&mut app, "manual", "m", Vec3::ZERO);
+    step(&mut app, 2);
+    assert!(err(&mut app, "encounter_clear", json!({"key": key})).contains("no living counted member in wave 0"));
+    ok(&mut app, "encounter_start", json!({"key": key}));
+    run_until(&mut app, 120, |a| run(a, &key).wave == 1);
+    let text = ok(&mut app, "encounter_clear", json!({"key": key}));
+    assert!(text.starts_with("cleared wave 1 of world/m: e"), "{text}");
+    tick(&mut app);
+    assert!(matches!(state(&app, &key), RunState::Between { .. }));
+}
