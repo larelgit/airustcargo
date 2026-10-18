@@ -1,0 +1,186 @@
+# Controller options for an exact rulebook (C4): a backstep, turning speed per source, the brake
+# and the spring at water entry, the climb-out facing test and its own duration, and the crawl
+# lock. Every option is off in the sandbox's own content; this file adds a locomotion
+# definition, an action and a moveset with `content_apply`, runs the player on them, and takes
+# them away at the end, so the content (and the reference replays' content hash) is what it was.
+
+seed 42
+
+# --- the world as the game spawns it, whatever was played in it before
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act sprint on=false
+act set id=e5 component=Statuses value='[]'
+act set id=e5 component=Stamina path=current value=100
+act teleport id=e5 x=0 z=-3 y=0
+step 5
+invariant field e5 Health.current > 0
+
+# --- the definitions: the player's own numbers plus the options under test
+act content_apply changes='[{"kind": "locomotion", "id": "c4", "def": {"radius": 0.4, "height": 1.8, "walk_speed": 2.0, "run_speed": 5.0, "sprint_speed": 7.5, "jump_height": 1.2, "mantle_height": 1.6, "mantle_time": 0.45, "swim_speed": 3.0, "glide_speed": 9.0, "glide_fall_speed": 2.0, "glide_accel": 8.0, "turn_speed_deg": 688.0, "locked_turn_speed_deg": 573.0, "swim_turn_speed_deg": 90.0, "turn_toward_input": true, "entry_max_speed": 4.0, "buoyancy_omega": 4.0, "water_max_vertical_speed": 7.0, "water_fall_drag": 3.0, "climb_out_min_facing": 0.5, "climb_out_time": 1.0, "swim_fast_speed": 4.0, "swim_fast_drain": 14.0, "swim_fast_resume": {"Fraction": 0.25}}}, {"kind": "action", "id": "c4_back_roll", "def": {"net_id": 9001, "phases": [["roll", 0.4], ["recover", 0.1]], "cost": {"stamina": 20}, "iframes": [{"Secs": [0.0, 0.18]}], "displacement": [[0.35, 4.0]], "steer": "MoveOrBack"}}, {"kind": "moveset", "id": "c4_player", "def": {"inputs": {"light": "light_1", "heavy": "heavy", "dodge": "c4_back_roll", "block": "block", "use_item": "drink", "use_item.flask": "drink"}, "stagger": "player_stagger", "death": "player_death"}}]'
+
+# --- 1. the options are the params' own numbers, and the sandbox's player has none of them
+session --agent runner
+act move_info
+expect result contains "\"turn_free_deg\": 720.0"
+expect result contains "\"turn_locked_deg\": null"
+expect result contains "\"turn_swim_deg\": null"
+expect result contains "\"entry_max_speed\": null"
+expect result contains "\"buoyancy_omega\": null"
+session --agent scenario
+act set id=e5 component=CharacterController path=params value=c4
+step 2
+session --agent runner
+act move_info
+expect result contains "\"turn_free_deg\": 688.0"
+expect result contains "\"turn_locked_deg\": 573.0"
+expect result contains "\"turn_swim_deg\": 90.0"
+expect result contains "\"entry_max_speed\": 4.0"
+expect result contains "\"buoyancy_omega\": 4.0"
+expect result contains "\"climb_out_time\": 1.0"
+expect result contains "\"climb_out_min_facing\": 0.5"
+session --agent scenario
+
+# --- 2. a standing dodge goes backward, away from where the body faces; with input it goes there
+act set id=e5 component=Fighter path=moveset value=c4_player
+act teleport id=e5 x=0 z=-3 y=0
+session --agent runner
+act move dir=E meters=40
+session --agent scenario
+step 20
+session --agent runner
+act stop
+session --agent scenario
+step 20
+expect field e5 Transform.translation.x > 1.5
+session --agent runner
+act dodge
+expect result contains "c4_back_roll (back)"
+session --agent scenario
+step 40
+expect field e5 Transform.translation.x < 1.2
+act set id=e5 component=Stamina path=current value=100
+step 30
+session --agent runner
+act dodge dir=E
+session --agent scenario
+step 40
+expect field e5 Transform.translation.x > 0.8
+
+# --- 3. the brake at water entry: a jump into the pool at 8 m/s sideways enters the water at the 4 m/s cap, not above it
+act content_apply changes='[{"kind": "locomotion", "id": "c4_off", "def": {"radius": 0.4, "height": 1.8, "walk_speed": 2.0, "run_speed": 5.0, "sprint_speed": 7.5, "jump_height": 1.2, "mantle_height": 1.6, "mantle_time": 0.45, "swim_speed": 3.0, "glide_speed": 9.0, "glide_fall_speed": 2.0, "glide_accel": 8.0, "turn_speed_deg": 720.0}}]'
+act set id=e5 component=CharacterController path=params value=c4_off
+act heal id=e5
+act teleport id=e5 x=52 z=0 y=6
+step 1
+act set id=e5 component=MotionState path=velocity value='[8.0, 0.0, 0.0]'
+step 200 --until "journal:air → water"
+expect journal "e5 air → water"
+expect field e5 MotionState.velocity.x > 4.5
+
+act set id=e5 component=CharacterController path=params value=c4
+act teleport id=e5 x=52 z=0 y=6
+step 1
+act set id=e5 component=MotionState path=velocity value='[8.0, 0.0, 0.0]'
+mark
+step 200 --until "journal:air → water"
+expect journal "e5 air → water"
+expect field e5 MotionState.velocity.x > 3.9
+expect field e5 MotionState.velocity.x < 4.1
+
+# --- 4. a dive of five meters plunges past the float line (2.0 m: the surface is 3.1, the float depth 1.1) and settles on it
+step 200
+act teleport id=e5 x=60 z=2 y=9
+mark
+step 200 --until field:e5:Transform.translation.y<1.75
+expect field e5 Transform.translation.y < 1.75
+step 240
+expect shows e5 "water"
+expect field e5 Transform.translation.y > 1.94
+expect field e5 Transform.translation.y < 2.06
+
+# --- 5. the crawl lock: a dry crawl stays shut below a quarter of the bar (25), the button up or
+# pressed again, and opens by itself once the bar is there (the bar regenerates 45 a second after 0.5 s)
+act set id=e5 component=Stamina path=current value=3
+session --agent runner
+act sprint on=true
+act move dir=E meters=3
+session --agent scenario
+step 40
+expect shows e5 "exhausted"
+session --agent runner
+act sprint on=false
+session --agent scenario
+step 15
+expect shows e5 "exhausted"
+session --agent runner
+act sprint on=true
+session --agent scenario
+step 10
+expect shows e5 "exhausted"
+session --agent runner
+act sprint on=false
+session --agent scenario
+step 40
+expect field e5 Stamina.current > 25
+session --agent runner
+act sprint on=true
+act move dir=E meters=3
+session --agent scenario
+step 30
+expect shows e5 "water 4.0m/s"
+session --agent runner
+act sprint on=false
+act stop
+session --agent scenario
+act set id=e5 component=Stamina path=current value=100
+
+
+# --- 6. the climb-out wants the body to face the ledge: it swims west, then is put at the deck's
+# foot and pushed east; it turns at 90 degrees per second and climbs only once it is within 60 degrees of the deck
+act heal id=e5
+act teleport id=e5 x=60 z=0 y=3.4
+act set id=e5 component=CharacterController path=params value=c4_off
+step 60
+session --agent runner
+act move dir=W meters=3
+session --agent scenario
+step 60
+session --agent runner
+act stop
+session --agent scenario
+act set id=e5 component=CharacterController path=params value=c4
+act teleport id=e5 x=64.2 z=0 y=3.4
+step 70
+expect shows e5 "facing W"
+session --agent runner
+act move dir=E meters=3
+session --agent scenario
+mark
+step 40
+expect !journal "climbs a"
+expect shows e5 "water"
+step 400 --until "journal:e5 climbs a"
+expect journal "e5 climbs a"
+# its own duration: 1.0 s (the player's mantle is 0.45 s), so still climbing after 0.6 s
+step 36
+expect shows e5 "mantle"
+step 40
+expect field e5 Transform.translation.y > 3.25
+session --agent runner
+act stop
+session --agent scenario
+
+# --- the world as it was: the player's own numbers and none of the test definitions
+act set id=e5 component=Fighter path=moveset value=player
+act set id=e5 component=CharacterController path=params value=player
+act heal id=e5
+act teleport id=e5 x=0 z=-3 y=0
+step 10
+act content_apply changes='[{"kind": "moveset", "id": "c4_player", "before": {"death": "player_death", "inputs": {"block": "block", "dodge": "c4_back_roll", "heavy": "heavy", "light": "light_1", "use_item": "drink", "use_item.flask": "drink"}, "stagger": "player_stagger"}}, {"kind": "action", "id": "c4_back_roll", "before": {"cost": {"cooldown": 0.0, "stamina": 20.0}, "displacement": [[0.35, 4.0]], "iframes": [{"Secs": [0.0, 0.18]}], "net_id": 9001, "phases": [["roll", 0.4], ["recover", 0.1]], "steer": "MoveOrBack", "track_until": 0.0}}, {"kind": "locomotion", "id": "c4", "before": {"acceleration": 40.0, "air_control": 0.35, "buoyancy_omega": 4.0, "climb_out_min_facing": 0.5, "climb_out_time": 1.0, "coyote_time": 0.12, "deceleration": 50.0, "entry_max_speed": 4.0, "float_depth": 1.1, "glide_accel": 8.0, "glide_fall_speed": 2.0, "glide_speed": 9.0, "gravity": 20.0, "height": 1.8, "jump_buffer": 0.12, "jump_height": 1.2, "locked_turn_speed_deg": 573.0, "mantle_height": 1.6, "mantle_time": 0.45, "max_slope_deg": 45.0, "radius": 0.4, "run_speed": 5.0, "skin_width": 0.02, "snap_distance": 0.35, "sprint_speed": 7.5, "step_height": 0.35, "swim_depth": 1.3, "swim_fast_drain": 14.0, "swim_fast_resume": {"Fraction": 0.25}, "swim_fast_speed": 4.0, "swim_speed": 3.0, "swim_turn_speed_deg": 90.0, "terminal_speed": 40.0, "turn_speed_deg": 688.0, "turn_toward_input": true, "walk_speed": 2.0, "water_fall_drag": 3.0, "water_max_vertical_speed": 7.0}}, {"kind": "locomotion", "id": "c4_off", "before": {"acceleration": 40.0, "air_control": 0.35, "coyote_time": 0.12, "deceleration": 50.0, "float_depth": 1.1, "glide_accel": 8.0, "glide_fall_speed": 2.0, "glide_speed": 9.0, "gravity": 20.0, "height": 1.8, "jump_buffer": 0.12, "jump_height": 1.2, "mantle_height": 1.6, "mantle_time": 0.45, "max_slope_deg": 45.0, "radius": 0.4, "run_speed": 5.0, "skin_width": 0.02, "snap_distance": 0.35, "sprint_speed": 7.5, "step_height": 0.35, "swim_depth": 1.3, "swim_speed": 3.0, "terminal_speed": 40.0, "turn_speed_deg": 720.0, "walk_speed": 2.0}}]'
