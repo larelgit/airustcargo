@@ -162,7 +162,7 @@ pub(crate) fn plugin(app: &mut App) {
     app.register_type::<Interpolated>()
         .register_type::<NotInterpolated>()
         .configure_sets(PostUpdate, InterpSystems::Blend.before(TransformSystems::Propagate))
-        .add_systems(FixedFirst, note_placements.run_if(showing))
+        .add_systems(FixedFirst, (note_placements, restore_rest).run_if(showing))
         .add_systems(FixedLast, capture.in_set(InterpSystems::Capture).run_if(showing))
         .add_systems(PostUpdate, (adopt_visuals, blend).chain().in_set(InterpSystems::Blend).run_if(drawing));
 }
@@ -185,6 +185,9 @@ fn applies(role: Option<&NetRole>, predicted: bool) -> bool {
     role.is_none_or(|r| r.simulates()) || predicted
 }
 
+/// A top-level character body: the only kind that is blended.
+type TopBody = (With<CharacterController>, Without<ChildOf>);
+
 /// A child that can be adopted: it has a transform and is neither marked nor simulated.
 type Adoptable = (With<Transform>, Without<Interpolated>, Without<NotInterpolated>, Without<AiId>);
 
@@ -198,7 +201,7 @@ pub fn adopt_visuals(
 ) {
     for children in &bodies {
         for child in children.iter().filter(|c| candidates.contains(*c)) {
-            commands.entity(child).insert(Interpolated::default());
+            commands.entity(child).try_insert(Interpolated::default());
         }
     }
 }
@@ -217,13 +220,33 @@ fn note_placements(mut visuals: Query<(&mut Interpolated, &ChildOf)>, bodies: Qu
     }
 }
 
+/// `FixedFirst`: put each blended child back to its rest transform for the length of the tick,
+/// so simulation code that reads a child's local `Transform` sees what the game left, on or off.
+/// (`blend` offsets it again in `PostUpdate`.) A child's `GlobalTransform` still holds last
+/// frame's picture until transforms propagate: gameplay must not read it for a body child; give
+/// such a child an `AiId` or [`NotInterpolated`].
+fn restore_rest(mut visuals: Query<(&mut Interpolated, &mut Transform), Without<CharacterController>>) {
+    for (mut visual, mut tf) in &mut visuals {
+        if let Some(rest) = visual.rest
+            && visual.applied == Some(*tf)
+        {
+            if *tf != rest {
+                *tf = rest;
+            }
+            if visual.applied != Some(rest) {
+                visual.applied = Some(rest);
+            }
+        }
+    }
+}
+
 /// `FixedLast`: keep the pose each body ended the tick with.
 fn capture(
     tick: Option<Res<SimTick>>,
     tuning: Option<Res<CameraTuning>>,
     role: Option<Res<NetRole>>,
     mut visuals: Query<(&mut Interpolated, &ChildOf)>,
-    bodies: Query<(&Transform, Has<Predicted>)>,
+    bodies: Query<(&Transform, Has<Predicted>), Without<ChildOf>>,
 ) {
     let snap = tuning.map_or(CameraTuning::default().body_snap_distance, |t| t.body_snap_distance);
     let tick = tick.map(|t| t.0);
@@ -246,7 +269,7 @@ fn blend(
     settings: Option<Res<GraphicsSettings>>,
     role: Option<Res<NetRole>>,
     mut visuals: Query<(&mut Interpolated, &mut Transform, &ChildOf), Without<CharacterController>>,
-    bodies: Query<(&Transform, Has<Predicted>), With<CharacterController>>,
+    bodies: Query<(&Transform, Has<Predicted>), TopBody>,
 ) {
     let on = settings.is_none_or(|s| s.interpolation);
     // A paused clock (and a `step`, which runs ticks without frames) shows the last tick: the
@@ -273,7 +296,10 @@ fn blend(
             }
             _ => None,
         };
-        visual.shown = blended.map(|(_, shown)| shown);
+        let shown = blended.map(|(_, shown)| shown);
+        if visual.shown != shown {
+            visual.shown = shown;
+        }
         let next = match blended {
             Some((body_tf, shown)) => visual_offset(body_tf, shown, rest),
             None => rest,
@@ -281,7 +307,9 @@ fn blend(
         if *tf != next {
             *tf = next;
         }
-        visual.applied = Some(next);
+        if visual.applied != Some(next) {
+            visual.applied = Some(next);
+        }
     }
 }
 
@@ -496,5 +524,46 @@ mod tests {
         app.world_mut().run_schedule(PostUpdate);
         assert!(app.world().get::<Interpolated>(child).is_some());
         assert!(app.world().get::<Interpolated>(skip).is_none());
+    }
+
+    #[test]
+    fn a_placement_noted_before_the_tick_starts_the_history_over() {
+        let (mut app, body, child) = rig(None);
+        app.world_mut().entity_mut(body).insert(MotionState::default());
+        tick(&mut app, body, 0.0, 8);
+        tick(&mut app, body, 0.1, 8);
+        // Placed 1 m away (under the snap distance), noted in FixedFirst, then the tick ends there.
+        app.world_mut().get_mut::<MotionState>(body).unwrap().placed = Some(Vec3::new(1.0, 0.0, 0.0));
+        app.world_mut().get_mut::<Transform>(body).unwrap().translation.x = 1.0;
+        app.world_mut().get_mut::<MotionState>(body).unwrap().placed = Some(Vec3::new(0.5, 0.0, 0.0));
+        app.world_mut().run_schedule(FixedFirst);
+        assert!(app.world().get::<Interpolated>(child).unwrap().moved);
+        tick(&mut app, body, 1.1, 8);
+        let v = app.world().get::<Interpolated>(child).unwrap();
+        assert_eq!(v.previous().unwrap().translation.x, 1.1);
+    }
+
+    #[test]
+    fn a_child_that_opts_out_stays_at_rest_and_a_tick_reads_the_rest_transform() {
+        let (mut app, body, child) = rig(None);
+        let skip = app.world_mut().spawn((Transform::from_xyz(0.0, 2.0, 0.0), NotInterpolated, ChildOf(body))).id();
+        tick(&mut app, body, 0.0, 8);
+        tick(&mut app, body, 1.0, 8);
+        app.world_mut().run_schedule(PostUpdate);
+        assert_eq!(*app.world().get::<Transform>(skip).unwrap(), Transform::from_xyz(0.0, 2.0, 0.0));
+        assert_ne!(*app.world().get::<Transform>(child).unwrap(), Transform::from_xyz(0.0, 1.0, 0.0));
+        // The simulation's view: FixedFirst puts the blended child back at rest.
+        app.world_mut().run_schedule(FixedFirst);
+        assert_eq!(*app.world().get::<Transform>(child).unwrap(), Transform::from_xyz(0.0, 1.0, 0.0));
+        app.world_mut().run_schedule(PostUpdate);
+        assert_ne!(*app.world().get::<Transform>(child).unwrap(), Transform::from_xyz(0.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn a_child_despawned_in_the_frame_it_would_be_adopted_does_not_panic() {
+        let (mut app, body, _child) = rig(None);
+        let late = app.world_mut().spawn((Transform::default(), ChildOf(body))).id();
+        app.add_systems(PostUpdate, (move |mut c: Commands| { c.entity(late).despawn(); }).before(adopt_visuals));
+        app.world_mut().run_schedule(PostUpdate);
     }
 }

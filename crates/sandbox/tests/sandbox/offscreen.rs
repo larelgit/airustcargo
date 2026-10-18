@@ -296,7 +296,7 @@ fn model_x(app: &mut App) -> (f32, Option<f32>) {
 }
 
 #[test]
-#[ignore = "needs a GPU, or a software one (WGPU_FORCE_FALLBACK_ADAPTER=1): cargo test -p sandbox --test sandbox -- --ignored interpolation"]
+#[ignore = "needs a GPU, or a software one (WGPU_FORCE_FALLBACK_ADAPTER=1): cargo test -p sandbox --test sandbox -- --ignored the_model_moves"]
 fn the_model_moves_between_ticks_while_the_body_stays_on_the_tick() {
     use std::time::Duration;
     let mut app = offscreen_app();
