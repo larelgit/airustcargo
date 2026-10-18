@@ -100,6 +100,7 @@ pub fn overlay_lines(world: &World) -> Vec<String> {
         .map(|mut q| q.iter(world).map(|tf| tf.translation).collect())
         .unwrap_or_default();
     let Some(mut npcs) = world.try_query::<(
+        Entity,
         &AiId,
         &Npc,
         &NpcBrain,
@@ -114,17 +115,10 @@ pub fn overlay_lines(world: &World) -> Vec<String> {
         return Vec::new();
     };
     let db = world.get_resource::<ContentDb>();
-    let mut rows: Vec<_> = npcs.iter(world).filter(|row| near_players(&players, row.3.translation)).collect();
-    rows.sort_by_key(|row| *row.0);
-    // What only the duel rules put on an NPC's mind (the entity is needed to read it).
-    let entities: Vec<Entity> = {
-        let Some(mut q) = world.try_query::<(Entity, &AiId)>() else { return Vec::new() };
-        let all: Vec<(AiId, Entity)> = q.iter(world).map(|(e, id)| (*id, e)).collect();
-        rows.iter().filter_map(|row| all.iter().find(|(id, _)| id == row.0).map(|(_, e)| *e)).collect()
-    };
+    let mut rows: Vec<_> = npcs.iter(world).filter(|row| near_players(&players, row.4.translation)).collect();
+    rows.sort_by_key(|row| *row.1);
     rows.into_iter()
-        .zip(entities)
-        .map(|((id, npc, brain, tf, token, home, perceived, agent, controller, own), entity)| {
+        .map(|(entity, id, npc, brain, tf, token, home, perceived, agent, controller, own)| {
             let here = tf.translation;
             let mut parts = vec![npc_line(brain, token, home, Some(tf)).unwrap_or_else(|| "(not started)".into())];
             if brain.active {

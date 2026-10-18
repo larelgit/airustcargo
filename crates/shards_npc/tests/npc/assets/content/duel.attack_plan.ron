@@ -67,4 +67,6 @@
         options: [(input: "light", chain: Some((input: "light", chance: 1.0, gate_at_start: true))), (action: "swing_2", weight: 0.0, chain: Some((input: "light", chance: 1.0, gate_at_start: true)))],
         rest: (0.3, 0.3),
     ),
+    // An option that is open only on a decision tick.
+    "gate_deciding": (options: [(input: "light", when: ["deciding"])], rest: (0.5, 0.5)),
 }

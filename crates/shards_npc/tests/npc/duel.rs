@@ -954,3 +954,14 @@ fn two_planners_gating_their_continuations_at_the_start_keep_the_spacing() {
     }
 }
 
+
+#[test]
+fn the_open_options_stay_as_decided_between_two_decisions() {
+    // `deciding` holds on the decision tick only; the option it opens stays open until the next decision.
+    let (mut app, grunt) = duel_with("grunt_think", "gate_deciding");
+    for _ in 0..40 {
+        step(&mut app, 1);
+        let open = app.world().get::<shards_npc::NpcOptions>(grunt).map(|o| o.allowed.clone());
+        assert_eq!(open, Some(vec!["light".to_owned()]), "tick {}", app.world().resource::<ai_core::SimTick>().0);
+    }
+}
