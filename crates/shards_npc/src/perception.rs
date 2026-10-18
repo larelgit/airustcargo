@@ -100,6 +100,7 @@ impl Perceived {
 const SWITCH: f32 = 0.6;
 
 /// The body point sight aims at: the collider's centre, else a meter above the feet.
+#[expect(clippy::disallowed_methods, reason = "the entity is a body (an NPC's target), whose collider is its capsule; a voxel field is never a target")]
 fn body_point(physics: &PhysicsWorld, entity: Entity, feet: Vec3) -> Vec3 {
     physics.collider(entity).map_or(feet + Vec3::Y, |c| c.position)
 }

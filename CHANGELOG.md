@@ -112,10 +112,37 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   scenario: header, `seed S`, `act?` and `step` lines). `crates/sandbox/scenarios/regress/` holds such scenarios; `scenario_files.rs` runs each on a fresh game of its seed, forward only.
 - `shards fuzz --steer` (weights follow new coverage signatures) and `--minimize [--budget N]` (shrinks a session that halted, or whose chaos round trip did not come back, and writes `scenarios/regress/<date>-<stop>-seed<S>.scenario`); `shards_script::{stop, shrink}` and `shards::testing::fuzz_and_shrink` (each attempt on a fresh game, in heavy mode when the run had it). A regress file for a heavy stop says `# heavy: every=N span=K offset=O` in its header, and the runner plays it that way.
 - The nightly fuzz campaign: `crates/sandbox/tests/fuzz_campaign.rs` (`#[ignore]`; `SHARDS_FUZZ_SEED`, `_RUNS`, `_INPUTS`, `_HEAVY`, `_CHAOS`, `_BUDGET`, `_SHRINK_SECS`, `_MINUTES`, `_OUT`, `_REGRESS`) and the job `fuzz` of `nightly.yml`: 50 runs of 2000 rounds with chaos, steering and heavy mode, shrunk scenarios, replays and a coverage report as the artifact `fuzz`.
+- Voxel fields in the physics (`shards_motion`, the voxel design's PR A2a): `VoxelCollider` and `VoxelField` (static solid cells, one bit a
+  cell, in world space) with a `ColliderId` from the same counter as colliders, in id order, replaced by a new value and removed with the
+  component or the entity. Rays walk the cells (a ray along a seam between solid cells is inside the solid); casts test the cells under
+  the swept box, merged into column runs (a field made `with_cast_merge(false)` tests them one by one, to the bit as a cuboid collider per
+  cell; the mode is in the field's hash), and
+  a merged box parry's cast misses but may meet is cast cell by cell; `overlaps` and `closer_than` test the cells. Fields come after
+  colliders (strictly nearer replaces), the lower id first; on a tie a cell met as a box before one met only along a seam, then the
+  lowest cell in `(x, y, z)` order. `PhysicsWorld::has_solid(mask)` (perception's gate); `len`, `is_empty` and `colliders()` count
+  colliders only. The hooks
+  `PhysicsWorld::extent_at`, `top_under` and `solid_span` answer what readers used to read off a collider's box, and every such reader
+  uses them (the gate of `clearance` and `path_to`, `Terrain::blocker_top`, the nav bake's seed, `ground_below`);
+  `PhysicsWorld::subset` keeps fields (the scatter's solids take the fields near a tile); the snapshot check `static_colliders` hashes
+  every field. The engine rule `voxel.body_in_solid` (`BODY_IN_SOLID`), off by default. Engine rules off by default:
+  `add_opt_in_engine_invariant(name, rule)` registers one only when `EngineConfig::opt_in_invariants` names it, and `shards::run` takes
+  `--engine-invariant NAME` (repeatable; only the names offered; not with `--no-engine-invariants`). A world without fields runs the code it ran
+  before: the reference replays verify byte for byte. The guard against a reader that forgets fields: `PhysicsWorld::collider`,
+  `PhysicsWorld::by_id` and `ColliderInfo::bounds` are `disallowed-methods` (each call says why with `#[expect]` on its statement), and
+  `crates/shards_motion/tests/readers.rs` checks every collider read in `crates/*/src` (the methods, `get::<Collider>`, `&Collider` in a
+  query or an argument) against `tests/readers.allow`, a row for each occurrence. Tests: `tests/motion/seams.rs` (the seam differential
+  test: one cuboid per cell, merged boxes, the field with the merge on and off), `tests/motion/voxel.rs`, the field-against-cells test
+  and the timing `field_timing` (`#[ignore]`) in `physics/world.rs`.
 
 ### Changed
 
 - Breaking, once, for every later combat change: `DamageCtx` gained `credit`, `ignore_reason`, `dir`, `reaction`, `reaction_armor`, `knockback`, `taken`, `guard_mult` and `weight`; `Outcome` gained `PerfectEvaded` and `Parried` became `Parried { stamina }`; `Damaged`, `Blocked`, `Parried`, `Evaded`, `GuardBroken` and `Died` gained `weight`, `absorbed`, `source` and friends (`Damaged` also `ignore_reason`, so the journal can say why a hit was ignored: `god mode`, `grace`, `downed`, `ignored`); `Cost` gained `stamina_mode`. A struct literal of these needs the new fields. The behaviour of existing content is unchanged.
+- `ColliderInfo::aabb_min` and `aabb_max` are `pub(crate)`: outside `shards_motion`, `ColliderInfo::bounds()` gives the box (and says,
+  by its `clippy.toml` entry, that a voxel field has none).
+- Breaking: `PhysicsWorld::subset` takes a second predicate, the fields to keep (`subset(|c| …, |f| …)`; `|_| false` keeps none, as
+  before).
+- The test `replays::a_different_world_diverges_and_the_report_says_when` (`shards_motion`) steers the second world's own hero: two
+  worlds need not spawn the same entities while they load, and under a loaded `cargo test` it failed on an `Entity` of the first.
 - The UI's journal lines (`ui: opened pause`, `ui: closed pause`, `ui: … pressed`, …) are `JournalKind::Local`, not `Event`: screens are outside the simulation and the snapshot, so a heavy twin never had them, and the first fuzz campaign stopped on `ui_close` for that. They are still in the journal and in `expect journal`.
 - `shards_script`: a tool call's `Outcome` carries `halted` (why the game stopped itself during the call), so a driver other than the CLI sees a halted `step`.
 - `soak.yml` runs every night (it ran on Mondays).
