@@ -159,7 +159,7 @@ pub use machine::{
     action_progress, apply_effect, can_start, extend_recovery, force_action, press_life, ActionEffect, ActionEffects, ActionEnd, ActionEnded,
     ActionMissed, ActionRejected,
     ActionStarted,
-    intangible, state_intangible, ActionState, Blocker, FighterView, Healed, InputBuffer, LeapRun, Queued, RunExtras, Running, Start, Telegraph,
+    in_the_air, intangible, state_intangible, ActionState, Blocker, FighterView, Healed, InputBuffer, LeapRun, Queued, RunExtras, Running, Start, Telegraph,
 };
 pub use predict::{shown_queue, shown_state, ActionPredictor, PredictedAction, CONFIRM_SLACK};
 pub use stance::{actions_to_modifiers, hold_regen_during_actions};

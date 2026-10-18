@@ -1601,7 +1601,7 @@ What an action does to the body, as data. Everything is off by default and unser
 (`shards_motion`): the controller launches it up with its own gravity so that it peaks `height` metres above the take-off
 (`v = sqrt(2 * gravity * height)`, whatever the gravity), in the same tick, even while the action owns the body, and removes
 the component. It only launches a body on the ground or within `coyote_time` of it (a jump's test, without its buffer): on
-a body that is not grounded the launch does nothing and the action goes on. A launch counts as a jump for landing tiers
+a body that is not grounded the launch does nothing, so a leap does not start from there at all: while the body is in the air past its coyote time `can_start` answers `Blocker::InAir` (`in the air; a leap starts from the ground`, `ready_in: None`), the tools refuse, the host and a client's predictor judge it alike, and a press made anyway waits in the buffer and is rejected with that reason, unpaid (a press made on the ground, or within coyote time of it, leaps; a queued leap with no landing waits until its ttl, then is rejected unpaid). A forced action (`force_action`) skips the check and launches nothing in the air. A launch counts as a jump for landing tiers
 (`JumpedFlight`) but is no `Jumped` event. The run's flat movement is its `displacement`; without `search` the authored
 distance is used. With `search`, the distance is chosen when the action starts ([`plan_leap`]): candidates from the aimed distance
 down by `step` to `min`, the first whose landing point passes wins: the wall ray at `probe_height` above the feet to the same

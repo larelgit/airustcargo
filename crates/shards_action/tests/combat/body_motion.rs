@@ -154,8 +154,8 @@ fn leap_launches_once_on_the_ground() {
 fn a_leap_on_a_body_that_is_not_grounded_launches_nothing() {
     let mut app = arena();
     let hero = hero(app.world_mut(), "b_hero", Vec3::new(0.0, 3.0, 0.0), N);
-    // `b_hop` has no search, so it starts in the air; its launch at 0.1 s finds no ground.
-    press(&mut app, hero, "technique.8");
+    // `b_hop` has no search; forced in the air (a press is refused there), its launch at 0.1 s finds no ground.
+    assert!(force_action(app.world_mut(), hero, "b_hop"));
     let mut top: f32 = 0.0;
     for _ in 0..12 {
         step(&mut app, 1);
@@ -386,4 +386,50 @@ fn a_leap_with_no_landing_does_not_take_the_start_slot() {
     assert_eq!(action(&app, hero), "b_slam", "the press behind the leap started: {:#?}", journal(&app));
     assert!(stamina(&app, hero) <= before);
     assert_eq!(app.world().get::<Cooldowns>(hero).unwrap().left("b_leap_far"), 0.0, "the leap paid nothing");
+}
+
+#[test]
+fn a_leap_pressed_in_the_air_is_refused_unpaid() {
+    let mut app = arena();
+    let hero = hero(app.world_mut(), "b_hero", Vec3::new(0.0, 40.0, 0.0), N);
+    step(&mut app, 1);
+    assert_eq!(mode(&app, hero), MotionMode::Air);
+    assert!(app.world().get::<MotionState>(hero).unwrap().coyote_left <= 0.0, "past coyote time");
+    let view = FighterView::of(app.world(), hero).unwrap();
+    for input in ["technique.1", "technique.8"] {
+        let err = can_start(&view, input, DT).unwrap_err();
+        assert_eq!(err, Blocker::InAir, "{input}");
+        assert_eq!(err.ready_in(), None);
+    }
+    // An action that is no leap is not judged by the ground.
+    assert!(can_start(&view, "light", DT).is_ok());
+    let refused = fails(&mut app, "use_technique", json!({"slot": 1}));
+    assert!(refused.contains("in the air; a leap starts from the ground"), "{refused}");
+    // A press made anyway waits, then is rejected; nothing is paid.
+    let before = stamina(&app, hero);
+    press(&mut app, hero, "technique.1");
+    step(&mut app, 40);
+    assert_eq!(action(&app, hero), "idle");
+    assert_eq!(stamina(&app, hero), before);
+    assert_eq!(app.world().get::<Cooldowns>(hero).unwrap().left("b_leap"), 0.0);
+    let rejected = lines(&app, "technique.1 rejected");
+    assert_eq!(rejected.len(), 1, "{:#?}", journal(&app));
+    assert!(rejected[0].contains("in the air; a leap starts from the ground"), "{rejected:?}");
+}
+
+#[test]
+fn a_leap_starts_on_the_ground_and_within_coyote_time() {
+    let mut app = arena();
+    let hero = me(&mut app);
+    step(&mut app, 1);
+    assert!(can_start(&FighterView::of(app.world(), hero).unwrap(), "technique.1", DT).is_ok(), "on the ground");
+    // Just walked off an edge: in the air, but within coyote time.
+    {
+        let mut m = app.world_mut().get_mut::<MotionState>(hero).unwrap();
+        m.mode = MotionMode::Air;
+        m.coyote_left = 0.1;
+    }
+    assert!(can_start(&FighterView::of(app.world(), hero).unwrap(), "technique.1", DT).is_ok(), "within coyote time");
+    app.world_mut().get_mut::<MotionState>(hero).unwrap().coyote_left = 0.0;
+    assert_eq!(can_start(&FighterView::of(app.world(), hero).unwrap(), "technique.1", DT), Err(Blocker::InAir));
 }

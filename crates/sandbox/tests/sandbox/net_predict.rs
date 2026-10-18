@@ -755,3 +755,21 @@ fn a_spin_is_cut_on_both_sides_when_the_body_enters_water() {
     stand.run(60);
     assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
 }
+
+#[test]
+fn a_leap_in_the_air_is_refused_on_both_sides() {
+    let (mut stand, id, mine) = mover_stand();
+    let theirs = entity(&stand, HOST, &id).unwrap();
+    // Thrown high above open ground: in the air, past coyote time, on both machines.
+    let up = stand.call(HOST, "teleport", json!({"id": id, "x": -20.0, "y": 40.0, "z": 20.0}));
+    assert!(up.ok, "{}", up.result);
+    stand.run(20);
+    let before = stand.world(HOST).get::<shards::action::Stamina>(theirs).unwrap().current;
+    let out = stand.call(C1, "use_technique", json!({"slot": 1}));
+    assert!(!out.ok && out.result.to_string().contains("in the air; a leap starts from the ground"), "{}", out.result);
+    stand.run(20);
+    assert!(shown(&stand, mine).is_none(), "nothing was shown");
+    assert!(!stand.world(HOST).get::<ActionState>(theirs).unwrap().is("spar_leap"), "nothing started on the host");
+    assert_eq!(stand.world(HOST).get::<shards::action::Stamina>(theirs).unwrap().current, before, "nothing was paid");
+    assert_eq!(prediction(&stand, C1).mispredicted, 0, "{:#?}", journal(&stand, C1));
+}
