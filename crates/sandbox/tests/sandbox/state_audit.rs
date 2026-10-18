@@ -106,6 +106,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     // shards_audio
     ("shards_audio::", "the mixer, the music's diagnostics and the audio device: sound only reads the world"),
     // shards_content
+    ("shards_content::ContentAppliedHooks", "what runs after a content change is applied, registered at build time"),
     ("shards_content::ContentGuards", "the content guards, registered at build time"),
     ("shards_content::db::ContentDb", "loaded content: the world is built around it, and snapshots check its hash"),
     ("shards_content::db::ContentKinds", "the content kinds, registered at build time"),
@@ -156,6 +157,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("shards_npc::invariants::TokenAudit", "what the token rule found right after the director this tick: recomputed every tick, read only by the invariant"),
     ("shards_npc::nav::NavPaths", "the path finder, set at build time"),
     ("shards_npc::nav::overlay::", "the navigation overlay: the picture"),
+    ("shards_npc::nav::region::NavFailed", "the region whose navmesh could not be built (a voxel region has none yet), so it is not tried every tick: made again with the navmesh by the snapshot rebuild `navmesh`"),
     ("shards_npc::nav::region::NavBakes", "baked navigation tiles by hash: a function of files and content"),
     ("shards_npc::nav::region::NavRegion", "the active region's navmesh, made again by the snapshot rebuild `navmesh`"),
     ("shards_npc::nav::tools::NavOverlay", "the navigation overlay: the picture"),
@@ -168,6 +170,8 @@ const OUTSIDE: &[(&str, &str)] = &[
     // shards_scatter
     ("shards_scatter::ScatterState", "strewn foliage: the picture, without AiId or colliders"),
     // shards_voxel
+    ("shards_voxel::region::VoxelSettings", "whether built volumes are kept in the process: how a region is built, not what it is"),
+    ("shards_voxel::region::VoxelTerrain", "the voxel region's volume, palette and field, made again from the region's manifest (RegionBuild) by the snapshot prepare `region`, and checked by `voxel.volume`"),
     ("shards_voxel::worldgen::VoxelSteps", "the voxel generation steps and checks, registered at build time"),
     // shards_settings
     ("shards_settings::", "the player's settings and their registry"),
@@ -219,7 +223,7 @@ fn unclassified(names: &BTreeSet<String>) -> Vec<&str> {
 #[test]
 fn every_resource_is_saved_or_said_to_be_outside_the_simulation() {
     let mut seen = BTreeSet::new();
-    for name in ["combat_prototype.json", "region.json"] {
+    for name in ["combat_prototype.json", "region.json", "voxel_arena.json"] {
         let app = played(name);
         let names = not_saved(app.world());
         let unknown = unclassified(&names);

@@ -19,17 +19,31 @@
 //! - [`column_boxes`] (the fallback collision and the reference a voxel field is measured
 //!   against) and [`water_boxes`] (water for every voxel region).
 //!
-//! What is not here yet: the region kind, collision, navigation and meshing (later PRs of the
-//! design). The module costs nothing in a game without a voxel region: it registers a content
-//! kind and a registry and adds no system.
+//! - [`VoxelRegionDef`]: the content kind `voxel_region` (`*.voxel_region.ron`), a region kind of
+//!   the world module ([`region`]): `regen region=<id>` generates it, builds its terrain (a
+//!   voxel field in physics), its water volumes, its sea and current, and its points of
+//!   interest, behind the same region API as tiles; [`VoxelTerrain`] is the region in the
+//!   world. Tools: `sea_current_at`, `voxel_info`; conditions `in_water`, `in_current`,
+//!   `near_grid_edge` (they read physics and the region API, so they answer in any region).
+//!
+//! What is not here yet: navigation and meshing (later PRs of the design). The module costs
+//! nothing in a game without a voxel region: it registers content kinds, a registry, a region
+//! kind and its tools, and adds no system.
+//!
+//! **The rule for games:** the volume's own types ([`VoxelVolume`], [`VoxelGen`], the palette's
+//! cells) are for generation steps. Gameplay reads a voxel region through the region API of the
+//! world module and through physics, as it reads a region of tiles, so content can swap one
+//! kind of region for the other.
 //!
 //! Determinism: nothing here calls a platform `sin`, `powf` or `exp`; random numbers come from
 //! `DetRng` keyed by the generation's inputs, ordered collections are `BTreeMap`s or indices.
 
 pub mod worldgen;
+mod ai;
 pub mod merge;
 pub mod noise;
 pub mod palette;
+pub mod region;
 pub mod volume;
 
 use bevy::prelude::*;
@@ -37,9 +51,10 @@ use shards_content::ContentAppExt;
 use shards_core::EngineAppExt;
 
 pub use worldgen::{
-    block_named, fill_water, generate, noise_hills, step_set_hash, world_hash, CheckFn, FillWaterParams, GenSpec, Generated, Mark, NoiseHillsParams, StepFn, VoxelGen,
-    VoxelSteps, MAX_ATTEMPTS,
+    block_named, fill_water, generate, generate_attempt, generate_attempts, noise_hills, step_set_hash, world_hash, AttemptError, AttemptStage, CheckFn,
+    FillWaterParams, GenSpec, Generated, Mark, NoiseHillsParams, StepFn, VoxelGen, VoxelSteps, MAX_ATTEMPTS,
 };
+pub use region::{CurrentDef, SeaDef, VoxelRegionDef, VoxelSettings, VoxelTerrain, WaterDef};
 pub use merge::{column_boxes, water_boxes, CellBox};
 pub use noise::Noise;
 pub use palette::{AoDef, BlockDef, Meshing, ShadeDef, VariationDef, VoxelPalette, VoxelPaletteDef, MAX_BLOCKS};
@@ -67,6 +82,7 @@ impl VoxelAppExt for App {
         if let Err(e) = result {
             panic!("{e}");
         }
+        share_steps(self.world_mut());
         self
     }
 
@@ -75,7 +91,21 @@ impl VoxelAppExt for App {
         if let Err(e) = result {
             panic!("{e}");
         }
+        share_steps(self.world_mut());
         self
+    }
+}
+
+/// Hands a copy of the step registry to what reads it outside the app's world: content checks
+/// (a region naming a step this game never registered is a content error) and the world
+/// module's generator (reports and saves clone it). Again after every registration.
+fn share_steps(world: &mut World) {
+    let Some(steps) = world.get_resource::<VoxelSteps>().cloned() else { return };
+    if let Some(mut kinds) = world.get_resource_mut::<shards_content::ContentKinds>() {
+        kinds.set_context(steps.clone());
+    }
+    if let Some(mut worldgen) = world.get_resource_mut::<shards_world::WorldGen>() {
+        worldgen.set_kind_data(region::CONTENT, steps);
     }
 }
 
@@ -90,6 +120,40 @@ impl Plugin for VoxelPlugin {
             app.is_plugin_added::<ai_core::AiCorePlugin>(),
             "VoxelPlugin needs AiCorePlugin added first (shards::EnginePlugins adds both)"
         );
-        app.add_content::<VoxelPaletteDef>().init_resource::<VoxelSteps>().add_engine_module("voxel", VERSION);
+        app.add_content::<VoxelPaletteDef>()
+            .add_content::<VoxelRegionDef>()
+            .init_resource::<VoxelSteps>()
+            .init_resource::<VoxelSettings>()
+            .add_engine_module("voxel", VERSION);
+        // A voxel region is a region kind of the world module: without it there are no regions.
+        if app.is_plugin_added::<shards_world::WorldPlugin>() {
+            use ai_core::AiAppExt;
+            use shards_world::WorldAppExt;
+            app.add_region_kind(region::kind())
+                // Absent outside a voxel region: replays and snapshots of other worlds keep their bytes.
+                .add_optional_replay_check("voxel.volume", region::volume_check)
+                .add_optional_snapshot_check(
+                    "voxel.volume",
+                    "the voxel volume differs: the region was made again from other content or another version of a generation step",
+                    region::volume_check,
+                )
+                // The volume compares once the world module has built the snapshot's region.
+                .add_snapshot_prepare_after("voxel", "region", &["voxel.volume"], |_, _| Ok(None))
+                .on_content_applied(region::content_applied);
+            ai::register(app);
+        }
+        share_steps(app.world_mut());
+    }
+
+    fn finish(&self, app: &mut App) {
+        // Added before the world module, this plugin could not register its region kind (the
+        // world module was not there yet): every `regen` of a voxel region would say "unknown
+        // region". A mistake in the game's build, said where it is made.
+        let registered = app.world().get_resource::<shards_world::WorldGen>().is_some_and(|g| g.kind(region::CONTENT).is_some());
+        assert!(
+            !app.is_plugin_added::<shards_world::WorldPlugin>() || registered,
+            "VoxelPlugin was added before WorldPlugin, so voxel regions are not a region kind of this game: add VoxelPlugin after WorldPlugin (shards::EnginePlugins does)"
+        );
+        share_steps(app.world_mut());
     }
 }

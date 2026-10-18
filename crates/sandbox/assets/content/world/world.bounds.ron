@@ -5,12 +5,14 @@
 // outside (past `margin` of the pieces). The pieces: the arena's floor and walls (x and z
 // -21.5..21.5), its corridor (x 21.5..44, z -5.5..5.5), the course's lane (x 44..86,
 // z -5.5..5.5) and the canyon floor under the glide (x 86..141.5, z -17.5..17.5). Or over the
-// loaded region's cells (the wilds: x -64..64, z 48..176; the region stays one rectangle).
+// loaded region's cells (the wilds: x -64..64, z 48..176; the region stays one rectangle;
+// the voxel arena: x -128..128, z -528..-272, and its sea, `past_grid`, 100 m beyond).
 // `margin` meters wider on every rectangle, and above `fall_below` (the canyon floor under
-// the course's cliff is at -10).
+// the course's cliff is at -10, and so is the voxel arena's sea floor).
 {
     "world": (
         margin: 4.0,
         fall_below: -30.0,
+        past_grid: {"voxel_arena": 100.0},
     ),
 }

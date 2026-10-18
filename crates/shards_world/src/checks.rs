@@ -100,6 +100,9 @@ impl RegionGraph {
         match manifest.layout {
             Layout::Grid => graph.build_grid(db, manifest)?,
             Layout::Rooms => graph.build_rooms(db, manifest)?,
+            // No tiles, no roads: an empty graph over the volume's chunks (its walkable ground
+            // is the voxels', which navigation reads, not tiles).
+            Layout::Volume => {}
         }
         Ok(graph)
     }
@@ -277,18 +280,34 @@ fn room_index(id: &str) -> Option<usize> {
     id.strip_prefix("room.")?.parse().ok()
 }
 
-/// The check rules of the region or dungeon a manifest comes from.
+/// The check rules of the region or dungeon a manifest comes from. A volume has none of these:
+/// its checks are its region kind's own and run while it is generated.
 pub fn rules_of<'a>(db: &'a ContentDb, manifest: &RegionManifest) -> Result<&'a CheckRules, String> {
-    match manifest.layout {
+    let rules = match manifest.layout {
         Layout::Grid => db.get::<RegionDef>(&manifest.region).map(|r| &r.checks),
         Layout::Rooms => db.get::<DungeonDef>(&manifest.region).map(|d| &d.checks),
-    }
-    .ok_or_else(|| format!("no {} `{}` in content", if manifest.layout == Layout::Grid { "region" } else { "dungeon" }, manifest.region))
+        Layout::Volume => {
+            return Err(format!(
+                "voxel region `{}`: its checks are its generation's own (they run while it is generated: `worldgen_report`)",
+                manifest.region
+            ));
+        }
+    };
+    let label = match manifest.layout {
+        Layout::Grid => "region",
+        Layout::Rooms => "dungeon",
+        Layout::Volume => "voxel region",
+    };
+    rules.ok_or_else(|| format!("no {label} `{}` in content", manifest.region))
 }
 
 /// Every check of the manifest's region: the engine's rules and the custom checks it names
-/// (from `worldgen`; without it they are skipped).
+/// (from `worldgen`; without it they are skipped). A volume passes: its checks ran while it was
+/// generated, and a manifest records only an attempt that passed them.
 pub fn check_manifest(db: &ContentDb, worldgen: Option<&WorldGen>, manifest: &RegionManifest) -> Result<Vec<CheckFailure>, String> {
+    if manifest.layout == Layout::Volume {
+        return Ok(Vec::new());
+    }
     let rules = rules_of(db, manifest)?;
     let graph = RegionGraph::build(db, manifest)?;
     let input = CheckInput { manifest, rules, graph: &graph, db };

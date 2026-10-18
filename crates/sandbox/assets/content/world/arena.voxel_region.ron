@@ -1,0 +1,47 @@
+// The voxel arena: a voxel region 256 x 32 x 256 m north of the arena (x -128..128, z
+// -528..-272), the arena's floor at y 0 and its middle at (0.5, 0, -399.5). Hills fall to a sea
+// at the rim; a lake, trees, and a flat arena with steps, a ledge, a pool, an overhang and a cave
+// (the sandbox's steps, `src/gameplay/terrain.rs`). `regen region=voxel_arena seed=7` goes
+// there. No navmesh yet: NPCs plan over the local grid.
+{
+    "voxel_arena": (
+        size: (256, 32, 256),
+        chunk: (64, 32, 64),
+        palette: "terrain",
+        version: 1,
+        anchor: Some((128, 12, 128)),
+        at: (0.0, 0.0, -400.0),
+        attempts: 4,
+        steps: [
+            ("island", 1),
+            ("lake", 1),
+            ("flat_arena", 1),
+            ("arena_pieces", 1),
+            ("cave", 1),
+            ("trees", 1),
+            ("fill_water", 1),
+        ],
+        params: {
+            "island": (
+                base: 10.0, hills: 7.0, hills_frequency: 0.016, detail: 2.5, detail_frequency: 0.07,
+                falloff_from: 0.55, falloff: 60.0, shore_below: 9, peak_from: 21,
+                ground: "grass", soil: "dirt", rock: "stone", shore: "sand", peak: "snow", soil_depth: 3,
+            ),
+            "lake": (at: (-60.0, -50.0), radius: (18.0, 12.0), level: 8, depth: 4.0, bed: "sand"),
+            "flat_arena": (height: 12, radius: 16.0, blend: 14.0, top: "grass", fill: "dirt"),
+            "arena_pieces": (height: 12, ledge: 2, stone: "stone", brick: "brick", sand: "sand", water: "water", glow: "glow"),
+            "cave": (height: 12, mound: 6, rock: "stone", top: "grass", radius: 1.6),
+            "trees": (count: 170, clear: 30.0, dry_above: 9, ground: "grass", trunk: "wood", leaves: "leaves"),
+            "fill_water": (level: 9, block: "water"),
+        },
+        checks: ["arena_flat", "spawn_on_ground", "pool_depth", "cave_open"],
+        marks: ["steps.0", "ledge.0", "pool.0", "overhang.0", "cave.0", "post"],
+        markers: ["post"],
+        spawn: Some("spawn.0"),
+        water: (surface_drop: 0.05),
+        sea: Some((level: 9, reach: 100.0, floor: 2.0, current: Some((starts: 10.0, full: 1.5)))),
+        near_edge: 10.0,
+        check_seed: 7,
+        fallback_seed: Some(7),
+    ),
+}

@@ -2,7 +2,8 @@
 //! combat prototype, the combat director, an enemy on the navmesh, the generated region and
 //! "go to boss phase" by snapshot (that one starts from its snapshot) and saves (save, get
 //! hurt, load, die, load again, play on: the replay starts from the state after the last
-//! load), played by their scenarios on a fresh game. Each one is verified the
+//! load) and the voxel arena (a voxel region: its steps, ledges, pool and cave), played by their
+//! scenarios on a fresh game. Each one is verified the
 //! way CI and a person do it, by the game itself: `sandbox --replay FILE --verify` must say
 //! `identical` and exit 0. A change that alters gameplay makes them diverge; record them
 //! again on purpose:
@@ -23,7 +24,7 @@ use shards::ai_core::scenario::run_file;
 use crate::scenario_files::scenario;
 
 /// The scenarios recorded as reference replays, by the replay's file name.
-const RECORDED: [(&str, &str); 10] = [
+const RECORDED: [(&str, &str); 11] = [
     ("obstacle_course.json", "obstacle_course.scenario"),
     ("combat_prototype.json", "combat_prototype.scenario"),
     ("npc_director.json", "npc_director.scenario"),
@@ -32,6 +33,7 @@ const RECORDED: [(&str, &str); 10] = [
     ("snapshot.json", "snapshot.scenario"),
     ("saves.json", "saves.scenario"),
     ("reactions.json", "reactions.scenario"),
+    ("voxel_arena.json", "voxel_arena.scenario"),
     ("timeline.json", "timeline.scenario"),
     ("body_state.json", "body_state.scenario"),
 ];
