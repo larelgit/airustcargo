@@ -134,6 +134,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("shards_look::", "looks and their materials: the picture"),
     // shards_motion
     ("shards_motion::ai::MotionAi", "the settings of motion queries (fall height, clearance range)"),
+    ("shards_motion::camera::lock::LockHooks", "the lock-on hooks the action module installs at build time"),
     ("shards_motion::camera::", "the camera: the picture"),
     ("shards_motion::input::", "the local controls and key bindings: gameplay reads Intent, which the replay records"),
     ("shards_motion::overlay::PhysicsOverlay", "the physics overlay: the picture"),

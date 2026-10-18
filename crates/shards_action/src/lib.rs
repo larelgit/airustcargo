@@ -112,6 +112,7 @@ pub mod cue;
 pub mod def;
 pub mod draw;
 pub mod fighter;
+pub mod lock;
 pub mod machine;
 mod invariants;
 mod orders;
@@ -153,6 +154,7 @@ pub use machine::{
     ActionStarted,
     ActionState, Blocker, FighterView, Healed, InputBuffer, Queued, Running, Start, Telegraph,
 };
+pub use lock::{LockLoss, LockLost, LockSight, LockSwitched, LockSystems};
 pub use predict::{shown_state, ActionPredictor, PredictedAction, CONFIRM_SLACK};
 pub use stance::{actions_to_modifiers, hold_regen_during_actions};
 pub use status::{
@@ -368,6 +370,7 @@ impl Plugin for ActionPlugin {
             // Cosmetic: a game may add it in a window only, and replays must not care.
             .replay_ignore::<Animated>();
         predict::plugin(app);
+        lock::plugin(app);
         ai::register(app);
         tools::register(app);
         bake::register(app);

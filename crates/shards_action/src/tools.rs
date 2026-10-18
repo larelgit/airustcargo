@@ -12,10 +12,12 @@ use serde::Deserialize;
 use shards_content::ContentDb;
 use shards_core::input_names::{BLOCK, DODGE, HEAVY, LIGHT, PARRY, TECHNIQUE, USE_ITEM};
 use shards_core::{flat, Intent, Order, Predicted};
+use shards_motion::camera::{LockOnDef, Side};
 
 use crate::combat::{react, revive, stagger, Reaction, StaggerCause};
 use crate::def::{ActionDef, CombatTuning, MovesetDef, Steer, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team};
+use crate::lock::{pick_for_body, switch_lock_of, switch_rules, take_lock};
 use crate::machine::{can_start, fits_buffer, ActionState, FighterView, Healed};
 use crate::predict::shown_state;
 use crate::zone::{body_radius, zones_threatening};
@@ -284,14 +286,17 @@ fn require_input(world: &World, me: Entity, input: &str, prefix: &str, what: &st
     })
 }
 
-/// Lock on to a target (your attacks and facing follow it), the nearest enemy, or let
-/// go with `off`.
+/// Lock on to a target (your attacks and facing follow it), or to the best one you can see,
+/// or let go with `off`; `side` moves the lock you hold to the next target on that side.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct LockOnArgs {
     pub target: Option<Id>,
     /// Release the lock-on.
     #[serde(default)]
     pub off: bool,
+    /// Move the lock you hold to the next target on this side, seen from you: `left` or
+    /// `right` (the nearest angle past a small dead band; only what you can see).
+    pub side: Option<Side>,
 }
 
 fn lock_on(In(call): In<Call<LockOnArgs>>, world: &mut World) -> ToolResult {
@@ -301,26 +306,58 @@ fn lock_on(In(call): In<Call<LockOnArgs>>, world: &mut World) -> ToolResult {
         world.get_mut::<Intent>(me).ok_or("no Intent")?.target = None;
         return Ok("ok: lock-on released".into());
     }
-    let target = match call.args.target {
-        Some(id) => {
+    // Without a `lock_on` definition: the nearest living enemy within the combat tuning's
+    // range, and any target asked for by id (as before the lock-on rules).
+    let rules = LockOnDef::active(world.get_resource::<ContentDb>()).cloned();
+    if let Some(side) = call.args.side {
+        if call.args.target.is_some() {
+            return Err("pass `target` or `side`, not both: `side` moves the lock you hold".into());
+        }
+        let switch = switch_rules(world);
+        return match switch_lock_of(world, me, side, &switch) {
+            Ok((from, to)) => Ok(format!("ok: locked on {to} (switched {} from {from}){}", side.name(), where_is(world, here, to))),
+            Err(None) => Err(format!("you hold no lock to move {}; lock on first (`lock_on`, or `lock_on target=eN`)", side.name())),
+            Err(Some(from)) => Err(format!(
+                "nobody you can see to the {} of {from} within {:.0}m; the lock stays on {from}",
+                side.name(),
+                switch.range
+            )),
+        };
+    }
+    let target = match (call.args.target, &rules) {
+        (Some(id), rules) => {
             let e = id.entity(world)?;
             if e == me {
                 return Err("you cannot lock on to yourself".into());
             }
+            if let Some(def) = rules {
+                // What the check would take away at once is refused here.
+                if world.get::<Dead>(e).is_some() {
+                    return Err(format!("{} is dead; lock on to a living target", id.0));
+                }
+                let distance = world.get::<Transform>(e).map_or(0.0, |t| t.translation.distance(here));
+                if distance > def.range {
+                    return Err(format!("{} is {distance:.1}m away, beyond the lock-on range of {:.0}m; come closer", id.0, def.range));
+                }
+            }
             id.0
         }
-        None => {
+        (None, Some(def)) => pick_for_body(world, me, def)
+            .ok_or_else(|| format!("nothing you can see within {:.0}m to lock on to; pass `target`", def.range))?,
+        (None, None) => {
             let range = CombatTuning::of(world.resource::<ContentDb>()).lock_on_range;
             nearest_enemy(world, me, here, range)
                 .ok_or_else(|| format!("no enemy within {range:.0}m to lock on to; pass `target`"))?
         }
     };
+    take_lock(world, me, target);
+    Ok(format!("ok: locked on {target}{}", where_is(world, here, target)))
+}
+
+/// ` (6.2m N)`: where `target` is from `here`, or nothing when it has no position.
+fn where_is(world: &World, here: Vec3, target: AiId) -> String {
     let there = world.resource::<AiIndex>().get(target).and_then(|e| world.get::<Transform>(e)).map(|t| t.translation);
-    world.get_mut::<Intent>(me).ok_or("no Intent")?.target = Some(target);
-    Ok(match there {
-        Some(p) => format!("ok: locked on {target} ({})", relative(here, p)),
-        None => format!("ok: locked on {target}"),
-    })
+    there.map_or(String::new(), |p| format!(" ({})", relative(here, p)))
 }
 
 /// The nearest living hostile fighter within `range`, lowest id on ties.

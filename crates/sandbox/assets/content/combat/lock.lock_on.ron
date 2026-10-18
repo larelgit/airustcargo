@@ -1,0 +1,20 @@
+// The lock-on rules (C6): how far a lock reaches, what the scored pick weighs, how long a target
+// may hide behind the world before the lock goes, and the switch's dead band. Every field not
+// written here takes the engine's default; without this file the camera and the `lock_on` tool
+// pick as they did before the rules, and nothing checks a lock.
+{
+    "default": (
+        // m, in 3D between the two bodies: the pick, the switch and the check.
+        range: 30.0,
+        // Lower is better: distance per range, screen angle per half view, look angle per half
+        // turn; danger (an attack about to land on you) and the current target are taken off.
+        weights: (distance: 1.0, screen: 1.0, view: 0.5, danger: 0.5, current: 0.3),
+        // The aim point and the eye, as fractions of the bodies' heights.
+        aim_height: 0.6,
+        eye_height: 0.9,
+        // Hidden this long in a row (s, counted in ticks: 120 at 60 Hz): the lock goes.
+        obstruction_s: Some(2.0),
+        // A switch skips what is within this angle of the current target (rad).
+        switch_dead_band: 0.05,
+    ),
+}

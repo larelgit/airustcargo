@@ -2,17 +2,20 @@
 //! window to be seen, so they are part of the `render` feature; headless apps have no
 //! camera and nothing here runs.
 
-use ai_core::{AiId, AiIndex};
+use ai_core::{journal, label, AiId, AiIndex, JournalKind};
 use bevy::camera::Projection;
 use bevy::post_process::motion_blur::MotionBlur;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
-use shards_core::{Intent, LocalPlayer};
+use shards_content::ContentDb;
+use shards_core::input_names::{LOCK_ON, LOCK_SWITCH};
+use shards_core::{Intent, LocalPlayer, Press};
 use shards_settings::AccessibilitySettings;
 
+use super::lock::{half_width, in_frustum, lock_candidates, pick_lock, sight_clear, switch_target, LockOnDef, Lockable, PickView};
 use super::math::{
     aim_assist, arm_length, arm_reach, lock_framing, lock_holds, next_lock_target, orbit_angles, orbit_position, pick_lock_target,
-    pitch_limits, resolve_camera_collision, shake_offset_with, wrap_angle, FlickState, LockCandidate, LockView,
+    pitch_limits, resolve_camera_collision, shake_offset_with, wrap_angle, FlickState, LockCandidate, LockView, Side,
 };
 use super::{CameraOffsets, CameraSettings, CameraShake, CameraSystems, CameraTuning, LockOnTarget, ThirdPersonCamera};
 use crate::input::{ControlState, ControlSystems};
@@ -21,10 +24,12 @@ use crate::physics::{LayerMask, PhysicsWorld, QueryFilter};
 /// The local player, as opposed to the camera that follows it.
 type LocalPlayerFilter = (With<LocalPlayer>, Without<ThirdPersonCamera>);
 
-type Lockable<'w, 's> =Query<'w, 's, (&'static AiId, &'static Transform), (With<LockOnTarget>, Without<ThirdPersonCamera>)>;
+type LockOnTargets<'w, 's> = Query<'w, 's, (&'static AiId, &'static Transform), (With<LockOnTarget>, Without<ThirdPersonCamera>)>;
 
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(PreUpdate, lock_on.after(ControlSystems::Read))
+    // Without a `lock_on` definition the camera picks and lets go as it always did; with one it
+    // picks by the definition's rules and leaves the checking of a lock to the simulation.
+    app.add_systems(PreUpdate, (lock_on.run_if(not(lock_rules)), lock_by_rules.run_if(lock_rules)).after(ControlSystems::Read))
         .add_systems(PostUpdate, orbit_camera.in_set(CameraSystems::Orbit).before(TransformSystems::Propagate))
         .add_systems(Update, apply_motion_blur);
 }
@@ -70,7 +75,7 @@ fn lock_on(
     index: Res<AiIndex>,
     cameras: Query<&Transform, With<ThirdPersonCamera>>,
     positions: Query<&Transform, Without<ThirdPersonCamera>>,
-    targets: Lockable,
+    targets: LockOnTargets,
     mut players: Query<(Option<&AiId>, &mut Intent), With<LocalPlayer>>,
     mut flick: Local<FlickState>,
     mut last_lock: Local<Option<AiId>>,
@@ -151,6 +156,108 @@ fn clear_view(physics: &PhysicsWorld, from: Vec3, to: Vec3) -> bool {
     physics.raycast(from, dir, distance, &QueryFilter::new(LayerMask::WORLD)).is_none_or(|hit| hit.distance >= distance - 0.05)
 }
 
+/// Run condition: the game has a `lock_on` definition, so the lock-on rules are in force.
+fn lock_rules(db: Option<Res<ContentDb>>) -> bool {
+    LockOnDef::active(db.as_deref()).is_some()
+}
+
+/// `PreUpdate`, with a `lock_on` definition: the `lock_on` button takes the target the scored
+/// pick names among what the camera sees (inside its frustum at the player's base field of view,
+/// or the cone, and a clear ray from the eye), or lets go of the lock; a look flick or the mouse
+/// wheel is a `lock_switch` press to that side, which the simulation carries out by its own rule
+/// (sent only when that rule finds somebody there, so a flick into nothing does not start the
+/// cooldown unless the tuning says so). The camera never lets go of a lock by itself here: the
+/// action module checks every lock on every tick, with a window or without.
+fn lock_by_rules(world: &mut World, mut flick: Local<FlickState>, mut last_lock: Local<Option<AiId>>) {
+    flick.tick(world.resource::<Time<Virtual>>().delta_secs());
+    let Some(def) = LockOnDef::active(world.get_resource::<ContentDb>()).cloned() else { return };
+    let frame_dt = world.resource::<Time<Real>>().delta_secs();
+    let flick_tuning = world.resource::<CameraTuning>().flick.clone();
+    let settings = world.resource::<CameraSettings>().clone();
+    let (lock_pressed, px, deflection, wheel) = {
+        let state = world.resource::<ControlState>();
+        (state.just_pressed(LOCK_ON), state.look_pointer_px().x, state.look_stick().x, state.axis(LOCK_SWITCH))
+    };
+    let mut cameras = world.query_filtered::<(&Transform, Option<&Projection>), With<ThirdPersonCamera>>();
+    let Some((camera, aspect)) = cameras.iter(world).next().map(|(tf, projection)| (*tf, aspect_of(projection))) else {
+        return;
+    };
+    let mut players = world.query_filtered::<Entity, (With<LocalPlayer>, With<Intent>, Without<ThirdPersonCamera>)>();
+    let Ok(me) = players.single(world) else { return };
+    let target = world.get::<Intent>(me).and_then(|i| i.target);
+
+    // A stick already pushed over when a lock is taken cannot flick the fresh target.
+    if *last_lock != target {
+        if last_lock.is_none() {
+            flick.lock_taken(&flick_tuning, deflection);
+        }
+        *last_lock = target;
+    }
+
+    if lock_pressed {
+        if target.is_some() {
+            if let Some(mut intent) = world.get_mut::<Intent>(me) {
+                intent.target = None;
+            }
+        } else if let Some(pick) = pick_in_view(world, me, &def, &camera, &settings, aspect) {
+            if let Some(mut intent) = world.get_mut::<Intent>(me) {
+                intent.target = Some(pick);
+            }
+            // The camera is input on this machine: its pick is a local line (a replay or a heavy
+            // twin sets the same target from the recorded input, without it).
+            let line = format!("{} locks {pick}", label(world, me));
+            journal::emit(world, JournalKind::Local, line);
+        }
+        return;
+    }
+    // Both devices see every frame, so the mouse's sum drops when the lock goes and the stick
+    // re-arms; the mouse wins a frame in which both flick, then the stick, then the wheel.
+    let locked = target.is_some();
+    let by_mouse = flick.mouse(&flick_tuning, px, frame_dt, locked);
+    let by_stick = if by_mouse.is_some() { None } else { flick.stick(&flick_tuning, deflection, locked) };
+    // The wheel: down (toward the player) is to the right, a tilt to the right is too.
+    let notch = if wheel.y != 0.0 { -wheel.y } else { wheel.x };
+    let by_wheel = Side::from_x(notch).filter(|_| locked && flick.cooldown <= 0.0);
+    let Some(side) = by_mouse.or(by_stick).or(by_wheel) else { return };
+    let found = switch_target(world, me, side, &def).is_some();
+    if found && let Some(mut intent) = world.get_mut::<Intent>(me) {
+        intent.pressed.push(Press { input: LOCK_SWITCH.to_owned(), dir: Some(Vec3::X * side.x()) });
+    }
+    flick.flicked(&flick_tuning, found);
+}
+
+/// Width over height of a perspective camera (16:9 when it has none).
+fn aspect_of(projection: Option<&Projection>) -> f32 {
+    match projection {
+        Some(Projection::Perspective(p)) if p.aspect_ratio.is_finite() && p.aspect_ratio > 0.0 => p.aspect_ratio,
+        _ => 16.0 / 9.0,
+    }
+}
+
+/// The scored pick among what the camera sees: inside its frustum at the base field of view
+/// (`def.frustum`) or the cone of `CameraSettings::lock_cone_deg`, with a clear ray from the eye
+/// to the aim point; distance and look direction measured from the player.
+fn pick_in_view(world: &World, me: Entity, def: &LockOnDef, camera: &Transform, settings: &CameraSettings, aspect: f32) -> Option<AiId> {
+    let origin = world.get::<Transform>(me)?.translation;
+    let physics = world.get_resource::<PhysicsWorld>();
+    // The player's own field of view, never what a sprint adds on top of it (`CameraOffsets`).
+    let fov_y = settings.fov_deg.clamp(30.0, 120.0).to_radians();
+    let (eye, forward) = (camera.translation, *camera.forward());
+    let cone = settings.lock_cone_deg.to_radians();
+    let seen = |aim: Vec3| match def.frustum {
+        true => in_frustum(eye, camera.rotation, fov_y, aspect, aim),
+        false => (aim - eye).length_squared() > 1e-6 && forward.angle_between(aim - eye) <= cone,
+    };
+    let candidates: Vec<Lockable> = lock_candidates(world, me, def)
+        .into_iter()
+        .filter(|(e, c)| seen(c.aim) && physics.is_none_or(|p| sight_clear(p, eye, c.aim, &[me, *e])))
+        .map(|(_, c)| c)
+        .collect();
+    let half_fov = if def.frustum { half_width(fov_y, aspect) } else { cone };
+    let view = PickView { origin, eye, forward, look: Vec3::new(forward.x, 0.0, forward.z), half_fov };
+    pick_lock(&view, def, &candidates).map(|i| AiId(candidates[i].key))
+}
+
 /// `PostUpdate`, before transforms propagate: look, follow, frame the lock-on, keep out of
 /// walls, shake, field of view.
 #[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
@@ -165,7 +272,7 @@ fn orbit_camera(
     mut shake: ResMut<CameraShake>,
     players: Query<(Entity, &Intent), LocalPlayerFilter>,
     followed: Query<&Transform, Without<ThirdPersonCamera>>,
-    lockable: Lockable,
+    lockable: LockOnTargets,
     mut cameras: Query<(&mut ThirdPersonCamera, &mut Transform, Option<&mut Projection>)>,
 ) {
     let dt = time.delta_secs();
@@ -263,7 +370,7 @@ fn finite_or_zero(x: f32) -> f32 {
 
 /// How much (yaw, pitch) the camera must change to put the lockable target nearest the
 /// crosshair on it; `aim_assist` ignores the ones too far from it to bend toward.
-fn crosshair_error(camera: &ThirdPersonCamera, lockable: &Lockable) -> Option<Vec2> {
+fn crosshair_error(camera: &ThirdPersonCamera, lockable: &LockOnTargets) -> Option<Vec2> {
     let eye = orbit_position(camera.focus, camera.yaw, camera.pitch, camera.distance);
     lockable
         .iter()

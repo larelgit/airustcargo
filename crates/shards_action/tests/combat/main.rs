@@ -6,6 +6,7 @@ mod agents;
 mod common;
 mod golden;
 mod hits;
+mod lock;
 mod modifiers;
 mod outcome;
 mod parity;

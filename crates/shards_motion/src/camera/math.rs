@@ -101,10 +101,41 @@ pub fn pick_lock_target(view: &LockView, candidates: &[LockCandidate]) -> Option
 }
 
 /// Which way a lock-on switches.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum Side {
     Left,
     Right,
+}
+
+impl Side {
+    /// The side a `lock_switch` press names in `dir.x`: right when positive, left when
+    /// negative, none at 0 (or not a number).
+    pub fn from_x(x: f32) -> Option<Side> {
+        if x > 0.0 {
+            Some(Side::Right)
+        } else if x < 0.0 {
+            Some(Side::Left)
+        } else {
+            None
+        }
+    }
+
+    /// The `dir.x` of a `lock_switch` press for this side: `+1` right, `-1` left.
+    pub fn x(self) -> f32 {
+        match self {
+            Side::Left => -1.0,
+            Side::Right => 1.0,
+        }
+    }
+
+    /// `left` or `right`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Side::Left => "left",
+            Side::Right => "right",
+        }
+    }
 }
 
 /// Signed bearing of `position` from the view's forward on the ground plane: positive to

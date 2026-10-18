@@ -60,6 +60,12 @@ pub enum Binding {
         #[serde(default = "one")]
         scale: f32,
     },
+    /// The mouse wheel as a 2D axis: this frame's scroll times `scale`, `y` up (away from the
+    /// player), `x` a tilt to the right. A notch is one line, or the pixels a touchpad sends.
+    MouseWheel {
+        #[serde(default = "one")]
+        scale: f32,
+    },
 }
 
 /// A physical input without its settings, to tell whether two bindings use the same one.
@@ -71,6 +77,7 @@ enum Physical {
     PadAxis(GamepadAxis),
     Stick(Stick),
     MouseMotion,
+    MouseWheel,
 }
 
 impl Binding {
@@ -89,6 +96,7 @@ impl Binding {
             }
             Binding::Stick { stick, .. } => vec![Physical::Stick(stick)],
             Binding::MouseMotion { .. } => vec![Physical::MouseMotion],
+            Binding::MouseWheel { .. } => vec![Physical::MouseWheel],
         }
     }
 
@@ -109,6 +117,7 @@ impl Binding {
                 | Binding::Buttons2D { .. }
                 | Binding::Stick { .. }
                 | Binding::MouseMotion { .. }
+                | Binding::MouseWheel { .. }
         )
     }
 
@@ -147,6 +156,7 @@ impl Binding {
             }
             Binding::Stick { stick, .. } => format!("{stick:?} Stick"),
             Binding::MouseMotion { .. } => "Mouse".to_owned(),
+            Binding::MouseWheel { .. } => "Mouse Wheel".to_owned(),
         }
     }
 
@@ -157,7 +167,7 @@ impl Binding {
                 "`{text}` is not a binding ({e}); write Key(KeyE), Mouse(Left), GamepadButton(South), \
                  GamepadAxis(axis: LeftStickX), KeyAxis(neg: KeyA, pos: KeyD), \
                  Keys2D(up: KeyW, down: KeyS, left: KeyA, right: KeyD), \
-                 Buttons2D(up: DPadUp, down: DPadDown, left: DPadLeft, right: DPadRight), Stick(stick: Left) or MouseMotion()"
+                 Buttons2D(up: DPadUp, down: DPadDown, left: DPadLeft, right: DPadRight), Stick(stick: Left), MouseMotion() or MouseWheel()"
             )
         })
     }
@@ -560,6 +570,8 @@ impl InputMap {
             ActionBinding::new("use_item", [Key(KeyCode::KeyC), Pad(GamepadButton::DPadDown)]),
             ActionBinding::new("interact", [Key(KeyCode::KeyE), Pad(GamepadButton::North)]),
             ActionBinding::new("lock_on", [Key(KeyCode::Tab), Mouse(MouseButton::Middle), Pad(GamepadButton::RightThumb)]),
+            // The wheel switches the lock-on target (the camera turns it into `lock_switch` presses).
+            ActionBinding::new("lock_switch", [Binding::MouseWheel { scale: 1.0 }]),
             // Opens the game's `pause` screen (shards_ui); in a menu `back` closes it.
             ActionBinding::new("pause", [Key(KeyCode::Escape), Pad(GamepadButton::Start)]),
         ];

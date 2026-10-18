@@ -250,6 +250,44 @@ fn a_push_that_is_not_flat_or_never_slows_stops_the_game() {
 }
 
 #[test]
+fn a_lock_on_a_dead_or_missing_target_stops_the_game() {
+    use shards::action::LockSystems;
+    // Set after the lock-on check of tick 2 (which would have let go of it), the way a game
+    // system in `SimSet::Cleanup` that ran later would leave it; or before it.
+    fn lock(app: &mut App, target: u32, after_check: bool) {
+        let corrupt = move |world: &mut World| {
+            if ai_core::sim::tick(world) == 2 {
+                if target == 7 {
+                    let skeleton = body(world, 7);
+                    world.entity_mut(skeleton).insert(Dead);
+                }
+                let player = body(world, 5);
+                world.get_mut::<Intent>(player).unwrap().target = Some(AiId(target));
+            }
+        };
+        match after_check {
+            true => app.add_systems(FixedUpdate, corrupt.in_set(SimSet::Cleanup).after(LockSystems::Check)),
+            false => app.add_systems(FixedUpdate, corrupt.in_set(SimSet::Cleanup).before(LockSystems::Check)),
+        };
+    }
+    let mut app = sandbox::test_app(42);
+    lock(&mut app, 7, true);
+    let line = stops_on(&mut app, "action.lock_on_valid", 2);
+    assert!(line.contains("e5 Intent.target = e7, which is dead"), "{line}");
+
+    let mut app = sandbox::test_app(42);
+    lock(&mut app, 999, true);
+    let line = stops_on(&mut app, "action.lock_on_valid", 2);
+    assert!(line.contains("e5 Intent.target = e999, which no longer exists"), "{line}");
+
+    // Set before the check, the same lock is let go of on the same tick: nothing to report.
+    let mut app = sandbox::test_app(42);
+    lock(&mut app, 7, false);
+    assert_eq!(step(&mut app, 5), "ran 5 ticks (0 → 5)");
+    assert!(journal(&app, JournalKind::Event).iter().any(|l| l.contains("e5 lock lost: e7 dead")), "{:?}", journal(&app, JournalKind::Event));
+}
+
+#[test]
 fn an_npc_in_a_state_its_behavior_lacks_stops_the_game() {
     use shards::npc::NpcBrain;
     let mut app = sandbox::test_app(42);
