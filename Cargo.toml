@@ -35,6 +35,7 @@ version = "0.2.0"
 edition = "2024"
 rust-version = "1.97.1"
 publish = false
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 # Bevy is pinned to the 0.20 line on purpose: minor releases break APIs.
