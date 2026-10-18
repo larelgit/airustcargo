@@ -111,6 +111,8 @@ fn default_priority() -> u8 {
 
 impl ContentDef for SoundDef {
     const KIND: &'static str = "sound";
+    // Only what a machine shows or plays, or what lies outside a session: never in the replay check.
+    const SIMULATION: bool = false;
 
     fn validate(&self, _: &str, refs: &mut Refs) {
         if self.files.is_empty() {
@@ -229,6 +231,8 @@ impl MusicDef {
 
 impl ContentDef for MusicDef {
     const KIND: &'static str = "music";
+    // Only what a machine shows or plays, or what lies outside a session: never in the replay check.
+    const SIMULATION: bool = false;
 
     fn validate(&self, _: &str, refs: &mut Refs) {
         if self.stems.is_empty() {
@@ -358,6 +362,8 @@ impl Default for AudioDef {
 
 impl ContentDef for AudioDef {
     const KIND: &'static str = "audio";
+    // Only what a machine shows or plays, or what lies outside a session: never in the replay check.
+    const SIMULATION: bool = false;
 
     fn validate(&self, id: &str, refs: &mut Refs) {
         let others: Vec<&str> = refs.iter::<AudioDef>().map(|(other, _)| other).filter(|other| *other != id).collect();

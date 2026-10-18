@@ -187,7 +187,7 @@ fn menu_controls(world: &mut World) {
         world.resource_mut::<MenuControls>().settle = false;
     }
     if !menu_open {
-        let has_pause = world.get_resource::<ContentDb>().is_some_and(|db| db.get::<ScreenDef>(PAUSE_SCREEN).is_some());
+        let has_pause = world.get_resource::<ContentDb>().is_some_and(|db| db.peek::<ScreenDef>(PAUSE_SCREEN).is_some());
         // Only a game in play pauses: not its main menu, not while it loads.
         let in_game = world.get_resource::<State<EngineState>>().is_some_and(|s| *s.get() == EngineState::InGame);
         if controls.just_pressed("pause") && has_pause && in_game {

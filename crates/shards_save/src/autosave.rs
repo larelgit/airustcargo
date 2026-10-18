@@ -69,6 +69,10 @@ impl SaveDef {
 
 impl ContentDef for SaveDef {
     const KIND: &'static str = "save";
+    // Outside the simulation: saving never changes the world, and a playback writes no saves and
+    // never reads these numbers (`write_requests` drops what is asked before it does), so a
+    // recording that autosaved would list `save/world` and its playback would not.
+    const SIMULATION: bool = false;
 
     fn validate(&self, id: &str, refs: &mut Refs) {
         for problem in self.problems(id) {

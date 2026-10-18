@@ -83,6 +83,9 @@ pub struct UiNavigateArgs {
 fn ui_navigate(In(call): In<Call<UiNavigateArgs>>, world: &mut World) -> ToolResult {
     let nav = Nav::parse(&call.args.dir)
         .ok_or_else(|| format!("no direction `{}`: up, down, left, right, next, prev, confirm or back", call.args.dir))?;
+    if let Some(name) = model::top_screen(world).and_then(|top| model::screen_name(world, top)) {
+        model::mark_pressed(world, name);
+    }
     model::navigate(world, nav, &call.caller.agent)
 }
 
@@ -97,6 +100,7 @@ pub struct UiClickArgs {
 
 fn ui_click(In(call): In<Call<UiClickArgs>>, world: &mut World) -> ToolResult {
     let e = widget(world, &call.args.id)?;
+    model::mark_widget_pressed(world, e);
     model::activate(world, e, &call.caller.agent)
 }
 
@@ -126,6 +130,7 @@ fn text_or_scalar<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<S
 
 fn ui_set(In(call): In<Call<UiSetArgs>>, world: &mut World) -> ToolResult {
     let e = widget(world, &call.args.id)?;
+    model::mark_widget_pressed(world, e);
     model::set_value(world, e, &call.args.value, &call.caller.agent)
 }
 

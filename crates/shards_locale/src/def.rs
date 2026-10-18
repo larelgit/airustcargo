@@ -34,6 +34,8 @@ pub struct LocaleDef {
 
 impl ContentDef for LocaleDef {
     const KIND: &'static str = "locale";
+    // Only what a machine shows or plays, or what lies outside a session: never in the replay check.
+    const SIMULATION: bool = false;
 
     fn validate(&self, id: &str, refs: &mut Refs) {
         if let Err(e) = id.parse::<LanguageIdentifier>() {

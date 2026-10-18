@@ -19,7 +19,9 @@
 //!   with file, line and id; definitions that parsed are used anyway, also those next to
 //!   a definition that did not (only a broken map, a syntax error or a bad id, drops its file).
 //! - **Reading**: [`ContentDb::get`] or the [`Content`] system param. Gameplay never
-//!   writes content.
+//!   writes content. What the simulation reads is noted, and the replay check `content` covers
+//!   only that ([`db`]); a reader that is not the simulation inside its scope uses
+//!   [`ContentDb::peek`].
 //! - **Hot reload** (`hot_reload` feature): an edited file is checked against the whole
 //!   database; a clean edit is applied through the `content_apply` tool, recorded in
 //!   the replay at its tick, and journaled: `content reloaded: combat/attacks.attack.ron
@@ -94,6 +96,26 @@ pub fn content_held(world: &World) -> Option<String> {
     world.get_resource::<ContentGuards>()?.0.iter().find_map(|guard| guard(world))
 }
 
+/// Makes `db` the world's content database, counting what the world's simulation reads from it
+/// ([`ContentDb::used_parts`]). A copy of the world's database ([`ContentDb::clone`]) counts for
+/// the same world already.
+pub fn install(world: &mut World, mut db: ContentDb) {
+    db.watch(world.get_resource::<ai_core::SimScope>().cloned());
+    world.insert_resource(db);
+}
+
+/// What `content` (the replay check and the snapshot check) says when it differs.
+const CONTENT_HINT: &str = "the content the session read differs from this game's: put those definitions back, or record \
+     the session (or take the snapshot) again";
+
+fn used_parts(world: &World) -> Vec<(String, u64)> {
+    world.get_resource::<ContentDb>().map_or_else(Vec::new, ContentDb::used_parts)
+}
+
+fn whole_hash(world: &World) -> u64 {
+    world.get_resource::<ContentDb>().map_or(0, ContentDb::hash)
+}
+
 impl ContentAppExt for App {
     fn add_content<T: ContentDef>(&mut self) -> &mut Self {
         self.world_mut().get_resource_or_init::<ContentKinds>().register::<T>();
@@ -148,6 +170,16 @@ impl<'w, T: ContentDef> Content<'w, T> {
         self.db.iter::<T>()
     }
 
+    /// Definition `id`, for a reader that is not the simulation ([`ContentDb::peek`]).
+    pub fn peek(&self, id: &str) -> Option<&T> {
+        self.db.peek::<T>(id)
+    }
+
+    /// Definitions by id, for a reader that is not the simulation ([`ContentDb::peek_iter`]).
+    pub fn peek_iter(&self) -> impl Iterator<Item = (&str, &T)> {
+        self.db.peek_iter::<T>()
+    }
+
     /// The whole database.
     pub fn db(&self) -> &ContentDb {
         &self.db
@@ -168,19 +200,16 @@ impl Plugin for ContentPlugin {
             .init_resource::<load::ContentLoading>()
             .require_loaded("content", load::content_status)
             .add_engine_module("content", env!("CARGO_PKG_VERSION"))
-            .add_replay_check("content", |w| w.get_resource::<ContentDb>().map_or(0, ContentDb::hash))
+            // The definitions the simulation read, each a part (`action/swing`): a replay or
+            // a snapshot names the ones that differ. Files without the parts were made when the
+            // check hashed every definition, and a session that plays or loads one does that.
+            .add_parts_check("content", CONTENT_HINT, used_parts, whole_hash)
             // Content is files, not snapshot state; what `content_apply` set apart from them is
             // (`ContentEdits`), and goes over this game's files before the check compares the two
             // databases. Each machine of a co-op session keeps its own.
             .add_snapshot_resource::<ContentEdits>()
             .net_ignore_resource::<ContentEdits>()
             .add_snapshot_prepare("content", &["content"], edits::snapshot_prepare)
-            .add_snapshot_check(
-                "content",
-                "the content files differ from the ones the snapshot was taken with: put those files back, or take \
-                 the snapshot again",
-                |w| w.get_resource::<ContentDb>().map_or(0, ContentDb::hash),
-            )
             .add_systems(Startup, load::start_loading)
             .add_systems(
                 Update,

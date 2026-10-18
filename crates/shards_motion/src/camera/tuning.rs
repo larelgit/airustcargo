@@ -243,6 +243,8 @@ impl_is_default!(FramingTuning, ArmTuning, FlickTuning, TraumaTuning);
 
 impl ContentDef for CameraTuning {
     const KIND: &'static str = "camera";
+    // The camera is only a view: a window reads its tuning, a headless game never does.
+    const SIMULATION: bool = false;
 
     fn validate(&self, _id: &str, refs: &mut Refs) {
         for problem in self.problems() {
