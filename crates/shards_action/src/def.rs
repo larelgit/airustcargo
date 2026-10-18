@@ -41,6 +41,24 @@ use crate::status::StatusDef;
 /// Slack for comparing times that are sums of tick lengths (s).
 pub const EPS: f32 = 1e-4;
 
+// Predicates for `skip_serializing_if`: a field at its default does not serialize, so content
+// written before the field existed normalizes to the JSON it always had (replay checks hash it).
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+fn is_zero_u8(v: &u8) -> bool {
+    *v == 0
+}
+
+fn is_true(v: &bool) -> bool {
+    *v
+}
+
+fn yes() -> bool {
+    true
+}
+
 /// A stretch of an action's timeline.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Span {
@@ -198,6 +216,14 @@ pub enum HitFlag {
     GuardBreak,
     /// A perfect guard only blocks it.
     NoParry,
+    /// Walls stop it: the target is hit only if a ray from the attacker's chest to the
+    /// target's chest meets no [`LayerMask::WORLD`](shards_motion::LayerMask) collider (the
+    /// attacker's and the target's own colliders never count: the ray excludes both). Without it
+    /// walls do not matter. A target the ray finds occluded is skipped and not marked, so it may
+    /// still be hit later in the same window.
+    LineOfSight,
+    /// A perfect-evade window only evades it (no `PerfectEvaded`): ground zones.
+    NoPerfectEvade,
 }
 
 /// One hit window: while `span` lasts, `shape` hits every hurtbox of another team
@@ -226,6 +252,17 @@ pub struct HitDef {
     /// own group to let it hit again.
     #[serde(default)]
     pub group: u8,
+    /// Reaction tier asked of the target: 0 none, 1 light, 2 heavy, 3 knockdown. `None`: the
+    /// old rule (the moveset's `hit` flinch on any hit that does not break poise).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reaction: Option<u8>,
+    /// Push (m/s) a reaction to this hit starts with, when larger than the reaction's own.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub knockback: f32,
+    /// Stamina a guard pays for this hit, before `GuardDef::stamina_per_damage`. `None`: the
+    /// hit's damage (the old rule).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard_damage: Option<f32>,
 }
 
 /// A guard (block) window, with an optional perfect-guard (parry) window inside.
@@ -249,6 +286,24 @@ pub struct GuardDef {
     /// Hits from within this arc around the facing are guarded (degrees, full angle).
     #[serde(default = "half_turn")]
     pub arc: f32,
+    /// A perfect guard pays this share of a block's cost (0: free, the old rule). When it
+    /// cannot be paid the guard breaks, perfect or not. In `[0, 1]`: above 1 a perfect guard
+    /// would cost more than the plain block it falls through to.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub perfect_cost_mult: f32,
+    /// A perfect guard staggers the attacker (the old rule). `false`: the engine leaves the
+    /// attacker alone; the game's `Parried` observer decides (poise, a recoil through `react`).
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub parry_staggers: bool,
+    /// Share of a guard-breaking hit's damage that gets through; `None`: `damage_mult`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub break_damage_mult: Option<f32>,
+    /// Share of the hit's status buildup a block lets through (0: none, the old rule).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub status_mult: f32,
+    /// Share of the hit's status buildup a guard break lets through (0: none, the old rule).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub break_status_mult: f32,
 }
 
 fn one() -> f32 {
@@ -372,6 +427,25 @@ pub struct Cost {
     /// One charge of this named consumable (a healing flask).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub charge: Option<String>,
+    /// Whether `stamina` must be there in full to start.
+    #[serde(skip_serializing_if = "StaminaMode::is_full")]
+    pub stamina_mode: StaminaMode,
+}
+
+/// How an action's stamina cost gates its start.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StaminaMode {
+    /// The whole cost must be there (the old rule).
+    #[default]
+    Full,
+    /// Any stamina above 0 lets it start; the cost drains stamina to 0 at most.
+    Any,
+}
+
+impl StaminaMode {
+    fn is_full(&self) -> bool {
+        *self == StaminaMode::Full
+    }
 }
 
 impl Cost {
@@ -433,6 +507,14 @@ pub struct ActionDef {
     pub anim: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// Reaction armour while a span is open (sampled at the instant of the tick, `start <= t <= end`):
+    /// hits asking a tier at most `level` cause no reaction. Poise damage still lands (`hyper_armor` is the one that ignores poise).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub armor: Vec<(Span, u8)>,
+    /// Inside `iframes`: a hit evaded while one of these is open too is a perfect evade.
+    /// Sampled at the instant of the tick (`start <= t <= end`), like `armor`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub perfect_iframes: Vec<Span>,
 }
 
 /// What a press turns into when a cancel window allows it.
@@ -485,6 +567,24 @@ impl ActionDef {
     /// Whether any of `spans` is open in the tick `(prev, t]`.
     pub fn any_open(&self, spans: &[Span], prev: f32, t: f32) -> bool {
         spans.iter().filter_map(|s| self.span(s)).any(|w| touches(w, prev, t))
+    }
+
+    /// Whether any of `spans` is open at the instant `t` (`start <= t <= end`), not over the whole
+    /// tick that ends there: the sampling the `armor` and `perfect_iframes` windows use, so a window
+    /// whose end falls between two ticks is not open for one more tick than its length says.
+    pub fn any_open_at(&self, spans: &[Span], t: f32) -> bool {
+        spans.iter().filter_map(|s| self.span(s)).any(|w| w.0 <= t + EPS && t <= w.1 + EPS)
+    }
+
+    /// The highest reaction armour level of the `armor` spans open at the instant `t`
+    /// (see [`ActionDef::any_open_at`]); 0 if none.
+    pub fn armor_at(&self, t: f32) -> u8 {
+        self.armor
+            .iter()
+            .filter(|(span, _)| self.span(span).is_some_and(|w| w.0 <= t + EPS && t <= w.1 + EPS))
+            .map(|(_, level)| *level)
+            .max()
+            .unwrap_or(0)
     }
 
     /// The phase at `t` and when it ends.
@@ -592,6 +692,15 @@ impl ContentDef for ActionDef {
             check.span(&format!("{at}.span"), &hit.span);
             check.number(&format!("{at}.damage"), hit.damage);
             check.number(&format!("{at}.poise"), hit.poise);
+            check.number(&format!("{at}.knockback"), hit.knockback);
+            if let Some(g) = hit.guard_damage {
+                check.number(&format!("{at}.guard_damage"), g);
+            }
+            if let Some(tier) = hit.reaction
+                && tier > 3
+            {
+                check.refs.error(format!("{at}.reaction must be a tier 0 to 3 (is {tier}): 1 light, 2 heavy, 3 knockdown"));
+            }
             for (name, size) in hit.shape.sizes() {
                 if !(size > 0.0 && size.is_finite()) {
                     check.refs.error(format!("{at}.shape.{name} must be > 0 (is {size})"));
@@ -613,6 +722,16 @@ impl ContentDef for ActionDef {
         for (i, span) in self.hyper_armor.iter().enumerate() {
             check.window(&format!("hyper_armor[{i}]"), span);
         }
+        for (i, (span, level)) in self.armor.iter().enumerate() {
+            check.span(&format!("armor[{i}]"), span);
+            if *level > 3 {
+                check.refs.error(format!("armor[{i}] level must be 0 to 3 (is {level}): a reaction tier at most this causes no reaction"));
+            }
+        }
+        for (i, span) in self.perfect_iframes.iter().enumerate() {
+            check.window(&format!("perfect_iframes[{i}]"), span);
+            check.inside_iframes(&format!("perfect_iframes[{i}]"), span);
+        }
         if let Some(guard) = &self.guard {
             check.window("guard.span", &guard.span);
             if let Some(perfect) = &guard.perfect {
@@ -621,6 +740,17 @@ impl ContentDef for ActionDef {
             check.number("guard.damage_mult", guard.damage_mult);
             check.number("guard.stamina_per_damage", guard.stamina_per_damage);
             check.number("guard.poise_mult", guard.poise_mult);
+            check.number("guard.status_mult", guard.status_mult);
+            check.number("guard.break_status_mult", guard.break_status_mult);
+            if let Some(share) = guard.break_damage_mult {
+                check.number("guard.break_damage_mult", share);
+            }
+            if !(0.0..=1.0).contains(&guard.perfect_cost_mult) {
+                check.refs.error(format!(
+                    "guard.perfect_cost_mult must be between 0 and 1 (is {}): above 1 a perfect guard would cost more than the plain block it falls through to",
+                    guard.perfect_cost_mult
+                ));
+            }
             if !(guard.arc > 0.0 && guard.arc <= 360.0) {
                 check.refs.error(format!("guard.arc must be in (0, 360] degrees (is {})", guard.arc));
             }
@@ -776,6 +906,28 @@ impl Check<'_, '_, '_> {
         }
     }
 
+    /// A perfect-evade window lies inside the union of the i-frames, else it never opens.
+    fn inside_iframes(&mut self, field: &str, span: &Span) {
+        let Some((from, to)) = self.def.span(span) else { return };
+        let mut frames: Vec<(f32, f32)> = self.def.iframes.iter().filter_map(|s| self.def.span(s)).collect();
+        frames.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // Merge touching windows, then ask whether one holds the whole span.
+        let mut merged: Vec<(f32, f32)> = Vec::new();
+        for w in frames {
+            match merged.last_mut() {
+                Some(last) if w.0 <= last.1 + EPS => last.1 = last.1.max(w.1),
+                _ => merged.push(w),
+            }
+        }
+        if !merged.iter().any(|w| from >= w.0 - EPS && to <= w.1 + EPS) {
+            self.refs.error(format!(
+                "{field} {}..{} lies outside the i-frames: a perfect-evade window outside the i-frames never opens",
+                meters(from),
+                meters(to)
+            ));
+        }
+    }
+
     fn displacement(&mut self) {
         let mut last = 0.0;
         for &(t, d) in &self.def.displacement {
@@ -817,6 +969,42 @@ pub struct MovesetDef {
     /// Played once on death.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub death: Option<String>,
+    /// Reaction actions by tier: light (1), heavy (2), knockdown (3). Empty: the old flinch (`hit`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reactions: Vec<ReactionDef>,
+    /// Tiers at or below this never cause a reaction (a heavy enemy: 1).
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub reaction_armor: u8,
+    /// Seconds after a reaction starts in which tiers 1-2 cause no new one.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub reaction_immunity: f32,
+    /// Seconds of the same immunity granted when a reaction or a stagger ends.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub reaction_protection: f32,
+    /// Seconds poise damage is ignored after a poise break ends.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub break_protection: f32,
+    /// Forced by a guard break; `None`: `stagger` (the old rule).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard_broken: Option<String>,
+    /// A guard break pushes the body: `(scale, decel)` starts a push at `scale` times the body's
+    /// current flat velocity, slowing by `decel` m/s per s. `None`: no push.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard_broken_push: Option<(f32, f32)>,
+}
+
+/// One reaction tier: the forced action (its length is the reaction's duration) and its push.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ReactionDef {
+    pub action: String,
+    /// Push speed at the start (m/s) along the hit's direction.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub push: f32,
+    /// How fast the push slows (m/s per s). Above 0 for every reaction: a hit's `knockback`
+    /// lives in another definition, so `push: 0, decel: 0` met by `knockback: 3` would never stop.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub decel: f32,
 }
 
 impl MovesetDef {
@@ -836,10 +1024,52 @@ impl ContentDef for MovesetDef {
             }
             refs.require::<ActionDef>(action, &format!("inputs.{input}"));
         }
-        for (slot, action) in [("stagger", &self.stagger), ("hit", &self.hit), ("death", &self.death)] {
+        for (slot, action) in
+            [("stagger", &self.stagger), ("hit", &self.hit), ("death", &self.death), ("guard_broken", &self.guard_broken)]
+        {
             if let Some(action) = action {
                 refs.require::<ActionDef>(action, slot);
             }
+        }
+        if !(self.reactions.is_empty() || self.reactions.len() == 3) {
+            refs.error(format!(
+                "reactions has {} entries; give exactly three (light, heavy, knockdown) or none for the old flinch",
+                self.reactions.len()
+            ));
+        }
+        for (i, reaction) in self.reactions.iter().enumerate() {
+            let at = format!("reactions[{i}]");
+            refs.require::<ActionDef>(&reaction.action, &at);
+            for (name, v) in [("push", reaction.push), ("decel", reaction.decel)] {
+                if !(v >= 0.0 && v.is_finite()) {
+                    refs.error(format!("{at}.{name} must be a number >= 0 (is {v})"));
+                }
+            }
+            if reaction.decel <= 0.0 {
+                refs.error(format!(
+                    "{at}.decel must be above 0 (is {}): any hit's `knockback` may start a push, and a push with no deceleration never stops",
+                    reaction.decel
+                ));
+            }
+        }
+        for (name, v) in [
+            ("reaction_immunity", self.reaction_immunity),
+            ("reaction_protection", self.reaction_protection),
+            ("break_protection", self.break_protection),
+        ] {
+            if !(v >= 0.0 && v.is_finite()) {
+                refs.error(format!("{name} must be a number >= 0 (is {v})"));
+            }
+        }
+        if self.reaction_armor > 3 {
+            refs.error(format!("reaction_armor must be 0 to 3 (is {}): a tier at most this causes no reaction", self.reaction_armor));
+        }
+        if let Some((scale, decel)) = self.guard_broken_push
+            && !(scale >= 0.0 && scale.is_finite() && decel > 0.0 && decel.is_finite())
+        {
+            refs.error(format!(
+                "guard_broken_push ({scale}, {decel}) needs a scale >= 0 and a deceleration above 0, or the push never stops"
+            ));
         }
     }
 }
@@ -868,10 +1098,20 @@ pub struct CombatTuning {
     pub sprint_resume: SprintResume,
     /// How far `lock_on` looks for a target (m).
     pub lock_on_range: f32,
+    /// Share of a body's height where a `LineOfSight` hit's ray starts and ends (a chest).
+    #[serde(skip_serializing_if = "is_default_sight_height")]
+    pub sight_height: f32,
 }
 
 fn is_on_release(v: &SprintResume) -> bool {
     *v == SprintResume::OnRelease
+}
+
+/// The chest height `LineOfSight` rays use unless the tuning says otherwise.
+const SIGHT_HEIGHT: f32 = 0.6;
+
+fn is_default_sight_height(v: &f32) -> bool {
+    *v == SIGHT_HEIGHT
 }
 
 impl Default for CombatTuning {
@@ -882,6 +1122,7 @@ impl Default for CombatTuning {
             sprint_stamina_per_s: 10.0,
             sprint_resume: SprintResume::OnRelease,
             lock_on_range: 20.0,
+            sight_height: SIGHT_HEIGHT,
         }
     }
 }
@@ -907,6 +1148,7 @@ impl ContentDef for CombatTuning {
             ("input_buffer", self.input_buffer),
             ("sprint_stamina_per_s", self.sprint_stamina_per_s),
             ("lock_on_range", self.lock_on_range),
+            ("sight_height", self.sight_height),
         ] {
             if !(v >= 0.0 && v.is_finite()) {
                 refs.error(format!("{name} must be a number >= 0 (is {v})"));
@@ -1086,5 +1328,138 @@ mod tests {
         assert_eq!(HitShape::Circle { radius: 4.5, height: 2.0 }.to_string(), "circle 4.5m");
         assert_eq!(HitShape::Cone { range: 3.0, angle: 90.0, height: 2.0 }.to_string(), "cone 3m 90°");
         assert_eq!(HitShape::Line { length: 8.0, width: 1.0, height: 0.5 }.to_string(), "line 8m×1m");
+    }
+
+    #[test]
+    fn armor_at_takes_the_highest_open_level() {
+        let d = def(
+            r#"(net_id: 1, phases: [("windup", 0.4), ("active", 0.2), ("recovery", 0.4)],
+                armor: [(Phase("windup"), 1), (Secs(0.3, 0.7), 3), (Phase("recovery"), 2)])"#,
+        );
+        assert_eq!(d.armor_at(0.1), 1);
+        assert_eq!(d.armor_at(0.31), 3, "the higher of the two open at once");
+        assert_eq!(d.armor_at(0.5), 3);
+        assert_eq!(d.armor_at(0.7), 3, "the end instant is inside the window");
+        assert_eq!(d.armor_at(0.7167), 2, "a tick past a window that ends between ticks is outside it");
+        assert_eq!(d.armor_at(0.0), 1, "open at the very start");
+        assert_eq!(light().armor_at(0.5), 0, "no armour windows: 0");
+        assert!(d.any_open_at(&[Span::Secs(0.105, 0.215)], 0.2));
+        assert!(!d.any_open_at(&[Span::Secs(0.105, 0.215)], 13.0 / 60.0), "tick 13 is past 0.215");
+    }
+
+    #[test]
+    fn validation_names_bad_tiers_and_perfect_windows() {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<ActionDef>();
+        kinds.register::<MovesetDef>();
+        let actions = r#"{
+            "a": (net_id: 1, phases: [("windup", 0.2), ("active", 0.1)],
+                hits: [(span: Phase("active"), shape: Sphere(radius: 1), damage: 5, reaction: 4, knockback: -1, guard_damage: -2)],
+                armor: [(Phase("windup"), 4), (Phase("nope"), 1)],
+                iframes: [Secs(0.0, 0.1)], perfect_iframes: [Secs(0.05, 0.2)],
+                guard: (span: Phase("windup"), perfect_cost_mult: 1.5, status_mult: -1)),
+            "ok": (net_id: 2, phases: [("roll", 0.4)], cost: (stamina: 20, stamina_mode: Any),
+                iframes: [Secs(0.0, 0.1), Secs(0.1, 0.2)], perfect_iframes: [Secs(0.05, 0.15)]),
+            "r": (net_id: 3, phases: [("react", 0.3)]),
+        }"#;
+        let movesets = r#"{
+            "few": (inputs: {}, reactions: [(action: "r", push: 1, decel: 5)]),
+            "stuck": (inputs: {}, reactions: [(action: "r", push: 1, decel: 5), (action: "r", decel: 0), (action: "x", decel: 5)],
+                reaction_armor: 4, reaction_immunity: -1, guard_broken: "y", guard_broken_push: (0.2, 0.0)),
+        }"#;
+        let sources = [
+            shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
+            shards_content::db::Source { path: "content/m.moveset.ron".into(), text: movesets.into() },
+        ];
+        let db = shards_content::ContentDb::build(&kinds, &sources);
+        let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+        let has = |part: &str| errors.iter().any(|e| e.contains(part));
+        assert!(has("hits[0].reaction must be a tier 0 to 3 (is 4)"), "{errors:#?}");
+        assert!(has("hits[0].knockback must be a number >= 0") && has("hits[0].guard_damage must be a number >= 0"));
+        assert!(has("armor[0] level must be 0 to 3 (is 4)") && has("armor[1] names an unknown phase `nope`"));
+        assert!(has("perfect_iframes[0] 0.05..0.2 lies outside the i-frames: a perfect-evade window outside the i-frames never opens"));
+        assert!(!has("action `ok`"), "touching i-frames form one window: {errors:#?}");
+        assert!(has("guard.perfect_cost_mult must be between 0 and 1 (is 1.5)"), "above 1 it costs more than the block");
+        assert!(has("guard.status_mult must be a number >= 0"));
+        assert!(has("moveset `few`: reactions has 1 entries; give exactly three"));
+        assert!(has("reactions[1].decel must be above 0 (is 0)"), "a push that never stops: {errors:#?}");
+        assert!(has("reactions[2] -> unknown action `x`") && has("guard_broken -> unknown action `y`"));
+        assert!(has("reaction_armor must be 0 to 3 (is 4)") && has("reaction_immunity must be a number >= 0"));
+        assert!(has("guard_broken_push (0.2, 0) needs a scale >= 0 and a deceleration above 0"));
+    }
+
+    #[test]
+    fn zero_decel_reaction_fails_validation() {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<ActionDef>();
+        kinds.register::<MovesetDef>();
+        let sources = [
+            shards_content::db::Source {
+                path: "content/a.action.ron".into(),
+                text: r#"{ "r": (net_id: 1, phases: [("react", 0.3)]) }"#.into(),
+            },
+            shards_content::db::Source {
+                path: "content/m.moveset.ron".into(),
+                text: r#"{ "m": (inputs: {}, reactions: [(action: "r", push: 0, decel: 0), (action: "r", decel: 1), (action: "r", decel: 1)]) }"#
+                    .into(),
+            },
+        ];
+        let db = shards_content::ContentDb::build(&kinds, &sources);
+        let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+        assert_eq!(errors.len(), 1, "{errors:#?}");
+        assert!(errors[0].contains("reactions[0].decel must be above 0 (is 0)"), "{}", errors[0]);
+    }
+
+    #[test]
+    fn perfect_cost_mult_above_one_fails_validation() {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<ActionDef>();
+        let sources = [shards_content::db::Source {
+            path: "content/a.action.ron".into(),
+            text: r#"{
+                "g": (net_id: 1, phases: [("g", 0.3)], guard: (span: Phase("g"), perfect: Phase("g"), perfect_cost_mult: 1.01)),
+                "h": (net_id: 2, phases: [("g", 0.3)], guard: (span: Phase("g"), perfect: Phase("g"), perfect_cost_mult: 1.0)),
+            }"#
+            .into(),
+        }];
+        let db = shards_content::ContentDb::build(&kinds, &sources);
+        let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+        assert_eq!(errors.len(), 1, "{errors:#?}");
+        assert!(errors[0].contains("action `g`: guard.perfect_cost_mult must be between 0 and 1 (is 1.01)"), "{}", errors[0]);
+    }
+
+    #[test]
+    fn new_fields_keep_old_json() {
+        // Content written before the hit-outcome fields serializes without a trace of them: the content
+        // half of every replay check hashes this JSON.
+        let d = def(
+            r#"(net_id: 1, phases: [("windup", 0.2), ("active", 0.1)], cost: (stamina: 10),
+                hits: [(span: Phase("active"), shape: Sphere(radius: 1), damage: 5)],
+                guard: (span: Phase("windup"), perfect: Phase("windup")))"#,
+        );
+        let json = serde_json::to_string(&d).unwrap();
+        for new in [
+            "reaction",
+            "knockback",
+            "guard_damage",
+            "perfect_cost_mult",
+            "parry_staggers",
+            "break_damage_mult",
+            "status_mult",
+            "break_status_mult",
+            "stamina_mode",
+            "armor",
+            "perfect_iframes",
+        ] {
+            assert!(!json.contains(&format!("\"{new}\"")), "`{new}` leaked into {json}");
+        }
+        let moveset: MovesetDef = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME).from_str(r#"(inputs: {"light": "a"}, stagger: "s")"#).unwrap();
+        let json = serde_json::to_string(&moveset).unwrap();
+        assert_eq!(json, r#"{"inputs":{"light":"a"},"stagger":"s"}"#);
+        let tuning = serde_json::to_string(&CombatTuning::default()).unwrap();
+        assert!(!tuning.contains("sight_height"), "{tuning}");
+        // And a field set to something else does show.
+        let set: MovesetDef = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME).from_str(r#"(inputs: {}, reaction_immunity: 0.2)"#).unwrap();
+        assert!(serde_json::to_string(&set).unwrap().contains("reaction_immunity"));
     }
 }

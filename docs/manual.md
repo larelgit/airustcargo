@@ -935,7 +935,7 @@ The `shards_action` crate. An attack, a block, a parry, a roll and a flask are a
 
 **The machine.** A press from `Intent` waits in the input buffer `CombatTuning::input_buffer` (0.15 s by default) until its action becomes possible; cancel windows let one action be interrupted by another (combos); a held action repeats (a raised block). One rule, `can_start`, answers both the machine and the tools: `ok: light_1`, `ok: queued, light starts in 0.10s`, `not enough stamina: 20/40 (ready in 1.5s)`, `busy: windup light_1 0.17s (ready in 0.27s, when a cancel window opens)`. A press whose time has run out is written to the journal: `e5 light rejected: busy (active light_1 0.10s)`.
 
-**Hits** are detected in `SimSet::Resolve` after movement. Attack shapes overlap hurtboxes (colliders with the `HURTBOX` layer; the `Fighter` collider gets it). Attackers and targets are taken in `AiId` order. One target is hit once per action (and once per `group`). The damage pipeline: immortality (`god`) → invulnerability (`Evaded`) → parry (`Parried`, the attacker staggers) / block (`Blocked`, costs stamina) / guard break (`GuardBroken`) → armour → game hooks (`add_damage_hook`, in registration order) → health, statuses, poise (a break is `stagger`) → death. Events: `Damaged`, `Staggered`, `Died`, `Healed`, `ActionStarted`, `ActionRejected`, `ActionSound` (the `Sound` effect).
+**Hits** are detected in `SimSet::Resolve` after movement. Attack shapes overlap hurtboxes (colliders with the `HURTBOX` layer; the `Fighter` collider gets it). Attackers and targets are taken in `AiId` order. One target is hit once per action (and once per `group`). The damage pipeline: immortality (`god`) → invulnerability (`Evaded`, `PerfectEvaded` inside a perfect-evade window) → parry (`Parried`, the attacker staggers unless the guard says otherwise) / block (`Blocked`, costs stamina) / guard break (`GuardBroken`) → armour → game hooks (`add_damage_hook`, in registration order) → health, statuses, poise (a break is `stagger`; otherwise a reaction of the tier the hit asked for, or the old flinch) → death; see "Hit outcome: reactions, protection, pushes (B1)" below. Events: `Damaged`, `Staggered`, `Died`, `Healed`, `ActionStarted`, `ActionRejected`, `ActionSound` (the `Sound` effect).
 
 **Fighter resources** are components: `Health`; `Stamina` (it regenerates after a delay; sprinting spends it, and once it is drained to zero, sprint does not start again until the button is released); `Poise` (it regenerates after a delay; at 0 the poise breaks and forces a `stagger` action); `Armor`; `Team` (they hit only members of other teams); `Charges` (named consumables, such as the flask); `Cooldowns`; `Dead`.
 
@@ -991,7 +991,7 @@ A new curve changes gameplay (the lunge, the roll): replays recorded with the ol
 **What the AI sees.** In describe: `windup slam 0.78s (zone circle 4.5m) hyper-armor`, `stam 75/100`, `poise broken 0.8s`, `bleed 60%`, `queued light 0.13s`, `roll roll 0.33s i-frames`. Under the `YOU` line, the hint `ALERT in hit zone of e6 shockwave (lands in 0.50s): move 1.3m E to leave it`. In the journal: `e2 winds up slam (0.80s) ⚠
 circle 4.5m`, `e1 -> e2 heavy -45 (hp 55)`, `e1 blocked e2 swipe: -2 hp, -15 stamina (hp 98)`, `e2 staggered (parried)`.
 
-**Tools** (for the player, only through `Intent`): `light_attack`, `heavy_attack`, `block on=…`, `parry`, `dodge dir=…|away_from=…`, `use_technique slot=1`, `use_item item=flask`, `lock_on target=…|off=true`, `attack target=… input=… repeat=true`. For the developer: `god`, `heal`, `stagger`, `combat_overlay`. One-shot tools answer by `can_start`:
+**Tools** (for the player, only through `Intent`): `light_attack`, `heavy_attack`, `block on=…`, `parry`, `dodge dir=…|away_from=…`, `use_technique slot=1`, `use_item item=flask`, `lock_on target=…|off=true`, `attack target=… input=… repeat=true`. For the developer: `god`, `heal`, `stagger`, `react id=… tier=1..3`, `combat_overlay`. One-shot tools answer by `can_start`:
 
 ```text
 $ shards act dodge
@@ -1004,6 +1004,56 @@ error: your moveset `player` has no `parry`; it has: block, dodge, heavy, light,
 
 Refusals for resources and timing name the cause and the wait: `not enough stamina: 10/20 (ready in 0.2s)`, `busy: windup heavy
 0.50s (ready in 0.90s, when a cancel window opens)`. On an error, run `step` for the named time and try again.
+
+### Hit outcome: reactions, protection, pushes (B1)
+
+A hit can ask for more than damage: a **reaction tier** (what the target is put into), a **push**, a cost on a guard, a wall in the way. All of it is content with a default that leaves old content as it was (a field at its default does not serialize, so the content half of a replay check is unchanged), and all of it is generic: a game picks the numbers.
+
+```ron
+// content/combat/sparring.action.ron
+{
+    "spar_slam": (
+        net_id: 100,
+        phases: [("windup", 0.5), ("active", 0.15), ("recovery", 0.6)],
+        cost: (stamina: 20, stamina_mode: Any),             // starts on any stamina above 0, drains to 0 at most
+        hits: [(span: Phase("active"), shape: Cone(range: 2.4, angle: 120), damage: 40, poise: 30,
+                reaction: 2, knockback: 3.0, guard_damage: 25, flags: [LineOfSight])],
+        armor: [(Phase("windup"), 1)],                       // tiers 1 and below cause no reaction while it winds up
+    ),
+    "spar_roll": (net_id: 101, phases: [("roll", 0.4)], iframes: [Secs(0.07, 0.25)],
+                  perfect_iframes: [Secs(0.105, 0.215)], steer: Move),
+    "spar_guard": (net_id: 102, phases: [("raise", 0.18), ("hold", 0.3), ("lower", 0.1)],
+                   hold: (input: "block", span: Phase("hold")),
+                   guard: (span: Phases("raise", "hold"), perfect: Phase("raise"), stamina_per_damage: 0.8,
+                           perfect_cost_mult: 0.5, parry_staggers: false, break_damage_mult: 0.5,
+                           status_mult: 0.25, break_status_mult: 0.5)),
+}
+// content/combat/sparring.moveset.ron
+{ "sparring": (inputs: {"heavy": "spar_slam", "dodge": "spar_roll", "block": "spar_guard"},
+               stagger: "spar_stagger", guard_broken: "spar_guard_broken", guard_broken_push: (0.2, 10.0),
+               reactions: [(action: "spar_react_light", push: 2.0, decel: 12.0),      // tiers 1, 2, 3
+                           (action: "spar_react_heavy", push: 4.0, decel: 12.0),
+                           (action: "spar_react_down", push: 4.0, decel: 12.0)],
+               reaction_armor: 0, reaction_immunity: 0.2, reaction_protection: 1.0, break_protection: 3.0) }
+```
+
+**The pipeline after B1.** `detect` (a hit with `LineOfSight` skips a target when a ray from the attacker's chest to the target's meets a `LayerMask::WORLD` collider; the two bodies' own colliders never count; a skipped target is not marked, so it can still be hit later in the same window; the chest is `CombatTuning::sight_height`, 0.6, of the body's height) → `resolve` fills a `DamageCtx` (`credit`, `dir`, `reaction`, `reaction_armor`, `knockback`, `taken`, `guard_mult`, `weight`, `ignore_reason`) → `modifiers` (god mode, i-frames and perfect evades, guards with per-hit costs and shares, `Armor`) → the game's hooks → `apply`. `apply` works out a **plan** first (does the poise break, does the target react), so `Damaged` can carry its `weight` and `reaction` while still being triggered before death, statuses and poise, as it always was. Events name the credited entity (`DamageCtx::credit`) as `attacker` or `killer`; `source` is the combat object that hit (`DamageCtx::attacker`) when it is not the credited entity: a hook that sets `credit` to an owner gets `source` set to the object on `Damaged`, `Blocked`, `GuardBroken`, `Parried`, `Evaded`, `PerfectEvaded` and `Died` (`kill_with` for a game that kills itself; `kill` leaves it `None`). A parry staggers `DamageCtx::attacker`, the object that hit. A status a hook appends to a blocked hit is applied (the block applies whatever is left in the context after the hooks, by default the `status_mult` share). `Damaged::ignore_reason` is `None` for a hit that landed; a hook that sets `Ignored` without a reason prints `ignored`. `HitWeight::Counter` and `Finisher` and `IgnoreReason::Downed` are reserved: the engine never sets them, a game hook may.
+
+- **Guard.** The cost of a block is `hit.guard_damage` (else the hit's damage) times `stamina_per_damage`. A perfect guard pays `perfect_cost_mult` of it (`Parried { stamina }`, journal `, -10 stamina` only when above 0); when it cannot pay, the guard breaks, perfect or not, and spends all the stamina. `parry_staggers: false` leaves the attacker alone: the game's `Parried` observer decides (poise through `poise_damage`, a recoil through `react`). A guard break lets `break_damage_mult` (else `damage_mult`) of the damage through, a block `damage_mult`; a block lets `status_mult` of the status buildup through, a break `break_status_mult` (0, the old rule, lets none). A break forces the moveset's `guard_broken` action (then `Staggered { cause: GuardBroken }`), else its `stagger`; `guard_broken_push: (scale, decel)` starts a push at `scale` times the body's current flat velocity. **The guard is decided before the hooks**, from the damage as the hit defines it: a hook that rescales damage must also change `outcome` and `guard_mult` if it wants Blocked versus GuardBroken decided again; the engine does not redo the guard after the hooks.
+- **Perfect evade.** A hit that meets i-frames while a `perfect_iframes` span is also open is `Outcome::PerfectEvaded`: `Evaded`, then `PerfectEvaded`. Not for a hit with `NoPerfectEvade` (ground zones), nor for one that does no damage. The attacker's ledger marks the defender at the first detection, so it is once per swing. Every `perfect_iframes` span must lie inside the i-frames. **`perfect_iframes` and `armor` spans are sampled at the instant of the tick** (`start <= t <= end`), not over the tick: the roll's `Secs(0.105, 0.215)` is open in ticks 7 to 12 (6 ticks at 60 Hz), not 13. Content copied from a source that samples the same way keeps its literal numbers. (`iframes`, `hyper_armor`, guard and hit windows keep the older over-the-tick rule.)
+- **Stamina overdraft.** `cost.stamina_mode: Any` starts the action on any stamina above 0 and drains it to 0 at most; `Full` (the default) needs the whole cost. The refusal prints the action's real cost (`not enough stamina: 0/22`); `can_start` is the one rule, so the tools, the NPC planner and a client's prediction follow.
+
+**Reactions.** A hit's `reaction` is a tier: 0 none, 1 light, 2 heavy, 3 knockdown; no `reaction` keeps the old rule (the moveset's `hit` flinch on a hit that does not break poise). The rule (`should_react`): no reaction for tier 0; for a tier at most the target's **reaction armour** (the moveset's `reaction_armor` and the running action's `armor` spans, whichever is higher; a hook may raise `DamageCtx::reaction_armor`); for a hyper-armoured body; for a dead one; while its poise is broken or it runs its `stagger`, `guard_broken` or `death` action; and for tiers 1 and 2 inside the **reaction immunity** (`Protection::reactions`). Tier 3 ignores immunity but not armour. A hit that breaks the poise staggers and asks for no reaction. Otherwise the target is forced into `reactions[tier - 1]`, starts `reaction_immunity` (0.2 s; it is *assigned*, so a knockdown inside a longer protection cuts it to 0.2 s, and the end of the reaction it interrupts then grants `reaction_protection` on top), and is pushed at the larger of the reaction's `push` and the hit's `knockback` along `DamageCtx::dir`, slowing by the reaction's `decel` (every `decel` is above 0: a push that never stops is a content error). A moveset with no `reactions` flinches as before and gets no push, immunity or `Reacted`.
+
+`react(world, entity, Reaction)` is the same thing for a game: `Reaction::hit(..)` (a hit's own: armour and immunity apply, starts the immunity), `Reaction::recoil(tier, from, dir)` (ignores immunity, starts none; armour still stops it: a parried attacker's recoil), `Reaction::forced(tier, from, dir)` (ignores both: a charge into a wall, a finisher's knockdown, a shockwave). Its fields are public for the rest. `Reacted` says who reacted, to which tier and into which action.
+
+**Timers.** `Protection { reactions, poise }` is a lazy component: inserted when a timer is granted (`grant_protection(world, entity, reactions, poise)` keeps the longer time), removed when both run out. A timer granted in the fighter chain by the end of an action (`reaction_protection`, `break_protection`) is counted down in the tick it is granted, so 1.0 s acts on 59 further ticks, while a hit-granted timer (set before `tick_protection` of that tick, in `Hits`) acts on its full count. A timer of `s` seconds counts down by the tick *after* that tick's checks (`tick_protection`, last in the fighter chain), and is gone when `left <= EPS`: 0.2 s set by a hit in tick `N` blocks the hits of ticks `N+1` to `N+11` and tick `N+12` reacts. When a reaction or a stagger ends, for any reason (`ActionEnded`), the moveset's `reaction_protection` begins; the end of `guard_broken` grants none. When a poise break runs out, `break_protection` begins: poise damage is ignored for that long. `poise_damage` (the engine's rules, public), `end_break` (ends a break now, grants the protection) and `reset_poise` (a whole gauge, no break, no poise protection; a boss's phase change) are for the game. A poise break removes a push in progress.
+
+**Pushes.** `Knockback { velocity, decel }` (flat, m/s and m/s per s) is a lazy component. `push_bodies` (`ActionSystems::Push`, after the effects, in `AiId` order) decays the speed first and moves by the decayed speed (`v1 = max(0, v0 - decel * dt)`, `external += dir * v1 * dt`): Euler, not a trapezoid; the first tick moves `(v0 - decel * dt) * dt`. It adds to `LocomotionInput::external` after the machine wrote it, so a wall stops it; a dead body, a body with no `LocomotionInput`, and a body that is no longer in one of its moveset's reaction, `stagger` or `guard_broken` actions lose their push (the push is the reaction's own motion and ends with it, however it ended). A reaction or a guard break with `guard_broken_push` also drops the body's own flat velocity, so the push alone moves it.
+
+**`ActionEnded { entity, action, instance, end }`** is triggered when a run stops, before the `ActionStarted` of what replaces it: `Finished` (its time ran out), `Cancelled` (a cancel window started another), `Interrupted` (a forced action, a kill, a revival), `Removed` (its definition left content). `Branched` and `Released` are reserved: nothing ends this way yet. `finish_actions` ends them in `AiId` order through `Commands` (applied at the next sync point); `force_action`, `kill` and `revive` trigger it at once. It is not a net event, and a client's prediction never emits it.
+
+**What the AI sees.** `protected 0.82s`, `poise protected 2.40s`, `pushed 3.2m/s` in describe; the journal says `e7 reacts heavy (e5 spar_react_heavy)`, `e6 perfectly evaded e5 spar_slam`, `e6 parried e5 spar_slam, -10 stamina` (the suffix only when the perfect guard costs something), and an ignored hit prints why: `... -0 (hp 100, god mode)`, `grace`, `downed` or `ignored`. The dev tool `react id=e7 tier=2` forces a reaction (backwards from where the body faces); `step --until named:reacting` waits for any fighter to run a reaction action. The engine rules `action.protection_sane` (timers finite and `>= 0`) and `action.knockback_sane` (a flat, finite velocity and a `decel` above 0) stop the game on a bad write. `PerfectEvaded` and `Reacted` travel to clients like the other combat events.
 
 ## Levels from Blender (E4.2)
 
@@ -2641,7 +2691,7 @@ The sandbox has two of them: `health_in_range` (health is in `0..=max`) and `bod
 `e7 fell out of the world: y = -80.0`. No sandbox scenario, test or reference replay breaks them. A panic inside
 a rule is a violation too: `the rule itself panicked: …`.
 
-**The engine's own rules.** A game with all the engine modules gets seven rules of the engine, one or two from each module (a game that leaves out `npc` has no NPC rules). They are named
+**The engine's own rules.** A game with all the engine modules gets nine rules of the engine, one or two from each module (a game that leaves out `npc` has no NPC rules). They are named
 `<module>.<rule>`, checked before the game's rules, and listed by `shards assert list` as `engine rule`. Like a game's
 rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `add_ai_invariant` refuse its name), and
 `assert_reset` re-arms it after it fires. A module registers its rules with `add_engine_invariant(name, rule)` from
@@ -2654,6 +2704,8 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `motion.finite` | every `AiVisible` entity has a finite `Transform` translation and a finite rotation of length 1 ± 1e-3, and a finite `MotionState` (velocity, ground normal, timers, mantle, fall height, water surface, updraft, placed position). Scale is not judged |
 | `action.resources_in_range` | `Health`, `Stamina` and `Poise` are finite with `max > 0` and `0 <= current <= max`. Dead bodies are checked too (`current` is 0). A game that wants a buff above `max` raises `max` with it |
 | `action.running_sane` | a running action of a fighter exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. Without a content database the rule passes |
+| `action.protection_sane` | every `Protection` (the reaction and poise timers, B1) holds finite timers, none below 0. A NaN stays a NaN through the countdown and would shield its fighter for ever |
+| `action.knockback_sane` | every `Knockback` (a push in progress, B1) has a finite flat velocity (`y` is 0) and a finite `decel` above 0: a push that does not slow down never stops |
 | `npc.state_known` | `NpcBrain.state` is a state of the NPC's behaviour. Three carve-outs, each a state the engine itself leaves behind: an empty state (before the NPC's first decided tick), an inactive NPC (dormant or dead: the brain passes it through, so a state a hot reload removed stays until it wakes), and an NPC whose behaviour is not in content (that is reported once as a content problem) |
 | `npc.tokens_within_limit` | after the director ran, no token is held by a dead body, and each director holds no more tokens than its limit for the living players, unless every holder beyond the limit has its attack in flight (an attack under way keeps its token to its end). It is judged right after the director, not at the end of the tick: a holder that dies in `Resolve` keeps its token until the next tick's director takes it back, so the end of the tick would fire on every kill. A small system next to the director writes what it found to the resource `TokenAudit`, which the rule reads; it is recomputed every tick and is not part of a snapshot or a replay |
 
@@ -2677,12 +2729,14 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-11 rules, checked after every tick
+13 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
   action.resources_in_range  engine rule  armed
   action.running_sane  engine rule  armed
+  action.protection_sane  engine rule  armed
+  action.knockback_sane  engine rule  armed
   npc.state_known  engine rule  armed
   npc.tokens_within_limit  engine rule  armed
   health_in_range  game rule  armed
@@ -4530,6 +4584,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 | `characters/bodies.locomotion.ron` | how the player, the skeleton and the guard walk |
 | `combat/player.action.ron` | the combo `light_1`–`light_3`, `heavy`, the roll (i-frames 0.18 s), the block with a perfect block, the flask |
 | `combat/warden.action.ron` | the guard's four attacks (`slash`, `slam`, `sweep`, `shockwave`), calm and enraged |
+| `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters |
 | `combat/skeleton.action.ron`, `combat/fighters.moveset.ron`, `combat/tuning.combat_tuning.ron` | the skeleton's claw, the movesets, the input buffer |
 | `npc/monsters.behavior.ron`, `monsters.perception.ron`, `monsters.director.ron`, `monsters.attack_plan.ron` | how the monsters think: the `skeleton` and `warden` state machines (with a `calm` state that the scenarios do not let the monster leave), sight, the `default` director (two tokens for one player) and the `boss` director (the guard strikes on its own), the guard's attack plans |
 | `region/wilds.*.ron` | the wilds: tiles, socket rules, points of interest, the region, a fallback map, navmesh settings |

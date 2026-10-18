@@ -1,0 +1,56 @@
+# Co-op reactions (B1): a host and two clients see the same Protection and Knockback. The host's
+# skeleton e7 gets the `sparring` moveset and both players (the host's e5 and the client's e15) the
+# `duelist` one (`content/combat/sparring.*.ron`); reactions, a push, a stagger and a knockdown are
+# forced with the dev tools, and the stand must not report a desync (the state hash counts both
+# components). The movesets go back at the end.
+#
+#   cargo sandbox --stand 2 --headless --paused --port 0 --port-file F &
+#   SHARDS_PORT_FILE=F cargo shards wait --peer all
+#   SHARDS_PORT_FILE=F cargo shards scenario crates/sandbox/scenarios/stand/reactions.scenario
+#   SHARDS_PORT_FILE=F cargo shards stand stop
+stand clients=2 latency=100 loss=0.01
+seed 42
+
+@host act npc_set_state id=e6 state=calm
+@host act npc_set_state id=e7 state=calm
+@host act npc_set_state id=e8 state=calm
+@host act npc_set_state id=e14 state=calm
+@host act heal id=e5
+@host act heal id=e15
+@host act heal id=e7
+@host act set id=e5 component=Fighter path=moveset value=duelist
+@host act set id=e15 component=Fighter path=moveset value=duelist
+@host act set id=e7 component=Fighter path=moveset value=sparring
+@host act teleport id=e5 x=0 z=12 y=0
+@host act teleport id=e15 x=3 z=12 y=0
+@host act teleport id=e7 x=-3 z=12 y=0
+step 120
+invariant !journal "desync"
+
+# a heavy reaction and a push on each body, the client's player included
+@host act react id=e15 tier=2
+@host act react id=e7 tier=2
+step 20
+@host act react id=e15 tier=1
+step 100
+invariant !journal "desync"
+
+# a stagger, then a knockdown inside the protection that follows
+@host act stagger id=e7
+@host act react id=e15 tier=3
+step 200
+@host act react id=e7 tier=3
+step 200
+invariant !journal "desync"
+
+@host act set id=e5 component=Fighter path=moveset value=player
+@host act set id=e15 component=Fighter path=moveset value=player
+@host act set id=e7 component=Fighter path=moveset value=skeleton
+@host act heal id=e5
+@host act heal id=e15
+@host act heal id=e7
+@host act teleport id=e5 x=0 z=12 y=0
+@host act teleport id=e15 x=2 z=12 y=0
+@host act teleport id=e7 x=-12 z=2 y=0
+step 200
+invariant !journal "desync"
