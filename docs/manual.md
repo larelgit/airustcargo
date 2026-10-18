@@ -1400,7 +1400,7 @@ snapshots carry them.
 a hazard): the barrier, then health, then `kill_with(.., credit, None, None)` when health ran out; it returns the health left.
 It does nothing to a dead or gone entity, to one in god mode (`Invulnerable`), or for an amount that is not above 0, and it
 runs none of the pipeline (no guard, armor, `DamageTaken`, hooks, reaction or poise) and triggers no `Damaged` (that event names
-a hit's action); a game that wants a line for it triggers its own event. Like `extend_recovery`, it does nothing on a machine that\ndoes not simulate (a co-op client), so an observer that calls it on every machine kills once.
+a hit's action); a game that wants a line for it triggers its own event. Like `extend_recovery`, it does nothing on a machine that does not simulate (a co-op client), so an observer that calls it on every machine kills once.
 
 **Status rules.** `StatusDef` gains `min_proc_interval` (after a proc, buildup that reaches the threshold again within this
 many seconds is swallowed: a `ProcGates` entry on the fighter), `cool_while_active: false` (buildup does not decay while the
@@ -1412,7 +1412,7 @@ done; reached while gated: refused; else active: `stacks` adds a stack, `refresh
 refused; else it procs, and `min_proc_interval` closes its gate. `Statuses::add` and `Statuses::tick` are unchanged for old
 callers; `Statuses::add_with(id, def, amount, limit, gated, capped)` and `Statuses::tick_with(.., gated)` hold the new rules,
 and `add_status_buildup` (hits and `Status` effects) uses them with the target's `ProcGates` and its moveset's cap. An instant
-status is active for one tick: `StatusApplied`, its `on_apply` (and `on_tick` once), then `StatusExpired`. A `refresh` returns `Applied` like a proc, so `StatusApplied` and the game's\n`on_apply` run again and the gate closes again; a game whose `on_apply` is not repeatable checks the status's `stacks` or its\nown state. Chill's longer recovery and burn's explosion are the game's.
+status is active for one tick: `StatusApplied`, its `on_apply` (and `on_tick` once), then `StatusExpired`. A `refresh` returns `Applied` like a proc, so `StatusApplied` and the game's `on_apply` run again and the gate closes again; a game whose `on_apply` is not repeatable checks the status's `stacks` or its own state. Chill's longer recovery and burn's explosion are the game's.
 
 **What the AI sees.** Describe: `barrier 15 (6.2s)`, `takes x1.35 (core 3.1s)` (several: `takes x0.50 (armor), x1.35 (core
 3.1s)`), `proc gate spar_chill 1.2s`. Journal: `e5 barrier 50 for 8.0s`, ` [barrier -15]` on a hit line. Dev tools: `barrier
