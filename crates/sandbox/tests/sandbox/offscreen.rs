@@ -283,6 +283,55 @@ fn draws_follow_how_bevy_batches_not_how_many_meshes_are_drawn() {
     assert!(frames["draws"].as_f64().is_some_and(|d| d >= base as f64) && frames["draws_max"].as_u64().is_some_and(|d| d > base), "{frames}");
 }
 
+/// Where the player's model is drawn (world x), and what the player's visual child says.
+fn model_x(app: &mut App) -> (f32, Option<f32>) {
+    let world = app.world_mut();
+    let mut q = world.query::<(&shards::motion::Interpolated, &GlobalTransform, &ChildOf)>();
+    let bodies: Vec<_> = q.iter(world).map(|(i, g, p)| (i.shown().map(|s| s.translation.x), g.translation().x, p.parent())).collect();
+    let (shown, x, _) = bodies
+        .into_iter()
+        .find(|(_, _, parent)| world.get::<sandbox::gameplay::Player>(*parent).is_some())
+        .expect("the player's model is an interpolated child");
+    (x, shown)
+}
+
+#[test]
+#[ignore = "needs a GPU, or a software one (WGPU_FORCE_FALLBACK_ADAPTER=1): cargo test -p sandbox --test sandbox -- --ignored the_model_moves"]
+fn the_model_moves_between_ticks_while_the_body_stays_on_the_tick() {
+    use std::time::Duration;
+    let mut app = offscreen_app();
+    step(&mut app, 30);
+    ok(&mut app, "move", json!({"dir": "E", "meters": 8}));
+    step(&mut app, 20);
+    settle(&mut app, 120);
+    // A running clock that adds no time: frames, no ticks, and the overstep is set by hand.
+    app.insert_resource(shards::bevy::time::TimeUpdateStrategy::ManualDuration(Duration::ZERO));
+    shards::ai_core::sim::resume(app.world_mut());
+    let at = |app: &mut App, fraction: f64| {
+        let step = app.world().resource::<Time<Fixed>>().timestep();
+        let mut fixed = app.world_mut().resource_mut::<Time<Fixed>>();
+        let pending = fixed.overstep();
+        fixed.discard_overstep(pending);
+        fixed.accumulate_overstep(step.mul_f64(fraction));
+        app.update();
+        model_x(app)
+    };
+    let body = crate::common::get::<Transform>(&app, "e5").translation.x;
+    let (older, _) = at(&mut app, 0.0);
+    let (half, shown) = at(&mut app, 0.5);
+    let (last, _) = at(&mut app, 0.99);
+    assert!(older < half && half < last, "the model moves between ticks: {older} < {half} < {last}");
+    assert!(shown.is_some_and(|x| (x - (older + last) / 2.0).abs() < 0.05), "{shown:?}");
+    assert_eq!(crate::common::get::<Transform>(&app, "e5").translation.x, body, "the body is never touched");
+
+    // Off: the model stays where the tick left it, however far into the next one the frame is.
+    ok(&mut app, "settings_set", json!({"group": "graphics", "key": "interpolation", "value": false}));
+    let (a, _) = at(&mut app, 0.0);
+    let (b, shown) = at(&mut app, 0.5);
+    assert_eq!(a, b);
+    assert!(shown.is_none());
+}
+
 /// What the simulation reads does not depend on whether anything is drawn: the same session
 /// headless (as `--headless` builds it: no visuals) and drawn offscreen (models, animation,
 /// effects, foliage, the tiles' visuals, the HUD) reads the same definitions, so the replay check
