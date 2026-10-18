@@ -561,6 +561,9 @@ fn barrier(In(call): In<Call<BarrierArgs>>, world: &mut World) -> ToolResult {
     if world.get::<Dead>(e).is_some() {
         return Err(format!("{who} is dead; a barrier is not granted to the dead"));
     }
+    if world.get::<Health>(e).is_none() {
+        return Err(format!("{who} has no Health; a barrier only guards health (pick a fighter)"));
+    }
     grant_barrier(world, e, amount, seconds);
     let b = world.get::<Barrier>(e).copied().unwrap_or_default();
     Ok(format!("{who} has a barrier of {:.0} for {:.1}s", b.amount, b.left))

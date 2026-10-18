@@ -706,7 +706,7 @@ fn hurt(world: &mut World, target: Entity, damage: f32) -> (f32, f32) {
 /// Damage that is not a hit: a status hook's burn, a hazard. Takes `amount` off `target`'s barrier,
 /// then its health, and kills it when its health runs out (`Died`, with `credit` as the killer
 /// and no action). Returns the health left. Nothing is done to a dead or gone entity, to one in
-/// god mode ([`Invulnerable`]), or for an `amount` that is not above 0. It runs none of the hit
+/// god mode ([`Invulnerable`]), or for an `amount` that is not a finite number above 0. It runs none of the hit
 /// pipeline (no guard, no armor, no [`DamageTaken`], no hooks, no reaction or poise) and
 /// triggers no [`Damaged`] (that event names a hit's action); a game that wants a line for it
 /// triggers its own event. A machine that does not simulate (a co-op client) changes nothing and
@@ -717,7 +717,7 @@ pub fn deal_damage(world: &mut World, target: Entity, amount: f32, credit: Optio
         return 0.0;
     }
     let simulates = world.get_resource::<NetRole>().is_none_or(|r| r.simulates());
-    if !simulates || world.get::<Invulnerable>(target).is_some() || amount.is_nan() || amount <= 0.0 {
+    if !simulates || world.get::<Invulnerable>(target).is_some() || !(amount > 0.0 && amount.is_finite()) {
         return world.get::<Health>(target).map_or(0.0, |h| h.current);
     }
     let (hp_left, _) = hurt(world, target, amount);

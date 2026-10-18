@@ -53,7 +53,8 @@ pub(crate) fn register(app: &mut App) {
                 label(w, e.defender),
                 label(w, e.attacker),
                 e.action,
-                e.amount,
+                // What reached health: a barrier took the rest (shown after it).
+                e.amount - e.absorbed,
                 e.stamina,
                 e.hp_left,
                 absorbed(e.absorbed)

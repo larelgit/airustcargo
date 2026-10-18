@@ -115,6 +115,7 @@ fn a_barrier_takes_a_blocked_hit_too() {
     step(&mut app, 8);
     let blocked = lines(&app, "blocked");
     assert_eq!(blocked.len(), 1, "{:#?}", journal(&app));
+    assert!(blocked[0].contains(": -12 hp,"), "what reached health: {}", blocked[0]);
     assert!(blocked[0].ends_with("(hp 88) [barrier -8]"), "{}", blocked[0]);
     assert_eq!(hp(&app, victim), 88.0);
 }
@@ -203,6 +204,7 @@ fn deal_damage_goes_through_the_barrier_and_can_kill() {
     app.world_mut().entity_mut(other).remove::<Invulnerable>();
     assert_eq!(deal_damage(app.world_mut(), other, 0.0, None), 100.0);
     assert_eq!(deal_damage(app.world_mut(), other, f32::NAN, None), 100.0);
+    assert_eq!(deal_damage(app.world_mut(), other, f32::INFINITY, None), 100.0, "not a finite amount");
     assert_eq!(deal_damage(app.world_mut(), other, 100.0, None), 0.0);
     assert!(app.world().get::<Dead>(other).is_some() && lines(&app, "died").len() == 2);
 }
@@ -455,6 +457,12 @@ fn dev_tools_set_barriers_and_multipliers() {
     assert!(fails(&mut app, "barrier", json!({"id": v, "amount": -1, "seconds": 3})).contains("must be a number >= 0"));
     ok(&mut app, "barrier", json!({"id": v, "amount": 0}));
     assert!(barrier(&app, victim).is_none());
+    // Something without health: the tool refuses it, the function ignores it.
+    let crate_ = app.world_mut().spawn(ai_core::AiKind::new("Crate")).id();
+    let c = id(&app, crate_);
+    assert!(fails(&mut app, "barrier", json!({"id": c, "amount": 5, "seconds": 3})).contains("has no Health"));
+    grant_barrier(app.world_mut(), crate_, 5.0, 3.0);
+    assert!(barrier(&app, crate_).is_none());
 
     let text = ok(&mut app, "damage_taken", json!({"id": v, "key": "core", "mult": 1.35, "seconds": 3}));
     assert_eq!(text, format!("{v} now: takes x1.35 (core 3.0s)"));

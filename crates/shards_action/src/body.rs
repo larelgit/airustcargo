@@ -14,7 +14,7 @@ use ai_core::AiId;
 use bevy::prelude::*;
 
 use crate::def::EPS;
-use crate::fighter::Dead;
+use crate::fighter::{Dead, Health};
 
 /// A pool that takes damage before health. Lazy: removed when empty or out of time.
 #[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq)]
@@ -119,11 +119,13 @@ pub struct DamageTakenExpired {
 }
 
 /// Gives `entity` a barrier of `amount` for `seconds`: the pool is the larger of what it holds
-/// and `amount`, and the time is `seconds` from now. Ignored for a dead or gone entity, an
-/// `amount` or `seconds` that is not above 0 or not finite. Triggers [`BarrierGranted`].
+/// and `amount`, and the time is `seconds` from now. Ignored for a dead or gone entity, one
+/// without [`Health`] (a barrier only guards health), an `amount` or `seconds` that is not above 0
+/// or not finite. Triggers [`BarrierGranted`].
 pub fn grant_barrier(world: &mut World, entity: Entity, amount: f32, seconds: f32) {
     if world.get_entity(entity).is_err()
         || world.get::<Dead>(entity).is_some()
+        || world.get::<Health>(entity).is_none()
         || !(amount > EPS && amount.is_finite() && seconds > EPS && seconds.is_finite())
     {
         return;

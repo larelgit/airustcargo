@@ -1322,7 +1322,7 @@ ignored for a dead or gone entity and for an `amount` or `seconds` that is not a
 same call; with `of_max: true` the amount is a share of the actor's max health (`0.5` is half of it). It triggers `BarrierGranted {
 entity, amount, seconds }` (the pool now), a net event for the HUD. `hurt` is the one place damage reaches health: the
 barrier takes `min(amount, damage)` first, `Damaged`, `Blocked` and `GuardBroken` carry it as `absorbed` (their `amount`
-stays the whole hit), and the journal line gains ` [barrier -20]` only when it is above 0. A barrier that emptied is removed
+stays the whole hit), and the journal line gains ` [barrier -20]` only when it is above 0 (a blocked line's `-N hp` is what reached health, the hit less the barrier's share). A barrier that emptied is removed
 at once; poise, statuses and reactions are decided by the hit as before. `clear_barrier(world, entity)` removes it.
 
 **Damage taken.** `DamageTaken(Vec<TakenMult { key, mult, left: Option<f32> }>)` holds named multipliers, sorted by key,
