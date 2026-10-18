@@ -189,7 +189,7 @@ fn the_nightly_fuzz_campaign() {
             }
             continue;
         };
-        let heavy_header = (heavy > 0).then(|| {
+        let heavy_header = (heavy > 0 && matches!(finding.stop, shards::script::stop::Stop::Heavy { .. })).then(|| {
             let config = heavy_config(run_seed, heavy);
             (config.every, config.span, config.offset)
         });
