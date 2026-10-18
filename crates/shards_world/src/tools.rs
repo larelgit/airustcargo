@@ -55,7 +55,7 @@ pub(crate) fn dev_entries(app: &mut App) {
 /// replays like any action, so playback regenerates at the same tick.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct RegenArgs {
-    /// `region` or `dungeon` content id. Default: the region in the world.
+    /// A region content id of any kind (`region`, `dungeon`, `voxel_region`, ...). Default: the region in the world.
     pub region: Option<String>,
     /// Default: the current seed + 1 for the same region, the world seed for another.
     pub seed: Option<u64>,
@@ -91,7 +91,7 @@ fn cells_of(m: &RegionManifest) -> String {
     match m.layout {
         Layout::Grid => format!("{} tiles", m.tiles.len()),
         Layout::Rooms => format!("{} rooms", m.tiles.len()),
-        Layout::Volume => format!("{} chunks", m.size[0] * m.size[1]),
+        Layout::Volume => format!("{} chunks", u64::from(m.size[0]) * u64::from(m.size[1])),
     }
 }
 
@@ -161,7 +161,7 @@ fn goto_tile(In(call): In<Call<GotoTileArgs>>, world: &mut World) -> ToolResult 
 /// panics with their seed. The first line starts with `ok:` when every seed passed.
 #[derive(Deserialize, JsonSchema)]
 pub struct WorldgenReportArgs {
-    /// `region` or `dungeon` content id.
+    /// A region content id of any kind (`region`, `dungeon`, `voxel_region`, ...).
     pub region: String,
     /// `1..1000` (both ends included), `7`, or `1,5,10..20`. Default 1..100.
     pub seeds: Option<SeedsArg>,

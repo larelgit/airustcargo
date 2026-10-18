@@ -4518,8 +4518,25 @@ section. A game picks the kind in content; its code and tools do not change with
 **The rule for games.** Calls into the voxel module (`VoxelGen`, `VoxelVolume`, `VoxelPalette`) stay inside generation steps
 and checks. The rest of the game asks the region API, which answers with the same types on both kinds (the test
 `the_region_api_answers_with_the_same_types_on_tiles_and_on_a_volume` in `crates/shards_voxel/tests/region/` builds a meadow of
-tiles and an island in one game and compares `region_info`, the manifest's fields, `Poi`, `Marker` and the spawn). There is no
-runtime voxel editing: once built, a volume is read-only until the region is made again.
+tiles and an island in one game and compares `region_info`, the manifest's fields, the spawn and the area, `Poi` and
+`Marker` with their `TileId`, `path_to` and its provider, `nav_info` and `nav_path`, and the `region` save section saved and
+loaded into a fresh game). There is no runtime voxel editing: once built, a volume is read-only until the region is made again.
+
+**Swapping a region of tiles for a volume.** What a game reads the same way on both: `ActiveRegion` (`spawn_point`, the
+manifest, `RegionManifest::area`, `cell_of`, `cell_center`), the points of interest by type (`Poi`, `ManifestPoi`), named
+places (`Marker { name }` with the `TileId` of its cell: on a volume, its chunk), `RegionPart`, `RegionLoadedHooks`, `path_to`
+(over the local grid or a navmesh: it names its `provider`), the conditions `in_water`, `in_current` and `near_grid_edge`, and
+the save section. What differs, by design:
+
+| | tiles | volume |
+|---|---|---|
+| tiles | `manifest.tiles`, `ActiveRegion::tile_at` | none: `tile_at` is `None`, `ManifestPoi.area` is 0 |
+| named places | `Marker` (inline tile markers) and, from level files, `LevelMarker` | `Marker` only: a game that reads markers on both reads `Marker` by name and `Poi` by type |
+| navigation | the baked navmesh (`nav_path`) | none yet: `nav_path` refuses and names `path_to`; NPCs plan over the local grid |
+| content change | the region stays as built until the next `regen` | the region is made again for its seed ("Hot reload") |
+| past the grid | the edge wall | the sea, or nothing: no out-of-world rule in the engine (the sandbox has `bodies_in_world`, with `past_grid`) |
+| a current | a tile's water carries one through its prefab (`"Current": (area: …, starts: …, full: …)`, the area in world metres) | the region's `sea.current` |
+| scatter | strewn by tile | none (`scatter` says why): a volume's foliage is its own blocks |
 
 **How a kind plugs in.** `shards_world` has a registry of region kinds (`RegionKind`, `app.add_region_kind(kind)`,
 `WorldGen::kinds`), so a crate adds one without the world module depending on it. A kind names its content kind and layout
@@ -4563,7 +4580,7 @@ dispatch on `manifest.layout`. The voxel module registers its kind when the worl
 
 | field | meaning |
 |---|---|
-| `size`, `block`, `chunk` | the volume's shape (checked without allocating it, as `VoxelVolume::check_shape` does); `chunk.x == chunk.z` |
+| `size`, `block`, `chunk` | the volume's shape (checked without allocating it, as `VoxelVolume::check_shape` does); `chunk.x == chunk.z`, and `chunk.y == size.y` (a chunk is as tall as the volume: the region's cells are its chunks, one to a column) |
 | `palette` | a `voxel_palette` |
 | `version` | the generator version of the region (1 and up); a manifest of another version is refused |
 | `anchor`, `at` | where the volume stands: the least corner of cell `anchor` is at `at` (`origin = at - anchor * block`) |
@@ -4573,7 +4590,7 @@ dispatch on `manifest.layout`. The voxel module registers its kind when the worl
 | `markers` | marks spawned as `Marker { name }` (an NPC's home, a link's end) |
 | `spawn` | the point of interest players appear at |
 | `water.surface_drop` | m every water volume's top lies below its cells' top; 0 by default, less than a block |
-| `sea` | none by default. `level` (the layer whose top is the surface), `reach` (m out from each side), `floor` (the layer of the boxes' bottom), `current` |
+| `sea` | none by default. `level` (the layer whose top is the surface), `reach` (m out from each side, above 0 and at most 100 km, `MAX_SEA_REACH`: farther out an `f32` position loses its centimetres), `floor` (the layer of the boxes' bottom), `current` |
 | `near_edge` | the `near_grid_edge` condition holds this close to the edge, m (0: past it only) |
 | `check_seed` | the seed `--check-content` generates the region with (default 1) |
 | `fallback_seed` | the seed whose first attempt stands in for a seed with no attempt that passes; none: such a seed has no region |
@@ -4589,13 +4606,20 @@ grid's north-west corner), `tiles: []`, no links, `pois` from the marks (each in
 manifests keep their bytes) and `content_hash`. The volume itself is not in it: `spawn` makes it again from the seed, the
 attempt, the steps and the content, a pure function. The `content_hash` covers the `voxel_region` definition and what the
 palette's blocks are to the world (`VoxelPalette::semantics`: names, order, `solid`, `liquid`, `foliage`, tags), not colours,
-shades or looks, which only the picture reads.
+shades or looks, which only the picture reads. It covers the whole definition, so a field the volume does not read
+(`near_edge`, `active_radius`, `water.surface_drop`) changes it too: one rule, and such a change makes the region again as any
+other does. `fallback` is `seed N` for a volume (the fallback seed whose first attempt made it), where a grid region names
+its `tile_map`.
 
 **A manifest is refused, not built otherwise** (`RegionKind::check`, run by `region::check_manifest`, `change_region`,
 `region_load`, a snapshot load and a save load): a step this build has at another version (`isle seed 7 v1 was made by voxel
 step `plaza` v1, and this build has `plaza` v2: its volume would come out otherwise, so it is not built; keep step `plaza` at
 v1, or generate the region again`), a step it does not have, steps or a version the content no longer lists, or a content hash
-that changed. The save section's `generator_version` of a voxel region is its definition's `version`.
+that changed. A manifest is data a player can edit (a save, a snapshot file), so its grid is checked too: `size`, `tile_size`
+and `origin` must be what the definition makes, every point of interest in one of its chunks, and no tiles or links
+(`… the manifest was changed; generate the region again`), before anything is built or allocated. The save section's
+`generator_version` of a voxel region is its definition's `version`. A mark a step makes outside the volume's cells (x and z)
+fails its attempt (`mark stray.0: at (270.00, 1.00, 300.00), outside the volume (x 284 to 316, z 284 to 316)`).
 
 ### What a build spawns
 
@@ -4603,7 +4627,7 @@ In this order, every time (so a build gives the same collider ids): the terrain 
 `Name("voxel terrain <id>")`, no `AiId`); one water `Volume` per box of `water_boxes` (`voxel water <i>`), its top
 `surface_drop` below the cells'; with a `sea`, four sea boxes (`voxel sea north`, `south`, `west`, `east`) from the grid's
 edge out to `reach`, from `floor` up to the surface; a `Current` on every water volume when the sea has a `current`; the
-markers. Then the world module spawns the points of interest (with their `poi` prefabs, when content has them). Every one is
+markers (`Marker` with the `TileId` of their chunk). Then the world module spawns the points of interest (with their `poi` prefabs, when content has them). Every one is
 a `RegionPart` at the top level with a world `Transform`. The `VoxelTerrain` resource holds the volume, the palette, the
 field, the hash, the counts and the build time; it goes with the region. There is no edge wall: past the grid is the sea or
 nothing.
@@ -4626,7 +4650,10 @@ The journal: `region generated: isle seed 7 v1 (attempt 1, 4 chunks, 2 POIs)` an
   steps make another volume under the same content and versions, or that has none, is refused at the handoff (`net: cannot take
   the host's world: … voxel.volume differs …`). The net layer's periodic desync hash covers the replicated view (entities and
   replicated resources), not the replay checks; the volume never changes after it is built, so it is compared where it is
-  built. A content change on a client never changes its region (the region is the host's).
+  built, and only there: `voxel.volume` gives the hash kept at the build, and nothing compares it again during play. That is
+  enough while no play changes a volume (there is no runtime editing); a change that edits volumes in play needs a periodic
+  comparison too. A refused client says so in its journal, says goodbye to the host, ends its session and, with
+  `exit_with_host`, exits with an error. A content change on a client never changes its region (the region is the host's).
 - **The cache.** Snapshot loads and heavy-mode twins build the same region many times, so the built volume, field and water
   boxes are kept in the process (at most four, the least recently used goes first), keyed by the manifest's canonical text and
   the code of its steps and checks, and shared by `Arc`. The entities are spawned fresh every time, in the same order: a
@@ -4641,8 +4668,10 @@ applied (the hook `ContentAppliedHooks`, `app.on_content_applied(f)`):
 
 - when the active voxel region's content hash changed (its definition, its params, its palette's semantics), the region is
   generated again for the manifest's seed and changed to as `regen` does; players keep their place where there is still
-  ground within a block of their feet, the others go to the spawn; the journal says
-  `voxel region isle seed 7 v1 regenerated (hash 685d46ec1d026dd2 -> …)`;
+  ground within a block of their feet, the others go to the spawn; the journal and the answer of the call that applied the
+  change (`content_apply`, `content_reload`) say `voxel region isle seed 7 v1 regenerated (hash 685d46ec1d026dd2 -> …)` (a hook
+  returns the line it adds to the answer). The region is made from its first attempt again, not from the attempt the
+  manifest kept: the content changed, so the attempts may pass otherwise;
 - a change the picture alone reads (colours, shades, corner darkening, looks) keeps the world: only the palette the picture
   reads is replaced;
 - a change that does not validate is refused whole by `content_apply` (the old definition stays, the error names the file);
@@ -4671,8 +4700,10 @@ controller's, a later change.
 Until the in-memory chunk bake exists, a voxel region has no navmesh, and the tools say so: NPCs plan over the local grid
 (`npc_state`'s `nav.routes`: `local grid: no navmesh for this region (voxel region, nav not baked yet)`), `nav_path` refuses
 (`no navmesh for this region (voxel region, nav not baked yet): use path_to, which plans over the local grid`), `nav_info`
-answers `navmesh: none` with the reason, `nav_bake` bakes no tile for it and says why, and the journal has
-`navmesh: none for this region: voxel region, nav not baked yet; NPCs plan on the local grid`.
+answers `navmesh: none` with the reason, `nav_bake` bakes the content's tile files as `--bake-nav` does (none of them is the
+volume's) and adds why the region in the world has none, and the journal has
+`navmesh: none for this region: voxel region, nav not baked yet; NPCs plan on the local grid` as an event, not a warning (it is
+by design, so `warning` rules and `--until warning` do not stop on every `regen`).
 
 ### Tools, conditions, the journal
 
@@ -4683,9 +4714,12 @@ answers `navmesh: none` with the reason, `nav_bake` bakes no tile for it and say
   cell, which every query reads: the long sea boxes), the field's memory, the build time and whether it came from the cache,
   and the cells of each block (`blocks=false` skips the count). The terrain entity has no `AiId`, so `inspect` cannot reach it;
   this tool describes it.
-- Conditions for `step --until named:…`: `in_current` (the player's feet are in water that pushes) and `near_grid_edge` (within
-  the region's `near_edge` of the edge, or past it). They are registered once a voxel region is built, so a game without one
-  keeps its list.
+- Conditions for `step --until named:…`: `in_water` (the player's feet are in a water volume), `in_current` (that water
+  pushes) and `near_grid_edge` (within the voxel region's `near_edge` of the grid's edge, or past it; on tiles, past it). They
+  are registered when the app is built and read physics and the region API, so they answer in a region of any kind (false with
+  no region), and content and scenarios may name them anywhere.
+- `voxel_info`'s `built` (the build time) is shown only where timing is reported (`report_perf`), as tick times are, so a test
+  that compares whole answers gets the same bytes; `cached` is always there.
 - `regen` and `region_info` say `chunks` for a volume (`4 chunks`, `2×2 chunks of 16m`); `goto_tile x=1 y=1` goes to the middle
   of a chunk, on the ground there; `observe`'s tile line says `chunk`.
 

@@ -122,7 +122,7 @@ struct Args {
     /// or 1. Runs nothing.
     #[arg(long)]
     check_content: bool,
-    /// Generate REGION (a `region` or `dungeon` content id) for every seed of `--seeds`,
+    /// Generate REGION (a region content id of any kind: `region`, `dungeon`, `voxel_region`) for every seed of `--seeds`,
     /// print the batch report, exit 0 (every seed passed) or 1. Runs no game.
     #[arg(long, value_name = "REGION")]
     worldgen_report: Option<String>,

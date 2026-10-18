@@ -481,6 +481,14 @@ fn attempt_once(registry: &VoxelSteps, palette: &VoxelPalette, spec: &GenSpec, a
             return Err(fail(AttemptStage::Mark, name, format!("no step made it ({made})")));
         }
     }
+    // A mark stands over the volume's cells (its edges count): a region's point of interest is
+    // in one of its chunks.
+    let (lo, hi) = (g.volume.origin(), g.volume.origin() + g.volume.size().as_vec3() * g.volume.block());
+    if let Some(m) = g.marks.iter().find(|m| !(m.pos.is_finite() && m.pos.x >= lo.x && m.pos.x <= hi.x && m.pos.z >= lo.z && m.pos.z <= hi.z)) {
+        let at = format!("({:.2}, {:.2}, {:.2})", m.pos.x, m.pos.y, m.pos.z);
+        let message = format!("at {at}, outside the volume (x {} to {}, z {} to {}): a step marks a point over its cells", lo.x, hi.x, lo.z, hi.z);
+        return Err(fail(AttemptStage::Mark, &m.name, message));
+    }
     let hash = world_hash(g.volume.hash(), palette, &spec.steps);
     Ok(Generated { volume: g.volume, marks: g.marks, remarks: g.remarks, attempt, steps: spec.steps.clone(), hash })
 }

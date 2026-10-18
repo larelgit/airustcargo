@@ -23,7 +23,8 @@
 //!   the world module ([`region`]): `regen region=<id>` generates it, builds its terrain (a
 //!   voxel field in physics), its water volumes, its sea and current, and its points of
 //!   interest, behind the same region API as tiles; [`VoxelTerrain`] is the region in the
-//!   world. Tools: `sea_current_at`, `voxel_info`; conditions `in_current`, `near_grid_edge`.
+//!   world. Tools: `sea_current_at`, `voxel_info`; conditions `in_water`, `in_current`,
+//!   `near_grid_edge` (they read physics and the region API, so they answer in any region).
 //!
 //! What is not here yet: navigation and meshing (later PRs of the design). The module costs
 //! nothing in a game without a voxel region: it registers content kinds, a registry, a region
@@ -145,6 +146,14 @@ impl Plugin for VoxelPlugin {
     }
 
     fn finish(&self, app: &mut App) {
+        // Added before the world module, this plugin could not register its region kind (the
+        // world module was not there yet): every `regen` of a voxel region would say "unknown
+        // region". A mistake in the game's build, said where it is made.
+        let registered = app.world().get_resource::<shards_world::WorldGen>().is_some_and(|g| g.kind(region::CONTENT).is_some());
+        assert!(
+            !app.is_plugin_added::<shards_world::WorldPlugin>() || registered,
+            "VoxelPlugin was added before WorldPlugin, so voxel regions are not a region kind of this game: add VoxelPlugin after WorldPlugin (shards::EnginePlugins does)"
+        );
         share_steps(app.world_mut());
     }
 }

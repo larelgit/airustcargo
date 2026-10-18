@@ -120,7 +120,9 @@ pub struct RegionManifest {
     pub version: u32,
     /// The attempt that passed, from 1; 0 when the fallback was used.
     pub attempt: u32,
-    /// The `tile_map` used when no attempt passed.
+    /// What stood in when no attempt passed (`attempt` is then 0): a grid region's `tile_map`
+    /// id; for a volume (`Layout::Volume`), `seed N`, the fallback seed whose first attempt made
+    /// the volume (the voxel kind writes and reads that form).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fallback: Option<String>,
     /// Cells (x, y).
@@ -195,6 +197,12 @@ impl RegionManifest {
     /// The world position of the region's north-west corner (y 0).
     pub fn corner(&self) -> Vec3 {
         Vec3::new(self.origin[0], 0.0, self.origin[1])
+    }
+
+    /// The ground the region's grid covers, x and z (m): its cells, from the north-west corner.
+    pub fn area(&self) -> Rect {
+        let corner = Vec2::new(self.origin[0], self.origin[1]);
+        Rect::from_corners(corner, corner + Vec2::new(self.size[0] as f32, self.size[1] as f32) * self.tile_size)
     }
 
     /// The center of cell `(x, y)` on the ground plane.

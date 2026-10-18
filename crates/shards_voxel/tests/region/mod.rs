@@ -16,7 +16,7 @@ use shards::testing;
 use shards::voxel::region::{cached_volumes, clear_cache};
 use shards::voxel::{VoxelAppExt, VoxelGen, VoxelPalette, VoxelRegionDef, VoxelSettings, VoxelTerrain};
 use shards::world::manifest::Layout;
-use shards::world::{Marker, Poi, RegionManifest, RegionPart, WorldGen};
+use shards::world::{Marker, Poi, RegionManifest, RegionPart, TileId, WorldGen};
 
 use super::Folder;
 
@@ -197,7 +197,11 @@ fn holds(app: &App, name: &str) -> bool {
 fn a_voxel_region_is_generated_built_and_answered_for_like_a_region_of_tiles() {
     let folder = folder("build", ISLE);
     let mut app = game(&folder);
-    assert!(!app.world().resource::<AiConditions>().0.contains_key("in_current"), "no voxel region yet: the conditions wait for one");
+    // The conditions are there before any voxel region (content may name them in any region),
+    // and hold nowhere yet.
+    for name in ["in_water", "in_current", "near_grid_edge"] {
+        assert!(!holds(&app, name), "{name} with no region");
+    }
     let out = ok(&mut app, "regen", json!({"region": "isle", "seed": 7}));
     assert!(text(&out).starts_with("ok: isle seed 7 v1 (attempt 1, 4 chunks, 2 POIs, "), "{out}");
 
@@ -227,8 +231,8 @@ fn a_voxel_region_is_generated_built_and_answered_for_like_a_region_of_tiles() {
     assert_eq!((t.region.as_str(), t.seed, t.made_with, t.water_boxes, t.sea_boxes), ("isle", 7, 7, water, 4));
     let currents = app.world_mut().query_filtered::<&Current, With<Volume>>().iter(app.world()).count();
     assert_eq!(currents, water + 4, "every water volume carries the current");
-    let markers: Vec<String> = app.world_mut().query::<&Marker>().iter(app.world()).map(|m| m.name.clone()).collect();
-    assert_eq!(markers, vec!["home".to_owned()]);
+    let markers: Vec<(String, TileId)> = app.world_mut().query::<(&Marker, &TileId)>().iter(app.world()).map(|(m, t)| (m.name.clone(), *t)).collect();
+    assert_eq!(markers, vec![("home".to_owned(), TileId { x: 0, y: 1 })], "in its chunk, as a tile's marker is in its tile");
     let mut points: Vec<String> = app.world_mut().query::<&Poi>().iter(app.world()).map(|p| p.id.clone()).collect();
     points.sort();
     assert_eq!(points, vec!["camp.0".to_owned(), "spawn.0".to_owned()]);
@@ -269,11 +273,11 @@ fn a_voxel_region_is_generated_built_and_answered_for_like_a_region_of_tiles() {
     assert!(bad.contains("sea_current_at at=[x,y,z]"), "{bad}");
 
     // The conditions, now that a voxel region exists.
-    assert!(!holds(&app, "near_grid_edge") && !holds(&app, "in_current"), "on the plaza");
+    assert!(!holds(&app, "near_grid_edge") && !holds(&app, "in_current") && !holds(&app, "in_water"), "on the plaza");
     let hero = hero(&mut app);
     app.world_mut().get_mut::<Transform>(hero).unwrap().translation = Vec3::new(286.0, -0.5, 300.0);
     assert!(holds(&app, "near_grid_edge"), "2 m from the edge, within 6");
-    assert!(holds(&app, "in_current"), "in the moat near the edge");
+    assert!(holds(&app, "in_current") && holds(&app, "in_water"), "in the moat near the edge");
     app.world_mut().get_mut::<Transform>(hero).unwrap().translation = Vec3::new(300.5, 1.0, 300.5);
 
     // Navigation: no navmesh yet, said plainly.
@@ -471,11 +475,13 @@ fn a_content_change_makes_the_region_again_and_a_colour_does_not() {
     let def = ok(&mut app, "content_get", json!({"kind": "voxel_region", "id": "isle"}))["def"].clone();
     let mut higher = def.clone();
     higher["params"]["noise_hills"]["amplitude"] = json!(6.0);
-    ok(&mut app, "content_apply", json!({"changes": [{"kind": "voxel_region", "id": "isle", "before": def, "def": higher}]}));
+    let answer = ok(&mut app, "content_apply", json!({"changes": [{"kind": "voxel_region", "id": "isle", "before": def, "def": higher}]}));
     let after = terrain(&app).hash;
     assert_ne!(after, before);
-    let said = lines(&journal(app.world()), &format!("voxel region isle seed 7 v1 regenerated (hash {before:016x} -> {after:016x})"));
+    let line = format!("voxel region isle seed 7 v1 regenerated (hash {before:016x} -> {after:016x})");
+    let said = lines(&journal(app.world()), &line);
     assert_eq!(said.len(), 1, "{:#?}", journal(app.world()));
+    assert!(text(&answer).contains(&line), "the call says it too: {answer}");
     let db = app.world().resource::<ContentDb>();
     let palette = VoxelPalette::from_db(db, "test").unwrap();
     assert_eq!(manifest(&app).content_hash, VoxelRegionDef::content_hash(db, "isle", &palette));
@@ -508,6 +514,17 @@ fn content_errors_name_the_step_the_version_and_the_file() {
     has("square in x and z");
     has("params: `stray` is not a listed step");
     has("checks[0]: unknown voxel check `plaza_dryy` (did you mean `plaza_dry`?)");
+
+    // A chunk lower than the volume, a sea out past where a position keeps its centimetres, and a
+    // current at full strength farther in than where it starts.
+    let bad = ISLE.replace("chunk: (16, 16, 16)", "chunk: (16, 8, 16)").replace("reach: 600.0", "reach: 200000.0").replace("starts: 6.0, full: 1.5", "starts: 1.0, full: 5.0");
+    let folder = folder("errors_far", &bad);
+    let dir = folder.path().to_string_lossy().into_owned();
+    let app = testing::test_app(move |config| config.asset_dir = dir, setup);
+    let all: Vec<String> = app.world().resource::<ContentDb>().errors().map(ToString::to_string).collect();
+    for needle in ["chunk 16 x 8 x 16: as tall as the volume (16 cells)", "sea.reach 200000: above 0 and at most 100000 m", "sea.current: starts 1 and full 5: starts above 0"] {
+        assert!(all.iter().any(|e| e.contains("voxel_region `isle`") && e.contains(needle)), "{needle}: {all:#?}");
+    }
 }
 
 #[test]
@@ -555,30 +572,84 @@ fn shape(value: &Value) -> Vec<(String, &'static str)> {
     out
 }
 
+/// The kinds of the values of a few fields of a JSON answer (absent: `missing`).
+fn kinds_of(value: &Value, keys: &[&str]) -> Vec<(String, &'static str)> {
+    let all = shape(value);
+    keys.iter().map(|k| (k.to_string(), all.iter().find(|(name, _)| name == k).map_or("missing", |(_, kind)| *kind))).collect()
+}
+
+/// Whether cell `t` is one of `region`'s.
+fn in_grid(region: &ActiveRegion, t: &TileId) -> bool {
+    let size = region.manifest.size;
+    (0..size[0] as i32).contains(&t.x) && (0..size[1] as i32).contains(&t.y)
+}
+
+/// The region API a game uses, asked the same way of a region of tiles (the world module's test
+/// meadow) and of a volume (the island): the same Rust types and the same answers, so content can
+/// swap one for the other without a change to gameplay code. What differs is said where it
+/// differs (the manual's "Voxel regions (A2c)", "Swapping a region of tiles for a volume").
 #[test]
 fn the_region_api_answers_with_the_same_types_on_tiles_and_on_a_volume() {
     // The world module's test content (a meadow of tiles) and the island, in one game.
     let folder = folder("same_api", ISLE);
     copy_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../shards_world/tests/world/assets/content"), &folder.path().join("content"));
+    let saves = std::env::temp_dir().join(format!("shards_voxel_same_api_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&saves);
+    let save_here = |app: &mut App| app.world_mut().resource_mut::<SaveConfig>().dir = saves.clone();
     let mut app = game(&folder);
+    save_here(&mut app);
     let mut answers = Vec::new();
     for (region, seed) in [("meadow", 3), ("isle", 7)] {
         let out = ok(&mut app, "regen", json!({"region": region, "seed": seed}));
         assert!(text(&out).starts_with(&format!("ok: {region} seed {seed} v1 (")), "{out}");
         let info = ok(&mut app, "region_info", json!({"manifest": true}));
         let active = app.world().resource::<ActiveRegion>();
-        // The same Rust types answer for both: the manifest, its POIs, the spawn point.
+        // The same Rust types answer for both: the manifest, its POIs, the spawn point, the area.
         let manifest: &RegionManifest = &active.manifest;
         let spawn: Vec3 = active.spawn_point(0);
+        let area: Rect = manifest.area();
         let poi: Option<&shards::world::manifest::ManifestPoi> = manifest.pois.first();
-        assert!(poi.is_some() && spawn.is_finite());
-        let pois: Vec<Poi> = app.world_mut().query::<&Poi>().iter(app.world()).cloned().collect();
-        let markers: Vec<Marker> = app.world_mut().query::<&Marker>().iter(app.world()).cloned().collect();
+        assert!(poi.is_some() && spawn.is_finite() && area.contains(spawn.xz()), "{region}: the spawn {spawn} in {area:?}");
+        let mut types: Vec<String> = manifest.pois.iter().map(|p| p.poi.clone()).collect();
+        types.sort();
+        types.dedup();
+        assert!(types.contains(&"camp".to_owned()) && types.contains(&"spawn".to_owned()), "{region}: {types:?}");
+        // Points of interest by type (a camp, the spawn), each a `Poi` in a cell of the grid.
+        let pois: Vec<(Poi, TileId)> = app.world_mut().query::<(&Poi, &TileId)>().iter(app.world()).map(|(p, t)| (p.clone(), *t)).collect();
+        assert!(pois.iter().any(|(p, _)| p.poi == "camp"), "{region}: a camp is a Poi: {pois:?}");
+        assert!(pois.iter().all(|(_, t)| in_grid(app.world().resource::<ActiveRegion>(), t)), "{region}: {pois:?}");
+        // Named markers, each in a cell of the grid.
+        let markers: Vec<(Marker, TileId)> = app.world_mut().query::<(&Marker, &TileId)>().iter(app.world()).map(|(m, t)| (m.clone(), *t)).collect();
+        assert!(!markers.is_empty() && markers.iter().all(|(_, t)| in_grid(app.world().resource::<ActiveRegion>(), t)), "{region}: {markers:?}");
         let parts = app.world_mut().query_filtered::<(), With<RegionPart>>().iter(app.world()).count();
-        assert!(!pois.is_empty() && !markers.is_empty() && parts > 0, "{region}: {} POIs, {} markers, {parts} parts", pois.len(), markers.len());
+        assert!(parts > 0, "{region}");
         let spawned_at = feet(&mut app);
         assert!(spawned_at.distance(spawn) < 1.5, "{region}: the player at the spawn ({spawned_at} vs {spawn})");
-        answers.push((shape(&info), shape(&info["manifest"])));
+
+        // The route provider: `path_to` answers on both, naming who planned the route.
+        let to = spawn + Vec3::new(2.0, 0.0, 0.0);
+        let route = ok(&mut app, "path_to", json!({"target": {"x": to.x, "z": to.z}}));
+        assert!(route["provider"].is_string() && route["path"].is_string(), "{region}: {route}");
+        // The navmesh tools answer on both (a volume has none yet, and says why).
+        let nav = testing::call(&mut app, "nav_info", json!({}));
+        let nav_path = testing::call(&mut app, "nav_path", json!({"to": {"x": to.x, "z": to.z}}));
+        assert!(!nav.result.is_null() && !nav_path.result.is_null(), "{region}");
+        if region == "isle" {
+            assert_eq!(nav.result["navmesh"], "none", "{}", nav.result);
+            assert!(!nav_path.ok && nav_path.result.to_string().contains("use path_to"), "{}", nav_path.result);
+            assert_eq!(route["provider"], "local grid", "{route}");
+        }
+        // The `region` save section: saved and loaded the same way, into a game with no region.
+        ok(&mut app, "save_game", json!({"what": "world", "slot": region}));
+        let saved = app.world().resource::<ActiveRegion>().manifest.clone();
+        let mut fresh = game(&folder);
+        save_here(&mut fresh);
+        let loaded = ok(&mut fresh, "load_game", json!({"what": "world", "slot": region}));
+        assert!(text(&loaded).starts_with(&format!("ok: world/{region} loaded")), "{loaded}");
+        assert_eq!(manifest(&fresh), saved, "{region}: the save's manifest built again");
+        let check = ok(&mut fresh, "save_check", json!({"slot": region}));
+        assert_eq!(check["world"]["file"]["same"].as_bool(), Some(true), "{region}: {check}");
+        answers.push((shape(&info), shape(&info["manifest"]), kinds_of(&route, &["provider", "path", "turns", "waypoints"]), shape(&check["world"])));
     }
     let (tiles, volume) = (&answers[0], &answers[1]);
     let without = |s: &[(String, &'static str)], skip: &[&str]| s.iter().filter(|(k, _)| !skip.contains(&k.as_str())).cloned().collect::<Vec<_>>();
@@ -586,6 +657,8 @@ fn the_region_api_answers_with_the_same_types_on_tiles_and_on_a_volume() {
     // its manifest names steps. Everything else is the same field with the same kind of value.
     assert_eq!(without(&tiles.0, &["north_west_corner", "edge"]), without(&volume.0, &["north_west_corner", "edge"]));
     assert_eq!(without(&tiles.1, &["steps", "origin"]), without(&volume.1, &["steps", "origin"]));
+    assert_eq!(tiles.2, volume.2, "path_to answers with the same fields");
+    assert_eq!(tiles.3, volume.3, "save_check answers with the same fields");
 
     // Back to the tiles: the volume, its field and its water go with the region.
     let isle = manifest(&app);
@@ -600,6 +673,78 @@ fn the_region_api_answers_with_the_same_types_on_tiles_and_on_a_volume() {
     assert!(text(&out).starts_with("ok: isle seed 7 v1 loaded from its manifest (4 chunks, "), "{out}");
     assert_eq!(manifest(&app), isle);
     assert!(app.world().get_resource::<VoxelTerrain>().is_some());
+    drop(app);
+    let _ = std::fs::remove_dir_all(&saves);
+}
+
+/// A manifest is data a player can edit (a save, a snapshot file): one whose grid is not the
+/// one its definition makes is refused before anything changes, in the world it was loaded into.
+#[test]
+fn a_manifest_whose_grid_was_changed_is_refused_and_the_world_stays() {
+    let folder = folder("forged", ISLE);
+    let mut app = game(&folder);
+    ok(&mut app, "regen", json!({"region": "isle", "seed": 7}));
+    let (m, hash) = (manifest(&app), terrain(&app).hash);
+    let forgeries: [(&str, fn(&mut RegionManifest)); 5] = [
+        ("no chunks", |m| m.size = [0, 0]),
+        ("chunks past counting", |m| m.size = [400_000, 400_000]),
+        ("another chunk edge", |m| m.tile_size = 8.0),
+        ("another corner", |m| m.origin = [0.0, 0.0]),
+        ("a point outside", |m| m.pois[0].cell = [5, 0]),
+    ];
+    for (what, forge) in forgeries {
+        let mut forged = m.clone();
+        forge(&mut forged);
+        let refused = err(&mut app, "region_load", json!({"manifest": forged.to_canonical()}));
+        assert!(refused.contains("the manifest was changed"), "{what}: {refused}");
+        assert_eq!((manifest(&app), terrain(&app).hash), (m.clone(), hash), "{what}: the region in the world stays");
+    }
+    // In a snapshot file: refused whole, into a game with the island and into one with no region.
+    let snapshot = capture(app.world()).unwrap();
+    let file = serde_json::to_string(&snapshot).unwrap();
+    let size = r#"\"size\": [2, 2]"#;
+    assert_eq!(file.matches(size).count(), 1, "the manifest's size in the snapshot's region record: {file}");
+    let forged: shards::ai_core::snapshot::Snapshot = serde_json::from_str(&file.replace(size, r#"\"size\": [400000, 400000]"#)).unwrap();
+    let refused = restore(app.world_mut(), &forged, false).unwrap_err();
+    assert!(refused.contains("the manifest was changed"), "{refused}");
+    assert_eq!((manifest(&app), terrain(&app).hash), (m.clone(), hash));
+    let mut empty = game(&folder);
+    let refused = restore(empty.world_mut(), &forged, false).unwrap_err();
+    assert!(refused.contains("the manifest was changed"), "{refused}");
+    assert!(empty.world().get_resource::<ActiveRegion>().is_none() && empty.world().get_resource::<VoxelTerrain>().is_none());
+    assert_eq!(empty.world_mut().query::<&Marker>().iter(empty.world()).count(), 0, "no marker of the forged region");
+}
+
+/// A step that marks a point beside the island, off its cells.
+fn stray_mark(g: &mut VoxelGen) -> Result<(), String> {
+    g.mark("stray.0", Vec3::new(270.0, 1.0, 300.0));
+    Ok(())
+}
+
+/// A step that marks a point off the volume fails its attempt by name: a point of interest is in
+/// one of the region's chunks.
+#[test]
+fn a_mark_off_the_volume_fails_the_attempt() {
+    let stray = ISLE.replace("(\"fill_water\", 1)]", "(\"fill_water\", 1), (\"stray_mark\", 1)]").replace("attempts: 4,", "attempts: 1,");
+    assert_ne!(stray, ISLE);
+    let folder = folder("stray", &stray);
+    let mut app = game_with(&folder, |_| {}, |app| {
+        app.add_voxel_step("stray_mark", 1, stray_mark);
+    });
+    let refused = err(&mut app, "regen", json!({"region": "isle", "seed": 7}));
+    assert!(refused.contains("mark `stray.0`: at (270.00, 1.00, 300.00), outside the volume (x 284 to 316, z 284 to 316)"), "{refused}");
+    assert!(app.world().get_resource::<ActiveRegion>().is_none(), "nothing was built");
+}
+
+/// The voxel module registers its region kind with the world module, so it is added after it:
+/// the other way round is said when the app is built, not found at the first `regen`.
+#[test]
+#[should_panic(expected = "VoxelPlugin was added before WorldPlugin")]
+fn the_voxel_module_added_before_the_world_module_is_a_build_error() {
+    let mut app = App::new();
+    let plugins = EnginePlugins::new(testing::config()).build().add_before::<shards::world::WorldPlugin>(shards::voxel::VoxelPlugin);
+    app.add_plugins(plugins);
+    app.finish();
 }
 
 /// `plaza` as another build might have it: the same name and version, one more block.

@@ -198,11 +198,14 @@ fn apply(world: &mut World, args: ContentApplyArgs) -> ToolResult {
     let defs = if n == 1 { "definition" } else { "definitions" };
     let names: Vec<&str> = files.iter().map(|f| shown(f)).collect();
     let from = if names.is_empty() { String::new() } else { format!(" {}", names.join(", ")) };
-    let text = format!("content reloaded:{from} ({n} {defs} changed)");
+    let mut text = format!("content reloaded:{from} ({n} {defs} changed)");
     journal::emit(world, JournalKind::Event, text.clone());
     if let Some(crate::ContentAppliedHooks(hooks)) = world.get_resource::<crate::ContentAppliedHooks>().cloned() {
         for hook in hooks {
-            hook(world);
+            if let Some(line) = hook(world) {
+                text.push('\n');
+                text.push_str(&line);
+            }
         }
     }
     Ok(text)

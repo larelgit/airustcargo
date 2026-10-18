@@ -1276,6 +1276,31 @@ mod tests {
         sim::step(app.world_mut(), ticks, Duration::from_secs(5), |_| None).unwrap();
     }
 
+    /// State a module may not have (a voxel region's volume): what the optional check hashes.
+    #[derive(Resource, Clone, Copy)]
+    struct Terrain(u64);
+
+    #[test]
+    fn an_optional_check_is_left_out_without_its_state_and_compares_presence_both_ways() {
+        let with_check = |app: &mut App| {
+            app.add_optional_snapshot_check("toy.terrain", "the terrain differs", |w| w.get_resource::<Terrain>().map(|t| t.0));
+        };
+        let mut bare = game_with(with_check);
+        let without = capture(bare.world()).unwrap();
+        assert!(!without.checks.contains_key("toy.terrain"), "no state, no value: {:?}", without.checks);
+        let mut built = game_with(with_check);
+        built.world_mut().insert_resource(Terrain(7));
+        let with = capture(built.world()).unwrap();
+        assert_eq!(with.checks["toy.terrain"], "0000000000000007");
+
+        let refused = restore(bare.world_mut(), &with, false).unwrap_err();
+        assert!(refused.contains("toy.terrain differs (snapshot 0000000000000007, this game has none): the terrain differs"), "{refused}");
+        let refused = restore(built.world_mut(), &without, false).unwrap_err();
+        assert!(refused.contains("toy.terrain differs (the snapshot has none, this game 0000000000000007): the terrain differs"), "{refused}");
+        assert!(restore(bare.world_mut(), &without, false).unwrap().differences.is_empty());
+        assert!(restore(built.world_mut(), &with, false).unwrap().differences.is_empty());
+    }
+
     #[test]
     fn a_snapshot_round_trips_through_its_file_text() {
         let mut app = game();

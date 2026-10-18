@@ -661,7 +661,10 @@ pub fn rebuild(world: &mut World) {
         Err(why) => {
             let content = content_changed(world);
             world.insert_resource(NavFailed { region, content });
-            journal::emit(world, JournalKind::Warn, format!("navmesh: none for this region: {why}; NPCs plan on the local grid"));
+            // A voxel region has no navmesh yet by design (its bake is a later change): not a
+            // warning, which `warning` rules and stop conditions would catch on every `regen`.
+            let kind = if super::region_is_volume(world) { JournalKind::Event } else { JournalKind::Warn };
+            journal::emit(world, kind, format!("navmesh: none for this region: {why}; NPCs plan on the local grid"));
         }
     }
 }

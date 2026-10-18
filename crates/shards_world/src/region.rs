@@ -596,7 +596,13 @@ pub fn spawn_region(world: &mut World, manifest: &RegionManifest) -> Result<Regi
                     e.despawn();
                 }
             }
-            unload_kinds(world);
+            // What the kind of this manifest kept outside its entities; a region of another kind
+            // in the world (a caller that did not unload it first) keeps its own.
+            if manifest.layout == Layout::Volume
+                && let Ok(kind) = kind_for(world, manifest)
+            {
+                (kind.unload)(world);
+            }
             Err(e)
         }
     }
@@ -830,7 +836,7 @@ fn generated_line(generated: &Generated) -> String {
         Layout::Grid => (m.tiles.len(), "tiles"),
         Layout::Rooms => (m.tiles.len(), "rooms"),
         // A volume's cells are its chunks.
-        Layout::Volume => ((m.size[0] * m.size[1]) as usize, "chunks"),
+        Layout::Volume => ((u64::from(m.size[0]) * u64::from(m.size[1])) as usize, "chunks"),
     };
     format!("region generated: {} ({how}, {count} {tiles}, {} POIs)", m.title(), m.pois.len())
 }

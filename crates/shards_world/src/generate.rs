@@ -644,7 +644,7 @@ pub fn unknown_region_of(db: &ContentDb, worldgen: Option<&WorldGen>, id: &str) 
     let known = known_regions(db, worldgen);
     let hint = closest(id, known.iter().map(String::as_str)).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
     if known.is_empty() {
-        format!("unknown region `{id}`: there is no `region` or `dungeon` content (content/**/*.region.ron)")
+        format!("unknown region `{id}`: content has no region of any kind (content/**/*.region.ron, *.dungeon.ron, or a kind a module adds, such as *.voxel_region.ron)")
     } else {
         format!("unknown region `{id}`{hint}; regions: {}", known.join(", "))
     }

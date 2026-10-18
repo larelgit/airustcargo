@@ -82,15 +82,16 @@ pub trait ContentAppExt {
     /// Runs `hook` after every content change a game applies while it runs (`content_apply`,
     /// `content_reload`, a file edited on disk), inside the call that applies it, so a replay
     /// runs it at the same tick ([`ContentAppliedHooks`]): what a module built from content that
-    /// cannot be patched in place is built again there.
-    fn on_content_applied(&mut self, hook: fn(&mut World)) -> &mut Self;
+    /// cannot be patched in place is built again there. What it returns (`voxel region isle regenerated …`)
+    /// is a line of the call's answer.
+    fn on_content_applied(&mut self, hook: fn(&mut World) -> Option<String>) -> &mut Self;
 }
 
 /// What runs after a content change is applied ([`ContentAppExt::on_content_applied`]), in the
 /// order registered. Not after a snapshot load puts back the content it was taken with: the
 /// snapshot rebuilds the world itself.
 #[derive(Resource, Default, Clone)]
-pub struct ContentAppliedHooks(pub Vec<fn(&mut World)>);
+pub struct ContentAppliedHooks(pub Vec<fn(&mut World) -> Option<String>>);
 
 /// Why the content of this game must not change right now, from the modules that may say so:
 /// while a guard gives a reason, `content_apply`, `content_reload` and a level's reload refuse
@@ -130,7 +131,7 @@ impl ContentAppExt for App {
         self
     }
 
-    fn on_content_applied(&mut self, hook: fn(&mut World)) -> &mut Self {
+    fn on_content_applied(&mut self, hook: fn(&mut World) -> Option<String>) -> &mut Self {
         self.world_mut().get_resource_or_init::<ContentAppliedHooks>().0.push(hook);
         self
     }

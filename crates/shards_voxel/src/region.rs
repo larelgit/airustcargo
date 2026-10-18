@@ -43,7 +43,7 @@ use shards_motion::{Collider, CollisionLayers, Current, Shape, Volume, VolumeKin
 use shards_world::generate::{AttemptFailure, GenError, Generated as RegionGenerated, Stage, WorldGen};
 use shards_world::grid::mm;
 use shards_world::manifest::{content_hash, fnv, Layout, ManifestPoi, RegionManifest, FORMAT};
-use shards_world::{ActiveRegion, Marker, RegionKind};
+use shards_world::{ActiveRegion, Marker, RegionKind, TileId};
 use ai_core::journal::{self, JournalKind};
 
 use crate::merge::{water_boxes, CellBox};
@@ -56,6 +56,10 @@ pub const CONTENT: &str = "voxel_region";
 
 /// How many built volumes the in-process cache keeps (the least recently used goes first).
 const CACHE_SIZE: usize = 4;
+
+/// The farthest a sea may reach past the grid, m: 100 km out, an `f32` position still has its
+/// centimetres (its step there is under 1 cm).
+pub const MAX_SEA_REACH: f32 = 100_000.0;
 
 fn one() -> f32 {
     1.0
@@ -225,6 +229,12 @@ impl VoxelRegionDef {
         if self.chunk.x != self.chunk.z {
             out.push(format!("chunk {} x {} x {}: square in x and z (the region's cells are its chunks)", self.chunk.x, self.chunk.y, self.chunk.z));
         }
+        if self.chunk.y != self.size.y {
+            out.push(format!(
+                "chunk {} x {} x {}: as tall as the volume ({} cells): the region's cells are its chunks, one to a column",
+                self.chunk.x, self.chunk.y, self.chunk.z, self.size.y
+            ));
+        }
         if let Some(anchor) = self.anchor
             && (anchor.x > self.size.x || anchor.y > self.size.y || anchor.z > self.size.z)
         {
@@ -256,8 +266,8 @@ impl VoxelRegionDef {
             out.push(format!("water.surface_drop {drop}: 0 or more and less than a block ({})", self.block));
         }
         if let Some(sea) = &self.sea {
-            if !(sea.reach.is_finite() && sea.reach > 0.0) {
-                out.push(format!("sea.reach {}: above 0", sea.reach));
+            if !(sea.reach.is_finite() && sea.reach > 0.0 && sea.reach <= MAX_SEA_REACH) {
+                out.push(format!("sea.reach {}: above 0 and at most {MAX_SEA_REACH} m (farther out a position loses its centimetres)", sea.reach));
             }
             if sea.level == 0 || sea.level > self.size.y {
                 out.push(format!("sea.level {}: a layer from 1 to the volume's height ({})", sea.level, self.size.y));
@@ -519,16 +529,11 @@ fn counts(volume: &VoxelVolume, palette: &VoxelPalette, marks: usize) -> BTreeMa
 /// The manifest of a volume made for `seed` (by attempt `attempt`, from 1; 0 with the
 /// fallback seed `fallback`).
 fn manifest(def: &VoxelRegionDef, id: &str, seed: u64, attempt: u32, fallback: Option<u64>, marks: &[Mark], content_hash: String) -> RegionManifest {
-    let origin = def.origin();
-    let edge = def.chunk.x as f32 * def.block;
-    let corner = mm(origin);
+    let (size, tile_size, origin) = grid_of(def);
     let pois = marks
         .iter()
         .filter(|m| !def.markers.contains(&m.name))
-        .map(|m| {
-            let cell = [((m.pos.x - origin.x) / edge).floor() as i32, ((m.pos.z - origin.z) / edge).floor() as i32];
-            ManifestPoi { id: m.name.clone(), poi: RegionManifest::poi_type(&m.name).to_owned(), cell, pos: mm(m.pos), area: 0 }
-        })
+        .map(|m| ManifestPoi { id: m.name.clone(), poi: RegionManifest::poi_type(&m.name).to_owned(), cell: chunk_of(def, m.pos), pos: mm(m.pos), area: 0 })
         .collect();
     RegionManifest {
         format: FORMAT.to_owned(),
@@ -538,9 +543,9 @@ fn manifest(def: &VoxelRegionDef, id: &str, seed: u64, attempt: u32, fallback: O
         version: def.version,
         attempt,
         fallback: fallback.map(|s| format!("seed {s}")),
-        size: [def.size.x / def.chunk.x, def.size.z / def.chunk.z],
-        tile_size: mm(Vec3::splat(edge))[0],
-        origin: [corner[0], corner[2]],
+        size,
+        tile_size,
+        origin,
         tiles: Vec::new(),
         pois,
         links: Vec::new(),
@@ -548,6 +553,22 @@ fn manifest(def: &VoxelRegionDef, id: &str, seed: u64, attempt: u32, fallback: O
         content_hash,
         steps: def.steps.clone(),
     }
+}
+
+/// The grid a definition's manifest has: chunks along x and z, a chunk's edge (m) and the grid's
+/// north-west corner, as the manifest stores them.
+fn grid_of(def: &VoxelRegionDef) -> ([u32; 2], f32, [f32; 2]) {
+    let corner = mm(def.origin());
+    ([def.size.x / def.chunk.x, def.size.z / def.chunk.z], mm(Vec3::splat(def.chunk.x as f32 * def.block))[0], [corner[0], corner[2]])
+}
+
+/// The chunk (x, z) of the grid a point is over: the manifest's cell of a mark. Generation keeps
+/// marks over the grid ([`generate_attempt`] fails an attempt with one outside), so only a mark
+/// exactly on the far edge needs the clamp: it belongs to the last chunk.
+fn chunk_of(def: &VoxelRegionDef, pos: Vec3) -> [i32; 2] {
+    let (origin, edge) = (def.origin(), def.chunk.x as f32 * def.block);
+    let last = [(def.size.x / def.chunk.x) as i32 - 1, (def.size.z / def.chunk.z) as i32 - 1];
+    [((pos.x - origin.x) / edge).floor().clamp(0.0, last[0] as f32) as i32, ((pos.z - origin.z) / edge).floor().clamp(0.0, last[1] as f32) as i32]
 }
 
 /// The seed and attempt (from 0) whose volume `manifest` names.
@@ -591,6 +612,21 @@ fn check(world: &World, manifest: &RegionManifest) -> Result<(), String> {
             "{title}: its definition or palette changed since it was made (content hash {} then, {now} now), so its volume would come out otherwise; generate it again",
             manifest.content_hash
         ));
+    }
+    // The grid the manifest says it has must be the one its definition makes: a manifest edited
+    // by hand (a saved or snapshot file) is refused here, before anything changes.
+    let (size, tile_size, origin) = grid_of(def);
+    if (manifest.size, manifest.tile_size, manifest.origin) != (size, tile_size, origin) {
+        return Err(format!(
+            "{title} says its grid is {:?} chunks of {} m from {:?}, and its definition makes {size:?} chunks of {tile_size} m from {origin:?}: the manifest was changed; generate the region again",
+            manifest.size, manifest.tile_size, manifest.origin
+        ));
+    }
+    if let Some(poi) = manifest.pois.iter().find(|p| !(0..size[0] as i32).contains(&p.cell[0]) || !(0..size[1] as i32).contains(&p.cell[1])) {
+        return Err(format!("{title}: point of interest `{}` is in chunk {:?}, outside its {size:?} chunks: the manifest was changed", poi.id, poi.cell));
+    }
+    if manifest.links.len() + manifest.tiles.len() > 0 {
+        return Err(format!("{title}: a volume has no tiles or links, and the manifest names some: the manifest was changed"));
     }
     made_with(manifest)?;
     Ok(())
@@ -695,7 +731,10 @@ fn spawn(world: &mut World, manifest: &RegionManifest) -> Result<Vec<Entity>, St
         }
     }
     for mark in built.marks.iter().filter(|m| def.markers.contains(&m.name)) {
-        out.push(world.spawn((Name::new(mark.name.clone()), Marker { name: mark.name.clone() }, Transform::from_translation(mark.pos))).id());
+        // In its chunk, as a marker of a tile is in its tile.
+        let [x, y] = chunk_of(&def, mark.pos);
+        let marker = (Name::new(mark.name.clone()), Marker { name: mark.name.clone() }, TileId { x, y }, Transform::from_translation(mark.pos));
+        out.push(world.spawn(marker).id());
     }
     world.insert_resource(VoxelTerrain {
         region: manifest.region.clone(),
@@ -716,7 +755,6 @@ fn spawn(world: &mut World, manifest: &RegionManifest) -> Result<Vec<Entity>, St
         built_in,
         cached,
     });
-    crate::ai::register_conditions(world);
     Ok(out)
 }
 
@@ -745,11 +783,17 @@ pub fn volume_check(world: &World) -> Option<u64> {
 /// alone reads (colours, looks) changes no hash: only the palette the picture reads is
 /// replaced. A change that no longer generates leaves the region as it was built, and says so.
 /// On a co-op client (it does not simulate) nothing is made again: the region is the host's.
-pub(crate) fn content_applied(world: &mut World) {
-    let Some(old) = world.get_resource::<VoxelTerrain>().map(|t| t.hash) else { return };
-    let Some(manifest) = world.get_resource::<ActiveRegion>().map(|r| r.manifest.clone()) else { return };
+/// What it did, when it did something, is journaled and is a line of the call's answer
+/// (`voxel region isle seed 7 v1 regenerated (hash … -> …)`).
+pub(crate) fn content_applied(world: &mut World) -> Option<String> {
+    let say = |world: &mut World, kind: JournalKind, line: String| {
+        journal::emit(world, kind, line.clone());
+        Some(line)
+    };
+    let old = world.get_resource::<VoxelTerrain>().map(|t| t.hash)?;
+    let manifest = world.get_resource::<ActiveRegion>().map(|r| r.manifest.clone())?;
     if manifest.layout != Layout::Volume {
-        return;
+        return None;
     }
     let title = manifest.title();
     let found = {
@@ -761,19 +805,15 @@ pub(crate) fn content_applied(world: &mut World) {
     };
     let (now, palette, block) = match found {
         Ok(found) => found,
-        Err(e) => {
-            journal::emit(world, JournalKind::Warn, format!("voxel region {title}: {e}; the region in the world stays as it was built"));
-            return;
-        }
+        Err(e) => return say(world, JournalKind::Warn, format!("voxel region {title}: {e}; the region in the world stays as it was built")),
     };
     if now == manifest.content_hash {
         world.resource_mut::<VoxelTerrain>().palette = Arc::new(palette);
-        return;
+        return None;
     }
     // A co-op client is shown the host's world: it never changes region by itself.
     if world.get_resource::<shards_core::NetRole>().is_some_and(|role| !role.simulates()) {
-        journal::emit(world, JournalKind::Warn, format!("voxel region {title}: content changed on this machine, which does not simulate; the host's region stays"));
-        return;
+        return say(world, JournalKind::Warn, format!("voxel region {title}: content changed on this machine, which does not simulate; the host's region stays"));
     }
     let generated = {
         let (db, worldgen) = (world.resource::<ContentDb>(), world.resource::<WorldGen>());
@@ -782,16 +822,14 @@ pub(crate) fn content_applied(world: &mut World) {
     let generated = match generated {
         Ok(generated) => generated,
         Err(e) => {
-            journal::emit(world, JournalKind::Warn, format!("voxel region {title}: the changed content does not generate ({e}); the region in the world stays as it was built"));
-            return;
+            return say(world, JournalKind::Warn, format!("voxel region {title}: the changed content does not generate ({e}); the region in the world stays as it was built"));
         }
     };
     let bodies: Vec<(Entity, Vec3)> =
         shards_world::region::players(world).into_iter().filter_map(|e| Some((e, world.get::<Transform>(e)?.translation))).collect();
     shards_world::region::journal_generated(world, &generated);
     if let Err(e) = shards_world::change_region(world, generated.manifest) {
-        journal::emit(world, JournalKind::Warn, format!("voxel region {title}: cannot build it again ({e})"));
-        return;
+        return say(world, JournalKind::Warn, format!("voxel region {title}: cannot build it again ({e})"));
     }
     for (body, at) in bodies {
         if let Some(y) = shards_world::region::ground_below(world, at, &[body])
@@ -802,5 +840,5 @@ pub(crate) fn content_applied(world: &mut World) {
         }
     }
     let new = world.get_resource::<VoxelTerrain>().map_or(0, |t| t.hash);
-    journal::emit(world, JournalKind::Event, format!("voxel region {title} regenerated (hash {old:016x} -> {new:016x})"));
+    say(world, JournalKind::Event, format!("voxel region {title} regenerated (hash {old:016x} -> {new:016x})"))
 }

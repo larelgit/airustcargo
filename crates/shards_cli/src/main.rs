@@ -326,7 +326,7 @@ enum Cmd {
     /// seeds passed, failed attempts by reason, distances between points of interest, panics
     /// (exit 1 unless every seed passed). Without a game: `<game> --worldgen-report R --seeds S`.
     Worldgen {
-        /// `region` or `dungeon` content id.
+        /// A region content id of any kind (`region`, `dungeon`, `voxel_region`, ...).
         #[arg(long)]
         region: String,
         /// `1..1000` (both ends included), `7`, `1,5,10..20`.

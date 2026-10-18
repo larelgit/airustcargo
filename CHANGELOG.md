@@ -80,10 +80,19 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   definition makes the region again for its seed, a colour does not); `--check-content` generates each voxel region for its
   `check_seed` and `fallback_seed`; the worldgen report's `totals:` line (`Generated::counts`). `Current`, `current_at` and
   `edge_distance` in `shards_motion` (nothing moves bodies by it yet); `PhysicsWorld::wide_colliders`. Tools `sea_current_at`
-  (player) and `voxel_info` (dev, and in the developer menu); conditions `in_current` and `near_grid_edge`; the journal line
-  `region loaded: <id> seed N vV (X x Y x Z, N water boxes, …)`. Until the navigation bake, a voxel region has no navmesh:
-  `npc_state`, `nav_path` (refused: `use path_to`), `nav_info` and `nav_bake` say so. Snapshot checks may be optional
-  (`add_optional_snapshot_check`). Manual: "Voxel regions (A2c)".
+  (player) and `voxel_info` (dev, and in the developer menu; its build time only where timing is reported); conditions
+  `in_water`, `in_current` and `near_grid_edge`, registered when the app is built and answering in a region of any kind; the
+  journal line `region loaded: <id> seed N vV (X x Y x Z, N water boxes, …)`. Until the navigation bake, a voxel region has no
+  navmesh: `npc_state`, `nav_path` (refused: `use path_to`), `nav_info` and `nav_bake` say so, and the journal line
+  `navmesh: none for this region` is an event there, not a warning. A voxel region's markers carry the `TileId` of their
+  chunk, as a tile's do; `RegionManifest::area`. A voxel manifest whose grid is not the one its definition makes (size, chunk
+  edge, corner, a point outside, tiles or links) is refused before anything is built, as is a mark a step makes off the
+  volume; a chunk must be as tall as the volume, and a sea reach at most 100 km (`MAX_SEA_REACH`). A content-applied hook
+  returns the line it adds to the call's answer (`fn(&mut World) -> Option<String>`): `content_apply` says that a region was
+  made again. `VoxelPlugin` added before `WorldPlugin` panics when the app is finished, naming the order. `Layout::Volume`
+  needs no save `FORMAT` bump: a save of a tile region keeps its bytes, and an older build refuses a volume's `layout` by name.
+  Snapshot checks may be optional (`add_optional_snapshot_check`). Manual: "Voxel regions (A2c)", with what differs when a
+  region of tiles is swapped for a volume.
 - Sandbox: the voxel arena (`regen region=voxel_arena seed=7`), a voxel region of 256 x 32 x 256 cells north of the arena,
   made by the sandbox's own steps (`island`, `lake`, `flat_arena`, `arena_pieces`, `cave`, `trees`, then the stock `fill_water`;
   `src/gameplay/terrain.rs`) and checks (`arena_flat`, `spawn_on_ground`, `pool_depth`, `cave_open`) from
@@ -178,7 +187,9 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
 
 - The engine rule `voxel.body_in_solid` is on by default (it was off, behind `--engine-invariant`): 50 runs of `shards fuzz
   --steps 600` on the sandbox's voxel arena with it on (20 without chaos, 20 with `--chaos 0.02`, 10 more steered by coverage) stopped on
-  nothing, nor did the reference replays. `--engine-invariant` offers no name today.
+  nothing, nor did the reference replays. The runs: `cargo sandbox --coverage --headless --paused --port 0 --port-file F
+  --engine-invariant voxel.body_in_solid`, `shards act regen region=voxel_arena seed=7`, then `shards fuzz --seed S --steps 600`
+  (`--chaos 0.02`, `--chaos 0.02 --steer`); the seeds were not kept. `--engine-invariant` offers no name today.
 - The palette's part of a generated voxel world's hash is `VoxelPalette::semantics` (names, order, solid, liquid, foliage, tags), not
   `fingerprint` (which also covers colours): a recoloured palette is the same world. The golden world hash changed with it.
 - `regen` of a dungeon says `N rooms` (it said `N tiles`), as does `region_load`; `goto_tile` outside a region says `chunks` or

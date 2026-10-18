@@ -155,7 +155,6 @@ pub fn navmesh_path(world: &World, from: Vec3, to: Vec3, params: &CharacterParam
     }
 }
 
-/// The navmesh of the region in the world, when it is built for that region.
 /// Why the region in the world has no navmesh when it is a voxel volume (until its in-memory
 /// bake lands): `npc_state`, `nav_info`, `nav_path` and the journal say it.
 pub const VOXEL_NO_NAV: &str = "voxel region, nav not baked yet";
@@ -166,6 +165,7 @@ pub fn region_is_volume(world: &World) -> bool {
     world.get_resource::<ActiveRegion>().is_some_and(|r| r.manifest.layout == shards_world::manifest::Layout::Volume)
 }
 
+/// The navmesh of the region in the world, when it is built for that region.
 pub fn region_nav(world: &World) -> Option<&NavRegion> {
     let nav = world.get_resource::<NavRegion>()?;
     (world.get_resource::<ActiveRegion>().map(|r| r.hash) == Some(nav.hash)).then_some(nav)

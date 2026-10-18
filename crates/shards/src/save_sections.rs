@@ -40,7 +40,7 @@ impl Plugin for EngineSavePlugin {
 /// A region as a save names it.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct RegionRef {
-    /// The `region` or `dungeon` content id.
+    /// The region content id (of any kind: `region`, `dungeon`, `voxel_region`, ...).
     pub id: String,
     pub seed: u64,
 }
