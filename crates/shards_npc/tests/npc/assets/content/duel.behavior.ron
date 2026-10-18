@@ -34,4 +34,12 @@
     ),
     // Presses a strike whenever it is free, without asking the spacing (the test's hook `unruly`).
     "unruly_fighter": (initial: "go", states: {"go": (kind: "unruly")}),
+    // Every rule of the duel at once: a cadence and a rest clamp, and the plan's own rules.
+    "everything": (
+        initial: "fight",
+        think: Some(0.15),
+        states: {
+            "fight": (kind: "attack", rest_clamp: Some(0.3)),
+        },
+    ),
 }

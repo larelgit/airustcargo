@@ -34,4 +34,15 @@
     ),
     // A long rest, to be clamped.
     "long_rest": (options: [(input: "light")], rest: (1.0, 1.0)),
+    // Every rule of the duel at once, for the snapshot and the replay.
+    "duel_all": (
+        options: [
+            (input: "light", name: "swing", chain: Some((input: "light", chance: 0.8)), when: [("!health_below", {"fraction": 0.05})]),
+            (action: "swing_2", weight: 0.0, chain: Some((input: "light", chance: 0.8))),
+        ],
+        rest: (0.3, 0.5),
+        rest_interrupted: Some((0.2, 0.2)),
+        rest_runs_while_busy: true,
+        first_rest: Some((0.2, 0.4)),
+    ),
 }

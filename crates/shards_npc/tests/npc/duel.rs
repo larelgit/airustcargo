@@ -504,3 +504,154 @@ fn chain_numbers_are_checked() {
     assert!(errors[0].contains("options[0].chain names no input"), "{errors:?}");
     assert!(errors[1].contains("options[0].chain.chance is a probability in 0..1 (is 1.5)"), "{errors:?}");
 }
+
+// --- replays and snapshots -----------------------------------------------------------------
+
+/// A hero and two combat fighters that use every rule of the duel at once.
+fn everything(app: &mut App) -> [Entity; 2] {
+    let world = app.world_mut();
+    player(world, 0, Vec3::ZERO);
+    let make = |world: &mut World, z: f32| {
+        npc(world, "combo", Npc::new("everything", "keeper").with_plan("duel_all").with_director("spaced"), Vec3::new(0.0, 0.0, z), if z > 0.0 { N } else { S })
+    };
+    [make(world, 1.2), make(world, -1.2)]
+}
+
+/// Plays the duel up to tick `until`, with a stagger of the first fighter at tick 70, in the middle
+/// of an attack.
+fn advance(app: &mut App, until: u64) {
+    loop {
+        let now = app.world().resource::<ai_core::SimTick>().0;
+        if now >= until {
+            break;
+        }
+        if now == 69 {
+            call(app, "stagger", serde_json::json!({"id": "e2"}));
+        }
+        step(app, 1);
+    }
+}
+
+#[test]
+fn the_rules_of_the_duel_are_in_the_snapshot_and_a_loaded_fight_goes_on_the_same() {
+    use ai_core::snapshot::{self, differences};
+    let mut original = app_seeded(7, record_starts);
+    let _who = everything(&mut original);
+    let mut snapshots = Vec::new();
+    for at in [30u64, 70, 71, 100, 140, 200, 333] {
+        advance(&mut original, at);
+        let snap = snapshot::capture(original.world()).unwrap();
+        assert!(snap.left_out.is_empty(), "{:?}", snap.left_out);
+        snapshots.push((at, snap));
+    }
+    advance(&mut original, 700);
+    let last = snapshot::capture(original.world()).unwrap();
+    // Every new piece of state reached a snapshot.
+    for component in ["NpcStrike", "NpcThink", "NpcOptions", "NpcChain"] {
+        assert!(
+            snapshots.iter().any(|(_, s)| s.entities.iter().any(|e| e.components.keys().any(|k| k.ends_with(&format!("::{component}"))))),
+            "{component} is in no snapshot"
+        );
+    }
+    let story = journal(&original);
+    for needle in ["chains light after", "returns its attack token"] {
+        assert!(story.iter().any(|l| l.contains(needle)), "no `{needle}` in {story:#?}");
+    }
+    for (at, snap) in snapshots {
+        let mut copy = app_seeded(7, record_starts);
+        let report = snapshot::restore(copy.world_mut(), &snap, false).unwrap_or_else(|e| panic!("tick {at}: {e}"));
+        assert!(report.exact(), "tick {at}: {:?}", report.differences);
+        advance(&mut copy, 700);
+        let diff = differences(&last, &snapshot::capture(copy.world()).unwrap());
+        assert!(diff.is_empty(), "loaded at tick {at}:\n{}", diff.join("\n"));
+    }
+}
+
+#[test]
+fn a_recorded_duel_plays_back_identically() {
+    use ai_core::replay::{self, Replay};
+    let mut original = app_seeded(7, record_starts);
+    let who = everything(&mut original);
+    advance(&mut original, 700);
+    let recording = replay::save(original.world());
+    let recording: Replay = serde_json::from_str(&serde_json::to_string(&recording).unwrap()).unwrap();
+    let mut copy = app_seeded(7, record_starts);
+    everything(&mut copy);
+    replay::play(copy.world_mut(), recording.clone()).unwrap();
+    step(&mut copy, recording.end.tick);
+    copy.update();
+    let report = copy.world().resource::<ai_core::AiReplay>().report().cloned().expect("playback finished");
+    assert!(report.identical(), "{report}");
+    assert_eq!(journal(&original), journal(&copy));
+    let left_out: Vec<String> = all_journal(&original).into_iter().filter(|l| l.contains("replay checks leave out")).collect();
+    assert!(left_out.is_empty(), "{left_out:#?}");
+    // The strikes were spaced all the way, and the interrupted fighter rested by its own range.
+    assert!(started(&original, who[0]).len() >= 4 && started(&original, who[1]).len() >= 4);
+}
+
+// --- what the AI sees ----------------------------------------------------------------------
+
+#[test]
+fn npc_state_and_the_overlay_show_the_state_of_the_duel_rules() {
+    let mut app = app_seeded(7, record_starts);
+    let who = everything(&mut app);
+    // The first duelist stays at its post, the hero steps back out of the sight range of
+    // `keeper` (10 m) into its keep range (16 m) once it has been seen.
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..400 {
+        step(&mut app, 1);
+        for e in who {
+            let who_id = id(&app, e);
+            let out = call(&mut app, "npc_state", serde_json::json!({"id": who_id}));
+            assert!(out.ok, "{}", text(&out));
+            let v = out.result;
+            for key in ["strike", "spacing", "think", "chain"] {
+                if v.get(key).is_some_and(|x| !x.is_null()) {
+                    seen.insert(key);
+                }
+            }
+            assert!((v["think"]["every"].as_f64().unwrap() - 0.15).abs() < 1e-6, "{v}");
+            assert!(v["plan"]["options"]["open"].is_array() && v["plan"]["options"]["closed"].is_array(), "{v}");
+            assert_eq!(v["perception"]["keep_range"].as_f64(), Some(16.0));
+        }
+    }
+    assert_eq!(seen.into_iter().collect::<Vec<_>>(), ["chain", "spacing", "strike", "think"]);
+    // The overlay line says the same in a few words.
+    let overlay = ok(&mut app, "npc_overlay", serde_json::json!({}));
+    let overlay = text(&overlay);
+    assert!(overlay.contains("think "), "{overlay}");
+}
+
+#[test]
+fn an_npc_that_uses_none_of_the_rules_has_none_of_their_fields() {
+    let mut app = app();
+    let hero = player(app.world_mut(), 0, Vec3::ZERO);
+    let _ = hero;
+    let g = grunt(app.world_mut(), "grunt", "grunt", "default", Vec3::new(0.0, 0.0, 3.0));
+    step(&mut app, 120);
+    let g_id = id(&app, g);
+    let out = ok(&mut app, "npc_state", serde_json::json!({"id": g_id}));
+    let v = out.result;
+    for key in ["strike", "spacing", "think", "chain", "perception"] {
+        assert!(v.get(key).is_none(), "{key} in {v}");
+    }
+    assert!(v["plan"].get("options").is_none());
+    assert!(v["perceived"][0].get("kept").is_none());
+}
+
+#[test]
+fn a_target_kept_in_sight_beyond_the_sight_range_is_marked() {
+    let mut app = app();
+    let world = app.world_mut();
+    let watcher = npc(world, "grunt", Npc::new("watcher", "keeper"), Vec3::ZERO, N);
+    let hero = player(world, 0, Vec3::new(0.0, 0.0, -9.0));
+    step(&mut app, 1);
+    teleport(&mut app, hero, Vec3::new(0.0, 0.0, -14.0));
+    step(&mut app, 1);
+    let w_id = id(&app, watcher);
+    let v = ok(&mut app, "npc_state", serde_json::json!({"id": w_id})).result;
+    assert_eq!(v["perception"], serde_json::json!({"sight_range": 10.0, "keep_range": 16.0}));
+    assert_eq!(v["perceived"][0]["kept"], serde_json::json!(true), "{v}");
+    let overlay = text(&ok(&mut app, "npc_overlay", serde_json::json!({})));
+    assert!(overlay.contains("keeps e2 14.0m N"), "{overlay}");
+}
