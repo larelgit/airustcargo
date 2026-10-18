@@ -2,12 +2,15 @@
 //! follows, looks, keeps out of walls, shakes, and sets the field of view. Pure math is
 //! tested in `camera::math`.
 
+use std::time::Duration;
+
 use ai_core::{AiCorePlugin, AiId, AiIndex, AiKind, SimConfig};
 use bevy::camera::Projection;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
+use bevy::time::TimeUpdateStrategy;
 use shards_core::{Intent, LocalPlayer};
-use shards_motion::camera::{AddTrauma, CameraShake};
+use shards_motion::camera::{AddTrauma, CameraOffsets, CameraShake, CameraTuning, FlickTuning};
 use shards_motion::*;
 use shards_settings::AccessibilitySettings;
 
@@ -60,6 +63,19 @@ fn frame(app: &mut App) {
     app.insert_resource(AccumulatedMouseMotion::default());
 }
 
+/// Lets `secs` of simulation time pass in a few frames: the camera tests start paused, so the
+/// clock is switched on for them and off again.
+fn run_sim(s: &mut Scene, secs: f32) {
+    s.app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(secs / 4.0)));
+    s.app.world_mut().resource_mut::<Time<Virtual>>().set_max_delta(Duration::from_secs(5));
+    s.app.world_mut().resource_mut::<Time<Virtual>>().unpause();
+    for _ in 0..4 {
+        s.app.update();
+    }
+    s.app.world_mut().resource_mut::<Time<Virtual>>().pause();
+    s.app.insert_resource(TimeUpdateStrategy::Automatic);
+}
+
 fn target(s: &Scene) -> Option<AiId> {
     s.app.world().get::<Intent>(s.player).unwrap().target
 }
@@ -89,9 +105,8 @@ fn a_look_flick_switches_to_the_neighbour_and_back() {
     s.app.update();
     assert_eq!(target(&s), Some(id(&s.app, s.side)), "a flick to the right selects the target on the right");
     s.app.insert_resource(AccumulatedMouseMotion::default());
-    // A switch needs a moment before the next one (real time, as the player feels it).
-    s.app.update();
-    std::thread::sleep(std::time::Duration::from_millis(400));
+    // A switch needs a moment before the next one, on the simulation clock.
+    run_sim(&mut s, 0.4);
     s.app.insert_resource(AccumulatedMouseMotion { delta: Vec2::new(-30.0, 0.0) });
     s.app.update();
     assert_eq!(target(&s), Some(id(&s.app, s.near)), "and back");
@@ -276,4 +291,191 @@ fn motion_blur_off_and_on_again_keeps_the_games_sample_count() {
         let b = s.app.world().get::<MotionBlur>(blur).unwrap();
         assert_eq!((b.shutter_angle, b.samples), (strength as f32, 4), "at {strength}");
     }
+}
+
+fn cam(s: &Scene) -> ThirdPersonCamera {
+    s.app.world().get::<ThirdPersonCamera>(s.camera).unwrap().clone()
+}
+
+fn camera_at(s: &Scene) -> Vec3 {
+    s.app.world().get::<Transform>(s.camera).unwrap().translation
+}
+
+#[test]
+fn a_paused_game_does_not_run_the_flick_cooldown_down() {
+    let mut s = scene();
+    tap_lock(&mut s);
+    let (near, side) = (id(&s.app, s.near), id(&s.app, s.side));
+    s.app.insert_resource(AccumulatedMouseMotion { delta: Vec2::new(30.0, 0.0) });
+    s.app.update();
+    assert_eq!(target(&s), Some(side));
+    s.app.insert_resource(AccumulatedMouseMotion::default());
+    s.app.update();
+
+    // Wall-clock time passes, the game stays paused (Time<Virtual> is paused in these tests): the cooldown is where it was.
+    assert!(s.app.world().resource::<Time<Virtual>>().is_paused());
+    s.app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(400)));
+    s.app.insert_resource(AccumulatedMouseMotion { delta: Vec2::new(-30.0, 0.0) });
+    s.app.update();
+    assert!(s.app.world().resource::<Time<Real>>().delta_secs() >= 0.39, "real time did pass");
+    s.app.insert_resource(TimeUpdateStrategy::Automatic);
+    assert_eq!(target(&s), Some(side), "paused: the cooldown has not run down, so no switch");
+    s.app.insert_resource(AccumulatedMouseMotion::default());
+
+    // Simulation time passes: it can switch back.
+    run_sim(&mut s, 0.4);
+    s.app.insert_resource(AccumulatedMouseMotion { delta: Vec2::new(-30.0, 0.0) });
+    s.app.update();
+    assert_eq!(target(&s), Some(near));
+}
+
+#[test]
+fn the_flick_numbers_are_the_tunings() {
+    let mut s = scene();
+    // A 110 px threshold with a sum that drains: 30 px does nothing now.
+    s.app.world_mut().resource_mut::<CameraTuning>().flick =
+        FlickTuning { mouse_threshold_px: 110.0, mouse_decay_px_s: Some(600.0), ..default() };
+    tap_lock(&mut s);
+    let (near, side) = (id(&s.app, s.near), id(&s.app, s.side));
+    s.app.insert_resource(AccumulatedMouseMotion { delta: Vec2::new(30.0, 0.0) });
+    s.app.update();
+    assert_eq!(target(&s), Some(near));
+    s.app.insert_resource(AccumulatedMouseMotion { delta: Vec2::new(150.0, 0.0) });
+    s.app.update();
+    assert_eq!(target(&s), Some(side));
+}
+
+#[test]
+fn a_hit_shakes_the_view_and_never_the_stored_yaw_the_walk_is_turned_by() {
+    let mut s = scene();
+    s.app.world_mut().get_mut::<ThirdPersonCamera>(s.camera).unwrap().yaw = 0.7;
+    frame(&mut s.app);
+    s.app.world_mut().commands().trigger(AddTrauma(1.0));
+    s.app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyW);
+    let steady = s.app.world().get::<Transform>(s.camera).unwrap().rotation;
+    let mut moved_view = false;
+    for _ in 0..6 {
+        s.app.update();
+        moved_view |= s.app.world().get::<Transform>(s.camera).unwrap().rotation.angle_between(steady) > 1e-4;
+        assert!((cam(&s).yaw - 0.7).abs() < 1e-6, "the stored yaw has no shake in it: {}", cam(&s).yaw);
+        let want = Quat::from_rotation_y(0.7) * Vec3::NEG_Z;
+        let dir = s.app.world().get::<Intent>(s.player).unwrap().move_dir;
+        assert!((dir - want).length() < 1e-5, "the walk is turned by the yaw, not the jittered view: {dir}");
+    }
+    assert!(moved_view, "the view did shake");
+}
+
+#[test]
+fn the_offsets_add_to_the_base_values_and_leave_no_trace() {
+    let mut s = scene();
+    let fov = |s: &Scene| match s.app.world().get::<Projection>(s.camera).unwrap() {
+        Projection::Perspective(p) => p.fov.to_degrees(),
+        _ => panic!("perspective"),
+    };
+    frame(&mut s.app);
+    frame(&mut s.app);
+    let (base_fov, base_at, base_cam) = (fov(&s), camera_at(&s), cam(&s));
+    assert!((base_fov - 70.0).abs() < 1e-3);
+
+    // The sprint widens the view by 5 degrees; the player's setting is still the base.
+    s.app.insert_resource(CameraOffsets { fov_add_deg: 5.0, ..default() });
+    frame(&mut s.app);
+    assert!((fov(&s) - 75.0).abs() < 1e-3, "{}", fov(&s));
+    assert_eq!(s.app.world().resource::<CameraSettings>().fov_deg, 70.0, "the setting is not written");
+    // The sum is held to the engine's limit.
+    s.app.insert_resource(CameraOffsets { fov_add_deg: 80.0, ..default() });
+    frame(&mut s.app);
+    assert!((fov(&s) - 120.0).abs() < 1e-3);
+
+    // A system that wrote a NaN or an infinity does not poison the view.
+    s.app.insert_resource(CameraOffsets { fov_add_deg: f32::NAN, focus_dip_m: f32::INFINITY, ..default() });
+    frame(&mut s.app);
+    assert!((fov(&s) - 70.0).abs() < 1e-3 && camera_at(&s).is_finite(), "{} {}", fov(&s), camera_at(&s));
+
+    // A landing dip lowers the view without tilting it, and the focus keeps no dip.
+    s.app.insert_resource(CameraOffsets { focus_dip_m: 0.12, ..default() });
+    frame(&mut s.app);
+    let dipped = camera_at(&s);
+    assert!(
+        (dipped.y - (base_at.y - 0.12)).abs() < 1e-4 && (dipped.x - base_at.x).abs() < 1e-4 && (dipped.z - base_at.z).abs() < 1e-4,
+        "{dipped} vs {base_at}"
+    );
+    assert_eq!(cam(&s).focus, base_cam.focus, "the stored focus is untouched");
+
+    // Written back to neutral, everything is as it was the very next frame: the camera kept nothing.
+    s.app.insert_resource(CameraOffsets::default());
+    frame(&mut s.app);
+    assert!((fov(&s) - base_fov).abs() < 1e-3);
+    assert!((camera_at(&s) - base_at).length() < 1e-4, "{} vs {base_at}", camera_at(&s));
+}
+
+#[test]
+fn the_pitch_limits_come_from_the_tuning_and_a_cap_clamps_the_stored_pitch() {
+    let mut s = scene();
+    s.app.world_mut().get_mut::<ThirdPersonCamera>(s.camera).unwrap().pitch = 1.3;
+    frame(&mut s.app);
+    assert_eq!(cam(&s).pitch, 1.3, "inside the default limits");
+
+    // Godot-style limits: the tuning clamps the stored pitch.
+    s.app.world_mut().resource_mut::<CameraTuning>().pitch = (-1.1, 0.5);
+    frame(&mut s.app);
+    assert_eq!(cam(&s).pitch, 0.5);
+
+    // A swim cap, which the game lifts again, clamps the stored pitch too.
+    s.app.world_mut().get_mut::<ThirdPersonCamera>(s.camera).unwrap().pitch = 0.3;
+    s.app.insert_resource(CameraOffsets { pitch_max: Some(0.1), ..default() });
+    frame(&mut s.app);
+    assert_eq!(cam(&s).pitch, 0.1, "the cap clamps the stored pitch");
+    s.app.insert_resource(CameraOffsets::default());
+    frame(&mut s.app);
+    assert_eq!(cam(&s).pitch, 0.1, "lifting the cap does not push it back up");
+
+    // The mouse stops at the tuning's limit (down is pitch up: a downward motion raises the camera).
+    s.app.insert_resource(AccumulatedMouseMotion { delta: Vec2::new(0.0, -2000.0) });
+    s.app.update();
+    let top = cam(&s).pitch;
+    s.app.insert_resource(AccumulatedMouseMotion { delta: Vec2::new(0.0, 2000.0) });
+    s.app.update();
+    let bottom = cam(&s).pitch;
+    let (hi, lo) = (top.max(bottom), top.min(bottom));
+    assert!((hi - 0.5).abs() < 1e-6 && (lo + 1.1).abs() < 1e-6, "limits (-1.1, 0.5), got {lo} and {hi}");
+}
+
+#[test]
+fn the_arm_grows_back_after_a_wall_at_the_tunings_rate() {
+    let wall_then_free = |rate: Option<f32>| {
+        let mut s = scene();
+        s.app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(16)));
+        s.app.world_mut().resource_mut::<CameraTuning>().arm.follow_rate = rate;
+        {
+            let mut c = s.app.world_mut().get_mut::<ThirdPersonCamera>(s.camera).unwrap();
+            c.yaw = 0.0;
+            c.pitch = 0.0;
+        }
+        for _ in 0..3 {
+            frame(&mut s.app);
+        }
+        let open = cam(&s).arm_reach;
+        assert!((open - 5.5).abs() < 0.05, "nothing in the way: {open}");
+        let wall = block(s.app.world_mut(), Vec3::new(-20.0, 0.0, 2.0), Vec3::new(20.0, 5.0, 3.0));
+        frame(&mut s.app);
+        frame(&mut s.app);
+        let shut = cam(&s).arm_reach;
+        s.app.world_mut().despawn(wall);
+        frame(&mut s.app);
+        let one = cam(&s).arm_reach;
+        for _ in 0..200 {
+            frame(&mut s.app);
+        }
+        (open, shut, one, cam(&s).arm_reach)
+    };
+
+    let (open, shut, one, end) = wall_then_free(Some(4.0));
+    assert!((0.7..2.0).contains(&shut), "a wall pulls it in at once: {shut}");
+    assert!(one > shut && one < shut + 0.5, "one frame grows it a little, not back: {one} from {shut}");
+    assert!((end - open).abs() < 0.05, "and it ends where it started: {end}");
+
+    let (_, shut, one, _) = wall_then_free(None);
+    assert!(shut < 2.0);
+    assert!((one - 5.5).abs() < 0.05, "without a rate it is back at once, as the camera always did: {one}");
 }
