@@ -100,6 +100,7 @@ pub fn overlay_lines(world: &World) -> Vec<String> {
         .map(|mut q| q.iter(world).map(|tf| tf.translation).collect())
         .unwrap_or_default();
     let Some(mut npcs) = world.try_query::<(
+        Entity,
         &AiId,
         &Npc,
         &NpcBrain,
@@ -114,14 +115,15 @@ pub fn overlay_lines(world: &World) -> Vec<String> {
         return Vec::new();
     };
     let db = world.get_resource::<ContentDb>();
-    let mut rows: Vec<_> = npcs.iter(world).filter(|row| near_players(&players, row.3.translation)).collect();
-    rows.sort_by_key(|row| *row.0);
+    let mut rows: Vec<_> = npcs.iter(world).filter(|row| near_players(&players, row.4.translation)).collect();
+    rows.sort_by_key(|row| *row.1);
     rows.into_iter()
-        .map(|(id, npc, brain, tf, token, home, perceived, agent, controller, own)| {
+        .map(|(entity, id, npc, brain, tf, token, home, perceived, agent, controller, own)| {
             let here = tf.translation;
             let mut parts = vec![npc_line(brain, token, home, Some(tf)).unwrap_or_else(|| "(not started)".into())];
             if brain.active {
                 parts.extend(perceived.map(|p| senses(here, p)).unwrap_or_default());
+                parts.extend(perceived.map(|p| crate::ai::extra_parts(world, entity, npc, p, here)).unwrap_or_default());
                 parts.extend(agent.map(route).unwrap_or_default());
                 let body = controller.map_or_else(|| own.cloned().unwrap_or_default(), |c| c.resolve(own, db).clone());
                 let walking = agent.is_some_and(|a| a.goal.is_some() && !a.arrived);

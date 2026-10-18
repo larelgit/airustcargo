@@ -1,0 +1,71 @@
+// Plans of the duel rules: one jab (54 ticks long), rests of whole half-seconds.
+{
+    // The reference: a rest of 0.5 s counted while the NPC runs no action.
+    "rest_plain": (options: [(input: "light")], rest: (0.5, 0.5)),
+    // Counted in every state: a stagger after the attack is part of the rest.
+    // A cut-short attack rests 0.3 s, a finished one 0.5 s.
+    "rest_interrupted": (options: [(input: "light")], rest: (0.5, 0.5), rest_interrupted: Some((0.3, 0.3))),
+    // A pause of a second at spawn.
+    "rest_first": (options: [(input: "light")], rest: (0.5, 0.5), first_rest: Some((1.0, 1.0))),
+    // Two NPCs on this plan keep wanting to strike.
+    "pair": (options: [(input: "light")], rest: (0.1, 0.1)),
+    // A retreat, tagged by its action as a repositioning.
+    "hopper": (options: [(input: "hop", max: Some(5.0))], rest: (0.1, 0.1)),
+    // The first swing continues with the odds written on it; the second has its own link
+    // (an option of weight 0 that only a chain reaches, named by its action).
+    "chain_always": (
+        options: [(input: "light", chain: Some((input: "light", chance: 1.0))), (action: "swing_2", weight: 0.0, chain: Some((input: "light", chance: 1.0)))],
+        rest: (0.3, 0.3),
+    ),
+    "chain_never": (options: [(input: "light", chain: Some((input: "light", chance: 0.0)))], rest: (0.3, 0.3)),
+    "chain_half": (options: [(input: "light", chain: Some((input: "light", chance: 0.5)))], rest: (0.3, 0.3)),
+    // No chain written: a plain swing.
+    "chain_none": (options: [(input: "light")], rest: (0.3, 0.3)),
+    // The window of the first swing opens after the press died.
+    "chain_slow": (options: [(input: "slow", chain: Some((input: "light", chance: 1.0)))], rest: (0.3, 0.3)),
+    // A second option that exists only on one side of a condition (N2).
+    "gated": (
+        options: [
+            (input: "light", name: "calm", when: ["!rage"]),
+            (input: "heavy", name: "fierce", when: ["rage"]),
+        ],
+        rest: (0.3, 0.3),
+    ),
+    // One action, two odds: the chain rolled is the one of the open option.
+    "chain_odds": (
+        options: [
+            (input: "light", name: "calm", when: ["!rage"], chain: Some((input: "light", chance: 0.0))),
+            (input: "light", name: "fierce", when: ["rage"], chain: Some((input: "light", chance: 1.0))),
+        ],
+        rest: (0.3, 0.3),
+    ),
+    // A long rest, to be clamped.
+    "long_rest": (options: [(input: "light")], rest: (1.0, 1.0)),
+    // Every rule of the duel at once, for the snapshot and the replay.
+    "duel_all": (
+        options: [
+            (input: "light", name: "swing", chain: Some((input: "light", chance: 0.8)), when: [("!health_below", {"fraction": 0.05})]),
+            (action: "swing_2", weight: 0.0, chain: Some((input: "light", chance: 0.8))),
+        ],
+        rest: (0.3, 0.5),
+        rest_interrupted: Some((0.2, 0.2)),
+        first_rest: Some((0.2, 0.4)),
+    ),
+    // Asks, chooses and presses on decision ticks only, and the same plan on any tick.
+    "decide_press": (options: [(input: "light")], rest: (0.5, 0.5), press_on_decision: true),
+    "any_press": (options: [(input: "light")], rest: (0.5, 0.5)),
+    // The same chain as chain_always, asking the spacing when the continuation would start.
+    "chain_gated": (
+        options: [(input: "light", chain: Some((input: "light", chance: 1.0, gate_at_start: true))), (action: "swing_2", weight: 0.0, chain: Some((input: "light", chance: 1.0, gate_at_start: true)))],
+        rest: (0.3, 0.3),
+    ),
+    // The same as `pair`, but its strikes never wait for the spacing (they still hold the others back).
+    "pair_boss": (options: [(input: "light")], rest: (0.1, 0.1), ignores_spacing: true),
+    "chain_boss": (
+        options: [(input: "light", chain: Some((input: "light", chance: 1.0))), (action: "swing_2", weight: 0.0, chain: Some((input: "light", chance: 1.0)))],
+        rest: (0.3, 0.3),
+        ignores_spacing: true,
+    ),
+    // An option that is open only on a decision tick.
+    "gate_deciding": (options: [(input: "light", when: ["deciding"])], rest: (0.5, 0.5)),
+}

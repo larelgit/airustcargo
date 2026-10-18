@@ -298,6 +298,33 @@ fn an_npc_in_a_state_its_behavior_lacks_stops_the_game() {
 }
 
 #[test]
+fn two_planned_strikes_closer_than_the_spacing_stop_the_game() {
+    use shards::npc::NpcStrike;
+    // The skeletons' director spaces strikes 0.7 s apart; two of them are found to have begun
+    // planned strikes 10 ticks apart. The rule's own cases are tested where it lives (shards_npc).
+    let mut app = sandbox::test_app(42);
+    called(
+        &mut app,
+        "content_apply",
+        json!({"changes": [{"kind": "director", "id": "default",
+            "before": {"patience": 3.0, "tokens": {"1": 2, "2": 3, "3": 4}, "waiting": [
+                {"distance": 3.5, "orbit": 1.2, "period": 2.0, "role": "Circle", "speed": 0.5},
+                {"distance": 3.0, "orbit": 1.0, "period": 1.5, "role": "Strafe", "speed": 0.5},
+                {"distance": 5.0, "orbit": 1.0, "period": 2.0, "role": "Hold", "speed": 0.5}
+            ]},
+            "def": {"tokens": {"1": 2, "2": 3, "3": 4}, "waiting": [{"role": "Circle", "distance": 3.5, "orbit": 1.2}], "patience": 3.0, "min_spacing": 0.7}}]}),
+    );
+    plant(&mut app, 3, |world| {
+        for (id, at) in [(7, 100), (8, 110)] {
+            let e = body(world, id);
+            world.entity_mut(e).insert(NpcStrike { last_start: at, gated: true, pool: "default".into() });
+        }
+    });
+    let line = stops_on(&mut app, "npc.strike_spacing", 3);
+    assert!(line.contains("e8 NpcStrike: began a strike on tick 110, 10 ticks after e7's on tick 100"), "{line}");
+}
+
+#[test]
 fn a_token_audit_that_found_trouble_stops_the_game() {
     // The audit itself is tested where the director's books are (shards_npc); here the rule
     // that reports it stops the game.

@@ -19,6 +19,7 @@ pub(crate) const ENGINE_RULES: [&str; 10] = [
     "action.knockback_sane",
     "action.extras_follow_run",
     "npc.state_known",
+    "npc.strike_spacing",
     "npc.tokens_within_limit",
 ];
 
