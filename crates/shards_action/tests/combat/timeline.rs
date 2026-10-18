@@ -722,6 +722,22 @@ fn closing_cap_limits_the_approach_the_turning_adds() {
 }
 
 #[test]
+fn a_forced_run_measures_the_closing_cap_from_its_own_facing() {
+    // Facing the target already, a forced lunge gains nothing by turning: the cap takes nothing
+    // off. Measured from the default north it would count the whole lunge as gained and stop at 0.4 m.
+    let mut app = arena();
+    let hero = hero(app.world_mut(), "t_more", Vec3::ZERO, E);
+    let east = dummy(&mut app, Vec3::new(6.0, 0.0, 0.0));
+    lock(&mut app, hero, east);
+    step(&mut app, 1);
+    assert!(force_action(app.world_mut(), hero, "t_close"));
+    step(&mut app, 40);
+    let x = extras(&app, hero).map_or(0.0, |x| x.closed);
+    assert!(x < 1e-3, "no gain, nothing counted: {x}");
+    assert!(feet(&app, hero).x > 3.0, "the whole lunge: {}", feet(&app, hero));
+}
+
+#[test]
 fn assist_needs_sight_of_the_target() {
     let mut app = arena();
     let hero = me(&mut app, "t_more");

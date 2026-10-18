@@ -1663,7 +1663,9 @@ pub fn force_action(world: &mut World, entity: Entity, action: &str) -> bool {
     let mut effects = Vec::new();
     let mut telegraphs = Vec::new();
     begin(entity, &def, &run, feet.0, &mut effects, &mut |t| telegraphs.push(t));
-    let extras = def.needs_extras().then(|| RunExtras { instance, start_facing: run.facing, ..default() });
+    // `from` is the closing cap's baseline: the run's own facing, as `RunExtras::start` sets it.
+    let extras =
+        def.needs_extras().then(|| RunExtras { instance, start_facing: run.facing, from: run.facing, ..default() });
     let replaced = state.current.replace(run);
     if let Some(old) = &replaced {
         interrupted(world, entity, old);
