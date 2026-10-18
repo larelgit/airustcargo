@@ -4909,7 +4909,7 @@ Also checked: an effect that starts no particles (neither `count` nor `rate` wit
 
 ## Hit stop (C2)
 
-When a blow lands, the picture stands still for a beat (60-100 ms). It is what makes a hit feel heavy, and it is a **hold, never slow motion**: the simulation does not pass at a fraction of its speed, and no tick is lost or added. `shards_hitstop` turns the combat events into holds by a table in content, and each machine does with a hold what suits it: alone with a picture it keeps the real-time clock still, in co-op it holds only the pictures of the bodies in the blow, and a headless game, a stepped one and a replay hold nothing at all.
+When a blow lands, the picture stands still for a beat (60-100 ms). It is what makes a hit feel heavy, and it is a **hold, never slow motion**: the simulation does not pass at a fraction of its speed, and no tick is lost or added. `shards_hitstop` turns the combat events into holds by a table in content, and each machine does with a hold what suits it: alone with a picture it keeps the real-time clock still, in co-op it holds only the pictures of the bodies in the blow (a headless co-op host or client records those holds too, though nothing draws them), and a headless game alone, a stepped one and a replay hold nothing at all.
 
 ```ron
 // crates/sandbox/assets/content/fx/sandbox.hitstop.ron (abbreviated)
