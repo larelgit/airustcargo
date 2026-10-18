@@ -725,7 +725,9 @@ fn decide_one(
         (Some(a), Some(b)) => Some(a.min(b)),
         (a, b) => a.or(b),
     };
-    let options = option_gates(world, entity, &next, hooks, dt, deciding, behavior_id, problems);
+    // Like every other decision, the options' conditions are judged on the NPC's decision ticks
+    // only: between two of them the open options stay as they were decided.
+    let options = if deciding { option_gates(world, entity, &next, hooks, dt, deciding, behavior_id, problems) } else { Gates::Keep };
     let changed = changed.filter(|(from, _)| !from.is_empty());
     Decided { entity, brain: next, drive: Some(out), changed, first_rest, think, rest_cap, options }
 }
