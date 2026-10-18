@@ -627,9 +627,9 @@ pub struct ActionDef {
     /// player steering the attack). Empty: `track_until` (the old rule). Not both.
     ///
     /// The spans turn the run's facing (`Running::facing`: its hits, guard arc and displacement),
-    /// not the body: the body turns toward it in the controller, once a tick, at the controller's
-    /// rate ([`turn_speed_deg`](Self::turn_speed_deg) of the action, else the locked rate, else the
-    /// free one). A span faster than that rate leaves the body behind its swing.
+    /// not the body: with `face: Run` the body turns toward it in the controller, once a tick, at
+    /// the controller's rate ([`turn_speed_deg`](Self::turn_speed_deg) of the action, else the
+    /// locked rate, else the free one). A span faster than that rate leaves the body behind its swing.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub turn: Vec<(Span, f32)>,
     /// Attack assist: with a lock-on target, the facing stays within `angle` degrees of the
