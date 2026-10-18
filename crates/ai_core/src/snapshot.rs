@@ -1363,7 +1363,7 @@ mod tests {
         // A patch release of the same engine line still loads, with a note.
         // The patch version is taken from this build's line, so a release does not break the test.
         let line = ENGINE_VERSION.rsplit_once('.').map_or(ENGINE_VERSION, |(line, _)| line);
-        let other_patch = format!("{line}.99");
+        let other_patch = if ENGINE_VERSION.ends_with(".99") { format!("{line}.98") } else { format!("{line}.99") };
         let mut patch = capture(app.world()).unwrap();
         patch.engine = other_patch.clone();
         let report = restore(app.world_mut(), &patch, false).unwrap();
