@@ -210,6 +210,7 @@ fn lone(tile: &str, rot: u16) -> RegionManifest {
         links: Vec::new(),
         spawn: None,
         content_hash: String::new(),
+        steps: Vec::new(),
     }
 }
 
@@ -351,4 +352,19 @@ fn without_the_gizmo_plugin_the_tool_still_answers_and_nothing_is_drawn() {
     assert!(nothing(drawn(&app)), "nothing was worked out: {} tiles", region(&app).manifest.tiles.len());
     assert_eq!(ok(&mut app, "world_overlay", json!({"on": false})), "world overlay off");
     let _ = std::fs::remove_dir_all(saves);
+}
+
+#[test]
+fn a_volume_has_no_tile_outlines_and_its_points_are_drawn() {
+    let app = app(1, None);
+    let mut m = lone("meadow", 0);
+    m.layout = Layout::Volume;
+    m.tiles.clear();
+    m.size = [2, 2];
+    m.steps = vec![("hills".into(), 1)];
+    m.pois = vec![shards::world::manifest::ManifestPoi { id: "spawn.0".into(), poi: "spawn".into(), cell: [1, 1], pos: [20.0, 1.0, 20.0], area: 0 }];
+    let draw = TileDraw::of(&m, db(&app));
+    assert!(draw.bounds.is_empty() && draw.sockets.is_empty() && draw.links.is_empty(), "{draw:?}");
+    assert_eq!(draw.pois.len(), 1);
+    assert!(close(draw.pois[0].at, Vec3::new(20.0, 1.5, 20.0)));
 }

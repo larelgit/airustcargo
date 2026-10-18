@@ -29,6 +29,11 @@ pub enum Layout {
     Grid,
     /// Rooms of several cells joined by doors (`dungeon` content).
     Rooms,
+    /// A volume of blocks made by generation steps (a region kind of its own, such as
+    /// `voxel_region` content, [`RegionKind`](crate::RegionKind)): no tiles; its cells
+    /// (`size`, `tile_size`) are the volume's chunks, and the manifest names the steps that made
+    /// it, with their versions, so the volume can be made again.
+    Volume,
 }
 
 /// A tile (or room) where it was put.
@@ -135,6 +140,11 @@ pub struct RegionManifest {
     pub spawn: Option<String>,
     /// FNV-1a over the definitions it was made from (hex).
     pub content_hash: String,
+    /// The generation steps that made it, in order, with their versions (a [`Layout::Volume`]
+    /// region; empty for tiles and rooms, and then left out of the canonical text, so their
+    /// manifests keep their bytes).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<(String, u32)>,
 }
 
 impl RegionManifest {
@@ -220,6 +230,12 @@ impl RegionManifest {
             Some(poi) => poi.position(),
             None => self.corner() + Vec3::new(self.size[0] as f32 * self.tile_size * 0.5, 0.0, self.size[1] as f32 * self.tile_size * 0.5),
         }
+    }
+
+    /// The type of the point of interest `id` (`camp.1`): the part before the first `.`
+    /// (`camp`), or the whole id.
+    pub fn poi_type(id: &str) -> &str {
+        id.split_once('.').map_or(id, |(kind, _)| kind)
     }
 
     /// `forest_a seed 42 v3`.
@@ -331,6 +347,7 @@ mod tests {
             links: vec![],
             spawn: Some("spawn.0".into()),
             content_hash: "00ff".into(),
+            steps: vec![],
         }
     }
 
@@ -370,6 +387,53 @@ mod tests {
         assert_eq!(m.cell_of(Vec3::new(-65.0, 0.0, 80.0)), [-1, -1], "west and north of the corner: outside");
         m.spawn = None;
         assert_eq!(m.spawn_position(), Vec3::new(-48.0, 0.0, 88.5), "the middle of the region");
+    }
+
+    #[test]
+    fn a_volume_manifest_keeps_its_steps_and_reads_back_to_the_same_bytes() {
+        let mut m = manifest();
+        assert!(!m.to_canonical().contains("\"steps\""), "a manifest without steps keeps its bytes");
+        m.layout = Layout::Volume;
+        m.tiles.clear();
+        m.origin = [284.0, 284.0];
+        m.steps = vec![("noise_hills".into(), 1), ("plaza".into(), 2)];
+        m.attempt = 0;
+        m.fallback = Some("seed 1".into());
+        let text = m.to_canonical();
+        assert!(text.contains("\"layout\": \"volume\""), "{text}");
+        assert!(text.contains("\"steps\": [\n    [\"noise_hills\", 1],\n    [\"plaza\", 2]\n  ]"), "{text}");
+        let back = RegionManifest::from_json(&text).unwrap();
+        assert_eq!(back, m);
+        assert_eq!(back.to_canonical(), text);
+        let mut other = m.clone();
+        other.steps[1].1 = 3;
+        assert_ne!(other.hash(), m.hash(), "a step version is part of the manifest's hash");
+        assert_eq!(RegionManifest::poi_type("camp.12"), "camp");
+        assert_eq!(RegionManifest::poi_type("home"), "home");
+    }
+
+    /// Every layout, matched without a wildcard: a new layout fails to compile here first, and
+    /// the list below names the places that match on it (each has a test of its own).
+    #[test]
+    fn every_layout_is_named_where_the_engine_matches_on_it() {
+        let sites = |layout: Layout| -> (&'static str, &'static str) {
+            match layout {
+                Layout::Grid => ("grid", "tiles"),
+                Layout::Rooms => ("rooms", "rooms"),
+                Layout::Volume => ("volume", "chunks"),
+            }
+        };
+        for layout in [Layout::Grid, Layout::Rooms, Layout::Volume] {
+            let (name, cells) = sites(layout);
+            assert_eq!(serde_json::to_value(layout).unwrap(), name);
+            assert_eq!(serde_json::from_value::<Layout>(serde_json::json!(name)).unwrap(), layout);
+            assert!(!cells.is_empty());
+        }
+        // The match sites (`Layout::Volume` arms): checks::RegionGraph::build, checks::rules_of,
+        // checks::check_manifest, region::plan, region::install (the active radius),
+        // region::request_files, tools::regen, tools::region_load, tools::goto_tile,
+        // tools::region_info, ai (the TILE line), report (the kind's version),
+        // shards::save_sections::generator_version, shards_npc's nav (no navmesh).
     }
 
     #[test]

@@ -13,7 +13,7 @@ use shards_content::ContentDb;
 
 use crate::checks::cells_text;
 use crate::generate::WorldGen;
-use crate::manifest::RegionManifest;
+use crate::manifest::{Layout, RegionManifest};
 use crate::region::{self, ActiveRegion};
 
 pub(crate) fn register(world: &mut World) {
@@ -67,11 +67,8 @@ fn regen(In(call): In<Call<RegenArgs>>, world: &mut World) -> ToolResult {
         (Some(region), _) => region,
         (None, Some((current, _))) => current.clone(),
         (None, None) => {
-            let known: Vec<&str> = {
-                let db = world.resource::<ContentDb>();
-                db.ids::<crate::content::RegionDef>().chain(db.ids::<crate::content::DungeonDef>()).collect()
-            };
-            return Err(format!("no region in the world yet: name one, e.g. regen region={}", known.first().unwrap_or(&"<id>")));
+            let known = crate::generate::known_regions(world.resource::<ContentDb>(), world.get_resource::<WorldGen>());
+            return Err(format!("no region in the world yet: name one, e.g. regen region={}", known.first().map_or("<id>", String::as_str)));
         }
     };
     let seed = match (call.args.seed, &active) {
@@ -86,7 +83,16 @@ fn regen(In(call): In<Call<RegenArgs>>, world: &mut World) -> ToolResult {
         None => format!("attempt {}", m.attempt),
     };
     let at = world.get_resource::<ActiveRegion>().map(|r| fmt_pos(r.spawn_point(0))).unwrap_or_default();
-    Ok(format!("ok: {} ({how}, {} tiles, {} POIs, {} entities), spawn at {at}", m.title(), m.tiles.len(), m.pois.len(), spawned.entities))
+    Ok(format!("ok: {} ({how}, {}, {} POIs, {} entities), spawn at {at}", m.title(), cells_of(m), m.pois.len(), spawned.entities))
+}
+
+/// What a region is made of: `64 tiles`, `9 rooms`, `16 chunks`.
+fn cells_of(m: &RegionManifest) -> String {
+    match m.layout {
+        Layout::Grid => format!("{} tiles", m.tiles.len()),
+        Layout::Rooms => format!("{} rooms", m.tiles.len()),
+        Layout::Volume => format!("{} chunks", m.size[0] * m.size[1]),
+    }
 }
 
 /// Build a region from a saved manifest, as it was (nothing is generated again), and change
@@ -102,9 +108,9 @@ fn region_load(In(call): In<Call<RegionLoadArgs>>, world: &mut World) -> ToolRes
         Value::String(text) => RegionManifest::from_json(&text)?,
         other => RegionManifest::from_json(&other.to_string())?,
     };
-    let title = manifest.title();
+    let (title, cells) = (manifest.title(), cells_of(&manifest));
     let spawned = region::change_region(world, manifest)?;
-    Ok(format!("ok: {title} loaded from its manifest ({} tiles, {} entities)", spawned.tiles, spawned.entities))
+    Ok(format!("ok: {title} loaded from its manifest ({cells}, {} entities)", spawned.entities))
 }
 
 /// Teleport to the center of a tile, onto the ground there.
@@ -126,17 +132,28 @@ fn goto_tile(In(call): In<Call<GotoTileArgs>>, world: &mut World) -> ToolResult 
     };
     let region = world.get_resource::<ActiveRegion>().ok_or("no region in the world; make one with `regen region=<id>`")?;
     let [w, h] = region.manifest.size;
-    let Some(tile) = region.tile_at_cell([x, y]).cloned() else {
-        return Err(format!("({x}, {y}) is outside {} (tiles 0..{w} × 0..{h})", region.manifest.title()));
+    // A volume's cells are its chunks: no tile, the chunk's centre.
+    let tile = match region.manifest.layout {
+        Layout::Volume if region.manifest.contains([x, y]) => None,
+        _ => match region.tile_at_cell([x, y]).cloned() {
+            Some(tile) => Some(tile),
+            None => {
+                let cells = if region.manifest.layout == Layout::Volume { "chunks" } else { "tiles" };
+                return Err(format!("({x}, {y}) is outside {} ({cells} 0..{w} × 0..{h})", region.manifest.title()));
+            }
+        },
     };
     let center = region.manifest.cell_center([x, y]);
-    let ground = region::ground_below(world, center, &[entity])
-        .ok_or_else(|| format!("tile ({x}, {y}) {} has no ground under its center to stand on; try a neighbor", tile.tile))?;
+    let name = tile.as_ref().map_or_else(|| format!("chunk ({x}, {y})"), |t| format!("tile ({x}, {y}) {}", t.tile));
+    let ground = region::ground_below(world, center, &[entity]).ok_or_else(|| format!("{name} has no ground under its center to stand on; try a neighbor"))?;
     let at = Vec3::new(center.x, ground, center.z);
     let mut tf = world.get_mut::<Transform>(entity).ok_or("that entity has no Transform")?;
     tf.translation = at;
     let who = world.get::<AiId>(entity).map_or_else(|| format!("{entity}"), ToString::to_string);
-    Ok(format!("{who} at tile ({x}, {y}) {} rot {}: {}", tile.tile, tile.rot, fmt_pos(at)))
+    match tile {
+        Some(tile) => Ok(format!("{who} at tile ({x}, {y}) {} rot {}: {}", tile.tile, tile.rot, fmt_pos(at))),
+        None => Ok(format!("{who} at chunk ({x}, {y}): {}", fmt_pos(at))),
+    }
 }
 
 /// Generate a region for many seeds without building any and report: how many passed, why
@@ -186,10 +203,14 @@ fn region_info(In(call): In<Call<RegionInfoArgs>>, region: Option<Res<ActiveRegi
         Some(map) => format!("fallback {map}"),
         None => format!("attempt {}", m.attempt),
     };
+    let cells = match m.layout {
+        Layout::Grid | Layout::Rooms => "tiles",
+        Layout::Volume => "chunks",
+    };
     let mut out = serde_json::json!({
         "region": m.title(),
         "made": origin,
-        "size": format!("{}×{} tiles of {}m", m.size[0], m.size[1], m.tile_size),
+        "size": format!("{}×{} {cells} of {}m", m.size[0], m.size[1], m.tile_size),
         "spawn": m.spawn,
         "pois": pois,
         "links": m.links.iter().map(|l| format!("{} {}–{} through {}", l.kind, l.a, l.b, cells_text(&l.cells))).collect::<Vec<_>>(),

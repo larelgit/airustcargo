@@ -1216,7 +1216,23 @@ fn check_content(build: &impl Fn(&EngineConfig) -> App, config: EngineConfig) ->
     let missing = picture.filter(|path| !root.join(path).is_file()).map(|path| {
         format!("loading_image: no file `{path}` under the asset folder (the picture the game's EngineConfig names for loading screens)")
     });
-    match (check_dir(&root, &kinds), missing) {
+    // Regions of the kinds other modules add are generated once (their check seeds), so a
+    // step that can never pass is a content error before any report runs.
+    let generated = || -> Vec<shards_content::ContentError> {
+        let Some(worldgen) = app.world().get_resource::<shards_world::WorldGen>() else { return Vec::new() };
+        if worldgen.kinds().is_empty() {
+            return Vec::new();
+        }
+        let Ok(sources) = shards_content::db::read_dir(&root) else { return Vec::new() };
+        let mut kinds = kinds.clone();
+        kinds.set_asset_root(root.clone());
+        shards_world::kind::generation_problems(&shards_content::ContentDb::build(&kinds, &sources), worldgen)
+    };
+    let checked = check_dir(&root, &kinds).and_then(|summary| {
+        let problems = generated();
+        if problems.is_empty() { Ok(summary) } else { Err(problems) }
+    });
+    match (checked, missing) {
         (Ok(summary), None) => {
             println!("{summary}");
             ExitCode::SUCCESS

@@ -119,6 +119,13 @@ pub fn bake_region(world: &World) -> Result<(usize, std::time::Duration), String
     let region = world.get_resource::<shards_world::ActiveRegion>().ok_or("no region is loaded")?;
     let db = world.get_resource::<ContentDb>().ok_or("content is not loaded")?;
     let manifest = &region.manifest;
+    if manifest.layout == shards_world::manifest::Layout::Volume {
+        return Err(format!(
+            "{} is a voxel volume: it has no tiles to bake, and its navigation is not baked yet ({}; NPCs plan on the local grid, see `nav_info`)",
+            manifest.title(),
+            super::VOXEL_NO_NAV
+        ));
+    }
     let kind = if manifest.layout == shards_world::manifest::Layout::Rooms { super::tile::TileKind::Room } else { super::tile::TileKind::Tile };
     let mut ids: Vec<&str> = manifest.tiles.iter().map(|t| t.tile.as_str()).collect();
     ids.sort_unstable();
@@ -146,7 +153,16 @@ pub struct NavBakeArgs {
 
 fn nav_bake(In(call): In<Call<NavBakeArgs>>, world: &mut World) -> ToolResult {
     let report = bake_files(world, call.args.tile.as_deref())?;
-    if report.ok() { Ok(report.to_string()) } else { Err(report.to_string()) }
+    let mut text = report.to_string();
+    // The files are the tiles' and rooms'; a voxel region in the world is not made of them.
+    if let Some(region) = world.get_resource::<shards_world::ActiveRegion>().filter(|_| super::region_is_volume(world)) {
+        text.push_str(&format!(
+            "\nthe region in the world, {}, is a voxel volume: these files are not its navigation ({}; NPCs plan on the local grid)",
+            region.manifest.title(),
+            super::VOXEL_NO_NAV
+        ));
+    }
+    if report.ok() { Ok(text) } else { Err(text) }
 }
 
 /// Whether the navigation overlay is drawn.
@@ -179,6 +195,13 @@ fn nav_overlay(In(call): In<Call<NavOverlayArgs>>, world: &mut World) -> ToolRes
 /// (`bodies`: each class's body and navmesh). Read-only.
 fn nav_info(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
     refresh(world);
+    if let Some(region) = world.get_resource::<shards_world::ActiveRegion>().filter(|_| super::region_is_volume(world)) {
+        return Ok(json!({
+            "region": region.manifest.title(),
+            "navmesh": "none",
+            "why": format!("{}: NPCs and `move_to path=true` plan on the local grid", super::VOXEL_NO_NAV),
+        }));
+    }
     let Some(nav) = world.get_resource::<NavRegion>() else {
         return Err("no navmesh: no region is loaded (NPCs and `move_to path=true` plan on the local grid); load one with `regen`".into());
     };

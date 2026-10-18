@@ -186,6 +186,8 @@ pub struct ContentKinds {
     registry: Option<AppTypeRegistry>,
     /// The asset folder, for definitions that name asset files (levels).
     asset_root: Option<PathBuf>,
+    /// What modules share with their checks, one value per type ([`set_context`](Self::set_context)).
+    contexts: Vec<(TypeId, Arc<dyn Any + Send + Sync>)>,
 }
 
 impl ContentKinds {
@@ -249,6 +251,23 @@ impl ContentKinds {
     /// [`check_dir`] for its `base`.
     pub fn set_asset_root(&mut self, root: PathBuf) {
         self.asset_root = Some(root);
+    }
+
+    /// Shares `value` with the checks of every kind ([`Refs::context`]): what a module registered
+    /// in code that its content names (a registry of generation steps by name and version), so
+    /// a check can tell a name the game never registered from a typo, wherever content is
+    /// validated, also without an app (`--check-content`). One value per type; setting it again
+    /// replaces it. The value is read-only to checks: a module that registers more later sets a
+    /// new copy.
+    pub fn set_context<T: Any + Send + Sync>(&mut self, value: T) {
+        let id = TypeId::of::<T>();
+        self.contexts.retain(|(t, _)| *t != id);
+        self.contexts.push((id, Arc::new(value)));
+    }
+
+    /// The value of type `T` [`set_context`](Self::set_context) shared.
+    pub fn context<T: Any + Send + Sync>(&self) -> Option<&T> {
+        self.contexts.iter().find(|(t, _)| *t == TypeId::of::<T>()).and_then(|(_, v)| v.downcast_ref::<T>())
     }
 
     /// The registered kind `kind`.
@@ -522,7 +541,7 @@ impl ContentDb {
             let Some(info) = kinds.get(kind) else { continue };
             for (id, entry) in table {
                 let asset_root = kinds.asset_root.as_deref();
-                let mut refs = Refs { db: self, kind, id, file: &entry.file, registry, asset_root, errors: &mut errors };
+                let mut refs = Refs { db: self, kind, id, file: &entry.file, registry, asset_root, kinds, errors: &mut errors };
                 (info.fns.validate)(&entry.def, id, &mut refs);
                 for check in kinds.checks.iter().filter(|c| c.kind == *kind) {
                     (check.run)(&entry.def, id, &mut refs);
@@ -766,6 +785,7 @@ pub struct Refs<'a> {
     file: &'a str,
     registry: Option<&'a TypeRegistry>,
     asset_root: Option<&'a Path>,
+    kinds: &'a ContentKinds,
     errors: &'a mut Vec<ContentError>,
 }
 
@@ -821,6 +841,12 @@ impl<'a> Refs<'a> {
     /// check them. `None` when the database was built without one.
     pub fn asset_root(&self) -> Option<&'a Path> {
         self.asset_root
+    }
+
+    /// What a module shared with the checks ([`ContentKinds::set_context`]): `None` when it set
+    /// nothing (the module is not in this game, or the check runs without it).
+    pub fn context<T: Any + Send + Sync>(&self) -> Option<&'a T> {
+        self.kinds.context::<T>()
     }
 
     /// The whole database being validated, for checks that need more than [`get`](Self::get)

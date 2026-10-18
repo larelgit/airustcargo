@@ -53,13 +53,14 @@ Instructions for agents are in [AGENTS.md](../AGENTS.md). How to make your own g
 25. [Foliage and small objects (E10.2)](#foliage-and-small-objects-e102)
 26. [Effects and decals (E10.3)](#effects-and-decals-e103)
 27. [Voxel terrain (core)](#voxel-terrain-core)
-28. [Steam (E10.5)](#steam-e105)
-29. [Builds for players and Windows (E10.6)](#builds-for-players-and-windows-e106)
-30. [Crash reports (E10.7)](#crash-reports-e107)
-31. [The sandbox](#the-sandbox)
-32. [Tests and CI](#tests-and-ci)
-33. [What's next](#whats-next)
-34. [Conventions and building](#conventions-and-building)
+28. [Voxel regions (A2c)](#voxel-regions-a2c)
+29. [Steam (E10.5)](#steam-e105)
+30. [Builds for players and Windows (E10.6)](#builds-for-players-and-windows-e106)
+31. [Crash reports (E10.7)](#crash-reports-e107)
+32. [The sandbox](#the-sandbox)
+33. [Tests and CI](#tests-and-ci)
+34. [What's next](#whats-next)
+35. [Conventions and building](#conventions-and-building)
 
 ## Quick start
 
@@ -299,7 +300,7 @@ generation is a pure function (seed, version, content) on `DetRng`, not `SimRng`
 it takes the tile graph, the active zones and the "region loaded" event from the world, and the tile files for baking from the levels. `shards_dev`
 (the developer menu and console) does not know any module: modules register their own menu items in `ai_core` (`add_dev_entry`),
 and it calls their tools by name. `shards_look` (how meshes are drawn) knows only `ai_core`, the core and the content: it reaches prefabs through a check it adds to the `prefab` kind (`add_content_check`), and it does not touch gameplay. `shards_scatter`
-(foliage) sits above the world and the looks: it scatters instances over the tiles of a region in `shards_world`, finds the ground under them with the physics of `shards_motion`, and colours them with the looks of `shards_look`. `shards_fx` (effects) knows `ai_core`, the core, the content, movement and combat: it reads combat events and attack zones, and it does not change the world. `shards_voxel` (voxel terrain, the core) knows `ai_core`, the core, the content and `shards_look` (a palette names looks, checked with `refs.require`): without `look` (`--without look`) a palette with a `look:` reports that no content kind `look` is registered, as with `shards_scatter`.
+(foliage) sits above the world and the looks: it scatters instances over the tiles of a region in `shards_world`, finds the ground under them with the physics of `shards_motion`, and colours them with the looks of `shards_look`. `shards_fx` (effects) knows `ai_core`, the core, the content, movement and combat: it reads combat events and attack zones, and it does not change the world. `shards_voxel` (voxel terrain) knows `ai_core`, the core, the content, `shards_look` (a palette names looks, checked with `refs.require`), `shards_motion` (the field, water volumes, `Current`) and `shards_world` (its region kind; registered only when the world module is in the game): without `look` (`--without look`) a palette with a `look:` reports that no content kind `look` is registered, as with `shards_scatter`.
 
 ### Crates
 
@@ -321,7 +322,7 @@ and it calls their tools by name. `shards_look` (how meshes are drawn) knows onl
 | `crates/shards_audio` | audio (E9.5): sounds, music and the mixer in the content (`sound`, `music`, `audio`), buses with the volume from the settings, voices with priority and a limit, spatial sounds, music in layers by the game's conditions, telegraph and event sounds, the `audio`, `sound_play` and `music_set` tools, the `MUSIC` line in `observe`; with the umbrella crate's `audio` feature, playback through Bevy audio |
 | `crates/shards_look` | mesh looks (E10.1): looks in the content (`look`, `*.look.ron`): colour, banded light (`Toon`), `Matte`, `Unlit`, `Lit`, flat faces, an outline of a fixed width in pixels, glow, glTF materials; the `Look` component, the material and the shaders in WESL, the `looks` and `look_outlines` tools, the `looks` field in `ai/status`, two developer menu items; with the `render` feature, mesh styling (window or `--offscreen`) |
 | `crates/shards_scatter` | foliage and small objects (E10.2): the `scatter` content kind (`*.scatter.ron`): what to scatter over the tiles of which regions, how densely, on which ground, with which looks, which meshes up close and far away; the layout follows the region's seed (the same in every run), primitive meshes (a grass tuft, a cone, a rock, a box) or glTF, levels of detail through `VisibilityRange`, the `graphics.foliage` setting, the `scatter` and `scatter_set` tools, the `scatter` field in `ai/status`, two developer menu items; with the `render` feature, instances under the tiles (window or `--offscreen`) |
-| `crates/shards_voxel` | voxel terrain, the core (G1, A2b): `VoxelVolume` (chunked blocks, the chunk size a parameter, edits for generation, the FNV hash), the `voxel_palette` content kind (`*.voxel_palette.ron`), deterministic noise, the registry of generation steps and checks (`add_voxel_step` with a version, `add_voxel_check`) and `generate`, the stock steps `noise_hills` and `fill_water`, and the merged boxes `column_boxes` and `water_boxes`; no region kind, collision, navigation or meshing yet |
+| `crates/shards_voxel` | voxel terrain (G1): the core (A2b: `VoxelVolume` with the chunk size a parameter, edits for generation, the FNV hash, the `voxel_palette` content kind, deterministic noise, the registry of generation steps and checks with versions, `generate`, the stock steps `noise_hills` and `fill_water`, the merged boxes `column_boxes` and `water_boxes`) and the voxel region kind (A2c: the `voxel_region` content kind, generation with attempts and a fallback seed, the build of the terrain field, water, sea and current, the rebuild cache, `voxel.volume`, hot reload, `sea_current_at`, `voxel_info`, `in_current`, `near_grid_edge`); no navigation or meshing yet |
 | `crates/shards_fx` | effects (E10.3): effects in the content (`effect`, `*.effect.ron`) and the event table (`fx`, `*.fx.ron`): particles from pools (`max_live` meshes per effect, one mesh and one material, the colour in `MeshTag`), camera-facing quads, cubes and shards, glow, flight that follows a formula on the simulation clock; `PlayEffect`, effects for combat events and clip markers; telegraph decals (`ForwardDecal` with a zone material in WESL: circle, sector, rectangle, "stadium", the fill grows toward the hit), `DepthPrepass` on the `AiCamera` cameras; the `effects`, `effect_play` and `telegraph_decals` tools, the `fx` field in `ai/status`, two developer menu items; with the `render` feature, drawing (window or `--offscreen`) |
 | `crates/shards_steam` | Steam (E10.5), behind the umbrella crate's `steam` feature (off by default; `steam_sdk` is the real client on `steamworks`): co-op over the Steam relay (`--steam-host` for a lobby with invites, `--steam-server` for an anonymous game server, `--join steam:<id>`, `+connect_lobby`), the `SteamTransport` transport for `shards_net`, achievements from the content (`achievement`, `UnlockAchievement`), copies of saves in Steam Cloud and their check at launch, a fake of the Steam process (`FakeSteam`) for tests, the `steam`, `steam_host`, `steam_join`, `steam_invite` and `achievement_unlock` tools, the `steam` field in `ai/status`, the `steam` section of the developer menu |
 | `crates/shards_dev` | developer menu and console (E11): items from modules (`add_dev_entry`) and from the game (the `devmenu` content kind), a console that takes `tool key=value` lines, the `dev_menu` and `console` tools; with the `render` feature, panels in the window (F10 and `` ` ``), Tab completes names from the schemas, the `dev` input context |
@@ -1275,6 +1276,8 @@ run. `spawn_level` and `level_reload` are actions; the replay records them. The 
 The `shards_world` crate. A region is a grid of macro tiles with sockets on the edges (or a dungeon of rooms that join door to door). The generator builds it from a seed, checks it, retries on failure, and in the end takes the fallback map. The result is a **manifest**: data from which the world is rebuilt without the generator. A region changes through the loading screen, and enemy AI works only in the active zones around the players.
 
 The set of tiles, the socket rules and the check thresholds are the game's content; the order of the steps, the solver, the retries and the report are the engine.
+
+A crate can add a region kind of its own (`RegionKind`, `app.add_region_kind`): a content kind whose regions go through the same generation, manifest, loading, saves and snapshots. The voxel module's `voxel_region` is one ("Voxel regions (A2c)"): its manifest has `layout: "volume"` and its cells are chunks.
 
 ```text
 seed ─► Points ─► Roads ─► Cells ─► Fill (socket solver) ─► Secondary ─► Decorate ─► Checks ─► manifest
@@ -4334,9 +4337,9 @@ Also checked: an effect that starts no particles (neither `count` nor `rate` wit
 ## Voxel terrain (core)
 
 `shards_voxel` (G1, PR A2b of the voxel design) is the data half of voxel terrain: a region's ground as a box of blocks that
-generation builds and play never changes. It has no region kind, no collision, no navigation and no meshing yet (the later PRs
-add them on top of this core), so a game that does not use it pays for a content kind and a registry and nothing else: the
-module adds no system. `shards::voxel` re-exports it; `voxel` is a module a game may leave out (`--without voxel`).
+generation builds and play never changes. Its region kind is in "Voxel regions (A2c)"; it has no navigation and no meshing yet
+(the later PRs add them on top of this core), so a game that does not use it pays for two content kinds and a registry and
+nothing else: the module adds no system. `shards::voxel` re-exports it; `voxel` is a module a game may leave out (`--without voxel`).
 
 ### The volume
 
@@ -4433,8 +4436,9 @@ Generation is a pure function of (seed, region version, step list with versions,
   `generate` fails with every attempt's reason.
 - `generate(&steps, &palette, &GenSpec)` returns `Generated { volume, marks, remarks, attempt, steps, hash }`. `GenSpec::problems`
   reports a bad spec whole (volume shape, attempts, unknown steps and checks, a `params` key that names no listed step).
-  `hash` is `world_hash(volume.hash(), palette, steps)`: the volume's hash with the palette fingerprint and the step list with versions folded in, so the same cells
-  made by another step set (or read through another palette) are another world.
+  `hash` is `world_hash(volume.hash(), palette, steps)`: the volume's hash with the palette's semantics (`VoxelPalette::semantics`:
+  block names, order, `solid`, `liquid`, `foliage`, tags; not colours) and the step list with versions folded in, so the same cells
+  made by another step set (or read through a palette whose blocks mean other things) are another world, and a recoloured palette is the same one.
 - **Stock steps**: `noise_hills { top, fill, base, amplitude, frequency, octaves, salt }` (column heights `base + amplitude *
   noise`, laid with `raise_column`; the block names are the palette's) and `fill_water { level, block }` (liquid from each
   column's natural surface up to `level` over air cells). They take every number from params; the engine has no number of a
@@ -4451,11 +4455,193 @@ holds only liquid and solid cells. Both are tested against a brute-force referen
 
 ### What is not here yet
 
-The region kind and spawning, the voxel field in `shards_motion`, the current and sea boxes, the volume hash in replay and
-snapshot checks (`voxel.volume`), navigation, meshing and the AI tools are the next PRs of the design; this core exports what
-they need (`VoxelVolume`, `VoxelPalette`, `generate`, `world_hash`, the boxes).
+The region kind, spawning, the current and sea boxes and the volume hash in replay and snapshot checks (`voxel.volume`) are in
+"Voxel regions (A2c)"; the voxel field is in `shards_motion` ("Movement (E2)"). Navigation, meshing and the rest of the AI
+tools are the next PRs of the design.
 
-**Limits.** A shape is checked without being built (`VoxelVolume::check_shape`, also what `GenSpec::problems` calls): at most 2^27 cells, 65 536 chunks and 65 535 cells tall, so a content file with a tiny `chunk` is an error that says to use a bigger one, not an out-of-memory. `sphere`, `tube` and `flatten` are clipped to the volume, so a huge radius from a param costs the volume and not its box. `chunk_uniform` and `chunk_cells` let a mesher skip a one-block chunk without reading its cells. `world_hash` folds in the volume, the palette (`VoxelPalette::fingerprint`: block order, names, flags, colours) and the step list. Block colours are opaque (`#rrggbbaa` with an alpha is a content error). The finished volume is read-only by convention: hand out `&VoxelVolume`.
+**Limits.** A shape is checked without being built (`VoxelVolume::check_shape`, also what `GenSpec::problems` calls): at most 2^27 cells, 65 536 chunks and 65 535 cells tall, so a content file with a tiny `chunk` is an error that says to use a bigger one, not an out-of-memory. `sphere`, `tube` and `flatten` are clipped to the volume, so a huge radius from a param costs the volume and not its box. `chunk_uniform` and `chunk_cells` let a mesher skip a one-block chunk without reading its cells. `world_hash` folds in the volume, the palette's semantics (`VoxelPalette::semantics`; `fingerprint` also covers the colours, for the picture) and the step list. Block colours are opaque (`#rrggbbaa` with an alpha is a content error). The finished volume is read-only by convention: hand out `&VoxelVolume`.
+
+## Voxel regions (A2c)
+
+A voxel region is a region kind of its own: a `voxel_region` definition that generation steps fill with blocks. It is
+generated, checked, built, unloaded, saved, snapshot, replayed and played in co-op through **the same region API as a grid of
+tiles**: `regen region=<id>`, `change_region`, `region_load`, `RegionManifest`, `ActiveRegion` (`spawn_point`, the points of
+interest), the `Poi` and `Marker` components, `RegionPart`, the active radius, `RegionLoadedHooks` and the `region` save
+section. A game picks the kind in content; its code and tools do not change with it.
+
+**The rule for games.** Calls into the voxel module (`VoxelGen`, `VoxelVolume`, `VoxelPalette`) stay inside generation steps
+and checks. The rest of the game asks the region API, which answers with the same types on both kinds (the test
+`the_region_api_answers_with_the_same_types_on_tiles_and_on_a_volume` in `crates/shards_voxel/tests/region/` builds a meadow of
+tiles and an island in one game and compares `region_info`, the manifest's fields, `Poi`, `Marker` and the spawn). There is no
+runtime voxel editing: once built, a volume is read-only until the region is made again.
+
+**How a kind plugs in.** `shards_world` has a registry of region kinds (`RegionKind`, `app.add_region_kind(kind)`,
+`WorldGen::kinds`), so a crate adds one without the world module depending on it. A kind names its content kind and layout
+and gives `ids`, `version`, `generate`, `check` (whether this build and content can make a manifest again, changing nothing),
+`spawn`, `unload`, `active_radius`, `summary` (the `region loaded` line) and `content_check` (`--check-content`). `generate`
+dispatches on the content id after `region` and `dungeon`; `spawn_region`, `install`, `check_manifest`, saves and snapshots
+dispatch on `manifest.layout`. The voxel module registers its kind when the world module is in the game
+(`VoxelPlugin` after `WorldPlugin`; `EnginePlugins` adds both).
+
+### `*.voxel_region.ron`
+
+```ron
+{
+    "isle": (
+        size: (128, 32, 128),           // cells: a whole number of chunks on every axis
+        block: 1.0,                     // m per cell
+        chunk: (64, 32, 64),            // square in x and z: the manifest's cells are the chunks
+        palette: "terrain",
+        version: 1,                     // the generator version: raise it when a seed makes another volume
+        anchor: Some((64, 8, 64)),      // the cell whose least corner lands on `at`
+        at: (0.0, 0.0, -240.0),
+        attempts: 4,
+        steps: [("noise_hills", 1), ("plaza", 1), ("fill_water", 1)],
+        params: {
+            "noise_hills": (top: "grass", fill: "dirt", base: 7.0, amplitude: 4.0, frequency: 0.09),
+            "fill_water": (level: 8),
+        },
+        checks: ["plaza_dry"],
+        marks: ["camp.0"],              // marks every attempt must make (the spawn is added)
+        markers: ["home"],              // marks that become `Marker`s, not points of interest
+        spawn: Some("spawn.0"),
+        water: (surface_drop: 0.05),
+        sea: Some((level: 8, reach: 600.0, floor: 2.0, current: Some((starts: 10.0, full: 1.5)))),
+        near_edge: 6.0,
+        check_seed: 1,
+        fallback_seed: Some(1),
+        active_radius: None,
+    ),
+}
+```
+
+| field | meaning |
+|---|---|
+| `size`, `block`, `chunk` | the volume's shape (checked without allocating it, as `VoxelVolume::check_shape` does); `chunk.x == chunk.z` |
+| `palette` | a `voxel_palette` |
+| `version` | the generator version of the region (1 and up); a manifest of another version is refused |
+| `anchor`, `at` | where the volume stands: the least corner of cell `anchor` is at `at` (`origin = at - anchor * block`) |
+| `attempts` | 1 to 64; each attempt has its own rng keys |
+| `steps`, `params`, `checks` | the generation of "Voxel terrain (core)"; an unknown step or check (with the closest name), another version than the one the game registered, or a `params` key that names no listed step is a content error with the file |
+| `marks` | marks every attempt must make: a missing one fails the attempt (`mark camp.0`). Every mark a step makes is a point of interest whose type is the part before the dot (`camp.0`: `camp`), except the `markers` |
+| `markers` | marks spawned as `Marker { name }` (an NPC's home, a link's end) |
+| `spawn` | the point of interest players appear at |
+| `water.surface_drop` | m every water volume's top lies below its cells' top; 0 by default, less than a block |
+| `sea` | none by default. `level` (the layer whose top is the surface), `reach` (m out from each side), `floor` (the layer of the boxes' bottom), `current` |
+| `near_edge` | the `near_grid_edge` condition holds this close to the edge, m (0: past it only) |
+| `check_seed` | the seed `--check-content` generates the region with (default 1) |
+| `fallback_seed` | the seed whose first attempt stands in for a seed with no attempt that passes; none: such a seed has no region |
+| `active_radius` | as for tile regions; none: the world settings' |
+
+The engine's defaults are neutral: no sea, no current, no surface drop. Every number of a particular world is content.
+
+### The manifest
+
+A voxel region's manifest has `layout: "volume"`, `size: [chunks_x, chunks_z]`, `tile_size` (the chunk's edge, m), `origin` (the
+grid's north-west corner), `tiles: []`, no links, `pois` from the marks (each in its chunk), `spawn`, `attempt` (from 1; 0 with
+`fallback: "seed N"`), `steps` (the steps with the versions that made it: written only when there are some, so tile and dungeon
+manifests keep their bytes) and `content_hash`. The volume itself is not in it: `spawn` makes it again from the seed, the
+attempt, the steps and the content, a pure function. The `content_hash` covers the `voxel_region` definition and what the
+palette's blocks are to the world (`VoxelPalette::semantics`: names, order, `solid`, `liquid`, `foliage`, tags), not colours,
+shades or looks, which only the picture reads.
+
+**A manifest is refused, not built otherwise** (`RegionKind::check`, run by `region::check_manifest`, `change_region`,
+`region_load`, a snapshot load and a save load): a step this build has at another version (`isle seed 7 v1 was made by voxel
+step `plaza` v1, and this build has `plaza` v2: its volume would come out otherwise, so it is not built; keep step `plaza` at
+v1, or generate the region again`), a step it does not have, steps or a version the content no longer lists, or a content hash
+that changed. The save section's `generator_version` of a voxel region is its definition's `version`.
+
+### What a build spawns
+
+In this order, every time (so a build gives the same collider ids): the terrain entity (`VoxelCollider` with the region's field,
+`Name("voxel terrain <id>")`, no `AiId`); one water `Volume` per box of `water_boxes` (`voxel water <i>`), its top
+`surface_drop` below the cells'; with a `sea`, four sea boxes (`voxel sea north`, `south`, `west`, `east`) from the grid's
+edge out to `reach`, from `floor` up to the surface; a `Current` on every water volume when the sea has a `current`; the
+markers. Then the world module spawns the points of interest (with their `poi` prefabs, when content has them). Every one is
+a `RegionPart` at the top level with a world `Transform`. The `VoxelTerrain` resource holds the volume, the palette, the
+field, the hash, the counts and the build time; it goes with the region. There is no edge wall: past the grid is the sea or
+nothing.
+
+The journal: `region generated: isle seed 7 v1 (attempt 1, 4 chunks, 2 POIs)` and
+`region loaded: isle seed 7 v1 (32 x 16 x 32, 1 water box, 4 sea boxes, 9 entities, players at (300.5, 1.0, 300.5))`.
+
+### Snapshots, replays, co-op, the cache
+
+- **Snapshots.** The world module's `RegionBuild` (the manifest) is already in every snapshot, and its prepare `region`
+  builds the snapshot's region in a game that has another one, or none. The voxel module adds the optional check
+  `voxel.volume` (the world hash of the volume: its cells, the palette's semantics and the step list): compared after the
+  region is built, it refuses a snapshot whose volume this build makes otherwise (`voxel.volume differs (snapshot …, this game
+  …)`), and one taken in a voxel region loaded where none could be built (`… this game has none`). A snapshot taken without a
+  voxel region has no `voxel.volume` at all, so snapshots and replays of other worlds keep their bytes. `VoxelTerrain` is not
+  a snapshot resource: it is made again from the manifest (the state audit says so).
+- **Replays.** The same `voxel.volume` is an optional replay check: absent outside a voxel region, the volume's hash inside one.
+- **Co-op.** A client takes the host's world as a snapshot (the join, a region change, a resync), so it builds the volume from
+  the host's manifest with its own step code, and the `voxel.volume` check compares it with the host's there: a client whose
+  steps make another volume under the same content and versions, or that has none, is refused at the handoff (`net: cannot take
+  the host's world: … voxel.volume differs …`). The net layer's periodic desync hash covers the replicated view (entities and
+  replicated resources), not the replay checks; the volume never changes after it is built, so it is compared where it is
+  built. A content change on a client never changes its region (the region is the host's).
+- **The cache.** Snapshot loads and heavy-mode twins build the same region many times, so the built volume, field and water
+  boxes are kept in the process (at most four, the least recently used goes first), keyed by the manifest's canonical text and
+  the code of its steps and checks, and shared by `Arc`. The entities are spawned fresh every time, in the same order: a
+  cached build and a cold one give the same colliders with the same ids, the same `static_colliders` and `voxel.volume`
+  hashes and the same state hash (tested with the cache on, cleared and off). `SHARDS_VOXEL_CACHE=off` (or the resource
+  `VoxelSettings { cache: false }`) turns it off; `voxel_info` says whether a build came from it.
+
+### Hot reload
+
+A content change (`content_apply`, `content_reload`, a file edited on disk) never patches a volume in place. After it is
+applied (the hook `ContentAppliedHooks`, `app.on_content_applied(f)`):
+
+- when the active voxel region's content hash changed (its definition, its params, its palette's semantics), the region is
+  generated again for the manifest's seed and changed to as `regen` does; players keep their place where there is still
+  ground within a block of their feet, the others go to the spawn; the journal says
+  `voxel region isle seed 7 v1 regenerated (hash 685d46ec1d026dd2 -> …)`;
+- a change the picture alone reads (colours, shades, corner darkening, looks) keeps the world: only the palette the picture
+  reads is replaced;
+- a change that does not validate is refused whole by `content_apply` (the old definition stays, the error names the file);
+  one that validates but no longer generates leaves the region as it was built, with a warning.
+
+### Worldgen report and `--check-content`
+
+`--worldgen-report <id> --seeds 1..1000` and the `worldgen_report` tool run a voxel region like a grid one: each seed's
+attempts with the failing step, check or mark by name (`12× check only_seed_one`), the seeds that fell back, and the totals a
+kind reports (`totals: marks 120 (3 a region), solid cells …, water boxes …, water cells …, water columns …`). `--check-content`
+generates every voxel region for its `check_seed` (it must pass on some attempt, not by the fallback) and the
+`fallback_seed`'s first attempt (it must pass, or it could not stand in): a step that fails on every seed is a content error
+with the file before any report runs.
+
+### Water, the sea and the current
+
+`Current { area, starts, full }` (`shards_motion`) is a component on water volumes: near the edge of `area` the water pushes
+toward its middle in the ground plane, from nothing `starts` m inside the edge to full strength `full` m inside it and beyond.
+`current_at(physics, world, p)` is the strongest push of the water volumes holding `p`; `edge_distance(area, p)` is the one
+signed distance to the edge (positive inside) that the current, the tools and the conditions share. A region puts the same
+`Current` on all its water when its sea has a `current`. Nothing moves bodies by it yet: applying it to swimmers is the swim
+controller's, a later change.
+
+### Navigation
+
+Until the in-memory chunk bake exists, a voxel region has no navmesh, and the tools say so: NPCs plan over the local grid
+(`npc_state`'s `nav.routes`: `local grid: no navmesh for this region (voxel region, nav not baked yet)`), `nav_path` refuses
+(`no navmesh for this region (voxel region, nav not baked yet): use path_to, which plans over the local grid`), `nav_info`
+answers `navmesh: none` with the reason, `nav_bake` bakes no tile for it and says why, and the journal has
+`navmesh: none for this region: voxel region, nav not baked yet; NPCs plan on the local grid`.
+
+### Tools, conditions, the journal
+
+- `sea_current_at at=[x,y,z]` (player scope; default the body's feet): the current's vector and strength, and the distance to
+  the grid's edge.
+- `voxel_info` (dev scope; the developer menu's `voxel_info`): the size, chunks, origin, palette, seed and attempt, the steps
+  with versions, the hash, the water and sea boxes, the current, the wide volumes (colliders wider than the broad phase's widest
+  cell, which every query reads: the long sea boxes), the field's memory, the build time and whether it came from the cache,
+  and the cells of each block (`blocks=false` skips the count). The terrain entity has no `AiId`, so `inspect` cannot reach it;
+  this tool describes it.
+- Conditions for `step --until named:…`: `in_current` (the player's feet are in water that pushes) and `near_grid_edge` (within
+  the region's `near_edge` of the edge, or past it). They are registered once a voxel region is built, so a game without one
+  keeps its list.
+- `regen` and `region_info` say `chunks` for a volume (`4 chunks`, `2×2 chunks of 16m`); `goto_tile x=1 y=1` goes to the middle
+  of a chunk, on the ground there; `observe`'s tile line says `chunk`.
 
 ## Steam (E10.5)
 
@@ -4886,7 +5072,7 @@ a separate workspace; one `#[ignore]`: recording its references).
 | `shards_look` | the look of a mesh: its own `Look`, its ancestor's, the glTF material name; the material from the source (colour and transparency, glow, `unlit`), `extends` presets and their errors, the flat copy and the outline (layers, transparent materials and morph targets without an outline), hot reload and assets changed in place; without an image nothing is styled; the image on the GPU (`#[ignore]`): the bands and the outline in pixels |
 | `shards_scatter` | the layout: one seed, the same points, `spacing`, `graphics.foliage` keeps the start of the same list, ground, slope, the band of heights and `clearance`; the content check names every error; in a game without an image nothing is scattered; on every tile of the test region, not on a column, not in a wall, the same in two runs; batches (two meshes for thousands of entities), the `VisibilityRange` of levels, shadows; `graphics.foliage`, `scatter_set` and the developer menu, a content edit and a region change (without warning B0004); the image on the GPU (`#[ignore]`): the grass is green in the pixels; foliage that is switched off, or beyond the last level, is not drawn |
 | `shards_fx` | effects and the table in content and their errors (a pool smaller than one run, an event with a typo, a second table), tools, the menu and the status without an image; mesh pools from content (one mesh and material per effect), starting, pool overflow (the oldest ones give way), simulation clocks (pause freezes them, `step` advances them), `rate` and `duration`, effects of events (on the side of the hit), clip labels and `PlayEffect`; a decal on a zone (circle, sector), the fill grows towards the hit, the colour of an enemy and of an ally, gizmos give way to the fill, `DepthPrepass` on the camera and back; the image on the GPU (`#[ignore]`): the decal paints the floor only inside the zone, the particles glow where they play |
-| `shards_voxel` | the volume and its limits (chunk size a parameter, shape checked without allocating, edits clipped), the hash, the palette and each error with the file named, noise golden values, the step registry, retries and the golden world, the merged boxes against a brute-force reference; the content kind alone changes no content hash |
+| `shards_voxel` | the volume and its limits (chunk size a parameter, shape checked without allocating, edits clipped), the hash, the palette and each error with the file named, noise golden values, the step registry, retries and the golden world, a colour that leaves the world hash, a missing mark that fails an attempt, the merged boxes against a brute-force reference; the content kind alone changes no content hash; `tests/region/`: a voxel region generated and built (the manifest, the spawn order, the current, the tools, the conditions, the no-navmesh answers), the report and the fallback seed, a snapshot into a fresh game and into another seed, the cache on, cleared and off (the same colliders and hashes), a save and the refusal of another step version, hot reload (a colour, a change, a refused one), content errors, `--check-content` generation, the same region API on tiles and on a volume, co-op (the same volume; another one, or none, refused at the handoff), a replay with the cache on and off and in heavy mode |
 | `shards_steam` | on a fake Steam: lobbies and invitations, relay sessions (held datagrams, refusal, hub delay), the game server, achievements and the fake's cloud, `steam:` and `+connect_lobby` addresses, the cloud check and its file names; `tests/steam/`: a lobby host and two friends over the stand's relay, the game server and a client by id, an invitation, refusal of a stranger, a failed join and `--exit-with-host`, a check of the achievement content, a write to Steam after a second and a retry of a refused write, the previous run, a replay, co-op (the host decides, each one opens its own), a copy of each record, cloud turned off, the check at start-up before a slot is loaded, the answers of `steam` and `ai/status`. The real backend is only built (`--features sdk`) |
 | `shards_net` | `src/`, without Bevy: transports (an in-memory hub, UDP, a reply to a stranger that binds no one), link simulation, the channel (reliable and latest-only messages, blobs, acknowledgements, RTT, loss, timeouts), the datagram format (knock, challenge, cookie in the acknowledgement fields, protocol 1 is recognised), the cookie (SipHash-2-4 on reference vectors, address, session, expiry, forgery); the session (a knock leaves no trace on the host, a peer only with the cookie of its own address and session, an expired cookie, the table of strangers as before, refusal of an older build on its protocol and no more than 8 times a second, the character in parts: the place is held, order, size, `Hello` bytes, JSON; the limits on input frames and on the largest honest packet, what is held after the world is reloaded, replication rules, waiting for room in the channel by count and by bytes, `NetDef`, departed tokens). The whole session is covered in the sandbox tests `net*.rs` |
 | `shards` | how networking and saves fit together (`coop`: what the host knows about the player's character, how it travels as text), engine sections (a number that a body never has), the stand's slot, a replay from a snapshot (`--verify`: the same result, code 2 for a foreign snapshot), the mode without a window: the same plugins, but no image (`display` and the `shot` hint), `--offscreen`: the window's plugins without a window (an image for `shot`, into which the cameras aimed at the window draw, also after a change of target), the internal 3D resolution (`render_scale`: an image of the right size, the cameras into it and back, shown on the whole window, the window changes size, the system scale, the game camera with its own image), the test app, `testing::ok` on a gameplay failure, `testing::run_to` and `verify`, when a violated rule matched the start of loading, the tick budget on the command line, frame time (`frames`: a frame is the slower of the two worlds, a frame with `step` does not count, the GPU report, draw commands travel with their own frame), the performance test (`bench`: verdicts, including `draws` and `nav_bake_s`, a definition check, `--perf` and its codes), `counts` without a window, the animation bridge on a real model with a skin and on a humanoid from Blender (a roll in place, a clip from a second file), `--bake-motion` |

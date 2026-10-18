@@ -76,7 +76,7 @@ pub use input::{BindMode, Binding, ControlState, ControlSystems, InputContext, I
 pub use intent::{intent_to_locomotion, GlideUntilLanded, MotionSystems};
 pub use modifiers::{ModifierSystems, MoveModifiers, StanceSpeed};
 pub use physics::{
-    Body, Collider, ColliderId, ColliderIds, ColliderInfo, CollisionLayers, LayerMask, Penetration, PhysicsPlugin,
+    current_at, edge_distance, Body, Collider, ColliderId, ColliderIds, ColliderInfo, CollisionLayers, Current, LayerMask, Penetration, PhysicsPlugin,
     PhysicsSystems, PhysicsWorld, QueryFilter, RayHit, Shape, ShapeHit, SpatialQuery, Volume, VolumeEntered,
     VolumeExited, VolumeKind, VoxelCollider, VoxelField,
 };

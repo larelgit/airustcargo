@@ -211,7 +211,25 @@ struct SnapshotPrepare {
 struct SnapshotCheck {
     name: &'static str,
     hint: &'static str,
-    check: fn(&World) -> u64,
+    check: CheckFn,
+}
+
+/// A snapshot check's hash: always one, or one only while the state it hashes exists.
+#[derive(Clone, Copy)]
+enum CheckFn {
+    Always(fn(&World) -> u64),
+    /// `None`: nothing to hash; the snapshot leaves the check out, and a snapshot without it
+    /// matches only a game without that state.
+    Optional(fn(&World) -> Option<u64>),
+}
+
+impl CheckFn {
+    fn run(&self, world: &World) -> Option<u64> {
+        match self {
+            Self::Always(check) => Some(check(world)),
+            Self::Optional(check) => check(world),
+        }
+    }
 }
 
 /// What modules registered with [`AiAppExt`](crate::AiAppExt)'s `add_snapshot_*`.
@@ -241,7 +259,12 @@ impl SnapshotRegistry {
 
     pub(crate) fn add_check(&mut self, name: &'static str, hint: &'static str, check: fn(&World) -> u64) {
         self.checks.retain(|c| c.name != name);
-        self.checks.push(SnapshotCheck { name, hint, check });
+        self.checks.push(SnapshotCheck { name, hint, check: CheckFn::Always(check) });
+    }
+
+    pub(crate) fn add_optional_check(&mut self, name: &'static str, hint: &'static str, check: fn(&World) -> Option<u64>) {
+        self.checks.retain(|c| c.name != name);
+        self.checks.push(SnapshotCheck { name, hint, check: CheckFn::Optional(check) });
     }
 
     pub(crate) fn add_prepare(&mut self, name: &'static str, after: Option<&'static str>, covers: &'static [&'static str], run: PrepareFn) {
@@ -338,7 +361,7 @@ pub fn capture(world: &World) -> Result<Snapshot, String> {
         .collect();
     let resources = encoder.encode_resources(&mut left_out);
 
-    let checks = modules.checks.iter().map(|c| (c.name.to_owned(), format!("{:016x}", (c.check)(world)))).collect();
+    let checks = modules.checks.iter().filter_map(|c| Some((c.name.to_owned(), format!("{:016x}", c.check.run(world)?)))).collect();
     Ok(Snapshot {
         format: FORMAT.to_owned(),
         tick: sim::tick(world),
@@ -706,8 +729,17 @@ fn check_compatible(
     let modules = world.get_resource::<SnapshotRegistry>();
     let checks: &[SnapshotCheck] = modules.map_or(&[], |m| &m.checks);
     for check in checks.iter().filter(|c| checked(c.name)) {
-        let now = format!("{:016x}", (check.check)(world));
+        let Some(now) = check.check.run(world).map(|hash| format!("{hash:016x}")) else {
+            // Optional and absent here: the snapshot must not have it either.
+            if let Some(saved) = snapshot.checks.get(check.name) {
+                problems.push(format!("{} differs (snapshot {saved}, this game has none): {}", check.name, check.hint));
+            }
+            continue;
+        };
         match snapshot.checks.get(check.name) {
+            None if matches!(check.check, CheckFn::Optional(_)) => {
+                problems.push(format!("{} differs (the snapshot has none, this game {now}): {}", check.name, check.hint))
+            }
             Some(saved) if *saved != now => problems.push(format!(
                 "{} differs (snapshot {saved}, this game {now}): {}",
                 check.name, check.hint

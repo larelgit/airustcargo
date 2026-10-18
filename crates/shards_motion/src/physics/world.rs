@@ -508,6 +508,12 @@ impl PhysicsWorld {
         self.order.is_empty()
     }
 
+    /// How many colliders are wider than the broad phase's widest cell (a sea box kilometres
+    /// across): every query that reaches volumes or colliders near a point reads all of them.
+    pub fn wide_colliders(&self) -> usize {
+        self.grid.wide_len()
+    }
+
     /// All colliders in id order (not the voxel fields: [`fields`](Self::fields)).
     pub fn colliders(&self) -> impl Iterator<Item = &ColliderInfo> {
         self.order.iter().map(|(_, slot)| &self.slots[*slot as usize].info)

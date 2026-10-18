@@ -78,7 +78,19 @@ pub trait ContentAppExt {
     /// A module that cannot have this game's content change under it at times says when, and
     /// why ([`ContentGuards`]).
     fn add_content_guard(&mut self, guard: fn(&World) -> Option<String>) -> &mut Self;
+
+    /// Runs `hook` after every content change a game applies while it runs (`content_apply`,
+    /// `content_reload`, a file edited on disk), inside the call that applies it, so a replay
+    /// runs it at the same tick ([`ContentAppliedHooks`]): what a module built from content that
+    /// cannot be patched in place is built again there.
+    fn on_content_applied(&mut self, hook: fn(&mut World)) -> &mut Self;
 }
+
+/// What runs after a content change is applied ([`ContentAppExt::on_content_applied`]), in the
+/// order registered. Not after a snapshot load puts back the content it was taken with: the
+/// snapshot rebuilds the world itself.
+#[derive(Resource, Default, Clone)]
+pub struct ContentAppliedHooks(pub Vec<fn(&mut World)>);
 
 /// Why the content of this game must not change right now, from the modules that may say so:
 /// while a guard gives a reason, `content_apply`, `content_reload` and a level's reload refuse
@@ -115,6 +127,11 @@ impl ContentAppExt for App {
 
     fn add_content_guard(&mut self, guard: fn(&World) -> Option<String>) -> &mut Self {
         self.world_mut().get_resource_or_init::<ContentGuards>().0.push(guard);
+        self
+    }
+
+    fn on_content_applied(&mut self, hook: fn(&mut World)) -> &mut Self {
+        self.world_mut().get_resource_or_init::<ContentAppliedHooks>().0.push(hook);
         self
     }
 }

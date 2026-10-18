@@ -105,6 +105,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     // shards_audio
     ("shards_audio::", "the mixer, the music's diagnostics and the audio device: sound only reads the world"),
     // shards_content
+    ("shards_content::ContentAppliedHooks", "what runs after a content change is applied, registered at build time"),
     ("shards_content::ContentGuards", "the content guards, registered at build time"),
     ("shards_content::db::ContentDb", "loaded content: the world is built around it, and snapshots check its hash"),
     ("shards_content::db::ContentKinds", "the content kinds, registered at build time"),
@@ -166,6 +167,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     // shards_scatter
     ("shards_scatter::ScatterState", "strewn foliage: the picture, without AiId or colliders"),
     // shards_voxel
+    ("shards_voxel::region::VoxelSettings", "whether built volumes are kept in the process: how a region is built, not what it is"),
     ("shards_voxel::worldgen::VoxelSteps", "the voxel generation steps and checks, registered at build time"),
     // shards_settings
     ("shards_settings::", "the player's settings and their registry"),

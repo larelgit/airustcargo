@@ -212,11 +212,16 @@ impl SaveSection for RegionSave {
 }
 
 /// The generator version content has now for the region of `manifest`, `None` when content no
-/// longer defines it.
-fn generator_version(db: &ContentDb, manifest: &RegionManifest) -> Option<u32> {
+/// longer defines it. A volume's is its region kind's (`RegionKind::version`).
+fn generator_version(world: &World, manifest: &RegionManifest) -> Option<u32> {
+    let db = world.resource::<ContentDb>();
     match manifest.layout {
         Layout::Grid => db.get::<RegionDef>(&manifest.region).map(|d| d.version),
         Layout::Rooms => db.get::<DungeonDef>(&manifest.region).map(|d| d.version),
+        Layout::Volume => {
+            let kind = world.get_resource::<WorldGen>()?.kind_for(db, manifest)?;
+            (kind.version)(db, &manifest.region)
+        }
     }
 }
 
@@ -232,7 +237,7 @@ fn check_saved(world: &World, manifest: &RegionManifest) -> Result<(), String> {
 /// the load applied anything; `change_region` looks again before it unloads the old region).
 fn build_saved(world: &mut World, manifest: RegionManifest) -> Result<(), String> {
     let title = manifest.title();
-    let now = match generator_version(world.resource::<ContentDb>(), &manifest) {
+    let now = match generator_version(world, &manifest) {
         Some(version) if version == manifest.version => String::new(),
         Some(version) => format!(" (the generator is v{version} now)"),
         None => format!(" (`{}` is no longer in the content)", manifest.region),
@@ -472,6 +477,7 @@ mod tests {
             links: vec![],
             spawn: Some("spawn.0".into()),
             content_hash: "00ff".into(),
+            steps: Vec::new(),
         }
     }
 

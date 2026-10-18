@@ -28,6 +28,7 @@
 //! code alone.
 
 mod broad;
+pub mod current;
 pub mod field;
 pub(crate) mod world;
 
@@ -42,6 +43,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_core::{predicts, NetSet};
 
+pub use current::{current_at, edge_distance, Current};
 pub use field::{FieldRay, VoxelField};
 pub use world::{ColliderInfo, Penetration, PhysicsWorld, RayHit, ShapeHit};
 
@@ -474,6 +476,7 @@ impl Plugin for PhysicsPlugin {
             .register_type::<Collider>()
             .register_type::<Body>()
             .register_type::<Volume>()
+            .register_type::<Current>()
             .register_type::<VolumeKind>()
             .register_type::<ColliderId>()
             // Snapshots: the counter is saved; the colliders of entities without an `AiId`

@@ -15,6 +15,7 @@ use ai_core::{AiAppExt, AiId, AiIndex};
 use bevy::prelude::*;
 use serde_json::{json, Value};
 
+use crate::manifest::Layout;
 use crate::region::{ActiveRegion, Poi};
 use crate::zones::Dormant;
 
@@ -51,10 +52,14 @@ fn observe_lines(world: &World, subject: Entity) -> Vec<String> {
         return Vec::new();
     };
     let m = &region.manifest;
+    let cell = m.cell_of(pos);
+    let cells = if m.layout == Layout::Volume { "chunks" } else { "tiles" };
     let mut lines = vec![match region.tile_at(pos) {
         Some(([x, y], tile)) => format!("TILE ({x}, {y}) {} rot {} · {}", tile.tile, tile.rot, m.title()),
+        // A volume has no tiles: its cells are chunks.
+        None if m.layout == Layout::Volume && m.contains(cell) => format!("TILE ({}, {}) chunk · {}", cell[0], cell[1], m.title()),
         None => format!(
-            "TILE outside {} ({}×{} tiles of {}m from ({}, {}))",
+            "TILE outside {} ({}×{} {cells} of {}m from ({}, {}))",
             m.title(),
             m.size[0],
             m.size[1],

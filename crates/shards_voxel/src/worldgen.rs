@@ -165,12 +165,14 @@ pub fn step_set_hash(steps: &[(String, u32)]) -> u64 {
     h.0
 }
 
-/// Folds the palette ([`VoxelPalette::fingerprint`]) and a step list into a volume hash: the hash
-/// of a generated world.
+/// Folds what the palette's blocks are ([`VoxelPalette::semantics`]: names, order, solid,
+/// liquid, foliage, tags; not colours, which only the picture reads) and a step list into a
+/// volume hash: the hash of a generated world, which the `voxel.volume` check compares. A
+/// colour changed in the palette is the same world drawn otherwise.
 pub fn world_hash(volume_hash: u64, palette: &VoxelPalette, steps: &[(String, u32)]) -> u64 {
     let mut h = Fnv::default();
     h.bytes(&volume_hash.to_le_bytes());
-    h.bytes(&palette.fingerprint().to_le_bytes());
+    h.bytes(&palette.semantics().to_le_bytes());
     h.bytes(&step_set_hash(steps).to_le_bytes());
     h.0
 }
@@ -204,6 +206,9 @@ pub struct GenSpec {
     pub params: BTreeMap<String, Value>,
     /// The checks to run after the steps, in order.
     pub checks: Vec<String>,
+    /// Marks the steps must have made (the spawn, the points a region names): one missing fails
+    /// the attempt, as a check does.
+    pub marks: Vec<String>,
 }
 
 impl GenSpec {
@@ -220,6 +225,7 @@ impl GenSpec {
             steps: steps.iter().map(|(n, v)| ((*n).to_owned(), *v)).collect(),
             params: BTreeMap::new(),
             checks: Vec::new(),
+            marks: Vec::new(),
         }
     }
 
@@ -355,8 +361,8 @@ pub struct Generated {
     pub attempt: u32,
     /// The step list with versions it was made by.
     pub steps: Vec<(String, u32)>,
-    /// [`world_hash`]: the volume's hash with the palette fingerprint and the step set folded in. What `voxel.volume` will
-    /// compare.
+    /// [`world_hash`]: the volume's hash with the palette's semantics (what each block is, not
+    /// its colours) and the step set folded in. What `voxel.volume` will compare.
     pub hash: u64,
 }
 
@@ -367,40 +373,127 @@ impl Generated {
     }
 }
 
+/// Where an attempt failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttemptStage {
+    /// The spec itself ([`GenSpec::problems`]): no attempt can pass.
+    Spec,
+    /// A step returned an error.
+    Step,
+    /// A check said no.
+    Check,
+    /// A mark the spec asks for ([`GenSpec::marks`]) was not made.
+    Mark,
+}
+
+impl AttemptStage {
+    /// `step`, `check`, `mark`, `spec`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Spec => "spec",
+            Self::Step => "step",
+            Self::Check => "check",
+            Self::Mark => "mark",
+        }
+    }
+}
+
+/// Why one attempt failed: `step `hills`: no room`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AttemptError {
+    /// From 0.
+    pub attempt: u32,
+    pub stage: AttemptStage,
+    /// The step, check or mark (empty for the spec).
+    pub name: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for AttemptError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.stage {
+            AttemptStage::Spec => f.write_str(&self.message),
+            stage => write!(f, "{} `{}`: {}", stage.name(), self.name, self.message),
+        }
+    }
+}
+
 /// Generates the world `spec` describes. Fails at once with every problem of the spec
 /// ([`GenSpec::problems`]), or after the last attempt with each attempt's reason.
 pub fn generate(registry: &VoxelSteps, palette: &VoxelPalette, spec: &GenSpec) -> Result<Generated, String> {
+    generate_attempts(registry, palette, spec).map_err(|failures| match failures.as_slice() {
+        [only] if only.stage == AttemptStage::Spec => only.message.clone(),
+        _ => {
+            let lines: Vec<String> = failures.iter().map(|f| format!("attempt {}: {f}", f.attempt)).collect();
+            format!("generation failed after {} attempt(s): {}", spec.attempts, lines.join("; "))
+        }
+    })
+}
+
+/// [`generate`], with every failed attempt as it is: one [`AttemptStage::Spec`] error when the
+/// spec cannot run at all.
+pub fn generate_attempts(registry: &VoxelSteps, palette: &VoxelPalette, spec: &GenSpec) -> Result<Generated, Vec<AttemptError>> {
     let problems = spec.problems(registry);
     if !problems.is_empty() {
-        return Err(problems.join("; "));
+        return Err(vec![AttemptError { attempt: 0, stage: AttemptStage::Spec, name: String::new(), message: problems.join("; ") }]);
     }
     let mut failures = Vec::new();
     for attempt in 0..spec.attempts {
         match attempt_once(registry, palette, spec, attempt) {
             Ok(done) => return Ok(done),
-            Err(why) => failures.push(format!("attempt {attempt}: {why}")),
+            Err(why) => failures.push(why),
         }
     }
-    Err(format!("generation failed after {} attempt(s): {}", spec.attempts, failures.join("; ")))
+    Err(failures)
 }
 
-fn attempt_once(registry: &VoxelSteps, palette: &VoxelPalette, spec: &GenSpec, attempt: u32) -> Result<Generated, String> {
-    let volume = VoxelVolume::new(spec.size, spec.block, spec.origin, spec.chunk)?;
+/// Attempt `attempt` (from 0) of `spec` alone: how a region rebuilds the volume of the attempt
+/// that passed when it was generated, without running the ones that failed before it. The
+/// same as that attempt inside [`generate`]: the rng keys are the attempt's.
+pub fn generate_attempt(registry: &VoxelSteps, palette: &VoxelPalette, spec: &GenSpec, attempt: u32) -> Result<Generated, AttemptError> {
+    let problems = spec.problems(registry);
+    if !problems.is_empty() {
+        return Err(AttemptError { attempt, stage: AttemptStage::Spec, name: String::new(), message: problems.join("; ") });
+    }
+    attempt_once(registry, palette, spec, attempt)
+}
+
+fn attempt_once(registry: &VoxelSteps, palette: &VoxelPalette, spec: &GenSpec, attempt: u32) -> Result<Generated, AttemptError> {
+    let fail = |stage, name: &str, message: String| AttemptError { attempt, stage, name: name.to_owned(), message };
+    let volume = VoxelVolume::new(spec.size, spec.block, spec.origin, spec.chunk).map_err(|e| fail(AttemptStage::Spec, "", e))?;
     let mut g = VoxelGen { volume, palette, spec, attempt, step_index: 0, step: "", marks: Vec::new(), remarks: Vec::new() };
     for (index, (name, _)) in spec.steps.iter().enumerate() {
         let (_, run) = registry.steps[name.as_str()];
         g.step_index = index;
         g.step = name;
-        run(&mut g).map_err(|e| format!("step `{name}`: {e}"))?;
+        run(&mut g).map_err(|e| fail(AttemptStage::Step, name, e))?;
     }
     g.step_index = spec.steps.len();
     g.step = "";
     g.volume.compact();
     for name in &spec.checks {
-        registry.checks[name.as_str()](&g).map_err(|e| format!("check `{name}`: {e}"))?;
+        registry.checks[name.as_str()](&g).map_err(|e| fail(AttemptStage::Check, name, e))?;
+    }
+    for name in &spec.marks {
+        if g.find_mark(name).is_none() {
+            let made: Vec<&str> = g.marks.iter().map(|m| m.name.as_str()).collect();
+            let made = if made.is_empty() { "no step made any".to_owned() } else { format!("the steps made {}", made.join(", ")) };
+            return Err(fail(AttemptStage::Mark, name, format!("no step made it ({made})")));
+        }
     }
     let hash = world_hash(g.volume.hash(), palette, &spec.steps);
     Ok(Generated { volume: g.volume, marks: g.marks, remarks: g.remarks, attempt, steps: spec.steps.clone(), hash })
+}
+
+impl VoxelSteps {
+    /// The code of the steps and checks `spec` runs, as addresses: two registries that name the
+    /// same steps with other code make other worlds under the same content, so a cache of
+    /// generated volumes keys on it.
+    pub fn code_of(&self, steps: &[(String, u32)], checks: &[String]) -> Vec<usize> {
+        let steps = steps.iter().map(|(name, _)| self.steps.get(name).map_or(0, |(_, run)| *run as usize));
+        let checks = checks.iter().map(|name| self.checks.get(name).map_or(0, |run| *run as usize));
+        steps.chain(checks).collect()
+    }
 }
 
 // --- stock steps ------------------------------------------------------------------------------
@@ -643,7 +736,9 @@ mod tests {
         assert_eq!((a.volume.hash(), a.hash), GOLDEN_WORLD, "{:#018x} {:#018x}", a.volume.hash(), a.hash);
     }
 
-    const GOLDEN_WORLD: (u64, u64) = (0x4214394880047bc2, 0x1c55608147bab276);
+    const GOLDEN_WORLD: (u64, u64) = (0x4214394880047bc2, GOLDEN_WORLD_HASH);
+    /// The world hash of the golden world, over the palette's semantics (its colours left out).
+    const GOLDEN_WORLD_HASH: u64 = 0x1e84892a7c0289fc;
 
     #[test]
     fn rng_and_noise_are_keyed_by_seed_version_attempt_and_step() {
@@ -792,5 +887,45 @@ mod tests {
         let other = VoxelPalette::from_def(&def).unwrap();
         assert_ne!(world_hash(a.volume.hash(), &other, &spec.steps), a.hash);
         assert_ne!(other.fingerprint(), palette().fingerprint());
+        // The same blocks in another colour: the same world (drawn otherwise).
+        let mut def = palette().def().clone();
+        def.blocks[0].top = "#000000".to_owned();
+        let recoloured = VoxelPalette::from_def(&def).unwrap();
+        assert_eq!(world_hash(a.volume.hash(), &recoloured, &spec.steps), a.hash, "colours are not part of a world");
+        assert_eq!(recoloured.semantics(), palette().semantics());
+        assert_ne!(recoloured.fingerprint(), palette().fingerprint(), "the picture's fingerprint sees colours");
+    }
+
+    #[test]
+    fn a_missing_mark_fails_the_attempt_and_one_attempt_rebuilds_alone() {
+        fn spawn_late(g: &mut VoxelGen) -> Result<(), String> {
+            // Only from the second attempt on.
+            if g.attempt() >= 1 {
+                g.mark("spawn.0", Vec3::new(1.0, 2.0, 3.0));
+            }
+            Ok(())
+        }
+        let mut steps = VoxelSteps::default();
+        steps.add_step("spawn_late", 1, spawn_late).unwrap();
+        let mut spec = hills_spec(3);
+        spec.steps.push(("spawn_late".into(), 1));
+        spec.marks = vec!["spawn.0".into()];
+        spec.attempts = 3;
+        let failures = generate_attempts(&steps, &palette(), &{
+            let mut one = spec.clone();
+            one.attempts = 1;
+            one
+        })
+        .unwrap_err();
+        assert_eq!(failures.len(), 1);
+        assert_eq!((failures[0].stage, failures[0].name.as_str()), (AttemptStage::Mark, "spawn.0"));
+        assert_eq!(failures[0].to_string(), "mark `spawn.0`: no step made it (no step made any)");
+        let whole = generate(&steps, &palette(), &spec).unwrap();
+        assert_eq!(whole.attempt, 1);
+        let alone = generate_attempt(&steps, &palette(), &spec, 1).unwrap();
+        assert_eq!((alone.hash, alone.marks.clone()), (whole.hash, whole.marks.clone()), "attempt 1 alone is attempt 1 of the loop");
+        assert_eq!(generate_attempt(&steps, &palette(), &spec, 0).unwrap_err().stage, AttemptStage::Mark);
+        assert_eq!(steps.code_of(&spec.steps, &spec.checks).len(), 3);
+        assert_ne!(steps.code_of(&spec.steps, &[])[2], 0, "a registered step has an address");
     }
 }

@@ -95,6 +95,8 @@ pub struct Step {
 pub struct WorldGen {
     steps: Vec<Step>,
     checks: BTreeMap<String, CheckFn>,
+    /// Region kinds other crates added ([`RegionKind`](crate::RegionKind)).
+    pub(crate) kinds: Vec<crate::kind::RegionKind>,
 }
 
 impl Default for WorldGen {
@@ -109,7 +111,7 @@ impl Default for WorldGen {
             (Stage::Checks, "engine.checks", run_checks),
         ];
         let steps = engine.into_iter().map(|(stage, name, run)| Step { stage, name: name.to_owned(), run }).collect();
-        Self { steps, checks: BTreeMap::new() }
+        Self { steps, checks: BTreeMap::new(), kinds: Vec::new() }
     }
 }
 
@@ -175,6 +177,9 @@ pub struct Generated {
     /// What went short of the data without failing: secondary points that found no slot,
     /// a fallback that does not pass the checks.
     pub remarks: Vec<String>,
+    /// What a region kind counts in what it made (`solid cells`, `water boxes`), which the
+    /// worldgen report sums over the seeds; empty for tiles and rooms.
+    pub counts: BTreeMap<String, u64>,
 }
 
 /// No region came out: why, and every failed attempt.
@@ -538,6 +543,7 @@ impl<'a> GenContext<'a> {
             links,
             spawn,
             content_hash: content_hash.to_owned(),
+            steps: Vec::new(),
         })
     }
 }
@@ -611,8 +617,9 @@ pub fn compile<'a>(db: &'a ContentDb, id: &str, def: &'a RegionDef) -> Result<Co
 
 // --- running -----------------------------------------------------------------------------
 
-/// Generates region or dungeon `id` for `seed`: attempts until one passes, else the
-/// fallback. Pure: the same content, steps and seed give the same manifest.
+/// Generates region or dungeon `id` for `seed` (or a region of a kind another crate added,
+/// [`RegionKind`](crate::RegionKind)): attempts until one passes, else the fallback. Pure: the
+/// same content, steps and seed give the same manifest.
 pub fn generate(db: &ContentDb, worldgen: &WorldGen, id: &str, seed: u64) -> Result<Generated, GenError> {
     if let Some(def) = db.get::<RegionDef>(id) {
         let compiled = compile(db, id, def)?;
@@ -621,18 +628,35 @@ pub fn generate(db: &ContentDb, worldgen: &WorldGen, id: &str, seed: u64) -> Res
     if let Some(def) = db.get::<DungeonDef>(id) {
         return crate::dungeon::generate(db, worldgen, id, def, seed);
     }
-    Err(GenError::from(unknown_region(db, id)))
+    if let Some(kind) = worldgen.kind_of(db, id) {
+        return (kind.generate)(db, worldgen, id, seed);
+    }
+    Err(GenError::from(unknown_region_of(db, Some(worldgen), id)))
 }
 
-/// `unknown region `x` (did you mean `y`?); regions: …`.
+/// `unknown region `x` (did you mean `y`?); regions: …`: the regions and dungeons of content.
 pub fn unknown_region(db: &ContentDb, id: &str) -> String {
-    let known: Vec<&str> = db.ids::<RegionDef>().chain(db.ids::<DungeonDef>()).collect();
-    let hint = closest(id, known.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
+    unknown_region_of(db, None, id)
+}
+
+/// [`unknown_region`] that also lists the regions of the kinds `worldgen` knows.
+pub fn unknown_region_of(db: &ContentDb, worldgen: Option<&WorldGen>, id: &str) -> String {
+    let known = known_regions(db, worldgen);
+    let hint = closest(id, known.iter().map(String::as_str)).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
     if known.is_empty() {
         format!("unknown region `{id}`: there is no `region` or `dungeon` content (content/**/*.region.ron)")
     } else {
         format!("unknown region `{id}`{hint}; regions: {}", known.join(", "))
     }
+}
+
+/// Every region id content defines: regions, dungeons, then each added kind's.
+pub fn known_regions(db: &ContentDb, worldgen: Option<&WorldGen>) -> Vec<String> {
+    let mut known: Vec<String> = db.ids::<RegionDef>().chain(db.ids::<DungeonDef>()).map(str::to_owned).collect();
+    for kind in worldgen.map(WorldGen::kinds).unwrap_or_default() {
+        known.extend((kind.ids)(db));
+    }
+    known
 }
 
 /// [`generate`] for a compiled grid region.
@@ -644,7 +668,7 @@ pub fn generate_compiled(db: &ContentDb, worldgen: &WorldGen, compiled: &Compile
         match run_attempt(&mut ctx, compiled) {
             Ok(manifest) => {
                 let remarks = std::mem::take(&mut ctx.remarks);
-                return Ok(Generated { manifest, failures, remarks });
+                return Ok(Generated { manifest, failures, remarks, counts: BTreeMap::new() });
             }
             Err(failure) => failures.push(failure),
         }
@@ -663,7 +687,7 @@ pub fn generate_compiled(db: &ContentDb, worldgen: &WorldGen, compiled: &Compile
     let (manifest, problems) = fallback_manifest(db, worldgen, compiled, fallback, seed).map_err(|e| GenError { message: e, failures: failures.clone() })?;
     let mut remarks = vec![format!("no attempt of {attempts} passed; used the fallback `{fallback}`")];
     remarks.extend(problems.iter().map(|p| format!("the fallback `{fallback}` fails {p}")));
-    Ok(Generated { manifest, failures, remarks })
+    Ok(Generated { manifest, failures, remarks, counts: BTreeMap::new() })
 }
 
 /// Runs every stage on `ctx`; the manifest, or why the attempt failed.

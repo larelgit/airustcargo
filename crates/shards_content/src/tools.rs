@@ -200,5 +200,10 @@ fn apply(world: &mut World, args: ContentApplyArgs) -> ToolResult {
     let from = if names.is_empty() { String::new() } else { format!(" {}", names.join(", ")) };
     let text = format!("content reloaded:{from} ({n} {defs} changed)");
     journal::emit(world, JournalKind::Event, text.clone());
+    if let Some(crate::ContentAppliedHooks(hooks)) = world.get_resource::<crate::ContentAppliedHooks>().cloned() {
+        for hook in hooks {
+            hook(world);
+        }
+    }
     Ok(text)
 }
