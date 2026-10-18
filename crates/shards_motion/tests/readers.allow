@@ -11,6 +11,7 @@
 # `PhysicsWorld::extent_at`, `top_under` or `solid_span`.
 
 crates/sandbox/src/visuals.rs :: fn draw_updrafts(mut gizmos: Gizmos, time: Res<Time<Real>>, q: Query<(&Volume, &Collider, &Transform)>) { :: draws updraft volumes, which are colliders; a field is never a volume
+crates/shards_action/src/combat.rs :: let height = world.get::<Collider>(entity).map_or(1.7, |c| c.shape.half_extents().y * 2.0); :: the height of an attacker or a target, a character's own body, for its line of sight
 crates/shards_action/src/draw.rs :: for c in physics.colliders().filter(|c| c.layers.memberships.contains(LayerMask::HURTBOX)) { :: hurtbox drawing: hurtboxes are colliders on HURTBOX, which a field never is
 crates/shards_action/src/draw.rs :: .get::<Collider>(entity) :: the i-frame outline of a fighter's own body
 crates/shards_action/src/draw.rs :: && let Some(mut q) = world.try_query_filtered::<(&Transform, &Collider), With<Invulnerable>>() :: the god-mode outline of an invulnerable body; a field is never invulnerable

@@ -424,6 +424,7 @@ line, and tests take `shards::testing::config()`.
 | `frame_budget` | a frame longer than this counts as "over budget" (`--frame-budget-ms`; the `frames` field in `ai/status`); `None` — 1/60 s. Frames exist only in a game that draws |
 | `report_perf` | the `ticks:` line under the `step` reply and `perf` entries in the journal; off in `shards::testing::config()` |
 | `engine_invariants` | check the engine's own invariant rules after every tick (see "Invariants (E11)"). On by default, off in a build with the `dist` feature, and off with `--no-engine-invariants`; `shards::testing::config()` and `--verify` always turn it on. Read when the plugins are built, so set it before `EnginePlugins::new(config)` |
+| `opt_in_invariants` | the engine rules that are off by default, turned on by name (`--engine-invariant NAME`, repeatable): today only `voxel.body_in_solid`. Needs `engine_invariants`; read when the plugins are built |
 | `after_loading` | where `Loading` goes after loading (`InGame`; `MainMenu` for a game with a main menu). `menu` decides whether this launch shows the menu, and `start_state()` gives the result |
 | `menu` | `MenuLaunch`: `Auto` (the default) shows the main menu only when the game draws (a window, `--offscreen`), with no session and no named slots (`--world`, `--character`); `Show` (`--menu`) always does, even without a window; `Skip` (`--no-menu`) never does. Replays, checks, `--smoke` and `--perf` always bypass the menu |
 | `loading_image` | an image under the asset folder (`ui/loading.png`), full screen, while the game loads (`Loading`) and while a region loads for longer than one call (`RegionLoading`), if anything is drawn. There is no content yet at that point, so it is in the config and not in the content; `--check-content` checks that the file exists. `None` — nothing |
@@ -447,7 +448,7 @@ is an error with exit code 2; `EnginePlugins` with an invalid `without` panics w
 
 **`shards::run`** is the standard `main`. Flags: `--headless | --offscreen --seed N --port N|0 --port-file F --no-remote --paused --hz N
 --replay FILE --verify [--windowed] --check-every N --check-detail components|entities|none --tick-budget-ms MS --frame-budget-ms MS
---check-content --worldgen-report REGION [--seeds S] --bake-nav [TILES] --bake-motion [ACTIONS] --smoke TICKS --perf ID --no-engine-invariants`; for phase C:
+--check-content --worldgen-report REGION [--seeds S] --bake-nav [TILES] --bake-motion [ACTIONS] --smoke TICKS --perf ID --no-engine-invariants --engine-invariant NAME`; for phase C:
 `--host [PORT] | --join ADDR | --stand N [--stand-udp | --stand-steam]` (mutually exclusive; `--stand` only with `--headless`), `--name`,
 `--net-sim SPEC`, `--save-dir DIR`, `--settings-dir DIR | --no-settings`, `--character SLOT`, `--world SLOT` (a slot is
 1–32 characters `a-z0-9_-`), `--exit-with-host`; `--menu | --no-menu` (the main menu, also without a window, or skipping it, also with a window; see "Main menu" below; `--menu` cannot be combined with replays, checks, sessions and slots); for Steam (feature `steam`, see "Steam (E10.5)"): `--steam-host | --steam-server`, `--steam-lobby TYPE`,
@@ -693,18 +694,26 @@ ledge`, `e5 air → water`, `e5 reached goal`).
   the fields after the colliders: a field's hit replaces a collider's only when strictly nearer, and of two fields the lower id is asked
   first. A world without a field runs exactly the colliders' code (the reference replays verify byte for byte, heavy mode included).
   A ray walks the cells it crosses (Amanatides–Woo) and tests each solid one as the box it is, so the distance, point and normal are a
-  cuboid collider's in its place; at the same distance the lowest cell in `(x, y, z)` order (x first) wins. One difference from cuboids
-  side by side: a ray lying in the plane of a face between two solid cells is inside the solid and meets it, where parry's cuboid ray can
-  slip between the boxes (on 0.2 m cells, 165 of 361 rays down the inner grid lines of a solid slab did; none on 0.5 m cells). A cast
-  (`sweep`, `shapecast`) tests the solid cells under its swept box; when that box covers more than one cell, the cells outside the start
-  box are merged into column runs and equal runs of neighbouring columns into rectangles, so a long cast tests a few boxes, not every
-  cell. The union is the same, so the first touch is the same up to rounding; the cells under the start box stay single, so a body that
-  starts touching the solid is let out of each cell as with one collider per cell. Among candidates the box with the lowest least cell
-  in `(x, y, z)` order wins a tie (with the merge off, `set_field_merge(false)`, that is exactly a world of one cuboid collider per cell
-  with ids in `(x, y, z)` order, to the bit). parry's cast now and then misses a box it touches near an edge (a merged run box 13.5 mm
-  away, in a test): a merged box the cast misses but may meet (within reach and drawing nearer, by convexity of the distance under a
-  translation) is cast cell by cell. `overlaps` and `closer_than` test the cells under the shape's box, one penetration a cell, where the
-  field's id puts it. The cost grows with the cells a query touches, never with the size of the field.
+  cuboid collider's in its place. After a hit the walk goes on to the cells it reaches at the same distance (through an edge or a
+  corner); of the cells met as near (the same `f32`), one met as a box wins over one met only along a seam (below), then the lowest in
+  `(x, y, z)` order (x first): what a world of one cuboid collider per cell, with ids in that order, answers. A ray that starts on a
+  face of a solid cell and goes in meets it at 0 with that face's normal. One difference from cuboids side by side: a ray lying in the
+  plane of a face between two solid cells is inside the solid and meets it, where parry's cuboid ray can slip between the boxes (on
+  0.2 m cells, 165 of 361 rays down the inner grid lines of a solid slab did; none on 0.5 m cells). A cast (`sweep`, `shapecast`)
+  tests the solid cells under its swept box (an infinite reach is cut at the field's edge); when that box covers more than one cell,
+  the cells outside the start box are merged into column runs and equal runs of neighbouring columns into rectangles, so a long cast
+  tests a few boxes, not every cell. The union is the same, so the first touch is the same up to rounding; the cells under the start box
+  stay single, so a body that starts touching the solid is let out of each cell as with one collider per cell. Among candidates the box
+  with the lowest least cell in `(x, y, z)` order wins a tie. The merge is the field's own: `VoxelField::with_cast_merge(false)` (for
+  tests and measurements) makes a field whose casts test every cell, exactly a world of one cuboid collider per cell with ids in `(x, y,
+  z)` order, to the bit; the mode is part of the field's hash, so the snapshot check and the replay see it. parry's cast now and then
+  misses a box it touches near an edge (a merged run box 13.5 mm away, in a test): a merged box the cast misses but may meet (within
+  reach and drawing nearer, by convexity of the distance under a translation) is cast cell by cell. `overlaps` and `closer_than` test
+  the cells under the shape's box, one penetration a cell, where the field's id puts it. The cost grows with the cells under the
+  query's (swept) box, never with the size of the field, as a collider world's broad phase grows with the colliders under it; a cast
+  whose box only grazes cells can still lose an ulp-thin sliver of cells at the box's edge (the box is the reach the cast was given,
+  and a touch there is a graze at the reach). `PhysicsWorld::has_solid(mask)` says whether any collider or field on `mask` is solid
+  (perception's gate), and `len`, `is_empty` and `colliders()` count colliders only.
 - **A field has no box: readers ask the hooks.** Code that reads the top or the bottom of what a query hit (how tall a blocker is, where
   the floor under a solid starts) asks `PhysicsWorld::extent_at(entity, point)` (the run of solid cells, contiguous in y, that holds the
   cell of `point`, tried at the point, 0.1 mm below and 0.1 mm above; a collider's box, wherever the point is), `top_under(entity, shape,
@@ -715,29 +724,40 @@ ledge`, `e5 air → water`, `e5 reached goal`).
   `top_under`), the nav bake's seed (`solid_span`, and `extent_at` to go on below a solid) and `ground_below` in `shards_world`
   (`extent_at` to climb out of a solid). `PhysicsWorld::subset` keeps the fields its second
   predicate keeps (the scatter's solids near a tile take the fields that reach it). **The rule for a new reader:** a field is no
-  collider, so `PhysicsWorld::collider(e)` and `ColliderInfo::bounds()` are `disallowed-methods` in `clippy.toml`, and each allowed
-  call carries `#[expect(clippy::disallowed_methods, reason = "…")]` saying why a field cannot be what it reads; the source scan
-  `crates/shards_motion/tests/readers.rs` fails on any `.collider(`, `.colliders()`, `.aabb_min` or `.aabb_max` in `crates/*/src`
-  outside `shards_motion/src/physics/` that is not in `tests/readers.allow` with its reason, and on a row that matches no line.
+  collider, so `PhysicsWorld::collider(e)`, `PhysicsWorld::by_id(id)` and `ColliderInfo::bounds()` are `disallowed-methods` in
+  `clippy.toml`, and each allowed call carries `#[expect(clippy::disallowed_methods, reason = "…")]` on its statement saying why a
+  field cannot be what it reads; the source scan `crates/shards_motion/tests/readers.rs` fails on any `.collider(`, `.colliders()`,
+  `.by_id(`, `get::<Collider>`, `.aabb_min`, `.aabb_max`, `PhysicsWorld::collider`/`colliders`/`by_id` or `&Collider` type (a query or
+  an argument: a field is no entity with a `Collider`) in `crates/*/src` outside `shards_motion/src/physics/` that is not in
+  `tests/readers.allow` with its reason, a row for each time a file has the line, and on a row that matches no line.
 - A field is not saved and has no `AiId` (as level geometry, the region that spawned it spawns it again); the snapshot check
-  `static_colliders` hashes every field (size, cell, origin, bits and layers), and a world without one hashes as before. The engine rule
-  `voxel.body_in_solid` (`BODY_IN_SOLID`, `body_in_solid`) names a character whose capsule centre is in a solid cell of a field it
-  collides with, except on the tick something other than the controller placed it (`MotionState::placed`); it is **off by default**
-  (mantle and sloped-step ticks may graze a cell) and a game turns it on with `app.add_engine_invariant(BODY_IN_SOLID, body_in_solid)`.
+  `static_colliders` hashes every field (size, cell, origin, cast mode, bits and layers), and a world without one hashes as before. The
+  engine rule `voxel.body_in_solid` (`BODY_IN_SOLID`, `body_in_solid`) names a character whose capsule centre is in a solid cell of a
+  field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). It is **off by
+  default** (mantle and sloped-step ticks may graze a cell) until fuzz runs on voxel terrain pass (the voxel design, 6.4): the motion
+  plugin offers it with `add_opt_in_engine_invariant`, which registers an engine rule only when `EngineConfig::opt_in_invariants` names
+  it, and a game run turns it on with `--engine-invariant voxel.body_in_solid` (a name it does not offer is refused, and the flag does not
+  go with `--no-engine-invariants`).
 - Checked by `crates/shards_motion/tests/motion/seams.rs`: each scenario runs in four worlds, one cuboid collider per cell, the merged
   boxes as colliders, the field, and the field with the merge off (stand on seams, an edge and a corner; one-cell walls; mixed
   heights; steps of 0.3, 0.5 and 1 m; a mantle; tunnels, with the probe, the hooks and `clearance` at 1350 spots in and around
-  them against the merged boxes; landing on a seam; a checkerboard diagonal; 16 bodies on rolling hills). The
-  field with the merge off equals the cells to the bit on every tick; with the merge on, the scripted scenarios stay within 3e-6 m and
-  2.4e-4 m/s of the cells with the same modes, and one step from the same state (16 bodies, 600 ticks) within 3.4e-6 m. Ground normals
-  are not compared: at a seam or an edge GJK's normal off a cell is noise (up to 56° on the checkerboard, positions equal). A free-running
-  walk amplifies rounding at corners as any chaotic system does (a step-up decided on an edge ride), so on the hills the merged field and
-  the cells part by more than 1e-4 m after 147 to 558 ticks (3 of 16 bodies on seed 1, 10 on seed 7; one of them by 32 cm on seed 7,
-  where a step-up decided on an edge ride went the other way at tick 147). The merged boxes as colliders part as soon or sooner
-  and for more bodies (7 and 14; 32 cm at tick 102 on seed 1). With the merge off the field never parts from the cells.
-  `field_timing` (`#[ignore]`, release): on 64 m of 0.5 m-cell hills the ground cast takes 8.5 µs with the merge, 17.4 µs without
-  and 19.4 µs as column boxes; rays 0.24–1.3 µs (1.7–2.2 times faster than the boxes, the sight ray 12 times), `overlaps` 8 times
-  faster; the walk cast (0.1 m) is slower than the boxes, 6.3 against 5.0 µs.
+  them against the merged boxes; landing on a seam; a checkerboard diagonal; 16 bodies on rolling hills), and each says what must have
+  happened (standing bodies stay put on the ground on every tick, sliders stay on their side of the wall, the checkerboard is crossed
+  and climbed). The field with the merge off equals the cells to the bit on every tick; with the merge on, the scripted scenarios stay
+  within 3e-6 m and 2.4e-4 m/s of the cells with the same modes. Ground normals are not compared: at a seam or an edge GJK's normal off
+  a cell is noise (up to 56° on the checkerboard, positions equal). On the hills (16 bodies, 600 ticks; 40 seeds walked by hand with
+  `SEAMS_SEEDS=1..=40`, three in the test), one step from the same state stays within 1e-4 m (at most 7e-5 m) but for two steps on
+  seed 6 that went another way (a mantle taken in the field, a step in the cells), and on both the merged boxes as colliders went the
+  field's way; the merged boxes take another step than the cells on 279 body-ticks of the 40 seeds. A free-running walk amplifies
+  rounding at corners as any chaotic system does (a step-up decided on an edge ride): the merged field and the cells part by more than
+  1e-4 m on 33 of the 40 seeds, first at tick 115 to 572 (on seed 7, 10 of 16 bodies from tick 147, one by 32 cm), and the test holds the
+  first 100 ticks. The merged boxes as colliders part for more bodies (365 against the field's 117) and first or alone on 39 of the 40
+  seeds. With the merge off the field never parts from the cells. The voxel design's criterion (section 15: within 1e-4 m over the free
+  walk) is not met as written; that is the lead's call (the design's risk 10).
+  `field_timing` (`#[ignore]`, release; the least of seven samples, the medians within 3 %): on 64 m of 0.5 m-cell hills the ground cast
+  takes 8.2 µs with the merge, 16.8 µs without and 15.3 µs as column boxes; rays 0.16–0.75 µs (1.5–1.8 times faster than the boxes, the
+  sight ray 16 times), `overlaps` 6.7 times faster; the walk cast (0.1 m) and `closer_than` are slower than the boxes, 5.2 against
+  4.8 µs and 1.54 against 1.33 µs.
 
 **Why parry3d and not avian3d.** The spec named avian3d as a candidate and required checking Bevy 0.20 support before taking a third-party crate. Checked against the crates.io index (13–14 October 2026): avian3d 0.7.0 requires Bevy 0.19, and Bevy is pinned
 to 0.20.0 (the same goes for bevy_enhanced_input 0.26.0 and lightyear 0.30.1). A kinematic controller needs collision queries, not dynamics, so `parry3d =0.31.1` was taken (dimforge geometry, it does not depend on Bevy; avian is built on it too).
@@ -2755,6 +2775,7 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `ai.index_consistent` | the `AiIndex` and the `AiId` components agree both ways (every entity with an id is in the index under it, every entry points at an entity that carries it) and the counts match, so no id is used twice. Tombstones are history and are not looked at. Catches an id written in place, which skips the hooks |
 | `core.intent_sane` | every `Intent` has a finite `move_dir` of length at most 1 (+ 1e-4) and a finite `aim`. The movement code survives garbage, so the rule names the writer that forgot to clamp. The host cleans a network client's input before it reaches `Intent`, so a bad frame cannot stop the host |
 | `motion.finite` | every `AiVisible` entity has a finite `Transform` translation and a finite rotation of length 1 ± 1e-3, and a finite `MotionState` (velocity, ground normal, timers, mantle, fall height, water surface, updraft, placed position). Scale is not judged |
+| `voxel.body_in_solid` | **off by default** (`--engine-invariant voxel.body_in_solid`): no character has its capsule centre in a solid cell of a voxel field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). Off until fuzz runs on voxel terrain pass, since mantle and sloped-step ticks may graze a cell (see "Voxel fields") |
 | `action.resources_in_range` | `Health`, `Stamina` and `Poise` are finite with `max > 0` and `0 <= current <= max`. Dead bodies are checked too (`current` is 0). A game that wants a buff above `max` raises `max` with it |
 | `action.running_sane` | a running action of a fighter exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. Without a content database the rule passes |
 | `action.protection_sane` | every `Protection` (the reaction and poise timers, B1) holds finite timers, none below 0. A NaN stays a NaN through the countdown and would shield its fighter for ever |
@@ -2770,7 +2791,7 @@ game rule, so a boss with 700 health breaks two rules, and the stop names the fi
 **The switch.** `EngineConfig::engine_invariants` is true by default and false when the `dist` feature is on (a shipped game
 must not pause on an engine rule; a game's own rules stay). `--no-engine-invariants` turns it off in a development build, for example to measure what the
 rules cost. Test apps (`shards::testing::config()`), `--verify`, `shards fuzz` and `shards soak` run with the rules on. With
-the switch off, no engine rule is registered and the token audit does not run. A test that writes garbage on purpose to show
+the switch off, no engine rule is registered and the token audit does not run. A rule that is off by default (`add_opt_in_engine_invariant`) is registered only when `EngineConfig::opt_in_invariants` also names it. A test that writes garbage on purpose to show
 that the controller survives it sets `engine_invariants: false`.
 In heavy mode the twin has its own engine rules and takes over which of them have fired, so a rule that fired in the original does not halt the twin again. The rules' cached query states (`RuleQueries`) are not simulation state and are not compared.
 

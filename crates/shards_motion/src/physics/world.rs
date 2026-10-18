@@ -1861,7 +1861,10 @@ mod tests {
 
     /// The queries of [`broad_phase_timing`] on rolling hills 64 m across of 0.5 m cells: as a
     /// field with the merge on and off, and as one box per column (the merged boxes) in the
-    /// collider grid. `cargo test -p shards_motion --release --lib field_timing -- --ignored --nocapture`.
+    /// collider grid. Each world is timed seven times, in turn (field, merge off, boxes, field, ...),
+    /// 100 rounds of the 16 bodies a time; the least and the median time are printed, so a busy
+    /// machine shows in the spread. `cargo test -p shards_motion --release --lib field_timing --
+    /// --ignored --nocapture`.
     #[test]
     #[ignore = "a measurement: run it in a release build and read what it prints"]
     fn field_timing() {
@@ -1911,23 +1914,31 @@ mod tests {
             ("overlaps (a swing)", Box::new(|w: &PhysicsWorld, b: usize| w.overlaps(&swing, bodies[b] + Vec3::X, Quat::IDENTITY, &QueryFilter::default()).len())),
         ];
         println!("
-rolling hills of 128 x 128 columns of 0.5 m cells, 16 bodies; µs a query (16 bodies x 400 rounds)");
-        println!("{:<30} {:>10} {:>10} {:>10}", "query", "field", "merge off", "boxes");
+rolling hills of 128 x 128 columns of 0.5 m cells, 16 bodies; µs a query, least / median of 7 samples of 100 rounds");
+        println!("{:<30} {:>16} {:>16} {:>16}", "query", "field", "merge off", "boxes");
         for (name, query) in &queries {
             let time = |world: &PhysicsWorld| {
                 let mut sum = 0;
                 let started = std::time::Instant::now();
-                for _ in 0..400 {
+                for _ in 0..100 {
                     for b in 0..bodies.len() {
                         sum += query(world, b);
                     }
                 }
-                (started.elapsed().as_secs_f64() * 1e6 / (400.0 * bodies.len() as f64), sum)
+                std::hint::black_box(sum);
+                started.elapsed().as_secs_f64() * 1e6 / (100.0 * bodies.len() as f64)
             };
-            let (merged, _) = time(&voxels);
-            let (cells, _) = time(&unmerged);
-            let (boxed, _) = time(&boxes);
-            println!("{name:<30} {merged:>10.3} {cells:>10.3} {boxed:>10.3}");
+            let mut samples = [[0.0; 7]; 3];
+            for i in 0..7 {
+                for (w, world) in [&voxels, &unmerged, &boxes].into_iter().enumerate() {
+                    samples[w][i] = time(world);
+                }
+            }
+            let [merged, cells, boxed] = samples.map(|mut s| {
+                s.sort_by(f64::total_cmp);
+                format!("{:.3} / {:.3}", s[0], s[3])
+            });
+            println!("{name:<30} {merged:>16} {cells:>16} {boxed:>16}");
         }
     }
 }
