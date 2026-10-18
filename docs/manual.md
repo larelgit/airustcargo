@@ -3272,9 +3272,9 @@ are recorded again only to stop depending on content they never read.
 
 **Cost.** A read checks the definition's flag first (one atomic load, set already after the first read), then the scope (two
 atomic loads); no lock. The parts are listed at each check (every 60 ticks), and each definition's hash is computed once, when it
-is loaded or edited, instead of hashing every definition's JSON at every check as before. On the combat prototype (release build,
-`--replay … --verify`, the two builds run in turns) the tick time is the same within the measurement's noise; see the PR that made
-the change for the numbers.
+is loaded or edited, instead of hashing every definition's JSON at every check as before. Measured on the combat prototype (release build, `--replay … --verify`, six runs of each
+build in turns, on a machine busy with other builds): 1.02–1.33 s for its 2307 ticks (median 1.18 s, 0.51 ms a tick), against
+1.05–1.60 s (median 1.20 s) for the build before; this one was not slower in any pair: no difference beyond the noise.
 
 ## Snapshots (E11.4)
 
