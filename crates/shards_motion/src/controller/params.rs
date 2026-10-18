@@ -131,6 +131,45 @@ pub struct CharacterParams {
     /// Turning speed of a swimmer (degrees per second). 0: `turn_speed_deg`.
     #[serde(skip_serializing_if = "is_zero")]
     pub swim_turn_speed_deg: f32,
+    /// Turning speed (degrees per second) while the input names a facing: a lock-on, an aim point or a
+    /// running action's own facing (`LocomotionInput::face`). 0: `turn_speed_deg`. A raised guard has
+    /// its own rate through `MoveModifiers::turn_at`, which wins over this; a swimmer keeps
+    /// `swim_turn_speed_deg`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub locked_turn_speed_deg: f32,
+    /// The body turns toward the movement input while there is one, instead of toward its velocity
+    /// (the direction it actually moves). A body pressed against a wall, whose velocity the wall
+    /// holds at zero, then still turns to face the wall, which a climb-out that wants a facing needs
+    /// (`climb_out_min_facing`). With no input it turns toward its velocity as before.
+    #[serde(skip_serializing_if = "is_false")]
+    pub turn_toward_input: bool,
+    /// Horizontal speed (m/s) a body is slowed to when it starts swimming (a plunge from a run or a
+    /// jump keeps no more than this). 0: no brake. Applied once, in the tick the water takes the
+    /// body, as a scale of the horizontal velocity.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub entry_max_speed: f32,
+    /// Buoyancy as a critically damped spring toward the float line with this natural frequency
+    /// (1/s), stepped in closed form so the result does not depend on the tick rate. A fall into the
+    /// water then plunges past the float line and comes back, instead of stopping at `swim_speed`.
+    /// 0: the first-order drift to the float line, the entry speed held to `swim_speed`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub buoyancy_omega: f32,
+    /// Fastest vertical speed in the water (m/s) while `buoyancy_omega` is set, entry included.
+    /// 0: `swim_speed`. Set it above `swim_speed` for a fall to plunge past the float line.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub water_max_vertical_speed: f32,
+    /// Drag on a fall in the water while `buoyancy_omega` is set: the downward speed decays as
+    /// `exp(-drag * t)`. 0: none.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub water_fall_drag: f32,
+    /// Water climb-out needs the body to face the ledge: the facing direction's dot product with the
+    /// direction into the wall (the opposite of its normal) must be at least this (0.5: within 60
+    /// degrees). `None`: no test, as before. Land mantles are not tested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub climb_out_min_facing: Option<f32>,
+    /// How long a water climb-out takes (s). `None`: `mantle_time`, like every climb.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub climb_out_time: Option<f32>,
     /// Two-tier climb-out: a swimmer pushing against a ledge climbs onto it by itself when the
     /// ledge top is at most this high **above the water surface** (m); a higher ledge (up to
     /// `mantle_height` above the feet) needs a jump. `None`: every ledge `mantle_height` allows
@@ -261,6 +300,14 @@ impl Default for CharacterParams {
             swim_acceleration: 0.0,
             swim_deceleration: 0.0,
             swim_turn_speed_deg: 0.0,
+            locked_turn_speed_deg: 0.0,
+            turn_toward_input: false,
+            entry_max_speed: 0.0,
+            buoyancy_omega: 0.0,
+            water_max_vertical_speed: 0.0,
+            water_fall_drag: 0.0,
+            climb_out_min_facing: None,
+            climb_out_time: None,
             climb_out_auto_height: None,
             climb_out_max_height: None,
             climb_out_reach: None,
@@ -485,6 +532,11 @@ impl CharacterParams {
             ("swim_acceleration", self.swim_acceleration),
             ("swim_deceleration", self.swim_deceleration),
             ("swim_turn_speed_deg", self.swim_turn_speed_deg),
+            ("locked_turn_speed_deg", self.locked_turn_speed_deg),
+            ("entry_max_speed", self.entry_max_speed),
+            ("buoyancy_omega", self.buoyancy_omega),
+            ("water_max_vertical_speed", self.water_max_vertical_speed),
+            ("water_fall_drag", self.water_fall_drag),
             ("wade_min_depth", self.wade_min_depth),
             ("wade_full_depth", self.wade_full_depth),
             ("wade_factor", self.wade_factor),
@@ -544,6 +596,15 @@ impl CharacterParams {
             if v.is_some_and(|v| !(v >= 0.0 && v.is_finite())) {
                 errors.push(format!("{name} must be >= 0 (is {v:?})"));
             }
+        }
+        if self.climb_out_time.is_some_and(|t| !(t > 0.0 && t.is_finite())) {
+            errors.push(format!("climb_out_time must be > 0 (is {:?})", self.climb_out_time));
+        }
+        if self.climb_out_min_facing.is_some_and(|f| !(-1.0..=1.0).contains(&f)) {
+            errors.push(format!("climb_out_min_facing must be between -1 and 1 (is {:?})", self.climb_out_min_facing));
+        }
+        if self.buoyancy_omega <= 0.0 && (self.water_max_vertical_speed > 0.0 || self.water_fall_drag > 0.0) {
+            errors.push("water_max_vertical_speed and water_fall_drag are set but buoyancy_omega is 0, so they never apply".to_string());
         }
         if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
     }

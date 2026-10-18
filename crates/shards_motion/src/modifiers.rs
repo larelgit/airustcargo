@@ -90,6 +90,14 @@ pub struct MoveModifiers {
     /// Replaces `CharacterParams::deceleration` (and the `air_deceleration` it brakes at in the
     /// air) while set.
     pub deceleration: Option<f32>,
+    /// Replaces the turning speed (degrees per second) of the params while set, on the ground and
+    /// in the air: a stance with its own rate (a raised guard turns slower than a free walk). A
+    /// swimmer keeps `swim_turn_speed_deg`. The lowest of several sources wins.
+    ///
+    /// Hidden from reflection (and so from snapshots and the AI's component dump), like the rest of
+    /// this per-tick scratch it is rebuilt every tick; the AI reads it in [`describe`](Self::describe).
+    #[reflect(ignore)]
+    pub turn_speed_deg: Option<f32>,
 }
 
 /// A stance's top speed on the ground and in the air (a guard's walk, a drinking walk): the
@@ -118,6 +126,7 @@ impl Default for MoveModifiers {
             stance: None,
             acceleration: None,
             deceleration: None,
+            turn_speed_deg: None,
         }
     }
 }
@@ -136,6 +145,7 @@ impl MoveModifiers {
         stance: None,
         acceleration: None,
         deceleration: None,
+        turn_speed_deg: None,
     };
 
     /// Nothing changes the character's speed (the sprint's cost may still).
@@ -202,6 +212,16 @@ impl MoveModifiers {
     pub fn decelerate_at(&mut self, rate: f32) -> &mut Self {
         if rate.is_finite() {
             self.deceleration = Some(rate.max(0.0));
+        }
+        self
+    }
+
+    /// Turns at `deg` degrees per second while this holds, instead of the params' `turn_speed_deg`
+    /// (the lowest of several sources wins; not below 0, and 0 turns at once like the params').
+    pub fn turn_at(&mut self, deg: f32) -> &mut Self {
+        if deg.is_finite() {
+            let deg = deg.max(0.0);
+            self.turn_speed_deg = Some(self.turn_speed_deg.map_or(deg, |t| t.min(deg)));
         }
         self
     }
@@ -358,6 +378,9 @@ impl MoveModifiers {
         }
         if let Some(rate) = self.deceleration {
             parts.push(format!("decel {rate:.1}"));
+        }
+        if let Some(deg) = self.turn_speed_deg {
+            parts.push(format!("turn {deg:.0}deg/s"));
         }
         parts.join(", ")
     }

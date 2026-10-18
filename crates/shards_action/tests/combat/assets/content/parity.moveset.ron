@@ -1,0 +1,5 @@
+{
+    "stancer": (
+        inputs: {"dodge": "back_roll", "block": "stance_block"},
+    ),
+}

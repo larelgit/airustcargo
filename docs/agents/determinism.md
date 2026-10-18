@@ -1,0 +1,53 @@
+# Determinism, simulation state, snapshots and replays
+
+Read this when you write or change anything that runs in the simulation: systems, spawning order, maths, randomness, ordering, event observers, new simulation state, input components. Part of the [AGENTS.md](../../AGENTS.md) index.
+
+## World creation and system order
+
+- **Create the world in `OnEnter(EngineState::InGame)`**, not in `Startup`: content exists only after loading. The order of
+  spawning is the same in every run, otherwise `AiId` and `ColliderId` will diverge.
+- All gameplay runs in `FixedUpdate`, in one of the `SimSet` sets; randomness comes only from `SimRng`.
+  The test `gameplay_systems_have_a_total_order` catches systems without an explicit order. Place your own systems "before" and "after"
+  the module sets (`CoreSystems`, `MotionSystems`, `ControllerSystems`, `ActionSystems`, `PhysicsSystems`).
+- An event observer (`On<Died>` and the like) that changes gameplay returns at once on a machine that does not simulate
+  (`shards::core::simulates`): the host forwards combat events to a co-op client for effects, and otherwise the score would count twice
+  (a desync catches this: `net: desync … here …, host …`).
+- **Physics reads `Transform`, not `GlobalTransform`** (it is not recalculated inside a fixed tick): put colliders
+  on top-level entities, and set the size in `Shape`, not in `Transform::scale`.
+- **Order by `AiId` or `ColliderId`, never by `Entity`**, and not by the order of a query: a window adds render entities and
+  shifts the `Entity` indices, and a replay must match with a window and without one.
+
+## Simulation maths
+
+- **Simulation maths goes through `bevy::math::ops` (libm), never through the `f32` methods from std.** `ops::sin(x)`,
+  `ops::cos`, `ops::atan2(y, x)`, `ops::exp`, `ops::powf`, `ops::sin_cos` and the rest (`ops` is already in Bevy's prelude; for the game it is
+  `shards::prelude::*`), and instead of `x.powi(2)` use `FloatPow::squared` (`bevy::math::FloatPow`). `x.sin()`, `x.atan2(y)`,
+  `x.exp()`, `x.powf(y)` call the platform's maths, and on MSVC, glibc and macOS the last bits differ: replays and co-op
+  would diverge between Windows, Linux and Steam Deck (Proton). The engine is built with `libm` (in `[workspace.dependencies]`: `bevy/libm`, parry3d with
+  `indexmap`, and `glamx` with `libm` — for `simba/libm_force`), so `ops`, glam (`Quat`, `Vec3::normalize`, `slerp`) and
+  collisions must give the same bits on all OSes of one architecture (x86_64: Windows, Linux, Steam Deck). Test runs have checked
+  this on Windows 11 and on Ubuntu 24.04 under WSL1 on one machine (one processor): nine reference replays were recorded on both OSes
+  byte for byte identically, and each OS passed `--verify` on the other's recordings; other x86_64 processors, macOS, ARM and Steam
+  Deck hardware have not been checked. glam keeps its SIMD: SSE2 is the same instructions on any x86_64 OS; do not build with
+  `-C target-cpu=native` or `+fma` (with them glam fuses the multiply and the add, and the bits differ). Determinism is not promised between architectures (x86_64 ↔
+  ARM). Do not enable `scalar-math` in glam (`enhanced-determinism` in parry3d turns it on): `Vec4` and `Mat4`
+  lose their 16-byte alignment, Bevy 0.20's `MeshUniform` becomes 168 bytes instead of 176 for the shader, and rendering stops; `shards`
+  does not build with it (`const` with `align_of` in `crates/shards/src/lib.rs`; `docs/manual.md`, "Time and determinism"). The rule is enforced by `clippy.toml` (in the root and in `template/`:
+  `disallowed-methods`): `cargo clippy … -D warnings` fails on
+  a direct call (in tests and in examples too). `ops` exists only for `f32`. For `f64`, do not use these functions: convert the value to `f32`.
+  A large `f64` is first reduced to a small one, while it is still `f64` (the phase, modulo `TAU`): `f32` has only 24 bits.
+  Exact operations (`sqrt`, `abs`, `floor`, `round`, `mul_add`, `rem_euclid`, `to_radians`) stay as methods.
+
+## Snapshots, replays, tick time
+
+- A snapshot does not see new simulation state outside entities with `AiId` (a resource, a counter): register it
+  with `add_snapshot_resource::<R>()` (it needs `Reflect`); a cache built from it goes in `add_snapshot_rebuild`; what the world is built around
+  (files, geometry) goes in `add_snapshot_check`. Otherwise `snapshot_load` says `the restored state differs`,
+  and a replay from the snapshot will diverge. References to entities without `AiId` go in `add_snapshot_entity_key`.
+- Replay checks (`shards-replay/4`) compare the game components of entities with `AiVisible`, not the text of
+  `observe`. Exclude cosmetics and caches with `replay_ignore::<C>()`; add state outside such entities
+  (resources, projectiles without an id) with `add_replay_check(name, |w| …)`. Anything that is only for the window must not change
+  the game components.
+- Tick time is not part of the hash or the replay, and it differs from run to run. A test that compares
+  whole answers or whole journals turns its output off: `report_perf: false` in `EngineConfig`
+  (`shards::testing::config()` already does this).
