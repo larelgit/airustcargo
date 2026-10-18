@@ -571,6 +571,8 @@ impl InputMap {
 
 impl ContentDef for InputMap {
     const KIND: &'static str = "input_map";
+    // Only what a machine shows or plays, or what lies outside a session: never in the replay check.
+    const SIMULATION: bool = false;
 
     /// The default controls: `content/**/*.input_map.ron`, one map with id `default`.
     fn validate(&self, _: &str, refs: &mut Refs) {

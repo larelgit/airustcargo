@@ -78,6 +78,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("ai_core::replay::PlaybackHooks", "what runs when a playback starts, registered at build time"),
     ("ai_core::replay::ReplayHashing", "what replay checks hash and leave out, registered at build time"),
     ("ai_core::rng::SimSeed", "the world's seed, in every snapshot's header and checked on load"),
+    ("ai_core::scope::SimScope", "whether what runs now is the simulation, open only while it runs (the content it read is the content check, which the snapshot holds)"),
     ("ai_core::session::AgentSessions", "the sessions and scopes of the agents that call tools"),
     ("ai_core::shot::AiShots", "screenshot requests: the picture"),
     ("ai_core::shot::PipelinesCompiling", "render pipelines still compiling: the picture"),
@@ -121,6 +122,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("shards_core::state::NetRole", "single player, host or client: the session's, chosen at start"),
     ("shards_core::state::PredictedMotion", "the motion module's correction functions, set at build time"),
     ("shards_core::state::RegionTrip", "the scratch state of one region change, empty between them"),
+    ("shards_core::state::TransitionScope", "the simulation's scope while a change of the engine state runs, empty between them"),
     // shards_dev
     ("shards_dev::", "the developer console and window: developer tools"),
     // shards_fx

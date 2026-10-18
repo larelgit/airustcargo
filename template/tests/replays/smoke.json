@@ -1,12 +1,12 @@
 {
-  "format": "shards-replay/3",
+  "format": "shards-replay/4",
   "seed": 42,
   "tick_hz": 59.99999880000003,
   "check_every": 60,
   "check_detail": "components",
   "end": {
     "tick": 258,
-    "hash": "40e2c0d0a4f7f7b5",
+    "hash": "8197936423dd26fa",
     "parts": {
       "entities": {
         "e1": {
@@ -87,7 +87,7 @@
         }
       },
       "game": {
-        "content": "191c19757c03c6e5"
+        "content": "46436199fe106a2d"
       }
     }
   },
@@ -196,7 +196,7 @@
   "checks": [
     {
       "tick": 60,
-      "hash": "91d82d6d23d4db87",
+      "hash": "d26960165803f6ee",
       "parts": {
         "entities": {
           "e1": {
@@ -276,13 +276,13 @@
           }
         },
         "game": {
-          "content": "191c19757c03c6e5"
+          "content": "3dac09a27c190332"
         }
       }
     },
     {
       "tick": 120,
-      "hash": "b93bf248cc252afd",
+      "hash": "e9aede9a76b1da18",
       "parts": {
         "entities": {
           "e1": {
@@ -362,13 +362,13 @@
           }
         },
         "game": {
-          "content": "191c19757c03c6e5"
+          "content": "66a3c7afa7a19e5d"
         }
       }
     },
     {
       "tick": 180,
-      "hash": "f9b286984bbca7f1",
+      "hash": "5c2eeb31955a197a",
       "parts": {
         "entities": {
           "e1": {
@@ -448,13 +448,13 @@
           }
         },
         "game": {
-          "content": "191c19757c03c6e5"
+          "content": "18f06bbe30dc7ffc"
         }
       }
     },
     {
       "tick": 240,
-      "hash": "4b46bbe924386018",
+      "hash": "fb4770e7c38e2bf0",
       "parts": {
         "entities": {
           "e1": {
@@ -534,9 +534,53 @@
           }
         },
         "game": {
-          "content": "191c19757c03c6e5"
+          "content": "a5b2d739cdb8c7c2"
         }
       }
     }
-  ]
+  ],
+  "check_parts": {
+    "content": [
+      {
+        "tick": 60,
+        "set": {
+          "arena/yard": "7e669786139ba9fa",
+          "combat_tuning/default": "0cf2e43e38f71b04",
+          "locomotion/grunt": "f802906abd6c05c7",
+          "locomotion/hero": "557625e60c915fb3",
+          "moveset/grunt": "670bfc2359ed950c",
+          "moveset/hero": "d807d4e4a55445ad",
+          "prefab/grunt": "e506767fa01e0ec3",
+          "prefab/hero": "f0feacea45774654"
+        }
+      },
+      {
+        "tick": 120,
+        "set": {
+          "action/swipe": "70526c3b0e7de1f5"
+        }
+      },
+      {
+        "tick": 180,
+        "set": {
+          "action/grunt_stagger": "82eeba82cf0e00b4",
+          "action/light_1": "a0056048a4cdfcf7",
+          "action/light_2": "2f4de5aa3f975f80",
+          "action/slam": "42b9df38fe6a8e8e"
+        }
+      },
+      {
+        "tick": 240,
+        "set": {
+          "action/hero_stagger": "2829ad50ba6de811"
+        }
+      },
+      {
+        "tick": 258,
+        "set": {
+          "action/grunt_death": "1fa289587d9f8ae9"
+        }
+      }
+    ]
+  }
 }

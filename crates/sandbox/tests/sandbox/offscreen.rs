@@ -282,3 +282,62 @@ fn draws_follow_how_bevy_batches_not_how_many_meshes_are_drawn() {
     let frames = shards::ai_core::status::status(app.world())["frames"].clone();
     assert!(frames["draws"].as_f64().is_some_and(|d| d >= base as f64) && frames["draws_max"].as_u64().is_some_and(|d| d > base), "{frames}");
 }
+
+/// What the simulation reads does not depend on whether anything is drawn: the same session
+/// headless (as `--headless` builds it: no visuals) and drawn offscreen (models, animation,
+/// effects, foliage, the tiles' visuals, the HUD) reads the same definitions, so the replay check
+/// `content` and the recordings' parts are the same in both.
+#[test]
+#[ignore = "needs a GPU, or a software one (WGPU_FORCE_FALLBACK_ADAPTER=1; Mesa's lavapipe on Linux): cargo test -p sandbox --test sandbox -- --ignored offscreen"]
+fn content_reads_are_the_same_headless_and_drawn() {
+    use shards::ai_core::replay;
+    use shards::content::ContentDb;
+
+    // Ticks in short runs with frames between, as a live game has them: a drawn one spawns
+    // models, animates them, streams the tiles' visuals, scatters foliage and plays effects there.
+    let run = |app: &mut App, ticks: u64| {
+        for _ in 0..ticks / 20 {
+            step(app, 20);
+            settle(app, 3);
+        }
+    };
+    let session = |app: &mut App| {
+        settle(app, 10);
+        ok(app, "teleport", json!({"id": "e5", "x": 0, "z": -3}));
+        ok(app, "attack", json!({"target": "e6", "repeat": true}));
+        run(app, 240);
+        shards::testing::call(app, "dodge", json!({}));
+        run(app, 120);
+        ok(app, "regen", json!({"region": "wilds", "seed": 7}));
+        settle(app, 10);
+        run(app, 240);
+        ok(app, "ui_open", json!({"screen": "pause"}));
+        settle(app, 3);
+        ok(app, "ui_navigate", json!({"dir": "back"}));
+        run(app, 60);
+        let read = app.world().resource::<ContentDb>().used_parts();
+        (replay::save(app.world()), read)
+    };
+    let mut headless = sandbox::test_app(42);
+    let mut drawn = shards::testing::test_app(
+        |config| (config.headless, config.offscreen, config.seed) = (false, true, 42),
+        |app| {
+            app.add_plugins((sandbox::SandboxPlugin, sandbox::visuals::VisualsPlugin));
+        },
+    );
+    let display = shards::ai_core::status::status(drawn.world())["display"].clone();
+    assert_eq!(display["mode"].as_str(), Some("offscreen"), "{display}");
+    let (plain, plain_read) = session(&mut headless);
+    let (pictured, pictured_read) = session(&mut drawn);
+    let meshes = |app: &mut App| app.world_mut().query::<&Mesh3d>().iter(app.world()).count();
+    let (none, many) = (meshes(&mut headless), meshes(&mut drawn));
+    assert!(many > none + 1000, "the drawn game draws (models, tiles, foliage): {many} meshes, headless {none}");
+    let names = |read: &[(String, u64)]| read.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
+    assert!(names(&plain_read).iter().any(|n| n == "tile (all)") && names(&plain_read).iter().any(|n| n == "action/light_1"), "{:?}", names(&plain_read));
+    assert_eq!(names(&pictured_read), names(&plain_read));
+    assert_eq!(pictured_read, plain_read);
+    assert_eq!(pictured.check_parts, plain.check_parts);
+    let hashes = |r: &replay::Replay| r.checks.iter().map(|c| (c.tick, c.hash)).collect::<Vec<_>>();
+    assert_eq!(hashes(&pictured), hashes(&plain));
+    assert_eq!(pictured.end.hash, plain.end.hash);
+}

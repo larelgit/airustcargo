@@ -64,6 +64,7 @@ pub mod remote;
 pub mod replay;
 pub mod rng;
 pub mod scenario;
+pub mod scope;
 pub mod session;
 #[cfg(feature = "render")]
 pub mod shot;
@@ -103,6 +104,7 @@ pub use replay::{
     AiReplay, Breakdown, CheckDetail, Divergence, EntityChange, EntityDiff, Replay, ReplayHashing, ReplayReport,
 };
 pub use rng::{DetRng, SimRng, SimSeed};
+pub use scope::{ScopeOpen, ScopeSuspended, SimScope};
 pub use session::{configure_session, AgentSession, AgentSessions, Caller, PlayerResolver, Scope, SessionChange};
 pub use sim::{Halt, SimConfig, SimGate, SimSet, SimTick, StepQueue, StepRoute, TickClock};
 pub use snapshot::{world_rebuilt, EntityKey, Snapshot, SnapshotRegistry, WorldRebuilt};
@@ -235,6 +237,7 @@ impl Plugin for AiCorePlugin {
             app.add_systems(PreStartup, |mut time: ResMut<Time<Virtual>>| time.pause());
         }
 
+        scope::plugin(app);
         builtin::register(app.world_mut());
         dev::register(app);
         replay::plugin(app, self.check_every, self.check_detail);
@@ -375,6 +378,15 @@ pub trait AiAppExt {
     /// the same whether or not that state ever existed (the level module's `level`: a game
     /// without placed levels hashes as one without the module).
     fn add_optional_replay_check(&mut self, name: &str, check: fn(&World) -> Option<u64>) -> &mut Self;
+
+    /// A check of what the world is built around that names its parts, in every replay check
+    /// and in snapshots under one `name` (the content database's `content`: each definition the
+    /// simulation read, as `kind/id` → its hash). Its value hashes `parts` ([`replay::parts_hash`]);
+    /// a recording keeps the parts as they change ([`Replay::check_parts`]) and a snapshot keeps
+    /// them too, so a divergence or a refused load names the parts that differ, with `hint` (what
+    /// to do about it). `whole` is the value the check had before it had parts: a session that
+    /// plays or loads a file without them computes that, as the build that made the file did.
+    fn add_parts_check(&mut self, name: &'static str, hint: &'static str, parts: replay::ReplayCheckParts, whole: fn(&World) -> u64) -> &mut Self;
 
     /// Runs `hook` when a playback is armed ([`replay::play`]), before its first frame or tick:
     /// a module asks for what the recording will need and the game has not loaded (the files its
@@ -553,6 +565,12 @@ impl AiAppExt for App {
 
     fn add_optional_replay_check(&mut self, name: &str, check: fn(&World) -> Option<u64>) -> &mut Self {
         self.world_mut().get_resource_or_init::<replay::ReplayHashing>().add_optional_check(name, check);
+        self
+    }
+
+    fn add_parts_check(&mut self, name: &'static str, hint: &'static str, parts: replay::ReplayCheckParts, whole: fn(&World) -> u64) -> &mut Self {
+        self.world_mut().get_resource_or_init::<replay::ReplayHashing>().add_parts_check(name, parts, whole);
+        self.world_mut().get_resource_or_init::<SnapshotRegistry>().add_parts_check(name, hint, parts, whole);
         self
     }
 

@@ -6,6 +6,7 @@
 mod actions;
 mod common;
 mod content;
+mod content_check;
 mod fuzz_shrink;
 mod coverage;
 mod course;

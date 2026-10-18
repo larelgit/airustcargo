@@ -57,6 +57,8 @@ pub fn streaming(settings: Res<WorldSettings>, config: Option<Res<EngineConfig>>
 
 /// `Update`: every tile's LOD from the nearest player; changed ones respawn their visual.
 pub fn stream_tile_visuals(world: &mut World) {
+    // Only a picture: whatever it spawns, what it reads is not the simulation's.
+    let _quiet = ai_core::scope::suspend(world);
     let Some(TileVisualSpawner(spawner)) = world.get_resource::<TileVisualSpawner>().copied() else {
         return;
     };

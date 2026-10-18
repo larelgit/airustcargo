@@ -704,6 +704,8 @@ impl Default for ThemeDef {
 
 impl ContentDef for ThemeDef {
     const KIND: &'static str = "theme";
+    // Only what a machine shows or plays, or what lies outside a session: never in the replay check.
+    const SIMULATION: bool = false;
 
     fn validate(&self, _id: &str, refs: &mut Refs) {
         let colors = [
