@@ -85,7 +85,8 @@ pub struct Stamina {
     pub max: f32,
     pub regen: f32,
     pub delay: f32,
-    /// Seconds since it was last spent (stops counting at `delay`).
+    /// Seconds since it was last spent (stops counting at `delay`). Below zero while a hold
+    /// ([`hold_regen`](Self::hold_regen)) is longer than `delay`.
     pub since_use: f32,
     /// Sprinting ran it dry: no sprint until the button is let go. Without this the
     /// first regenerated drop would be sprinted away again, over and over.
@@ -101,6 +102,17 @@ impl Stamina {
     pub fn spend(&mut self, amount: f32) {
         self.current = (self.current - amount).max(0.0);
         self.since_use = 0.0;
+    }
+
+    /// Holds the regeneration back for at least `secs` more seconds, counted from now: the wait is
+    /// the longer of what the last spend left and `secs` (`since_use` is moved back to where `secs`
+    /// remain; it goes below zero when `secs` exceeds `delay`, which regeneration and the
+    /// readiness estimate both read as a longer wait). Nothing is spent.
+    pub fn hold_regen(&mut self, secs: f32) {
+        let latest = self.delay - secs;
+        if self.since_use > latest {
+            self.since_use = latest;
+        }
     }
 
     /// Whether a sprint is held back right now: the bar is empty, or the lock a dry sprint set
@@ -509,7 +521,8 @@ pub fn update_fighters(
     mut fighters: Query<Resources, With<Fighter>>,
 ) {
     let dt = time.delta_secs();
-    let drain = CombatTuning::of(&db).sprint_stamina_per_s;
+    let tuning = CombatTuning::of(&db);
+    let drain = tuning.sprint_stamina_per_s;
     for (entity, fighter, stamina, poise, mut cooldowns, motion, dead, modifiers, body) in &mut fighters {
         if let Some(mut s) = stamina {
             if motion.is_some_and(|m| m.sprinting) && !dead {
@@ -523,7 +536,11 @@ pub fn update_fighters(
                         cost => (drain * cost * dt, cost > 0.0),
                     }
                 };
-                s.spend(amount);
+                match tuning.free_sprint_regen_hold {
+                    // A free sprint holds the regeneration back for its own, shorter time.
+                    Some(hold) if !costly => s.hold_regen(hold),
+                    _ => s.spend(amount),
+                }
                 // A sprint that costs nothing cannot run the stamina dry; a rule with no lock sets none.
                 s.exhausted |= costly && s.current <= EPS && sprint_rule(&db, motion, body).latches();
             } else {
@@ -622,6 +639,21 @@ pub(crate) struct Reported(Vec<String>);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hold_is_the_longer_wait_and_never_shortens_one() {
+        let mut s = Stamina::new(100.0, 10.0, 0.65);
+        s.spend(10.0);
+        s.hold_regen(0.3); // shorter than the 0.65 left: no change
+        assert_eq!(s.since_use, 0.0);
+        s.hold_regen(1.3); // longer: waits 1.3 s from now, since_use goes below zero
+        assert!((s.since_use + 0.65).abs() < 1e-5, "{}", s.since_use);
+        s.hold_regen(0.3); // a later, shorter hold does not cut it
+        assert!((s.since_use + 0.65).abs() < 1e-5);
+        let mut fresh = Stamina::new(100.0, 10.0, 0.65);
+        fresh.hold_regen(0.3); // fully recovered: waits 0.3 s
+        assert!((fresh.since_use - 0.35).abs() < 1e-5);
+    }
 
     #[test]
     fn stamina_waits_for_its_delay() {

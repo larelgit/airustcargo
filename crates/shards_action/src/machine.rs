@@ -1214,14 +1214,16 @@ pub(crate) fn steer(
     let moving = flat(intent.move_dir).try_normalize();
     let pick = match def.steer {
         Steer::Aim => pressed.or_else(|| target.and_then(toward)).or_else(|| intent.aim.and_then(toward)).or(moving),
-        Steer::Move => pressed.or(moving),
+        Steer::Move | Steer::MoveOrBack => pressed.or(moving),
     };
-    pick.unwrap_or_else(|| flat(forward).try_normalize().unwrap_or(Vec3::NEG_Z))
+    let ahead = flat(forward).try_normalize().unwrap_or(Vec3::NEG_Z);
+    // Nothing pressed and nothing held: a backstep leaves the way the body does not face.
+    pick.unwrap_or(if def.steer == Steer::MoveOrBack { -ahead } else { ahead })
 }
 
 /// While an action tracks, it turns toward the target or the aim point.
 fn track(def: &ActionDef, intent: &Intent, here: Vec3, target: Option<Vec3>) -> Option<Vec3> {
-    if def.steer == Steer::Move {
+    if matches!(def.steer, Steer::Move | Steer::MoveOrBack) {
         return None;
     }
     let toward = |p: Vec3| flat(p - here).try_normalize();
@@ -1971,6 +1973,33 @@ mod tests {
         assert_eq!(ticks_until(DT * 1.001, DT), 1);
         assert_eq!(ticks_until(DT * 1.1, DT), 2);
         assert!(fits_buffer(0.15, 0.15) && !fits_buffer(0.16, 0.15));
+    }
+
+    #[test]
+    fn a_backstep_goes_back_unless_something_names_a_direction() {
+        let step = |text: &str, dir: Option<Vec3>, held: Vec3| {
+            let def = parse_def(text);
+            let intent = Intent { move_dir: held, ..default() };
+            steer(&def, dir, &intent, Vec3::ZERO, Vec3::X, None)
+        };
+        let back = r#"(net_id: 1, phases: [("a", 0.4)], steer: MoveOrBack)"#;
+        let plain = r#"(net_id: 1, phases: [("a", 0.4)], steer: Move)"#;
+        assert_eq!(step(back, None, Vec3::ZERO), -Vec3::X, "nothing pressed: away from the facing");
+        assert_eq!(step(plain, None, Vec3::ZERO), Vec3::X, "the plain move keeps the facing");
+        assert_eq!(step(back, Some(Vec3::Z), Vec3::ZERO), Vec3::Z, "a press names the way");
+        assert_eq!(step(back, None, -Vec3::Z), -Vec3::Z, "so does the stick");
+        let def = parse_def(back);
+        assert!(track(&def, &Intent { aim: Some(Vec3::Z), ..default() }, Vec3::ZERO, Some(Vec3::Z)).is_none(), "no tracking");
+    }
+
+    #[test]
+    fn the_turn_and_hold_options_parse_and_stay_out_of_json_when_off() {
+        let def = parse_def(r#"(net_id: 1, phases: [("a", 0.4)], turn_speed_deg: 458, regen_hold: 1.3)"#);
+        assert_eq!((def.turn_speed_deg, def.regen_hold), (Some(458.0), Some(1.3)));
+        let plain = parse_def(r#"(net_id: 1, phases: [("a", 0.4)])"#);
+        let json = serde_json::to_value(&plain).unwrap();
+        assert!(json.get("turn_speed_deg").is_none() && json.get("regen_hold").is_none(), "not serialized when off");
+        assert!(serde_json::to_value(&def).unwrap().get("regen_hold").is_some());
     }
 
     #[test]

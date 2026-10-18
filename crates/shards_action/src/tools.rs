@@ -14,7 +14,7 @@ use shards_core::input_names::{BLOCK, DODGE, HEAVY, LIGHT, PARRY, TECHNIQUE, USE
 use shards_core::{flat, Intent, Order, Predicted};
 
 use crate::combat::{react, revive, stagger, Reaction, StaggerCause};
-use crate::def::{ActionDef, BufferMode, CombatTuning, EPS};
+use crate::def::{ActionDef, BufferMode, CombatTuning, MovesetDef, Steer, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team};
 use crate::machine::{
     buffer_press, can_start, fits_buffer, press_life, understands, ActionState, FighterView, Healed, InputBuffer, Queued,
@@ -297,7 +297,14 @@ fn dodge(In(call): In<Call<DodgeArgs>>, world: &mut World) -> ToolResult {
     };
     // The roll goes where the press says, else along the movement input (as `steer` does).
     let moving = world.get::<Intent>(me).and_then(|i| flat(i.move_dir).try_normalize());
-    let towards = dir.or(moving).map_or("forward", compass);
+    // With nothing named, a backstep goes back and a plain roll goes where the body faces.
+    let db = world.resource::<ContentDb>();
+    let backstep = world
+        .get::<Fighter>(me)
+        .and_then(|f| db.get::<MovesetDef>(&f.moveset)?.inputs.get(DODGE))
+        .and_then(|action| db.get::<ActionDef>(action))
+        .is_some_and(|d| d.steer == Steer::MoveOrBack);
+    let towards = dir.or(moving).map_or(if backstep { "back" } else { "forward" }, compass);
     press(world, &call.caller, DODGE, dir, &format!(" ({towards})"))
 }
 

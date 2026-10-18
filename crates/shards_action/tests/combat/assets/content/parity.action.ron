@@ -1,0 +1,21 @@
+// Movement options for an exact action-RPG rulebook (C4): a roll that backsteps with no input,
+// and a guard that turns slowly and holds the stamina regeneration while it is up.
+{
+    "back_roll": (
+        net_id: 62,
+        phases: [("roll", 0.4), ("recover", 0.1)],
+        cost: (stamina: 25),
+        iframes: [Secs(0.0, 0.18)],
+        displacement: [(0.35, 4.0)],
+        steer: MoveOrBack,
+    ),
+    "stance_block": (
+        net_id: 63,
+        phases: [("raise", 0.1), ("hold", 0.3), ("lower", 0.1)],
+        hold: (input: "block", span: Phase("hold")),
+        guard: (span: Phases("raise", "hold"), perfect: Phase("raise"), damage_mult: 0.1),
+        move_speed: 0.4,
+        turn_speed_deg: 90,
+        regen_hold: 1.3,
+    ),
+}
