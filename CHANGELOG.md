@@ -90,7 +90,7 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   volume; a chunk must be as tall as the volume, and a sea reach at most 100 km (`MAX_SEA_REACH`). A content-applied hook
   returns the line it adds to the call's answer (`fn(&mut World) -> Option<String>`): `content_apply` says that a region was
   made again. `VoxelPlugin` added before `WorldPlugin` panics when the app is finished, naming the order. `Layout::Volume`
-  needs no save `FORMAT` bump: a save of a tile region keeps its bytes, and an older build refuses a volume's `layout` by name.
+  needs no save `FORMAT` bump: a save of a tile region keeps its bytes, and an older build cannot read a volume's manifest (its parser says `unknown variant volume`).
   Snapshot checks may be optional (`add_optional_snapshot_check`). Manual: "Voxel regions (A2c)", with what differs when a
   region of tiles is swapped for a volume.
 - Sandbox: the voxel arena (`regen region=voxel_arena seed=7`), a voxel region of 256 x 32 x 256 cells north of the arena,
