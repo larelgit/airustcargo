@@ -87,8 +87,9 @@ fn hitstop(In(call): In<Call<HitstopArgs>>, world: &World) -> ToolResult {
     let skip = stops.log.len().saturating_sub(last);
     for r in stops.log.iter().skip(skip) {
         let ids = r.ids.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+        let on = if ids.is_empty() { String::new() } else { format!(" on {ids}") };
         out.push_str(&format!(
-            "  tick {:<5} {} {:.2} s ({}) on {ids}: {} ({:.2} s)\n",
+            "  tick {:<5} {} {:.2} s ({}){on}: {} ({:.2} s)\n",
             r.tick,
             r.name,
             r.seconds,
