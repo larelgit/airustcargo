@@ -16,8 +16,10 @@ use shards_core::{flat, Intent, Order, Predicted};
 use crate::combat::{react, revive, stagger, Reaction, StaggerCause};
 use crate::def::{ActionDef, BufferMode, CombatTuning, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team};
-use crate::machine::{can_start, fits_buffer, press_life, refused_press, ActionState, FighterView, Healed, InputBuffer, Queued};
-use crate::predict::shown_state;
+use crate::machine::{
+    buffer_press, can_start, fits_buffer, press_life, understands, ActionState, FighterView, Healed, InputBuffer, Queued,
+};
+use crate::predict::{shown_queue, shown_state};
 use crate::zone::{body_radius, zones_threatening};
 
 pub(crate) fn register(app: &mut App) {
@@ -68,9 +70,9 @@ enum When {
 
 /// The shared rule's answer for `input`: now, within the press's life in the buffer
 /// ([`press_life`]: longer while a `queue` span holds it for a window), or the error. A moveset
-/// with a single slot answers as its buffer will: a press weaker than the one waiting is dropped,
-/// and with `consume_on_refusal` a press the fighter tries now and cannot start is too. On a
-/// client's own body it asks about the action shown there ([`shown_state`]).
+/// with a single slot answers as its buffer will: a press weaker than the one waiting is dropped.
+/// On a client's own body it asks about the action and the presses shown there ([`shown_state`],
+/// [`shown_queue`]).
 fn when(world: &World, me: Entity, input: &str) -> Result<When, String> {
     let dt = world.resource::<Time<Fixed>>().timestep().as_secs_f32();
     let ttl = CombatTuning::of(world.resource::<ContentDb>()).input_buffer;
@@ -83,17 +85,13 @@ fn when(world: &World, me: Entity, input: &str) -> Result<When, String> {
     let def = run.and_then(|r| view.db.get::<ActionDef>(&r.action));
     let life = press_life(def, run, input, ttl);
     if let Some(mode @ BufferMode::SingleSlot { .. }) = view.moveset_def().map(|m| &m.buffer)
-        && let Some(waiting) = world.get::<InputBuffer>(me).and_then(|b| b.queued.first())
+        && let Some(waiting) = waiting(world, me, &view).into_iter().next()
         && mode.rank(input) < mode.rank(&waiting.input)
     {
         return Err(format!(
             "{} is waiting and comes first: one press waits at a time, and {input} ranks below it",
             waiting.input
         ));
-    }
-    let probe = [Queued { input: input.to_owned(), dir: None, left: life }];
-    if let Some((_, reason)) = refused_press(&view, &probe, dt) {
-        return Err(format!("{reason} (a refused press is dropped, not kept)"));
     }
     match can_start(&view, input, dt) {
         Ok(start) => Ok(When::Now(start.action)),
@@ -102,6 +100,22 @@ fn when(world: &World, me: Entity, input: &str) -> Result<When, String> {
             _ => Err(blocker.message()),
         },
     }
+}
+
+/// The presses `me` has waiting as its next tick takes them: its buffer (on a client's own body,
+/// the predictor's), with the presses still in its `Intent` added the way the buffer adds them.
+fn waiting(world: &World, me: Entity, view: &FighterView) -> Vec<Queued> {
+    let mut queued = shown_queue(world, me)
+        .unwrap_or_else(|| world.get::<InputBuffer>(me).map(|b| b.queued.clone()).unwrap_or_default());
+    let moveset = view.moveset_def();
+    let mode = moveset.map_or(&BufferMode::PerInput, |m| &m.buffer);
+    let running = view.state.current.as_ref().and_then(|r| view.db.get::<ActionDef>(&r.action));
+    for p in world.get::<Intent>(me).map_or(&[][..], |i| &i.pressed[..]) {
+        if understands(&p.input, moveset, running) {
+            buffer_press(&mut queued, mode, Queued { input: p.input.clone(), dir: p.dir, left: 0.0 });
+        }
+    }
+    queued
 }
 
 /// Presses `input` (towards `dir`) when the rule says it will start. `detail` follows the
@@ -119,12 +133,30 @@ fn press_held(world: &mut World, caller: &Caller, input: &str, dir: Option<Vec3>
     }
     let when = when(world, me, input)?;
     let note = predicted_note(world, me);
-    let displaced = world
-        .get::<InputBuffer>(me)
-        .and_then(|b| b.queued.first())
-        .filter(|q| q.input != input && single_slot(world, me))
-        .map(|q| format!(" ({} no longer waits)", q.input))
-        .unwrap_or_default();
+    let (displaced, tap) = {
+        let view = FighterView::of(world, me).ok_or("your body is not a complete fighter")?;
+        let shown = shown_state(world, me);
+        let view = FighterView { state: shown.as_ref().unwrap_or(view.state), ..view };
+        let slot = matches!(view.moveset_def().map(|m| &m.buffer), Some(BufferMode::SingleSlot { .. }));
+        let displaced = waiting(world, me, &view)
+            .into_iter()
+            .next()
+            .filter(|q| slot && q.input != input)
+            .map(|q| format!(" ({} no longer waits)", q.input))
+            .unwrap_or_default();
+        // An action that goes on only while its input is held, pressed without holding it.
+        let action = match &when {
+            When::Now(action) => Some(action.as_str()),
+            When::In(_) => view.moveset_def().and_then(|m| m.inputs.get(input)).map(String::as_str),
+        };
+        let lets_go = action.and_then(|a| view.db.get::<ActionDef>(a)).is_some_and(|d| d.while_held.as_deref() == Some(input));
+        let tap = if lets_go && hold != Some(true) && !view.held.iter().any(|h| h == input) {
+            format!(" (a tap: it stops as soon as {input} is not held; hold=true keeps it going)")
+        } else {
+            String::new()
+        };
+        (displaced, tap)
+    };
     let mut intent = world.get_mut::<Intent>(me).ok_or("no Intent")?;
     match dir {
         Some(dir) => intent.press_dir(input, dir),
@@ -137,18 +169,9 @@ fn press_held(world: &mut World, caller: &Caller, input: &str, dir: Option<Vec3>
         ""
     };
     Ok(match when {
-        When::Now(action) => format!("ok: {action}{holding}{detail}{displaced}{note}"),
-        When::In(t) => format!("ok: queued, {input} starts in {t:.2}s{holding}{detail}{displaced}{note}"),
+        When::Now(action) => format!("ok: {action}{holding}{detail}{displaced}{tap}{note}"),
+        When::In(t) => format!("ok: queued, {input} starts in {t:.2}s{holding}{detail}{displaced}{tap}{note}"),
     })
-}
-
-/// Whether `me`'s moveset keeps one press at a time.
-fn single_slot(world: &World, me: Entity) -> bool {
-    let db = world.resource::<ContentDb>();
-    world
-        .get::<Fighter>(me)
-        .and_then(|f| db.get::<crate::MovesetDef>(&f.moveset))
-        .is_some_and(|m| matches!(m.buffer, BufferMode::SingleSlot { .. }))
 }
 
 /// ` · predicted, host confirms` on a client's own body: it starts here at once, and the

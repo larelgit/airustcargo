@@ -18,16 +18,26 @@
     ),
     "t_early": (inputs: {"light": "t_chain_early"}, stagger: "t_stagger"),
     "t_tail": (inputs: {"light": "t_tail"}, stagger: "t_stagger"),
-    // One press waits at a time, the stronger first; a press tried and refused is dropped.
+    // One press waits at a time, the stronger first; the one waiting is tried on every tick until
+    // its time runs out.
     "t_slot": (
         inputs: {"light": "t_chain_1", "heavy": "t_heavy", "dodge": "t_roll", "technique.1": "t_tech"},
         stagger: "t_stagger",
-        buffer: SingleSlot(priority: [("dodge", 60), ("technique.1", 55), ("heavy", 40), ("light", 30)], consume_on_refusal: true),
+        buffer: SingleSlot(priority: [("dodge", 60), ("technique.1", 55), ("heavy", 40), ("light", 30)]),
     ),
-    // The same slot, keeping a refused press until its time runs out.
-    "t_slot_keep": (
-        inputs: {"light": "t_chain_1", "heavy": "t_heavy", "dodge": "t_roll"},
+    // The assist's limits, `face: Keep`, a shared slot cut in a windup, a charge's own costs.
+    "t_more": (
+        inputs: {
+            "technique.1": "t_close",
+            "technique.2": "t_close_free",
+            "technique.3": "t_sight",
+            "technique.4": "t_snap",
+            "technique.5": "t_lunge_b",
+            "technique.6": "t_spin",
+            "technique.7": "t_turn",
+            "dodge": "t_roll_keep",
+            "light": "t_roll_turn",
+        },
         stagger: "t_stagger",
-        buffer: SingleSlot(priority: [("dodge", 60), ("heavy", 40), ("light", 30)]),
     ),
 }

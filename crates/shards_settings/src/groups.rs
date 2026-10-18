@@ -208,11 +208,21 @@ pub struct ControlSettings {
     pub mouse_sensitivity: f64,
     /// Looking up moves the camera up instead of down.
     pub invert_y: bool,
+    /// Attacks may correct their direction toward the lock-on target (the attack assist). Off:
+    /// the controls hold `assist_off` for the player's body, and an attack with an assist does not
+    /// track the target.
+    pub attack_assist: bool,
 }
 
 impl Default for ControlSettings {
     fn default() -> Self {
-        Self { bindings: Default::default(), hold_or_toggle: Default::default(), mouse_sensitivity: 1.0, invert_y: false }
+        Self {
+            bindings: Default::default(),
+            hold_or_toggle: Default::default(),
+            mouse_sensitivity: 1.0,
+            invert_y: false,
+            attack_assist: true,
+        }
     }
 }
 

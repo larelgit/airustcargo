@@ -13,7 +13,8 @@ use shards_action::{
 };
 use shards_content::db::Source;
 use shards_content::{ContentDb, ContentKinds};
-use shards_core::Intent;
+use shards_action::fighter::Charges;
+use shards_core::{Intent, NetRole};
 
 use crate::common::*;
 use crate::reactions::{record, seen};
@@ -312,8 +313,8 @@ fn a_blocked_hit_counts_as_landed() {
 }
 
 #[test]
-fn miss_check_runs_before_the_tick_of_its_sweep() {
-    // The window is (0.2, 0.3]: the check comes at 0.3 s, before that tick's sweep.
+fn a_hit_on_the_checking_tick_counts_as_landed() {
+    // The window is (0.2, 0.3]: the check comes at 0.3 s, after that tick's hits.
     let mut app = arena();
     let hero = me(&mut app, "t_fighter");
     let victim = dummy(&mut app, Vec3::new(0.0, 0.0, -20.0));
@@ -322,18 +323,9 @@ fn miss_check_runs_before_the_tick_of_its_sweep() {
     app.world_mut().get_mut::<Transform>(victim).unwrap().translation = Vec3::new(0.0, 0.0, -2.0);
     step(&mut app, 1);
     assert_eq!(hp(&app, victim), 90.0, "the last tick of the window hits");
-    assert_eq!(lines(&app, "missed").len(), 1, "but it came after the check: {:#?}", journal(&app));
-
-    // A tick earlier, it counts.
-    let mut app = arena();
-    let hero = me(&mut app, "t_fighter");
-    let victim = dummy(&mut app, Vec3::new(0.0, 0.0, -20.0));
-    press(&mut app, hero, "technique.3");
-    step(&mut app, 16);
-    app.world_mut().get_mut::<Transform>(victim).unwrap().translation = Vec3::new(0.0, 0.0, -2.0);
-    step(&mut app, 2);
-    assert_eq!(hp(&app, victim), 90.0);
-    assert!(lines(&app, "missed").is_empty(), "{:#?}", journal(&app));
+    assert!(lines(&app, "missed").is_empty(), "and it counts: {:#?}", journal(&app));
+    assert!(extras(&app, hero).is_some_and(|x| x.checked && x.landed));
+    assert!(close(run(&app, hero).length, 0.5), "no extra recovery: {}", run(&app, hero).length);
 }
 
 #[test]
@@ -357,6 +349,10 @@ fn extend_recovery_lengthens_the_run() {
     press(&mut app, hero, "technique.7");
     step(&mut app, 5);
     assert!(!extend_recovery(app.world_mut(), hero, -1.0), "a negative bonus is refused");
+    // A co-op client does not simulate: the host's state brings the longer run.
+    app.world_mut().insert_resource(NetRole::Client);
+    assert!(!extend_recovery(app.world_mut(), hero, 0.5), "not on a client");
+    app.world_mut().remove_resource::<NetRole>();
     assert!(extend_recovery(app.world_mut(), hero, 0.5));
     assert!(close(run(&app, hero).length, 1.2));
     // 0.7 s + 0.5 s: tick 72.
@@ -488,10 +484,10 @@ fn queue_is_capped_when_the_run_ends() {
     assert_eq!(lines(&app, "light rejected").len(), 1, "{:#?}", journal(&app));
 }
 
-/// Godot's light chain without `queue_early`: a press in the windup or the active part lives the
+/// A chain whose queue span is its recovery: a press in the windup or the active part lives the
 /// buffer's 0.15 s; one in the recovery lives 0.15 s past the chain's opening.
 #[test]
-fn godot_queue_life_light_in_recovery_only() {
+fn queue_span_holds_only_the_presses_made_in_it() {
     let mut app = arena();
     let hero = me(&mut app, "t_fighter");
     run_until(&mut app, hero, "light", 6);
@@ -507,9 +503,9 @@ fn godot_queue_life_light_in_recovery_only() {
     assert!(close(left, TTL + (0.5 - t) - DT), "{left} at {t}");
 }
 
-/// Godot's `queue_early`: a press from the first tick lives 0.15 s past the chain's opening.
+/// A queue span from the first tick: an early press lives 0.15 s past the chain's opening.
 #[test]
-fn godot_queue_life_light_queued_early() {
+fn queue_span_from_the_start_holds_an_early_press() {
     let mut app = arena();
     let hero = me(&mut app, "t_early");
     let t = run_until(&mut app, hero, "light", 6);
@@ -519,10 +515,10 @@ fn godot_queue_life_light_queued_early() {
     assert_eq!(action(&app, hero), "t_chain_2");
 }
 
-/// Godot's light with no chain: its opening is the end of the action, and a press in the recovery
-/// starts the same action again when it is over.
+/// No chain: the window is at the action's end, and a press in the recovery starts the same action
+/// again when it is over.
 #[test]
-fn godot_queue_life_light_without_a_chain() {
+fn queue_window_at_the_end_restarts_the_action() {
     let mut app = arena();
     let hero = me(&mut app, "t_tail");
     let t = run_until(&mut app, hero, "light", 20);
@@ -541,10 +537,10 @@ fn godot_queue_life_light_without_a_chain() {
     assert_eq!(run(&app, hero).instance, instance + 1);
 }
 
-/// Godot's technique: a press of a technique at any time lives 0.15 s past the moment a technique
-/// may cut it (`technique_cancel_time`); with no such moment, the buffer's 0.15 s.
+/// A technique: a press of a technique at any time lives 0.15 s past the moment a technique may cut
+/// it; with no such moment, the buffer's 0.15 s.
 #[test]
-fn godot_queue_life_technique() {
+fn queue_span_holds_a_technique_for_its_cancel_window() {
     let mut app = arena();
     let hero = me(&mut app, "t_fighter");
     let t = run_until(&mut app, hero, "technique.1", 6);
@@ -612,35 +608,29 @@ fn single_slot_keeps_the_stronger_press() {
 }
 
 #[test]
-fn single_slot_drops_a_refused_press() {
-    // Free to act but short of stamina: the press is tried and dropped at once.
+fn single_slot_retries_a_refused_press_until_it_expires() {
+    // Free to act but short of stamina: the press waits its time, tried on every tick.
     let mut app = arena();
     let hero = me(&mut app, "t_slot");
-    set_stamina(&mut app, hero, 5.0);
-    press(&mut app, hero, "heavy");
-    step(&mut app, 1);
-    assert!(queued(&app, hero).is_empty());
-    let e = id(&app, hero);
-    assert_eq!(lines(&app, "rejected").len(), 1, "{:#?}", journal(&app));
-    assert!(lines(&app, &format!("1 {e} heavy rejected: ")).len() == 1, "{:#?}", journal(&app));
-    let refused = fails(&mut app, "heavy_attack", json!({}));
-    assert!(refused.contains("(a refused press is dropped, not kept)"), "{refused}");
-
-    // A press the running action holds back still waits.
-    let mut app = arena();
-    let hero = me(&mut app, "t_slot");
-    run_until(&mut app, hero, "heavy", 2);
-    queue(&mut app, hero, "light");
-    assert_eq!(queued(&app, hero).len(), 1);
-
-    // Without `consume_on_refusal` it waits out its time.
-    let mut app = arena();
-    let hero = me(&mut app, "t_slot_keep");
     set_stamina(&mut app, hero, 5.0);
     let left = queue(&mut app, hero, "heavy");
-    assert!(close(left, TTL - DT));
-    step(&mut app, 9);
+    assert!(close(left, TTL - DT), "{left}");
+    step(&mut app, 8);
+    assert!(lines(&app, "rejected").is_empty(), "{:#?}", journal(&app));
+    step(&mut app, 1);
     assert_eq!(lines(&app, "heavy rejected").len(), 1, "{:#?}", journal(&app));
+    assert_eq!(action(&app, hero), "idle");
+
+    // The stamina comes back inside its time: it starts.
+    let mut app = arena();
+    let hero = me(&mut app, "t_slot");
+    set_stamina(&mut app, hero, 5.0);
+    queue(&mut app, hero, "heavy");
+    step(&mut app, 3);
+    set_stamina(&mut app, hero, 50.0);
+    step(&mut app, 1);
+    assert_eq!(action(&app, hero), "t_heavy");
+    assert!(lines(&app, "rejected").is_empty(), "{:#?}", journal(&app));
 }
 
 // --- while_held and the tools --------------------------------------------------------------
@@ -677,4 +667,168 @@ fn tools_press_and_hold() {
     assert_eq!(action(&app, hero), "t_heavy");
     let out = ok(&mut app, "step", json!({"ticks": 5, "until": [{"named": "charging"}]}));
     assert!(!out.contains("charging"), "{out}");
+
+    // An action that goes on only while its input is held, pressed without holding it.
+    let mut app = arena();
+    me(&mut app, "t_fighter");
+    let out = ok(&mut app, "use_technique", json!({"slot": 2}));
+    assert_eq!(out, "ok: t_beam (a tap: it stops as soon as technique.2 is not held; hold=true keeps it going)");
+    let out = ok(&mut app, "use_technique", json!({"slot": 2, "hold": true}));
+    assert!(!out.contains("a tap"), "{out}");
+}
+
+// --- the assist's limits, steering, `face: Keep` --------------------------------------------
+
+fn facing_deg(app: &App, e: Entity) -> f32 {
+    yaw_deg(run(app, e).facing)
+}
+
+#[test]
+fn closing_cap_limits_the_approach_the_turning_adds() {
+    // The target is 6 m east; the run starts facing north and turns to it at once while it lunges 4 m.
+    let lunge = |input: &str| {
+        let mut app = arena();
+        let hero = me(&mut app, "t_more");
+        let east = dummy(&mut app, Vec3::new(6.0, 0.0, 0.0));
+        lock(&mut app, hero, east);
+        press(&mut app, hero, input);
+        step(&mut app, 40);
+        let closed = extras(&app, hero).unwrap().closed;
+        (feet(&app, hero), closed)
+    };
+    let (capped, closed) = lunge("technique.1");
+    assert!(close(closed, 0.4), "the cap is used up: {closed}");
+    assert!(capped.x > 0.3 && capped.x < 0.45, "about 0.4 m toward it: {capped}");
+    let (free, closed) = lunge("technique.2");
+    assert!(free.x > 3.0, "no cap: {free}");
+    assert!(closed == 0.0, "nothing to count without a cap: {closed}");
+}
+
+#[test]
+fn assist_needs_sight_of_the_target() {
+    let mut app = arena();
+    let hero = me(&mut app, "t_more");
+    let east = dummy(&mut app, Vec3::new(5.0, 0.0, 0.0));
+    let blocker = wall(app.world_mut(), Vec3::new(2.0, 0.0, -2.0), Vec3::new(2.4, 3.0, 2.0));
+    step(&mut app, 1);
+    lock(&mut app, hero, east);
+    press(&mut app, hero, "technique.3");
+    step(&mut app, 10);
+    assert!(close(facing_deg(&app, hero), 0.0), "behind the wall it does not track: {}", facing_deg(&app, hero));
+    app.world_mut().despawn(blocker);
+    step(&mut app, 10);
+    assert!(facing_deg(&app, hero) < -10.0, "in sight it turns again: {}", facing_deg(&app, hero));
+
+    // Out of sight the movement input still steers it.
+    let mut app = arena();
+    let hero = me(&mut app, "t_more");
+    let east = dummy(&mut app, Vec3::new(5.0, 0.0, 0.0));
+    wall(app.world_mut(), Vec3::new(2.0, 0.0, -2.0), Vec3::new(2.4, 3.0, 2.0));
+    step(&mut app, 1);
+    lock(&mut app, hero, east);
+    app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = Vec3::X;
+    press(&mut app, hero, "technique.3");
+    step(&mut app, 10);
+    assert!(close(facing_deg(&app, hero), -15.0), "{}", facing_deg(&app, hero));
+}
+
+#[test]
+fn assist_off_stops_the_tracking() {
+    let mut app = arena();
+    let hero = me(&mut app, "t_more");
+    let east = dummy(&mut app, Vec3::new(5.0, 0.0, 0.0));
+    lock(&mut app, hero, east);
+    hold(&mut app, hero, "assist_off", true);
+    press(&mut app, hero, "technique.3");
+    step(&mut app, 10);
+    assert!(close(facing_deg(&app, hero), 0.0), "the player turned it off: {}", facing_deg(&app, hero));
+    hold(&mut app, hero, "assist_off", false);
+    step(&mut app, 10);
+    assert!(close(facing_deg(&app, hero), -15.0), "on again: {}", facing_deg(&app, hero));
+
+    // An action without an assist tracks as it always did.
+    let mut app = arena();
+    let hero = me(&mut app, "t_more");
+    let east = dummy(&mut app, Vec3::new(5.0, 0.0, 0.0));
+    lock(&mut app, hero, east);
+    hold(&mut app, hero, "assist_off", true);
+    press(&mut app, hero, "technique.7");
+    step(&mut app, 10);
+    assert!(close(facing_deg(&app, hero), -15.0), "{}", facing_deg(&app, hero));
+}
+
+#[test]
+fn turn_spans_follow_the_movement_input_without_a_target() {
+    let mut app = arena();
+    let hero = me(&mut app, "t_more");
+    app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = Vec3::X;
+    press(&mut app, hero, "technique.7");
+    step(&mut app, 10);
+    assert!(close(facing_deg(&app, hero), -15.0), "90 degrees a second toward the stick: {}", facing_deg(&app, hero));
+    let at = feet(&app, hero);
+    assert!(Vec2::new(at.x, at.z).length() < 1e-3, "the action owns the body: it steers, it does not walk: {at}");
+}
+
+#[test]
+fn face_keep_moves_the_body_without_turning_it() {
+    // A roll east (the movement input), 2 m in 0.4 s.
+    let roll = |input: &str| {
+        let mut app = arena();
+        let hero = me(&mut app, "t_more");
+        app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = Vec3::X;
+        press(&mut app, hero, input);
+        step(&mut app, 1);
+        app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = Vec3::ZERO;
+        step(&mut app, 20);
+        let body = yaw_deg(*app.world().get::<Transform>(hero).unwrap().forward());
+        (body, feet(&app, hero), facing_deg(&app, hero))
+    };
+    let (body, at, facing) = roll("dodge");
+    assert!(close(body, 0.0), "the body still faces north: {body}");
+    assert!(close(facing, -90.0), "the run points east: {facing}");
+    assert!(at.x > 1.4 && at.z.abs() < 0.05, "it rolled east: {at}");
+    let (body, at, _) = roll("light");
+    assert!(body < -60.0, "`face: Run` turns the body: {body}");
+    assert!(at.x > 1.4, "{at}");
+}
+
+// --- what a cut and a charge pay ------------------------------------------------------------
+
+#[test]
+fn a_cut_windup_on_a_shared_slot_keeps_the_new_cooldown() {
+    let mut app = arena();
+    let hero = me(&mut app, "t_more");
+    press(&mut app, hero, "technique.4");
+    step(&mut app, 12);
+    assert_eq!(cooldown(&app, hero, "lunge"), 0.0, "its own 0.1 s are over");
+    press(&mut app, hero, "technique.5");
+    step(&mut app, 1);
+    assert_eq!(action(&app, hero), "t_lunge_b");
+    assert_eq!(ends(&app, "t_snap"), [ActionEnd::Cancelled]);
+    assert!(close(cooldown(&app, hero, "lunge"), 3.0 - DT), "the cut's share first, then the lunge's 3 s: {}", cooldown(&app, hero, "lunge"));
+}
+
+#[test]
+fn charge_waits_for_its_cooldown_and_pays_its_charge() {
+    // The charged action's slot is busy until 0.21 s: the turn waits for it (held from 0.1 s).
+    let mut app = arena();
+    let hero = me(&mut app, "t_more");
+    app.world_mut().entity_mut(hero).insert(Charges::new([("flask", 2), ("orb", 1)]));
+    app.world_mut().get_mut::<Cooldowns>(hero).unwrap().start("spin", 0.21);
+    press_hold(&mut app, hero, "technique.6");
+    step(&mut app, 13);
+    assert_eq!(action(&app, hero), "t_spin", "the slot is still busy");
+    step(&mut app, 1);
+    assert_eq!(action(&app, hero), "t_spin_full", "ready: it turns");
+    assert_eq!(app.world().get::<Charges>(hero).unwrap().get("orb").unwrap().current, 0, "an orb spent");
+    assert!(close(cooldown(&app, hero, "spin"), 2.0 - DT), "{}", cooldown(&app, hero, "spin"));
+
+    // No orb: it never turns.
+    let mut app = arena();
+    let hero = me(&mut app, "t_more");
+    app.world_mut().entity_mut(hero).insert(Charges::new([("flask", 2), ("orb", 0)]));
+    press_hold(&mut app, hero, "technique.6");
+    step(&mut app, 20);
+    assert_eq!(action(&app, hero), "t_spin");
+    assert_eq!(cooldown(&app, hero, "spin"), 0.0, "a refused turn pays nothing");
 }

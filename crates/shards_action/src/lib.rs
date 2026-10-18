@@ -139,9 +139,9 @@ pub use combat::{
 };
 pub use cue::{ActionSound, SoundCue};
 pub use def::{
-    ActionDef, BufferMode, CancelDef, ChargeDef, CombatTuning, Cost, Effect, GuardDef, HitDef, HitFlag, HitShape, HoldDef, Local, MotionBake,
+    ActionDef, AssistDef, BufferMode, CancelDef, ChargeDef, CombatTuning, Cost, Effect, GuardDef, HitDef, HitFlag, HitShape, HoldDef, Local, MotionBake,
     ReactionDef, StaminaMode,
-    MovesetDef, Phase, Span, Steer, TelegraphDef, TimedEffect, Transition,
+    Face, MovesetDef, Phase, Span, Steer, TelegraphDef, TimedEffect, Transition,
 };
 pub use fighter::{
     grant_protection, set_reaction_immunity, Armor, Charge, Charges, Cooldown, Cooldowns, Dead, Fighter, Health, Invulnerable, Knockback, Poise,
@@ -153,7 +153,7 @@ pub use machine::{
     ActionStarted,
     ActionState, Blocker, FighterView, Healed, InputBuffer, Queued, RunExtras, Running, Start, Telegraph,
 };
-pub use predict::{shown_state, ActionPredictor, PredictedAction, CONFIRM_SLACK};
+pub use predict::{shown_queue, shown_state, ActionPredictor, PredictedAction, CONFIRM_SLACK};
 pub use status::{
     statuses_to_modifiers, NoStatusSlow,
     add_status_buildup, StatusApplied, StatusDef, StatusEffects, StatusExpired, StatusHook, StatusHooks, StatusResist,
@@ -347,7 +347,7 @@ impl Plugin for ActionPlugin {
                     orders::follow_attack_orders.in_set(ActionSystems::Orders),
                     machine::run_machines.in_set(ActionSystems::Machine),
                     machine::apply_effects.in_set(ActionSystems::Effects),
-                    machine::check_misses.in_set(ActionSystems::Hits).before(combat::resolve_hits),
+                    machine::check_misses.in_set(ActionSystems::Hits).after(combat::resolve_hits),
                     combat::resolve_hits.in_set(ActionSystems::Hits),
                     fighter::push_bodies.in_set(ActionSystems::Push),
                     fighter::update_fighters.in_set(ActionSystems::Fighters),

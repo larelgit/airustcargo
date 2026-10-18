@@ -128,14 +128,14 @@ pub fn knockback_sane(world: &World) -> Option<String> {
 }
 
 /// The engine rule `action.extras_follow_run`: a [`RunExtras`] belongs to the run its fighter is
-/// running (same `instance`), its `extra` is a finite number `>= 0` and its `scale` a finite
-/// number `>= 0`.
+/// running (same `instance`), and its `extra` and `closed` are finite numbers `>= 0`.
 ///
 /// The machine puts extras in when a run that needs them starts and takes them out when it ends,
 /// on every path a run ends by (its time runs out, a cancel, a forced action, a death, a revive,
 /// a release, a hot reload); extras left behind would hand a later run a stale hold, landing
 /// flag or extra recovery. `extra` only grows by `miss_recovery` (validated `>= 0`) and
-/// [`extend_recovery`](crate::extend_recovery) (which refuses a negative number).
+/// [`extend_recovery`](crate::extend_recovery) (which refuses a negative number), and `closed` only
+/// by the approach the closing cap lets through (`> 0`).
 pub fn extras_follow_run(world: &World) -> Option<String> {
     let mut bad = Offenders::default();
     with_query::<(&AiId, &RunExtras, Option<&ActionState>), (), _>(world, |query| {
@@ -144,8 +144,8 @@ pub fn extras_follow_run(world: &World) -> Option<String> {
             if running.is_none_or(|r| r.instance != x.instance) {
                 let now = running.map_or("no action".to_owned(), |r| format!("instance {} ({})", r.instance, r.action));
                 bad.note(*id, || format!("RunExtras of instance {} while it runs {now}", x.instance));
-            } else if !(x.extra.is_finite() && x.extra >= 0.0 && x.scale.is_finite() && x.scale >= 0.0) {
-                bad.note(*id, || format!("RunExtras extra = {}, scale = {}: finite numbers >= 0", x.extra, x.scale));
+            } else if !(x.extra.is_finite() && x.extra >= 0.0 && x.closed.is_finite() && x.closed >= 0.0) {
+                bad.note(*id, || format!("RunExtras extra = {}, closed = {}: finite numbers >= 0", x.extra, x.closed));
             }
         }
     });

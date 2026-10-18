@@ -1,5 +1,5 @@
 // The action timeline (B2a): charge by hold, turn spans and assist, miss recovery, cooldown keys
-// and shares, the press queue, `while_held`. Net ids 70-89.
+// and shares, the press queue, `while_held`, the assist's limits, `face: Keep`. Net ids 70-99.
 {
     // Held 0.2 s, it turns into `t_heavy_full` (until the windup ends at 0.4 s); 20 stamina, the
     // charged one 50 (30 more at the turn).
@@ -29,7 +29,7 @@
         phases: [("windup", 0.4), ("active", 0.1), ("recovery", 0.2)],
         hits: [(span: Phase("active"), shape: Cone(range: 1.0, angle: 60), damage: 1)],
         track_until: 0.4,
-        assist: 30,
+        assist: (angle: 30),
     ),
     // The old rule, no extras: it snaps to its target until 0.4 s.
     "t_track": (
@@ -112,4 +112,60 @@
         steer: Move,
     ),
     "t_stagger": (net_id: 85, phases: [("stagger", 0.5)]),
+    // Turns toward its target fast while it lunges 4 m; the turning adds at most 0.4 m of approach
+    // over the way it first faced. `t_close_free` is the same with no cap.
+    "t_close": (
+        net_id: 86,
+        phases: [("windup", 0.1), ("active", 0.6)],
+        displacement: [(0.1, 0.0), (0.7, 4.0)],
+        turn: [(Phases("windup", "active"), 720)],
+        assist: (angle: 180, close: 0.4),
+    ),
+    "t_close_free": (
+        net_id: 87,
+        phases: [("windup", 0.1), ("active", 0.6)],
+        displacement: [(0.1, 0.0), (0.7, 4.0)],
+        turn: [(Phases("windup", "active"), 720)],
+        assist: (angle: 180),
+    ),
+    // Turns toward its target at 90 degrees a second, only while it sees it.
+    "t_sight": (
+        net_id: 88,
+        phases: [("windup", 0.5), ("active", 0.1)],
+        turn: [(Phase("windup"), 90)],
+        assist: (angle: 180, sight: true),
+    ),
+    // A roll that moves the body 2 m without turning it; `t_roll_turn` turns it.
+    "t_roll_keep": (
+        net_id: 89,
+        phases: [("roll", 0.4)],
+        displacement: [(0.4, 2.0)],
+        steer: Move,
+        face: Keep,
+    ),
+    "t_roll_turn": (
+        net_id: 90,
+        phases: [("roll", 0.4)],
+        displacement: [(0.4, 2.0)],
+        steer: Move,
+    ),
+    // Its 0.1 s cooldown, on the slot `lunge`, is over long before its windup; cut in the windup,
+    // it would keep half of it.
+    "t_snap": (
+        net_id: 91,
+        phases: [("windup", 0.5), ("active", 0.1)],
+        cost: (cooldown: 0.1, cooldown_key: "lunge", cooldown_if_interrupted: 0.5),
+        cancels: [(span: Phase("windup"), into: [Input("technique.5")])],
+    ),
+    // Held 0.1 s, it turns into `t_spin_full`, which spends an orb and has its own cooldown slot.
+    "t_spin": (
+        net_id: 92,
+        phases: [("windup", 0.4), ("active", 0.1)],
+        charge: (after: 0.1, into: "t_spin_full"),
+    ),
+    "t_spin_full": (
+        net_id: 93,
+        phases: [("windup", 0.4), ("active", 0.1)],
+        cost: (cooldown: 2.0, cooldown_key: "spin", charge: "orb"),
+    ),
 }

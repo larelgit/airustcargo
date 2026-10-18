@@ -44,6 +44,7 @@ use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::input::InputSystems;
 use bevy::prelude::*;
 use shards_content::{ContentAppExt, ContentDb};
+use shards_core::input_names::ASSIST_OFF;
 use shards_core::{Intent, LocalPlayer, Press};
 use shards_settings::{AccessibilitySettings, ControlSettings, SettingsAppExt, SettingsStorage};
 
@@ -458,6 +459,7 @@ fn read_input(
     map: Res<InputMap>,
     contexts: Res<InputContexts>,
     accessibility: Option<Res<AccessibilitySettings>>,
+    controls: Option<Res<ControlSettings>>,
     mut state: ResMut<ControlState>,
     mut applied: ResMut<Applied>,
     mut players: Query<(Entity, &mut Intent), With<LocalPlayer>>,
@@ -569,6 +571,11 @@ fn read_input(
         presses.clear();
         desired_held.clear();
         move_axis = Vec2::ZERO;
+    }
+    // The player turned the attack assist off: the body holds `assist_off` (in menus too: it is a
+    // setting, not a button).
+    if controls.is_some_and(|c| !c.attack_assist) {
+        desired_held.insert(ASSIST_OFF.to_owned());
     }
 
     // Nobody to hear it: nothing counts as written, so a body that appears later (or

@@ -218,7 +218,7 @@ fn run_extras_of_another_run_stop_the_game() {
         world.entity_mut(player).insert(RunExtras { instance, extra: -1.0, ..default() });
     });
     let line = stops_on(&mut app, "action.extras_follow_run", 2);
-    assert!(line.contains("e5 RunExtras extra = -1, scale = 1: finite numbers >= 0"), "{line}");
+    assert!(line.contains("e5 RunExtras extra = -1, closed = 0: finite numbers >= 0"), "{line}");
 }
 
 #[test]

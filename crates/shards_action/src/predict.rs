@@ -20,9 +20,9 @@
 //!
 //! A host run is new to this machine when its instance is new or when it is the instance shown
 //! here with another action (the host turned a charge this machine did not). The run shown
-//! takes what only the host changes: the extra recovery of a miss, the displacement scale. A run
+//! takes what only the host changes: the extra recovery of a miss, whether a hit landed. A run
 //! the host ended with no new one (no event says so) leaves the body to the host's state, and a
-//! charge the host never turned (it had no stamina) goes back to the host's action once the
+//! charge the host never turned (the stamina, a charge or the cooldown was not there) goes back to the host's action once the
 //! charge could no longer turn.
 //!
 //! Hits, effects, damage, stamina spent and statuses are never predicted: they come with the
@@ -37,14 +37,14 @@ use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::input_names::SPRINT;
 use shards_core::{Intent, NetPrediction, Predicted};
-use shards_motion::{CharacterController, CharacterParams, LocomotionInput, MotionState, MoveModifiers};
+use shards_motion::{CharacterController, CharacterParams, LocomotionInput, MotionState, MoveModifiers, PhysicsWorld};
 
 use crate::combat::Died;
 use crate::def::{ActionDef, BufferMode, CombatTuning, MovesetDef, EPS};
 use crate::fighter::{sprint_rule, Charges, Cooldowns, Dead, Fighter, Stamina};
 use crate::machine::{
-    advance, buffer_press, cap_queue, charge_due, choose_in, free_sprint, press_life, refused_press, start_facing, steer_locomotion,
-    step_run, understands, ActionRejected, ActionStarted, ActionState, FighterView, Queued, RunExtras, Running,
+    advance, body_height, buffer_press, cap_queue, charge_due, choose_in, free_sprint, in_sight, press_life, start_facing,
+    steer_locomotion, step_run, tracked, understands, ActionRejected, ActionStarted, ActionState, FighterView, Queued, RunExtras, Running,
 };
 
 /// Ticks past a press's tick (and the lead) after which a prediction the host has not
@@ -71,7 +71,7 @@ pub struct PredictedAction {
     /// The host started it too (or started it itself).
     pub confirmed: bool,
     /// The run's [`RunExtras`] as this machine keeps them (its own hold; the host's extra
-    /// recovery and scale), when its action needs them.
+    /// recovery and landing), when its action needs them.
     pub extras: Option<RunExtras>,
 }
 
@@ -151,8 +151,9 @@ pub(crate) fn predict_actions(
     tick: Res<SimTick>,
     mut net: ResMut<NetPrediction>,
     mut predictor: ResMut<ActionPredictor>,
+    physics: Res<PhysicsWorld>,
     mut commands: Commands,
-    positions: Query<&Transform>,
+    positions: Query<(&Transform, Option<&CharacterParams>)>,
     mut bodies: Query<PredictedBody, With<Predicted>>,
 ) {
     let dt = time.delta_secs();
@@ -315,7 +316,8 @@ pub(crate) fn predict_actions(
     // 3. This tick's presses: buffered as the host buffers them; one may start now.
     let moveset = db.get::<MovesetDef>(&b.fighter.moveset);
     let mode = moveset.map_or(&BufferMode::PerInput, |m| &m.buffer);
-    let ttl = CombatTuning::of(&db).input_buffer;
+    let tuning = CombatTuning::of(&db);
+    let (ttl, sight) = (tuning.input_buffer, tuning.sight_height);
     if b.dead {
         predictor.queued.clear();
     } else {
@@ -328,7 +330,14 @@ pub(crate) fn predict_actions(
     }
     let here = b.transform.translation;
     let forward = *b.transform.forward();
-    let target = b.intent.target.and_then(|id| index.get(id)).and_then(|e| positions.get(e).ok()).map(|t| t.translation);
+    let locked = b.intent.target.and_then(|id| index.get(id)).and_then(|e| positions.get(e).ok().map(|p| (e, p)));
+    let target = locked.map(|(_, (t, _))| t.translation);
+    // The machine's sight check for an assist that needs it.
+    let mine = body_height(b.body.and_then(|(_, p)| p));
+    let sees = || {
+        let Some((them, (there, params))) = locked else { return true };
+        in_sight(&physics, (entity, here, mine), (them, there.translation, body_height(params)), sight)
+    };
     let instance = shown.as_ref().map_or(0, |s| s.run.instance + 1).max(b.state.started).max(predictor.seen);
     let local = ActionState { current: shown.as_ref().map(|s| s.run.clone()), started: instance };
     let view = FighterView {
@@ -341,13 +350,6 @@ pub(crate) fn predict_actions(
         held: &b.intent.held,
         dead: b.dead,
     };
-    // A single slot that drops what is refused drops it here too (the host says why).
-    if !b.dead
-        && !predictor.queued.is_empty()
-        && let Some((i, _)) = refused_press(&view, &predictor.queued, dt)
-    {
-        predictor.queued.remove(i);
-    }
     let choice = (!b.dead).then(|| choose_in(&view, &predictor.queued, dt)).flatten();
     if let Some(choice) = choice
         && let Some(def) = db.get::<ActionDef>(&choice.start.action)
@@ -401,7 +403,8 @@ pub(crate) fn predict_actions(
     if let Some(s) = shown.as_mut() {
         match db.get::<ActionDef>(&s.run.action) {
             Some(mut def) => {
-                (_, external) = step_run(&mut s.run, def, s.extras.as_mut(), b.intent, here, target, dt);
+                let aimed = tracked(def, b.intent, target, sees);
+                (_, external) = step_run(&mut s.run, def, s.extras.as_mut(), b.intent, here, aimed, dt);
                 s.run.refresh(def, RunExtras::extra_of(s.extras.as_ref()));
                 if let Some(into) = charge_due(&s.run, def, s.extras.as_ref())
                     && let Some(into_def) = db.get::<ActionDef>(into)
@@ -512,15 +515,14 @@ fn take_over(
 }
 
 /// What only the host changes in the extras of a run shown here: the extra recovery of a miss,
-/// the displacement's scale, whether a hit landed and the miss check was made (and the host's
-/// numbering of the run). The hold stays this machine's, which reads the input first.
+/// whether a hit landed and the miss check was made (and the host's numbering of the run). The
+/// hold and the closing cap's count stay this machine's, which reads the input and moves the body first.
 fn adopt(mine: &mut Option<RunExtras>, host: Option<RunExtras>) {
     let Some(h) = host else { return };
     match mine {
         Some(x) => {
             x.instance = h.instance;
             x.extra = x.extra.max(h.extra);
-            x.scale = h.scale;
             x.landed |= h.landed;
             x.checked |= h.checked;
         }
@@ -540,6 +542,13 @@ pub fn shown_state(world: &World, entity: Entity) -> Option<ActionState> {
     let current = e.get::<PredictedAction>().map(|p| p.run.clone());
     let started = current.as_ref().map_or(started, |r| started.max(r.instance + 1));
     Some(ActionState { current, started })
+}
+
+/// The presses waiting for the own body on a client: the predictor's buffer, which the host's
+/// follows. `None` anywhere else (the body's `InputBuffer` is the truth there).
+pub fn shown_queue(world: &World, entity: Entity) -> Option<Vec<Queued>> {
+    world.get::<Predicted>(entity)?;
+    Some(world.get_resource::<ActionPredictor>().map(|p| p.queued.clone()).unwrap_or_default())
 }
 
 fn heard_started(

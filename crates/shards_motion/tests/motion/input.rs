@@ -921,6 +921,25 @@ fn hold_to_toggle_turns_held_buttons_into_toggles() {
 }
 
 #[test]
+fn turning_the_attack_assist_off_holds_assist_off() {
+    let mut app = input_app();
+    let e = local_player(&mut app);
+    frame(&mut app);
+    assert!(!intent(&app, e).is_held("assist_off"), "on by default");
+    set_control(&mut app, "attack_assist", "false");
+    frame(&mut app);
+    assert!(intent(&app, e).is_held("assist_off"), "the setting holds it for the player's body");
+    // A menu does not let go of it: it is a setting, not a button.
+    app.world_mut().resource_mut::<InputContexts>().push("menu");
+    frame(&mut app);
+    assert!(intent(&app, e).is_held("assist_off"));
+    app.world_mut().resource_mut::<InputContexts>().pop();
+    set_control(&mut app, "attack_assist", "true");
+    frame(&mut app);
+    assert!(!intent(&app, e).is_held("assist_off"));
+}
+
+#[test]
 fn the_look_and_accessibility_settings_reach_the_camera() {
     let mut app = input_app();
     assert_eq!(*app.world().resource::<CameraSettings>(), CameraSettings::default(), "the defaults agree");

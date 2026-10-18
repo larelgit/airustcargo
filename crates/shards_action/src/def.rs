@@ -55,6 +55,10 @@ fn is_true(v: &bool) -> bool {
     *v
 }
 
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
 fn yes() -> bool {
     true
 }
@@ -414,6 +418,44 @@ pub enum Steer {
     Move,
 }
 
+/// Whether a run turns the body it runs on ([`ActionDef::face`]).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Face {
+    /// The body faces where the run points (the old rule).
+    #[default]
+    Run,
+    /// The run moves the body along its own facing but does not turn it: the body keeps the facing
+    /// it had, and only what faces it outside actions (a lock-on target, an aim point) still turns
+    /// it (a roll that leaves the body looking where it looked).
+    Keep,
+}
+
+impl Face {
+    fn is_run(&self) -> bool {
+        *self == Face::Run
+    }
+}
+
+/// Attack assist ([`ActionDef::assist`]): how far a run that tracks its lock-on target may be
+/// drawn toward it, and when the assist is off.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AssistDef {
+    /// The facing stays within this many degrees of the direction to the target when the run
+    /// started.
+    pub angle: f32,
+    /// The most (m) the assist's turning may add to the body's approach to the target over the
+    /// run: the run's displacement along its turned facing, measured toward the target, beyond
+    /// what the same displacement along the direction it started in would give. Past it the
+    /// excess is taken off the displacement. `None`: no cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close: Option<f32>,
+    /// The assist is off while a `LayerMask::WORLD` collider lies between the chests of the
+    /// fighter and its target (at `CombatTuning::sight_height`): the run does not track it then.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub sight: bool,
+}
+
 /// Where an action's `displacement` is baked from: clip `clip` of animset `animset`, whose
 /// `root_motion` bone moves along the ground ([`crate::bake`]).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -551,14 +593,18 @@ pub struct ActionDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub charge: Option<ChargeDef>,
     /// Turn rate while tracking, per span, in degrees per second (the largest of the spans open
-    /// in a tick); outside every span the facing holds. The run starts from the body's facing,
-    /// with no snap. Empty: `track_until` (the old rule). Not both.
+    /// in a tick, for the whole tick: a span that opens or closes inside a tick turns it a full
+    /// tick); outside every span the facing holds. The run starts from the body's facing, with no
+    /// snap, and turns toward its lock-on target, else the aim point, else the movement input (a
+    /// player steering the attack). Empty: `track_until` (the old rule). Not both.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub turn: Vec<(Span, f32)>,
-    /// Attack assist: with a lock-on target, the facing stays within this many degrees of the
-    /// direction to the target when the action started.
+    /// Attack assist: with a lock-on target, the facing stays within `angle` degrees of the
+    /// direction to the target when the action started, the turning adds at most `close` metres
+    /// of approach, and the assist is off (no tracking of the target) while the target is out of
+    /// sight (`sight`) or the fighter turned it off (its `Intent` holds `assist_off`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assist: Option<f32>,
+    pub assist: Option<AssistDef>,
     /// Seconds added to the action when its last hit window has passed and none of its hits
     /// landed (a hit, a block, a parry or a guard break).
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -566,6 +612,10 @@ pub struct ActionDef {
     /// The action goes on only while this input is held; letting go ends it (`Released`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub while_held: Option<String>,
+    /// Whether the run turns the body (`Run`, the default) or leaves its facing alone (`Keep`: a
+    /// roll that moves the body without turning it).
+    #[serde(default, skip_serializing_if = "Face::is_run")]
+    pub face: Face,
 }
 
 /// What a press turns into when a cancel window allows it.
@@ -1104,10 +1154,18 @@ impl Check<'_, '_, '_> {
         if !def.turn.is_empty() && def.track_until > 0.0 {
             self.refs.error("turn and track_until both say how the action turns; give one (turn spans, or track_until)");
         }
-        if let Some(assist) = def.assist
-            && !(assist > 0.0 && assist <= 180.0)
-        {
-            self.refs.error(format!("assist must be in (0, 180] degrees (is {assist})"));
+        if let Some(assist) = &def.assist {
+            if !(assist.angle > 0.0 && assist.angle <= 180.0) {
+                self.refs.error(format!("assist.angle must be in (0, 180] degrees (is {})", assist.angle));
+            }
+            if let Some(close) = assist.close {
+                self.number("assist.close", close);
+            }
+            if def.turn.is_empty() && def.track_until <= 0.0 {
+                self.refs.error("assist limits how the action tracks its target, and it does not track: give it turn spans or track_until");
+            } else if def.steer == Steer::Move {
+                self.refs.error("assist limits tracking a lock-on target, which a `steer: Move` action never does; leave assist out");
+            }
         }
         self.number("miss_recovery", def.miss_recovery);
         if def.miss_recovery > 0.0 && def.hits.is_empty() {
@@ -1121,12 +1179,14 @@ impl Check<'_, '_, '_> {
         if def.cost.cooldown_key.as_deref() == Some("") {
             self.refs.error("cost.cooldown_key is empty; name the shared slot, or leave it out for the action's own");
         }
-        if let Some(share) = def.cost.cooldown_if_interrupted
-            && !(0.0..=1.0).contains(&share)
-        {
-            self.refs.error(format!(
-                "cost.cooldown_if_interrupted must be between 0 and 1 (is {share}): the share of the cooldown that stays"
-            ));
+        if let Some(share) = def.cost.cooldown_if_interrupted {
+            if !(0.0..=1.0).contains(&share) {
+                self.refs.error(format!(
+                    "cost.cooldown_if_interrupted must be between 0 and 1 (is {share}): the share of the cooldown that stays"
+                ));
+            } else if def.cost.cooldown <= 0.0 {
+                self.refs.error("cost.cooldown_if_interrupted is a share of cost.cooldown, which is 0: give the cooldown, or leave the share out");
+            }
         }
     }
 }
@@ -1196,15 +1256,11 @@ pub enum BufferMode {
     /// One press at a time. `priority` ranks inputs (`[("dodge", 60), ("technique.1", 55),
     /// ("technique.2", 55), ("light", 30)]`; inputs not listed rank 0): a press that ranks below
     /// the one waiting is dropped (rejected); an equal or higher one takes the slot; a press of the
-    /// waiting input again keeps the later of the two expiries.
-    /// `consume_on_refusal`: a press that is let through (the fighter is free, or a cancel window
-    /// is open for it) but cannot start (stamina, a cooldown, no charges) is rejected at once
-    /// instead of being tried again.
+    /// waiting input again keeps the later of the two expiries. The press in the slot is tried
+    /// again on every tick until it starts or its time runs out, as in `PerInput`.
     SingleSlot {
         #[serde(default)]
         priority: Vec<(String, i32)>,
-        #[serde(default)]
-        consume_on_refusal: bool,
     },
 }
 
@@ -1217,7 +1273,7 @@ impl BufferMode {
     pub fn rank(&self, input: &str) -> i32 {
         match self {
             BufferMode::PerInput => 0,
-            BufferMode::SingleSlot { priority, .. } => priority.iter().find(|(i, _)| i == input).map_or(0, |(_, r)| *r),
+            BufferMode::SingleSlot { priority } => priority.iter().find(|(i, _)| i == input).map_or(0, |(_, r)| *r),
         }
     }
 }
@@ -1300,7 +1356,7 @@ impl ContentDef for MovesetDef {
                 "guard_broken_push ({scale}, {decel}) needs a scale >= 0 and a deceleration above 0, or the push never stops"
             ));
         }
-        if let BufferMode::SingleSlot { priority, .. } = &self.buffer {
+        if let BufferMode::SingleSlot { priority } = &self.buffer {
             for (i, (input, _)) in priority.iter().enumerate() {
                 if input.is_empty() || input.contains(char::is_whitespace) {
                     refs.error(format!("buffer priority input `{input}` must be a name without spaces, e.g. `dodge`"));
@@ -1674,7 +1730,7 @@ mod tests {
         let actions = r#"{
             "a": (net_id: 1, phases: [("windup", 0.4), ("active", 0.1)],
                 hits: [(span: Phase("active"), shape: Sphere(radius: 1), damage: 5)],
-                charge: (after: 0.2, into: "b"), turn: [(Phase("nope"), -5)], track_until: 0.2, assist: 200,
+                charge: (after: 0.2, into: "b"), turn: [(Phase("nope"), -5)], track_until: 0.2, assist: (angle: 200, close: -1),
                 cost: (cooldown: 1, cooldown_key: "", cooldown_if_interrupted: 1.5)),
             "b": (net_id: 2, phases: [("windup", 0.4), ("active", 0.1)],
                 hits: [(span: Phase("active"), shape: Sphere(radius: 1), damage: 5)], charge: (after: 0.1, into: "a")),
@@ -1684,14 +1740,18 @@ mod tests {
                 hits: [(span: Phase("active"), shape: Sphere(radius: 1), damage: 5)], charge: (after: 0.35, into: "x")),
             "e": (net_id: 5, phases: [("windup", 0.3), ("active", 0.1)], charge: (after: 0.2, into: "a", until: 0.1),
                 cancels: [(span: Secs(0.4, 0.4), into: [Input("light")], queue: Phase("gone"))]),
+            "f": (net_id: 7, phases: [("windup", 0.3)], assist: (angle: 20)),
+            "g": (net_id: 8, phases: [("roll", 0.3)], steer: Move, track_until: 0.2, assist: (angle: 20)),
+            "h": (net_id: 9, phases: [("windup", 0.3)], cost: (stamina: 5, cooldown_if_interrupted: 0.4)),
             "ok": (net_id: 6, phases: [("windup", 0.3), ("active", 0.1)],
                 hits: [(span: Phase("active"), shape: Sphere(radius: 1), damage: 5)], charge: (after: 0.35, into: "a", until: 0.38),
-                turn: [(Phase("windup"), 90)], assist: 30, miss_recovery: 0.4, while_held: "heavy",
+                turn: [(Phase("windup"), 90)], assist: (angle: 30, close: 0.4, sight: true), miss_recovery: 0.4,
+                while_held: "heavy", face: Keep,
                 cancels: [(span: Secs(0.4, 0.4), into: [Input("light")], queue: Phase("windup"))]),
         }"#;
         let movesets = r#"{
             "slot": (inputs: {}, buffer: SingleSlot(priority: [("dodge", 60), ("dodge", 50), ("two words", 1)])),
-            "fine": (inputs: {}, buffer: SingleSlot(priority: [("technique.1", 55), ("technique.2", 55)], consume_on_refusal: true)),
+            "fine": (inputs: {}, buffer: SingleSlot(priority: [("technique.1", 55), ("technique.2", 55)])),
         }"#;
         let sources = [
             shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
@@ -1703,7 +1763,10 @@ mod tests {
         assert!(has("action `a`: charge turns in a circle (a -> b -> a)"), "{errors:#?}");
         assert!(has("turn[0] names an unknown phase `nope`") && has("turn[0] rate must be a number >= 0"), "{errors:#?}");
         assert!(has("turn and track_until both say how the action turns"));
-        assert!(has("assist must be in (0, 180] degrees (is 200)"));
+        assert!(has("assist.angle must be in (0, 180] degrees (is 200)") && has("assist.close must be a number >= 0"), "{errors:#?}");
+        assert!(has("action `f`: assist limits how the action tracks its target, and it does not track"), "{errors:#?}");
+        assert!(has("action `g`: assist limits tracking a lock-on target, which a `steer: Move` action never does"), "{errors:#?}");
+        assert!(has("action `h`: cost.cooldown_if_interrupted is a share of cost.cooldown, which is 0"), "{errors:#?}");
         assert!(has("cost.cooldown_key is empty") && has("cost.cooldown_if_interrupted must be between 0 and 1 (is 1.5)"));
         assert!(has("action `c`: charge.after 0.5 must lie in the action [0, 0.3)"), "{errors:#?}");
         assert!(has("charge.into is the action itself") && has("miss_recovery needs hit windows"));
@@ -1735,6 +1798,7 @@ mod tests {
             "queue",
             "cooldown_key",
             "cooldown_if_interrupted",
+            "face",
         ] {
             assert!(!json.contains(&format!("\"{new}\"")), "`{new}` leaked into {json}");
         }

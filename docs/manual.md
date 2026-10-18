@@ -477,7 +477,7 @@ starts at tick N: the main menu moved the world`), and the session's replay stil
 | `pressed` | presses since the last tick (`Press { input, dir }`); gameplay takes them, the rest are cleared at the end of the tick |
 | `orders` | orders that last many ticks: `Order::MoveTo { target, within }`, `Order::Attack { target, input, repeat }` |
 
-The engine's input names are in `shards::core::input_names` (`jump`, `sprint`, `glide`, `dodge`, `light`, `heavy`, `block`, `parry`, `technique.N`, `use_item`, `interact`, `lock_on`); the game adds its own. `Intent` is the replay input (the engine makes `replay_input::<Intent>()` itself): changes between ticks are recorded. `PlayerId` and `LocalPlayer` mark players, and `NetRole` (`Single` by default) is groundwork for networking.
+The engine's input names are in `shards::core::input_names` (`jump`, `sprint`, `glide`, `dodge`, `light`, `heavy`, `block`, `parry`, `technique.N`, `use_item`, `interact`, `lock_on`, and `assist_off`, held while the player has turned the attack assist off); the game adds its own. `Intent` is the replay input (the engine makes `replay_input::<Intent>()` itself): changes between ticks are recorded. `PlayerId` and `LocalPlayer` mark players, and `NetRole` (`Single` by default) is groundwork for networking.
 
 **Groundwork for networking (phase C).** None of this changes a single-player game.
 
@@ -1073,7 +1073,7 @@ exactly as they were (it does not serialize at its default, and an action that u
         cost: (stamina: 20),
         hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 20)],
         charge: (after: 0.2, into: "heavy_full"),           // held 0.2 s: it turns into `heavy_full`
-        turn: [(Phase("windup"), 90)],                       // turns toward its target at 90 degrees a second
+        turn: [(Phase("windup"), 90)],                       // turns at 90 degrees a second while it winds up
     ),
     "lunge": (
         net_id: 75,
@@ -1081,7 +1081,9 @@ exactly as they were (it does not serialize at its default, and an action that u
         cost: (cooldown: 3.0, cooldown_key: "lunge", cooldown_if_interrupted: 0.4),
         hits: [(span: Phase("active"), shape: Cone(range: 3.0, angle: 120), damage: 10)],
         miss_recovery: 0.6,                                  // a whiff recovers 0.6 s longer
-        assist: 30,                                          // never more than 30 degrees off where it started
+        // never more than 22 degrees off where it started, at most 0.4 m closer for the turning,
+        // and no tracking of a target behind a wall
+        assist: (angle: 22, close: 0.4, sight: true),
         track_until: 0.2,
     ),
     "light": (
@@ -1092,79 +1094,110 @@ exactly as they were (it does not serialize at its default, and an action that u
         cancels: [(span: Secs(0.5, 0.7), into: [Combo("light", "light_2")], queue: Phase("recovery"))],
     ),
     "beam": (net_id: 83, phases: [("beam", 2.0)], while_held: "technique.2"),   // lasts while held
+    "roll": (net_id: 84, phases: [("roll", 0.4)], displacement: [(0.4, 2.0)], steer: Move, face: Keep),
 }
-// a moveset: one press waits at a time, the stronger first; a press tried and refused is dropped
+// a moveset: one press waits at a time, the stronger first
 "fencer": (inputs: {..}, buffer: SingleSlot(priority: [("dodge", 60), ("technique.1", 55), ("technique.2", 55),
-                                                       ("heavy", 40), ("light", 30)], consume_on_refusal: true)),
+                                                       ("heavy", 40), ("light", 30)])),
 ```
 
 **Charge** (`charge: (after, into, until)`). While the input that started the run has been held on every tick of it, the run
 turns into `into` on the first tick with `after <= t <= until` (`until` defaults to the end of the windup: the start of the
 first hit window, else the end of the first phase). The turn keeps the run: the same `instance`, the same clock `t`, the same
-hit ledger, and the same input; it pays the difference of the two actions' stamina under `into`'s `stamina_mode` and starts
-`into`'s cooldown. When the stamina is not there, nothing is paid and it is tried again on the next tick, until `until`
-(no event: the client cannot see a refusal, see prediction below). It triggers `ActionEnded { end: Branched }`, then
-`ActionStarted { action: into }`. A press let go once never charges again in that run. Validation: `after` inside the action,
-`until >= after`, `into` exists, is not the action itself, and charges do not form a cycle.
+hit ledger (a target the first action already hit is not hit again by the same hit group), and the same input. It costs what
+`into` costs beyond the start: the difference of the two actions' stamina under `into`'s `stamina_mode`, one of `into`'s
+charges when it uses another charge than the action it turns from, and `into`'s cooldown, whose slot must be ready unless it
+is the slot of the action it turns from (this run started that one). When something is not there, nothing is paid and it is
+tried again on the next tick, until `until` (no event: the client cannot see a refusal, see prediction below). It triggers
+`ActionEnded { end: Branched }`, then `ActionStarted { action: into }`; the effects and the telegraph `into` has before the
+turn's `t` do not fire (the run is already past them). A press let go once never charges again in that run. Validation:
+`after` inside the action, `until >= after`, `into` exists, is not the action itself, and charges do not form a cycle.
 
 **Turning.** `turn: [(span, degrees_per_second)]`: an action with turn spans starts facing where the body faced (no snap) and
-turns toward its lock-on target (else the aim point) at the highest rate of the spans open in the tick; outside them it holds
-its facing. `assist: degrees` keeps the facing within that many degrees of the direction to the target when the run started,
-while there is a lock-on target (with `track_until` and no `turn`, it snaps to the clamped direction). An action with
-neither keeps the old `track_until` snap exactly. `turn` and `track_until` are not used together. Angles go through
-`ops::atan2` and `ops::sin_cos`.
+turns at the highest rate of the spans open in the tick, toward its lock-on target, else the aim point, else the movement input
+(a player steering the swing; a `steer: Move` action follows only the movement input). The rate holds for the whole tick: a
+span that opens or closes inside a tick turns it a full tick. Outside the spans the facing holds. An action with no `turn`
+keeps the old `track_until` snap exactly. `turn` and `track_until` are not used together. A steering share of a design
+("60% of the normal control") is a turn rate: the share times the body's own turn rate. Angles go through `ops::atan2` and
+`ops::sin_cos`.
+
+**Attack assist** (`assist: (angle, close, sight)`, for an action that tracks: `turn` or `track_until`, not `steer: Move`).
+With a lock-on target, the facing stays within `angle` degrees of the direction to the target when the run started (with
+`track_until` and no `turn`, it snaps to the clamped direction). `close: metres` caps the approach the run's turning adds: what
+moving along the turned facing brings the body closer to the target than moving along the facing the run started with
+(`RunExtras::from`) is counted in `RunExtras::closed`, and past `close` the excess is taken off the displacement along the
+direction to the target (the body still moves sideways). `sight: true` turns the assist off while a `LayerMask::WORLD` collider
+lies between the chests of the fighter and its target (the ray a `LineOfSight` hit casts, at `CombatTuning::sight_height`):
+the run then does not track the target and turns toward the aim point or the movement input instead. The player turns the
+assist off with the setting `controls.attack_assist = false`: the controls then hold the input `assist_off` for the
+player's body (it is an `Intent` input: replays and the host see it), and every action with an `assist` acts as if out of
+sight. An action without `assist` tracks its target as it always did.
+
+**`face: Keep`.** The run moves the body along its own facing but does not turn it: the body keeps the facing it had, and only
+what faces it outside actions (a lock-on target, an aim point) still turns it. A roll in a direction other than the body's
+facing leaves the body looking where it looked. `face: Run` (the default) turns the body where the run points.
 
 **Miss recovery** (`miss_recovery: seconds`, the action needs hits). On the first tick whose `t` reaches the end of its last hit
-window, before that tick's hits are resolved (`check_misses`, `ActionSystems::Hits`, before `resolve_hits`), the run is
-checked once: if none of its hits landed in the ticks before (a hit, a block, a parry or a guard break all count), it lasts
-`miss_recovery` longer (`Running::length` grows; its cancel windows stay where they are; the phase past the end stays the last
-one) and `ActionMissed { entity, action, extra }` is triggered. Hits of the checking tick come after the check and do not
-count. A game adds its own bonus from an observer with `extend_recovery(world, entity, seconds)`.
+window, after that tick's hits are resolved (`check_misses`, `ActionSystems::Hits`, after `resolve_hits`, before
+`finish_actions`), the run is checked once: if none of its hits landed by then (a hit, a block, a parry or a guard break all
+count, the checking tick's own included), it lasts `miss_recovery` longer (`Running::length` grows; its cancel windows stay
+where they are; the phase past the end stays the last one) and `ActionMissed { entity, action, extra }` is triggered. A game
+adds its own bonus from an observer with `extend_recovery(world, entity, seconds)`; on a machine that does not simulate (a
+co-op client, which the host forwards combat events to) it changes nothing and returns `false`, so an observer that calls it
+needs no check of its own.
 
 **Cooldown keys and shares.** `cost.cooldown_key: "lunge"` puts the cooldown on that slot instead of the action's id, so
-variants of one technique share it (`can_start` names the key: `lunge is on cooldown (ready in 2.40s)`).
-`cost.cooldown_if_interrupted: 0.4`: a run cut before its windup is over keeps only that share of its cooldown (forced
-over, killed, revived, released, or cancelled into anything but a `Combo` continuation; a dodge out of the windup counts;
-its own end, a charge's turn and a removal do not).
+variants of one technique share it (`can_start` names the key: `lunge is on cooldown (ready in 2.40s)`). A key may be another
+action's id: the two then share that action's slot. `cost.cooldown_if_interrupted: 0.4` (it needs a `cost.cooldown`): a run cut
+before its windup is over keeps only that share of its cooldown (forced over, killed, revived, released, or cancelled into
+anything but a `Combo` continuation; a dodge out of the windup counts; its own end, a charge's turn and a removal do not). The
+share is set before the action that cut it pays, so a new action on the same slot keeps its own full cooldown. The HUD source
+`you.cooldown` reads an action's slot through its key.
 
 **The press queue.** A cancel window's `queue: span`: a press of an input the window lets through, made while `span` is open
 and before the window opens, lives until the window opens plus `input_buffer` (`press_life`, which the machine, a client's
 prediction and the tools all use). A window with a `queue` that starts where the action ends (`Secs(L, L)`) never cuts the
 action short: it holds its presses until the action is over, and they start the tick after. Every end of a run but a
-charge's turn caps the waiting presses to `input_buffer` again. The four press lives of a source that has them (Godot's
-`command_life`) are content:
+charge's turn caps the waiting presses to `input_buffer` again. The usual press lives:
 
-| press life in the source | content |
+| press life | content |
 |---|---|
-| a chained light or heavy without `queue_early`: 0.15 s, or 0.15 s past the chain's opening for a press in the recovery | `(span: Secs(open, end), into: [Combo(..)], queue: Phase("recovery"))` |
-| the same with `queue_early`: 0.15 s past the chain's opening from the first tick | `queue: Phases("windup", "recovery")` |
-| a light with no chain: its opening is the end of the action | `(span: Secs(L, L), into: [Input("light")], queue: Phase("recovery"))` |
-| a technique: 0.15 s past `technique_cancel_time`, at any time; 0.15 s with no such time | `(span: Secs(cancel, L), into: [Input("technique.1"), ..], queue: Secs(0, L))`; no window: no `queue` |
+| a chain: the buffer's time, or past the chain's opening for a press in the recovery | `(span: Secs(open, end), into: [Combo(..)], queue: Phase("recovery"))` |
+| a chain pressed early: past the chain's opening from the first tick | `queue: Phases("windup", "recovery")` |
+| an action with no chain: its window is the end of the action | `(span: Secs(L, L), into: [Input("light")], queue: Phase("recovery"))` |
+| a technique another one may cut from `cancel`: past `cancel`, at any time | `(span: Secs(cancel, L), into: [Input("technique.1"), ..], queue: Secs(0, L))`; no window: no `queue` |
 
-**The single slot** (`MovesetDef::buffer`). `PerInput` (the default) keeps one press per input, as before. `SingleSlot { priority,
-consume_on_refusal }` keeps one press. `priority` is a list of `(input, rank)` (equal ranks are allowed, inputs not listed rank 0): a press that ranks below the waiting one is dropped (`e5 light rejected: heavy is
-waiting and comes first`); an equal or higher one takes its place (`e5 light rejected: heavy took its place`); the same input
-keeps the longer time. Inputs not in `priority` rank 0. With `consume_on_refusal`, a waiting press the fighter tries (it is free
-to act, or a cancel window lets the input through) and cannot start is dropped at once with the reason, instead of waiting out
-its time; a press the running action holds back still waits. Only presses of inputs the moveset understands go in; others (a
-jump) keep their own buffers. The tools answer the same before pressing (`heavy is waiting and comes first: one press waits at a
-time, and light ranks below it`; `… (a refused press is dropped, not kept)`; a press that pushes one out says `(light no longer waits)`).
+An enemy's chain uses the same rule: an NPC whose brain presses the next link early (in the first link's windup) has it start
+on the tick after the combo window opens, and the director's token stays with it through the chain (the continuation is the
+same attack).
 
-**`while_held: input`.** The run ends the tick its input is not held (`ActionEnded { end: Released }`).
+**The single slot** (`MovesetDef::buffer`). `PerInput` (the default) keeps one press per input, as before. `SingleSlot {
+priority }` keeps one press. `priority` is a list of `(input, rank)` (equal ranks are allowed, inputs not listed rank 0): a press
+that ranks below the waiting one is dropped (`e5 light rejected: heavy is waiting and comes first`); an equal or higher one takes
+its place (`e5 light rejected: heavy took its place`); the same input again keeps the later expiry. The press in the slot is tried
+on every tick until it starts or its time runs out, as with `PerInput`. Only presses of inputs the moveset understands go in;
+others (a jump) keep their own buffers. The tools answer the same before pressing (`heavy is waiting and comes first: one press
+waits at a time, and light ranks below it`; a press that pushes one out says `(light no longer waits)`), and on a client's own
+body they read the predicted run and the predictor's buffer (`shown_state`, `shown_queue`), with the presses not taken yet.
+
+**`while_held: input`.** The run ends the tick its input is not held (`ActionEnded { end: Released }`). A tool press without
+`hold=true` says so: `ok: beam (a tap: it stops as soon as technique.2 is not held; hold=true keeps it going)`. An action with
+both `while_held` and a `hold` loop is a channel that loops while held and ends when let go.
 
 **State.** What a run needs beyond `Running` lives in the lazy component `RunExtras { instance, held, landed, checked, extra,
-start_facing, scale, launched, charge_at }`, put in when a run whose action needs it starts and taken out when the run ends
+start_facing, from, closed, charge_at }`, put in when a run whose action needs it starts and taken out when the run ends
 (every way a run ends; the engine rule `action.extras_follow_run` stops the game on extras of another run). A fighter whose
 actions use none of it never has one, so the replay hash of old content does not change. It is a component of an `AiId` entity:
-snapshots, replay checks and co-op clients get it by the default rules. No resource is added.
+snapshots, replay checks and co-op clients get it by the default rules. No resource is added. The setting
+`controls.attack_assist` is not simulation state: what reaches the simulation is the held `assist_off` input.
 
-**Prediction.** A client predicts a charge, turning, `while_held` and the queue with the same functions (`charge_due`,
-`step_run`, `press_life`, the single slot), and reconciles by `(instance, action)`: a host run of the same instance under
-another action is the host's turn of a charge (the client takes the host's action and keeps its own `t` and hold); a turn the
-host did not make (its stamina) is kept until `until` has passed and then reverted to the host's action at the host's time; a
-same-instance, same-action run adopts what only the host changes (a miss's extra recovery: the client's run does not end
-before the host's); and when the host's run is gone with no new one and nothing is pending (a cut, a release), the shown run
-is dropped and the body goes back to the host's state.
+**Prediction.** A client predicts a charge, turning, the assist (with its sight ray), `while_held` and the queue with the same
+functions (`charge_due`, `step_run`, `tracked`, `press_life`, the single slot), and reconciles by `(instance, action)`: a host
+run of the same instance under another action is the host's turn of a charge (the client takes the host's action and keeps its
+own `t` and hold); a turn the host did not make (its stamina, a charge or the cooldown) is kept until `until` has passed and
+then reverted to the host's action at the host's time; a same-instance, same-action run adopts what only the host changes (a
+miss's extra recovery: the client's run does not end before the host's); and when the host's run is gone with no new one and
+nothing is pending (a cut, a release), the shown run is dropped and the body goes back to the host's state.
 
 **What the AI sees.** Describe: `charging, turns in 0.12s` while the starting input is held (`charging, turns when the stamina is
 there` once it waits for stamina), `missed +0.60s` after a whiff. Journal: `e5 lunge missed: +0.60s recovery`, and the
@@ -2821,7 +2854,7 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `action.running_sane` | a running action of a fighter exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. The length is the run's own when that is longer than the definition's (miss recovery and `extend_recovery` lengthen a run, B2a). Without a content database the rule passes |
 | `action.protection_sane` | every `Protection` (the reaction and poise timers, B1) holds finite timers, none below 0. A NaN stays a NaN through the countdown and would shield its fighter for ever |
 | `action.knockback_sane` | every `Knockback` (a push in progress, B1) has a finite flat velocity (`y` is 0) and a finite `decel` above 0: a push that does not slow down never stops |
-| `action.extras_follow_run` | every `RunExtras` (what a charging, turning or miss-recovering run keeps, B2a) belongs to the run its fighter is running (the same `instance`), with a finite `extra >= 0` and a finite `scale >= 0`. The machine puts extras in when such a run starts and takes them out on every way a run ends, so extras left behind would hand a later run a stale hold, hit or recovery |
+| `action.extras_follow_run` | every `RunExtras` (what a charging, turning or miss-recovering run keeps, B2a) belongs to the run its fighter is running (the same `instance`), with a finite `extra >= 0` and a finite `closed >= 0`. The machine puts extras in when such a run starts and takes them out on every way a run ends, so extras left behind would hand a later run a stale hold, hit or recovery |
 | `npc.state_known` | `NpcBrain.state` is a state of the NPC's behaviour. Three carve-outs, each a state the engine itself leaves behind: an empty state (before the NPC's first decided tick), an inactive NPC (dormant or dead: the brain passes it through, so a state a hot reload removed stays until it wakes), and an NPC whose behaviour is not in content (that is reported once as a content problem) |
 | `npc.tokens_within_limit` | after the director ran, no token is held by a dead body, and each director holds no more tokens than its limit for the living players, unless every holder beyond the limit has its attack in flight (an attack under way keeps its token to its end). It is judged right after the director, not at the end of the tick: a holder that dies in `Resolve` keeps its token until the next tick's director takes it back, so the end of the tick would fire on every kill. A small system next to the director writes what it found to the resource `TokenAudit`, which the rule reads; it is recomputed every tick and is not part of a snapshot or a replay |
 
@@ -3578,6 +3611,7 @@ hold_to_toggle = false       # held buttons work as toggles
 [controls]
 mouse_sensitivity = 1.0      # 0.05…5
 invert_y = false
+attack_assist = true         # false: attacks do not correct their direction toward the lock-on target (holds `assist_off`)
 
 [controls.bindings]          # only what the player changed
 "gameplay.jump" = ["Key(KeyJ)", "GamepadButton(South)"]
@@ -3591,7 +3625,7 @@ invert_y = false
 |---|---|
 | `graphics` | `shards_settings::apply_graphics`: the main window (fullscreen, vsync, size). The window changes when the settings change, not every frame, so the size the player dragged with the mouse is not taken back. Without a window the values are only stored. `render_scale` is applied by `shards::render_scale`: the resolution of the 3D picture, not the window scale (see "3D picture resolution" below). `shadows` is read by the game: `GraphicsSettings::shadow_quality()`; `foliage` is read by `shards_scatter` (`GraphicsSettings::foliage_density()`): at 0.5 half of the same instances stays, with no new ones (see "Foliage and small objects (E10.2)") |
 | `audio` | `shards_audio`: the volume of the buses `music`, `sfx`, `voice`, `ui` with `master` taken into account (`AudioSettings::volume("music")`), applied to what is already playing (see "Audio") |
-| `controls` | `shards_motion`: `ControlSettings` ⇄ `InputMap` (see "Input" in "Movement (E2)"); sensitivity and the Y-axis inversion go to `CameraSettings` |
+| `controls` | `shards_motion`: `ControlSettings` ⇄ `InputMap` (see "Input" in "Movement (E2)"); sensitivity and the Y-axis inversion go to `CameraSettings`; `attack_assist = false` makes the controls hold `assist_off` for the player's body (see "Action timeline (B2a)") |
 | `accessibility` | `shards_motion`: the field of view and the strength of the camera shake, `MotionBlur` on the cameras that have it (the game adds the component, the setting sets the strength, 0 turns it off), `hold_to_toggle` in the input map; `shards_action`: `flashes` for the blinking of telegraphs and of off-screen markers (`reduced` — half as big and no more than 2 times a second, `off` — a steady light, `draw::pulse_at`) |
 
 **3D picture resolution: `graphics.render_scale` (E8.6, E10).** The 3D world is drawn into a picture of `render_scale` x the window's pixels (with `--offscreen`, the base is the size of the `--offscreen` picture, 1280×720 by default), and the picture is stretched over the whole window with a linear filter;

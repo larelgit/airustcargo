@@ -345,3 +345,48 @@ fn those_without_a_token_wait_in_their_roles() {
     assert_eq!(seen_roles, ["circle", "hold"]);
     assert!(circling_moved, "circlers go round");
 }
+
+/// An enemy's chain rides the press queue (B2a): the next link, pressed in the first link's
+/// windup, waits for the combo window and starts on the tick after it opens, and the attack token
+/// stays with the NPC through both links (the continuation is the same attack). Without a queue
+/// span the early press runs out before the window opens, and the chain stops at its first link.
+#[test]
+fn an_early_chain_press_waits_for_the_combo_window() {
+    use shards_core::Intent;
+    let chain = |moveset: &str| {
+        let mut app = app();
+        record_starts(&mut app);
+        player(app.world_mut(), 0, Vec3::ZERO);
+        let plan = Npc::new("grunt", "grunt").with_plan("linker").with_director("single");
+        let e = npc(app.world_mut(), moveset, plan, Vec3::new(0.0, 0.0, -1.5), Vec3::Z);
+        let mut waited = 0;
+        while action(&app, e).is_none_or(|a| !a.starts_with("link")) {
+            step(&mut app, 1);
+            waited += 1;
+            assert!(waited < 600, "it never attacked: {:#?}", journal(&app));
+        }
+        // The brain presses the next link at once, as a chain decided at its start does.
+        app.world_mut().get_mut::<Intent>(e).unwrap().press("light");
+        let mut kept = true;
+        for _ in 0..80 {
+            step(&mut app, 1);
+            if action(&app, e).is_some() {
+                kept &= has_token(&app, e);
+            }
+        }
+        let starts: Vec<(u64, String)> =
+            app.world().resource::<Started>().0.iter().filter(|s| s.1 == e).map(|s| (s.0, s.2.clone())).collect();
+        (starts, kept, lines(&app, "light rejected"))
+    };
+    let (starts, kept, rejected) = chain("linker");
+    assert_eq!(starts.len(), 2, "{starts:?}");
+    let (first, second) = (&starts[0], &starts[1]);
+    assert_eq!((first.1.as_str(), second.1.as_str()), ("link_1", "link_2"), "{starts:?}");
+    assert_eq!(second.0, first.0 + 30, "the window opens at 0.5 s (30 ticks): the link starts on the next tick");
+    assert!(kept, "the token stays through the chain");
+    assert!(rejected.is_empty(), "{rejected:?}");
+
+    let (starts, _, rejected) = chain("linker_plain");
+    assert_eq!(starts.iter().map(|s| s.1.as_str()).collect::<Vec<_>>(), ["link_plain"], "{starts:?}");
+    assert_eq!(rejected.len(), 1, "the early press ran out: {rejected:?}");
+}
