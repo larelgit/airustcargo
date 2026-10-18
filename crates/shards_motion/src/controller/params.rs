@@ -155,7 +155,7 @@ pub struct CharacterParams {
     #[serde(skip_serializing_if = "is_zero")]
     pub buoyancy_omega: f32,
     /// Fastest vertical speed in the water (m/s) while `buoyancy_omega` is set, entry included.
-    /// 0: `swim_speed`.
+    /// 0: `swim_speed`. Set it above `swim_speed` for a fall to plunge past the float line.
     #[serde(skip_serializing_if = "is_zero")]
     pub water_max_vertical_speed: f32,
     /// Drag on a fall in the water while `buoyancy_omega` is set: the downward speed decays as

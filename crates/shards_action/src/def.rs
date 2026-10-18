@@ -407,7 +407,8 @@ pub enum Steer {
     Move,
     /// Like `Move`, but with no press direction and no movement input the action goes **backward**,
     /// away from where the body faces (a standing dodge is a backstep). The facing is read when the
-    /// action starts; the body then turns to the action's direction like it does for any action.
+    /// action starts; the body then turns to the action's direction like it does for any action. Until an
+    /// action can keep the body's facing, a standing backstep therefore turns the body around.
     MoveOrBack,
 }
 
@@ -508,7 +509,8 @@ pub struct ActionDef {
     /// locomotion params' (a raised guard turns slower than a free walk). `None`: the params' rate
     /// (its locked rate while the action names a facing). Written to `MoveModifiers::turn_speed_deg`
     /// by [`actions_to_modifiers`](crate::actions_to_modifiers), which sees the action as it was at the
-    /// start of the tick.
+    /// start of the tick (on a client's predicted body, the action it shows). `0` means "turns at
+    /// once", as everywhere in the locomotion params, not "cannot turn".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_speed_deg: Option<f32>,
     /// While this action runs, stamina does not regenerate; when it ends (a block is let go) the

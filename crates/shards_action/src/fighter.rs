@@ -85,7 +85,8 @@ pub struct Stamina {
     pub max: f32,
     pub regen: f32,
     pub delay: f32,
-    /// Seconds since it was last spent (stops counting at `delay`).
+    /// Seconds since it was last spent (stops counting at `delay`). Below zero while a hold
+    /// ([`hold_regen`](Self::hold_regen)) is longer than `delay`.
     pub since_use: f32,
     /// Sprinting ran it dry: no sprint until the button is let go. Without this the
     /// first regenerated drop would be sprinted away again, over and over.
@@ -620,6 +621,21 @@ pub(crate) struct Reported(Vec<String>);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hold_is_the_longer_wait_and_never_shortens_one() {
+        let mut s = Stamina::new(100.0, 10.0, 0.65);
+        s.spend(10.0);
+        s.hold_regen(0.3); // shorter than the 0.65 left: no change
+        assert_eq!(s.since_use, 0.0);
+        s.hold_regen(1.3); // longer: waits 1.3 s from now, since_use goes below zero
+        assert!((s.since_use + 0.65).abs() < 1e-5, "{}", s.since_use);
+        s.hold_regen(0.3); // a later, shorter hold does not cut it
+        assert!((s.since_use + 0.65).abs() < 1e-5);
+        let mut fresh = Stamina::new(100.0, 10.0, 0.65);
+        fresh.hold_regen(0.3); // fully recovered: waits 0.3 s
+        assert!((fresh.since_use - 0.35).abs() < 1e-5);
+    }
 
     #[test]
     fn stamina_waits_for_its_delay() {

@@ -52,7 +52,7 @@ fn turned(app: &App, e: Entity) -> f32 {
     yaw.to_degrees().abs()
 }
 
-// --- backstep (H24) -------------------------------------------------------------------------------
+// --- backstep -------------------------------------------------------------------------------
 
 #[test]
 fn a_dodge_with_nothing_pressed_goes_backward_and_one_with_input_goes_there() {
@@ -92,7 +92,7 @@ fn a_backstep_is_back_from_the_body_facing_not_from_the_world() {
     assert!(feet(&app, hero).dot(-E) > 1.0, "{}", feet(&app, hero));
 }
 
-// --- turn rate of a stance (H13) ------------------------------------------------------------------
+// --- turn rate of a stance ------------------------------------------------------------------
 
 #[test]
 fn a_guard_turns_at_its_own_rate_while_it_is_up() {
@@ -124,7 +124,7 @@ fn a_guard_turns_at_its_own_rate_while_it_is_up() {
     assert!(app.world().get::<MoveModifiers>(hero).unwrap().turn_speed_deg.is_none());
 }
 
-// --- regeneration holds (H5, H8) ------------------------------------------------------------------
+// --- regeneration holds ------------------------------------------------------------------
 
 /// Stamina regenerated in the 0.5 s after a 40-tick sprint ended, 50 stamina to begin with.
 fn regained(free: bool, hold: Option<f32>) -> f32 {
@@ -199,7 +199,7 @@ fn a_block_without_the_option_lets_the_stamina_come_back_at_once() {
     assert!(stamina(&app, hero) > 40.0, "{}", stamina(&app, hero));
 }
 
-// --- crawl lock (H66) -----------------------------------------------------------------------------
+// --- crawl lock -----------------------------------------------------------------------------
 
 /// A pool 5 m deep out past the arena's floor, and a swimmer in it with a fast swim.
 fn crawler(app: &mut App, resume: SprintResume) -> Entity {

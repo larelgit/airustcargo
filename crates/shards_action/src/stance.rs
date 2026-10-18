@@ -12,6 +12,7 @@ use shards_motion::MoveModifiers;
 use crate::def::ActionDef;
 use crate::fighter::{Dead, Stamina};
 use crate::machine::ActionState;
+use crate::predict::PredictedAction;
 
 /// `ModifierSystems::Contribute`, after the statuses: a body whose running action names a
 /// `turn_speed_deg` turns at that rate meanwhile (`MoveModifiers::turn_at`). The action is the one
@@ -19,10 +20,12 @@ use crate::machine::ActionState;
 /// turn rate lags an action's start by one tick.
 pub fn actions_to_modifiers<F: QueryFilter + 'static>(
     db: Res<ContentDb>,
-    mut fighters: Query<(&ActionState, &mut MoveModifiers), F>,
+    mut fighters: Query<(&ActionState, Option<&PredictedAction>, &mut MoveModifiers), F>,
 ) {
-    for (state, mut modifiers) in &mut fighters {
-        let Some(run) = &state.current else { continue };
+    for (state, shown, mut modifiers) in &mut fighters {
+        // A client's predicted body turns by the action it shows, not the one the host last
+        // replicated (a round trip behind), as `move_speed` does.
+        let Some(run) = shown.map(|p| &p.run).or(state.current.as_ref()) else { continue };
         if let Some(rate) = db.get::<ActionDef>(&run.action).and_then(|d| d.turn_speed_deg) {
             modifiers.turn_at(rate);
         }
