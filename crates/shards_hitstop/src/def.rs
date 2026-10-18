@@ -101,6 +101,9 @@ pub struct When {
     /// Match a hit that was ignored (god mode, a dodge's i-frames, a grace period)? By default a
     /// rule matches only hits that landed.
     pub ignored: bool,
+    /// Only a blow the local player is in (attacker, target or defender) matches. A fight between
+    /// two others, a hazard's tick or a crowd far from the player then holds nothing.
+    pub involves_local: bool,
 }
 
 /// One rule of the table: a condition and the hold it gives, in seconds.
@@ -160,6 +163,8 @@ pub struct HitInfo {
     pub cause: Option<Cause>,
     pub action: Option<String>,
     pub ignored: bool,
+    /// The local player is one of the bodies of the blow (set when the table is consulted).
+    pub local: bool,
 }
 
 impl When {
@@ -171,12 +176,14 @@ impl When {
             && self.cause.is_none_or(|c| info.cause == Some(c))
             && self.action.as_deref().is_none_or(|a| info.action.as_deref() == Some(a))
             && self.ignored == info.ignored
+            && (!self.involves_local || info.local)
     }
 
     /// Whether every event `other` matches is matched here too (so a rule `other` placed after
     /// this one can never be reached).
     fn covers(&self, other: &When) -> bool {
         self.ignored == other.ignored
+            && (!self.involves_local || other.involves_local)
             && self.event.is_none_or(|e| other.event == Some(e))
             && self.weight_at_least.is_none_or(|w| other.weight_at_least.is_some_and(|o| o >= w))
             && self.reaction_at_least.is_none_or(|r| other.reaction_at_least.is_some_and(|o| o >= r))
@@ -201,6 +208,9 @@ impl When {
         }
         if self.ignored {
             parts.push("ignored hits".to_owned());
+        }
+        if self.involves_local {
+            parts.push("local player involved".to_owned());
         }
         parts.join(" · ")
     }
@@ -295,7 +305,7 @@ mod tests {
     }
 
     fn info(event: EventKind, weight: Option<Weight>, reaction: Option<u8>) -> HitInfo {
-        HitInfo { event, weight, reaction, cause: None, action: None, ignored: false }
+        HitInfo { event, weight, reaction, cause: None, action: None, ignored: false, local: false }
     }
 
     const LADDER: &str = r#"(
@@ -361,5 +371,17 @@ mod tests {
         assert!(ron::from_str::<HitstopDef>("(rule: [])").is_err());
         assert!(ron::from_str::<HitstopDef>("(rules: [(when: (event: Hit), seconds: 0.1)])").is_err());
         assert!(ron::from_str::<HitstopDef>("(rules: [(when: (wieght_at_least: Break), seconds: 0.1)])").is_err());
+    }
+
+    #[test]
+    fn a_local_rule_matches_only_blows_the_local_player_is_in() {
+        let def = read(r#"(rules: [(when: (event: Damaged, involves_local: true), seconds: 0.06)])"#);
+        let mut hit = info(EventKind::Damaged, Some(Weight::Light), None);
+        assert!(def.select(&hit).is_none(), "two others fighting");
+        hit.local = true;
+        assert!(def.select(&hit).is_some());
+        let all = When::default();
+        let local = When { involves_local: true, ..When::default() };
+        assert!(all.covers(&local) && !local.covers(&all), "a rule for every blow shadows a local one, not the other way round");
     }
 }

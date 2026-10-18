@@ -8,7 +8,7 @@
 //!   catch-up. A hold consumes **zero** ticks: replays, snapshots and gameplay never see it.
 //!   [`sim::speed`](crate::sim::speed) reports the speed the player chose, and
 //!   [`sim::set_speed`](crate::sim::set_speed) during a hold changes that speed, not the hold.
-//!   A hold lasts the time asked for plus up to one frame (it is checked at the start of a frame,
+//!   A hold lasts the time asked for plus up to about two frames (it starts from the frame in which it is asked and is checked at the start of the next frame,
 //!   before the frame's time is counted).
 //! - [`PresentationHolds`]: bodies (by `AiId`) whose picture stands still for some real time while
 //!   the clock runs: what a co-op machine does, since no machine may stop the others' clock. The

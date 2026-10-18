@@ -126,7 +126,8 @@ pub struct HitstopPlayArgs {
 }
 
 fn parse_event(text: &str) -> Result<EventKind, String> {
-    EventKind::ALL.into_iter().find(|e| e.name() == text).ok_or_else(|| {
+    let flat = |s: &str| s.replace('_', "").to_ascii_lowercase();
+    EventKind::ALL.into_iter().find(|e| flat(e.name()) == flat(text)).ok_or_else(|| {
         let names = EventKind::ALL.map(EventKind::name);
         let hint = closest(text, names.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
         format!("no event `{text}`{hint}; events: {}", names.join(", "))
@@ -155,9 +156,13 @@ fn hitstop_play(In(call): In<Call<HitstopPlayArgs>>, world: &mut World) -> ToolR
     let bodies = [attacker, target].iter().flatten().map(|id| id.entity(world)).collect::<Result<Vec<Entity>, _>>()?;
     let stopped = match seconds {
         Some(s) if !s.is_finite() || s <= 0.0 => return Err(format!("seconds {s}: a duration above 0, at most {} s", crate::MAX_HOLD)),
-        Some(s) => crate::stop(world, event, 0, "tool".to_owned(), s.min(crate::MAX_HOLD), &bodies),
+        Some(s) => {
+            // A manual hold keeps the table's own ceiling too, and is named so in the journal.
+            let ceiling = table(world).map_or(crate::MAX_HOLD, |t| t.ceiling());
+            crate::stop(world, event, 0, "manual".to_owned(), s.min(ceiling), &bodies)
+        }
         None => {
-            let info = HitInfo { event, weight, reaction, cause, action, ignored: false };
+            let info = HitInfo { event, weight, reaction, cause, action, ignored: false, local: false };
             trigger(world, &info, &bodies)
         }
     };

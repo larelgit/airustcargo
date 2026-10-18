@@ -4833,6 +4833,7 @@ When a blow lands, the picture stands still for a beat (60-100 ms). It is what m
 | `cause` | `Staggered` | `PoiseBroken`, `Parried`, `GuardBroken`, `Dev` |
 | `action` | all but `Staggered` | the id of the action that hit |
 | `ignored` | `Damaged` | by default a rule matches only a hit that landed; `ignored: true` matches one that was ignored (god mode, i-frames) |
+| `involves_local` | all | `true`: only a blow the local player is in (attacker, target or defender) matches; a fight between two others, a hazard tick or a crowd far away then holds nothing. Put it on the rules of a game that should never stutter for the fights around the player (the sandbox does); the setting `hit_stop_local_only` does the same for every rule |
 
 So "finisher, then poise break, then counter, then a heavy reaction, then the rest" is five rules in that order, and a game that wants a different order writes it. `max_seconds` (at most 0.5 s, the engine's own ceiling) bounds every hold whatever a rule says, and `cooldown` (s) keeps a flurry of hits from turning into a stutter: a hold does not start within that time after the last one ended. Holds that overlap **merge by the later end**: a hold asked for while one runs lasts as long as the longer of the two has left. The content check names what cannot work: a second table, a rule longer than `max_seconds`, a rule the ones before it cover (it can never match), a `weight_at_least` on a parry (it has no weight), a `reaction_at_least` or a `cause` on the wrong event.
 
@@ -4859,7 +4860,9 @@ hit stop: solo: holds the real-time clock (no tick is lost)
 clock: 0.117 s held in all over 1 holds · ticks that ran inside a hold: 0 · the last: 0.117 s real, 0 ticks inside
 ```
 
-**Limits.** In co-op only the animation of the bodies stands still; the interpolation of a client's other bodies and what the pictures do on their own clocks (camera, UI) run on. The held time is the time asked for plus up to one frame, since a hold is checked at the start of a frame. The `Time<Virtual>` of a held clock is 0, so presentation that runs on it (a particle's life, `Res<Time>` in `Update`) stands still with the world; what must not stand still reads `Time<Real>`.
+**Limits.** In co-op only the animation of the bodies stands still; the interpolation of a client's other bodies and what the pictures do on their own clocks (camera, UI) run on. The held time is the time asked for plus up to about two frames: it starts from the start of the frame in which the blow is seen and is checked at the start of each frame (a measured 0.5 s hold took 0.51 s). The `Time<Virtual>` of a held clock is 0, so presentation that runs on it (a particle's life, `Res<Time>` in `Update`) stands still with the world; what must not stand still reads `Time<Real>`.
+
+**Deviations from the design, on purpose.** (1) A co-op picture hold freezes the animation only; the position of a held client body still follows interpolation (`shards_net/src/interp.rs` is not touched in C2). A body in a blow can slide while its pose stands still. Follow-up for the net lane (M8/M9): hold a body's interpolation by its `AiId` as well. (2) The hold's systems are unnamed `First` systems in `ai_core` and the plugin has no `SystemSet` of its own: nothing orders against them, the hold is not simulation. (3) No reference replay is recorded with hit stop on: a hold changes no tick, so a recording is the same file with or without it; the test in `crates/sandbox/tests/sandbox/hitstop.rs` records one while the clock is held and verifies it with hit stop off, headless and in a window. (4) `hitstop_play seconds=` keeps the table's `max_seconds` and is journalled as `manual`.
 
 ## Voxel terrain (core)
 

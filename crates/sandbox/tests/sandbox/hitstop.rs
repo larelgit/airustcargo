@@ -10,7 +10,7 @@ use shards::hitstop::{HitStops, Outcome};
 use shards::prelude::*;
 use shards::serde_json::json;
 
-use crate::common::{ok, BOSS};
+use crate::common::{ok, text, BOSS, PLAYER, SKELETONS};
 
 /// A sandbox that counts as drawing (an offscreen image no GPU draws into), in real time: one
 /// frame is one tick of real time, as a window at 60 Hz runs it.
@@ -100,4 +100,50 @@ fn a_replay_recorded_while_the_clock_was_held_verifies_with_hit_stop_off_headles
     fight(&mut off, ticks as u32);
     assert_eq!(off.world().resource::<ClockHold>().count, 0);
     assert_eq!(end(&off), want, "the same tick, the same state, whether the clock was held or not");
+}
+
+#[test]
+fn a_blow_between_two_others_holds_nothing_and_the_players_blow_does() {
+    let mut app = windowed(42);
+    app.update();
+    // The boss strikes a skeleton: neither is the local player, so no rule of the table gives a hold.
+    let out = ok(&mut app, "hitstop_play", json!({"event": "damaged", "attacker": BOSS, "target": SKELETONS[0]}));
+    assert!(text(&out).contains("no hold"), "{}", text(&out));
+    assert!(!app.world().resource::<ClockHold>().is_pending());
+    assert_eq!(app.world().resource::<HitStops>().clock, 0);
+    // The same blow on the player holds the clock.
+    let out = ok(&mut app, "hitstop_play", json!({"event": "damaged", "attacker": BOSS, "target": PLAYER}));
+    assert!(text(&out).contains("hit 0.06 s"), "{}", text(&out));
+    assert!(app.world().resource::<ClockHold>().is_pending());
+    assert_eq!(app.world().resource::<HitStops>().clock, 1);
+}
+
+#[test]
+fn a_manual_hold_keeps_the_tables_ceiling_and_is_named_manual() {
+    let mut app = windowed(42);
+    app.update();
+    let out = ok(&mut app, "hitstop_play", json!({"seconds": 5.0}));
+    // The sandbox table's max_seconds is 0.12, below the engine's 0.5.
+    assert!(text(&out).contains("manual 0.12 s"), "{}", text(&out));
+    // Event names read without caring for case or underscores.
+    ok(&mut app, "hitstop_play", json!({"event": "PerfectEvaded", "attacker": BOSS, "target": PLAYER}));
+}
+
+#[test]
+fn a_tick_run_by_hand_inside_a_hold_breaks_the_rule() {
+    // The rule's real path, not a hand-written counter: the clock is held, then something runs the
+    // fixed schedule on its own (as a system that ticked the game inside a hold would).
+    let mut app = windowed(42);
+    app.update();
+    sim::resume(app.world_mut());
+    app.world_mut().resource_mut::<ClockHold>().request(std::time::Duration::from_secs(3600));
+    app.update();
+    app.update();
+    assert!(app.world().resource::<ClockHold>().is_held(), "the hold began");
+    assert_eq!(shards::hitstop::no_ticks_inside(app.world()), None, "a hold that works leaves the rule silent");
+    let before = app.world().resource::<SimTick>().0;
+    app.world_mut().run_schedule(shards::bevy::app::FixedMain);
+    assert!(app.world().resource::<SimTick>().0 > before, "the schedule ran a tick");
+    let said = shards::hitstop::no_ticks_inside(app.world()).expect("a tick inside a hold is caught");
+    assert!(said.contains("1 simulation tick(s) ran while the clock was held"), "{said}");
 }
