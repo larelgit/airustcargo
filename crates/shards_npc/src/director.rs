@@ -379,7 +379,7 @@ pub(crate) fn direct(
         };
         let (budget, overlapping) = inflight.on(target, id, &director);
         // No token for a strike that would come too soon after another NPC's.
-        let spaced_out = waiting(&notes, id, &d, tick.0, spacing_ticks(director.min_spacing, dt)).is_some();
+        let spaced_out = !plan_def.ignores_spacing && waiting(&notes, id, &d, tick.0, spacing_ticks(director.min_spacing, dt)).is_some();
         let any = options.iter().any(|o| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director, spaced_out, f.options));
         if !any {
             continue;

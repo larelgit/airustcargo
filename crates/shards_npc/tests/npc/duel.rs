@@ -871,3 +871,68 @@ fn two_planners_gating_their_continuations_at_the_start_keep_the_spacing() {
         assert!(!gaps.is_empty() && gaps.iter().all(|g| *g >= 42), "seed {seed}: {gaps:?}");
     }
 }
+
+// --- E30: noting only ----------------------------------------------------------------------
+
+/// A boss on `boss_plan` and an add on `pair`, both of the director `spaced` (42 ticks), 1.2 m from the
+/// hero on opposite sides. Returns the boss's and the add's jab starts after `ticks`.
+fn boss_and_add(boss_plan: &str, ticks: u64) -> (Vec<u64>, Vec<u64>) {
+    let (mut app, who) = pair_of("grunt", "spaced", "pair", 7, |_| {});
+    app.world_mut().entity_mut(who[0]).insert(Npc::new("grunt", "grunt").with_plan(boss_plan).with_director("spaced"));
+    // `step` fails the test if the rule `npc.strike_spacing` is violated on the way.
+    step(&mut app, ticks);
+    (starts(&app, who[0], "jab"), starts(&app, who[1], "jab"))
+}
+
+#[test]
+fn a_boss_strike_delays_the_others_but_their_strikes_never_delay_the_boss() {
+    // The boss alone: its own rhythm, a jab and a short rest.
+    let (mut app, boss) = duel("pair_boss", |_| {});
+    step(&mut app, 600);
+    let alone = starts(&app, boss, "jab");
+    assert!(alone.len() >= 8 && alone.windows(2).all(|w| w[1] - w[0] == alone[1] - alone[0]), "{alone:?}");
+
+    let (boss, adds) = boss_and_add("pair_boss", 600);
+    assert!(adds.len() >= 4, "the add strikes too: {adds:?}");
+    // Never delayed: with the add at its side the boss keeps the rhythm it has alone.
+    assert_eq!(boss, alone, "the add's strikes held the boss back");
+    // Delayed: every start of the add comes 42 ticks or more after the boss's latest.
+    for t in &adds {
+        let last = boss.iter().rfind(|b| *b <= t).expect("the boss struck first");
+        assert!(t - last >= 42, "the add began at {t}, {} ticks after the boss at {last}: boss {boss:?}, add {adds:?}", t - last);
+    }
+}
+
+#[test]
+fn without_the_mode_the_boss_waits_for_the_add_like_anyone() {
+    let (alone, _) = {
+        let (mut app, boss) = duel("pair", |_| {});
+        step(&mut app, 600);
+        (starts(&app, boss, "jab"), ())
+    };
+    let (boss, adds) = boss_and_add("pair", 600);
+    assert!(!adds.is_empty() && boss.len() < alone.len(), "waiting for the add costs the boss strikes: {boss:?} vs {alone:?}");
+}
+
+#[test]
+fn a_noting_only_npc_is_always_ready_and_its_chain_is_never_refused() {
+    let (mut app, who) = pair_of("combo", "spaced", "chain_gated", 7, |_| {});
+    app.world_mut().entity_mut(who[0]).insert(Npc::new("grunt", "grunt").with_plan("chain_boss").with_director("spaced"));
+    step(&mut app, 1500);
+    let boss_id = id(&app, who[0]);
+    assert!(started(&app, who[0]).iter().filter(|(_, a)| a == "swing_2").count() >= 3, "the boss chains");
+    let refused = lines(&app, "refused after");
+    assert!(refused.iter().all(|l| !l.starts_with(&boss_id)), "the boss's chain was refused: {refused:?}");
+    assert!(shards_npc::wait_of(app.world(), who[0]).is_none(), "{boss_id} is always ready");
+}
+
+#[test]
+fn the_open_options_stay_as_decided_between_two_decisions() {
+    // `deciding` holds on the decision tick only; the option it opens stays open until the next decision.
+    let (mut app, who) = deciding_duelist("gate_deciding");
+    for _ in 0..40 {
+        step(&mut app, 1);
+        let open = app.world().get::<shards_npc::NpcOptions>(who).map(|o| o.allowed.clone());
+        assert_eq!(open, Some(vec!["light".to_owned()]), "tick {}", app.world().resource::<ai_core::SimTick>().0);
+    }
+}

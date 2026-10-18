@@ -74,6 +74,12 @@ pub(crate) fn waiting(notes: &[Note], me: AiId, pool: &str, now: u64, ticks: u64
         .max_by_key(|(who, left)| (*left, std::cmp::Reverse(*who)))
 }
 
+/// Whether the plan of NPC `npc` never waits for the director's spacing
+/// ([`AttackPlanDef::ignores_spacing`]): its starts are still noted for the others.
+pub(crate) fn ignores_spacing(db: &ContentDb, npc: &Npc) -> bool {
+    npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p)).is_some_and(|p| p.ignores_spacing)
+}
+
 /// The notes in `world`: every noted strike, and every press that has not started yet
 /// (counted from the tick it was pressed).
 pub(crate) fn notes_of(world: &World) -> Vec<Note> {
@@ -123,6 +129,9 @@ pub fn wait_of(world: &World, entity: Entity) -> Option<(AiId, u64)> {
     let npc = world.get::<Npc>(entity)?;
     let id = *world.get::<AiId>(entity)?;
     let db = world.get_resource::<ContentDb>()?;
+    if ignores_spacing(db, npc) {
+        return None;
+    }
     let dt = world.get_resource::<Time<Fixed>>()?.timestep().as_secs_f32();
     let ticks = spacing_ticks(DirectorDef::of(db, &npc.director).min_spacing, dt);
     waiting(&notes_of(world), id, &pool(&npc.director), ai_core::sim::tick(world), ticks)

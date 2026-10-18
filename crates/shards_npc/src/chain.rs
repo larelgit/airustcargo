@@ -26,7 +26,7 @@ use crate::brain::{salt, Npc};
 use crate::def::{AttackPlanDef, ChainDef, DirectorDef};
 use crate::director::{order, Fighting};
 use crate::planner::NpcOptions;
-use crate::strike::{chain_note, note_list, pool, spacing_ticks, strike_pressed, tags_for, waiting};
+use crate::strike::{chain_note, ignores_spacing, note_list, pool, spacing_ticks, strike_pressed, tags_for, waiting};
 
 /// An NPC's pending combo continuation: gameplay state, kept in replays and snapshots. Only an
 /// NPC whose attack rolled a chain carries it, from the roll to the end of the attack.
@@ -159,7 +159,8 @@ pub(crate) fn chain_press(
         // (the combo window is already open); else it is asked when it would start.
         let takes_now = chain.at_start && takes_input(&f, &db, &chain.input, dt);
         let asked = strike && (!chain.at_start || takes_now);
-        if asked && let Some((by, ticks_left)) = waiting(&notes, *f.id, &pool, tick.0, spacing) {
+        let waits = !ignores_spacing(&db, f.npc);
+        if asked && waits && let Some((by, ticks_left)) = waiting(&notes, *f.id, &pool, tick.0, spacing) {
             commands.entity(entity).remove::<NpcChain>();
             commands.trigger(ChainRefused { entity, after, input: chain.input, by, ticks_left, spacing });
             continue;
@@ -211,7 +212,9 @@ fn gate_buffered(
     let director = DirectorDef::of(db, &f.npc.director);
     let spacing = spacing_ticks(director.min_spacing, dt);
     let pool = pool(&f.npc.director);
-    if let Some((by, ticks_left)) = waiting(notes, *f.id, &pool, now, spacing) {
+    if !ignores_spacing(db, f.npc)
+        && let Some((by, ticks_left)) = waiting(notes, *f.id, &pool, now, spacing)
+    {
         f.buffer.queued.retain(|q| q.input != chain.input);
         let after = f.state.current.as_ref().map_or_else(String::new, |r| r.action.clone());
         commands.entity(f.entity).remove::<NpcChain>();

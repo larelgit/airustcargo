@@ -320,7 +320,7 @@ pub(crate) fn plan_attacks(
         let options = resolve(plan_def, &db, &f.fighter.moveset, radius);
         let (budget, overlapping) = inflight.on(grant.target, id, &director);
         // Another NPC of its director began a strike less than `min_spacing` ago: its strikes wait.
-        let spaced_out = waiting(&notes, id, &pool(&f.npc.director), tick.0, spacing(&director)).is_some();
+        let spaced_out = !plan_def.ignores_spacing && waiting(&notes, id, &pool(&f.npc.director), tick.0, spacing(&director)).is_some();
         // With `press_on_decision` a new choice, like the press, waits for the NPC's decision tick.
         let decides = !plan_def.press_on_decision || f.think.is_none_or(|t| t.decided == Some(tick.0));
         let chosen = {

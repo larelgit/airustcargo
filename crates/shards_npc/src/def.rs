@@ -650,6 +650,14 @@ pub struct AttackPlanDef {
     /// changes nothing.
     #[serde(skip_serializing_if = "is_false")]
     pub press_on_decision: bool,
+    /// Noting only (CDD 27.2: a big enemy's attacks pace the small ones around it, never the
+    /// reverse). The NPC's strike starts are noted and hold the other NPCs of its director back as
+    /// usual, but it never waits for the director's `min_spacing` itself: no strike of its own
+    /// is held back by the spacing, in the grant, the planner, a combo continuation or
+    /// `NpcCtx::strike_ready`. Off (the default): it waits like the rest. Without a `min_spacing`
+    /// on the director it changes nothing.
+    #[serde(skip_serializing_if = "is_false")]
+    pub ignores_spacing: bool,
 }
 
 impl Default for AttackPlanDef {
@@ -664,6 +672,7 @@ impl Default for AttackPlanDef {
             rest_interrupted: None,
             first_rest: None,
             press_on_decision: false,
+            ignores_spacing: false,
         }
     }
 }
@@ -961,7 +970,7 @@ mod tests {
             ]
         );
         let neutral = serde_json::to_string(&AttackPlanDef::default()).unwrap();
-        for field in ["rest_interrupted", "first_rest", "press_on_decision"] {
+        for field in ["rest_interrupted", "first_rest", "press_on_decision", "ignores_spacing"] {
             assert!(!neutral.contains(field), "{field} stays out of a plan that does not use it: {neutral}");
         }
     }
