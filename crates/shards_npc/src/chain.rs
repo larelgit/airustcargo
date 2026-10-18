@@ -180,6 +180,7 @@ pub(crate) fn chain_press(
 
 /// Whether the action machine would take `input` this tick.
 fn takes_input(f: &crate::director::FightingItem, db: &ContentDb, input: &str, dt: f32) -> bool {
+    // No leap site: a chain link that leaps is not judged for its landing here (the machine rejects it, unpaid).
     let view = crate::director::npc_view(db, f.fighter, f.state, &f.drive.held, f.dead, (f.stamina, f.cooldowns, f.charges), f.motion, None);
     can_start(&view, input, dt).is_ok()
 }

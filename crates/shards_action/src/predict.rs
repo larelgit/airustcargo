@@ -562,6 +562,10 @@ fn take_over(
     now: u64,
 ) -> Option<PredictedAction> {
     let run = catch_up(r.clone(), RunExtras::extra_of(extras.as_ref()), db, intent, ticks, dt)?;
+    // A leap the catch-up stepped past its launch is launched: the crossing tick is gone, and a flag left
+    // `false` would never fire (the host's body is where it is by then).
+    let past = db.get::<ActionDef>(&r.action).and_then(|d| d.leap.as_ref()).is_some_and(|l| run.t > l.at + EPS);
+    let leap = leap.map(|l| LeapRun { launched: l.launched || past, ..l });
     Some(PredictedAction {
         action: r.action.clone(),
         input: r.input.clone(),

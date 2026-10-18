@@ -714,3 +714,44 @@ fn predicted_burrow_ghosts_like_the_host() {
     assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
     verify_host(&stand);
 }
+
+#[test]
+fn a_leap_with_no_landing_starts_on_neither_side() {
+    let (mut stand, id, mine) = mover_stand();
+    // On the far deck, 1.6 m from the lane's wall to the north (the way a body faces when it stands):
+    // every landing from the 1.5 m minimum on is in the wall.
+    put(&mut stand, &id, 68.0, 3.4, -2.4);
+    let theirs = entity(&stand, HOST, &id).unwrap();
+    let before = stand.world(HOST).get::<shards::action::Stamina>(theirs).unwrap().current;
+    let out = stand.call(C1, "use_technique", json!({"slot": 1}));
+    assert!(!out.ok && out.result.to_string().contains("no landing spot within 1.5-6m"), "{}", out.result);
+    stand.run(60);
+    assert!(shown(&stand, mine).is_none(), "nothing was shown");
+    assert!(!stand.world(HOST).get::<ActionState>(theirs).unwrap().is("spar_leap"), "nothing started on the host");
+    assert_eq!(stand.world(HOST).get::<shards::action::Stamina>(theirs).unwrap().current, before, "nothing was paid");
+    assert_eq!(prediction(&stand, C1).mispredicted, 0, "{:#?}", journal(&stand, C1));
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+}
+
+#[test]
+fn a_spin_is_cut_on_both_sides_when_the_body_enters_water() {
+    let (mut stand, id, mine) = mover_stand();
+    let theirs = entity(&stand, HOST, &id).unwrap();
+    // On the deck by the pool (2.7 m deep at x 56..66): spinning, then put into the water, where the body swims in a few ticks.
+    put(&mut stand, &id, 54.5, 3.4, 0.0);
+    let out = stand.call(C1, "use_technique", json!({"slot": 2}));
+    assert!(text(&out).starts_with("ok: spar_spin"), "{}", out.result);
+    let into = stand.call(HOST, "teleport", json!({"id": id, "x": 61.0, "y": 2.0, "z": 0.0}));
+    assert!(into.ok, "{}", into.result);
+    run_until(&mut stand, 200, "the body swims", |s| {
+        s.world(HOST).get::<shards::motion::MotionState>(theirs).is_some_and(|m| m.mode == shards::motion::MotionMode::Water)
+    });
+    run_until(&mut stand, 120, "the spin is cut on the host", |s| !s.world(HOST).get::<ActionState>(theirs).unwrap().is("spar_spin"));
+    run_until(&mut stand, 120, "and on the client", |s| shown(s, mine).is_none());
+    // In water only an `afloat` action starts, here on the client too.
+    let refused = stand.call(C1, "use_technique", json!({"slot": 2}));
+    assert!(!refused.ok && refused.result.to_string().contains("only actions tagged afloat"), "{}", refused.result);
+    assert!(text(&stand.call(C1, "use_technique", json!({"slot": 3}))).starts_with("ok: spar_stroke"));
+    stand.run(60);
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+}

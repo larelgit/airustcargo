@@ -3,7 +3,8 @@
 
 mod actions;
 mod agents;
-mod body;
+mod body_motion;
+mod body_state;
 mod common;
 mod golden;
 mod hits;

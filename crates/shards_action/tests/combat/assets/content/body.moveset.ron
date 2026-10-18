@@ -1,26 +1,12 @@
 {
-    // Leaps, a spin, a burrow, a roll; in water only strokes (`afloat`) start.
-    "b_hero": (
-        inputs: {
-            "light": "b_slam",
-            "heavy": "b_sweep",
-            "dodge": "b_roll",
-            "technique.1": "b_leap",
-            "technique.2": "b_leap_to",
-            "technique.3": "b_leap_wet",
-            "technique.4": "b_leap_far",
-            "technique.5": "b_spin",
-            "technique.6": "b_burrow",
-            "technique.7": "b_stroke",
-            "technique.8": "b_hop",
-            "technique.9": "b_hide",
-        },
-        stagger: "b_stagger",
-        only_in: [(Water, ["afloat"])],
+    "b_attacker": (
+        inputs: {"light": "b_hit", "heavy": "b_hit_big", "technique.1": "b_hit_two"},
     ),
-    // A target that burrows.
-    "b_digger": (
-        inputs: {"technique.6": "b_burrow", "technique.9": "b_hide"},
-        stagger: "b_stagger",
+    // Casts the three wards.
+    "b_caster": (
+        inputs: {"technique.1": "b_ward", "technique.2": "b_ward_big", "technique.3": "b_ward_max", "block": "b_guard"},
     ),
+    // The victim: the tuning's cap (2) and a cap of one of its own.
+    "b_victim": (inputs: {"block": "b_guard"}),
+    "b_capped": (inputs: {}, max_statuses: 1),
 }

@@ -1,5 +1,5 @@
 //! Body and motion (B2c): the leap and its landing search, the launch, walking during a span, the
-//! mode gate (`only_in`), intangible spans and ghosts. Content in `assets/content/body.*.ron`.
+//! mode gate (`only_in`), intangible spans and ghosts. Content in `assets/content/body_motion.*.ron`.
 
 use bevy::prelude::*;
 use serde_json::json;
@@ -104,10 +104,10 @@ fn leap_without_landing_is_rejected_unpaid() {
     assert_eq!(err.ready_in(), None, "waiting will not do");
     let refused = fails(&mut app, "use_technique", json!({"slot": 4}));
     assert!(refused.contains("no landing spot within 3-3m"), "{refused}");
-    // A press made anyway (a keyboard) is rejected and nothing is paid.
+    // A press made anyway (a keyboard) waits in the buffer like any press the machine cannot start (the host and a client judge the landing alike), then is rejected and nothing is paid.
     let before = stamina(&app, hero);
     press(&mut app, hero, "technique.4");
-    step(&mut app, 3);
+    step(&mut app, 40);
     assert_eq!(action(&app, hero), "idle");
     assert_eq!(stamina(&app, hero), before);
     assert_eq!(app.world().get::<Cooldowns>(hero).unwrap().left("b_leap_far"), 0.0);
@@ -369,4 +369,21 @@ fn a_ghost_is_solid_again_when_its_run_is_cut() {
     step(&mut app, 30);
     assert_eq!(action(&app, victim), "idle");
     assert!(app.world().get::<Ghost>(victim).is_none());
+}
+
+#[test]
+fn a_leap_with_no_landing_does_not_take_the_start_slot() {
+    let mut app = arena();
+    let hero = me(&mut app);
+    // A wall 2.5 m north: `b_leap_far` (3 m or nothing) has no landing, and `light` (a slam) is
+    // pressed after it in the same tick.
+    wall(app.world_mut(), Vec3::new(-5.0, 0.0, -3.0), Vec3::new(5.0, 3.0, -2.5));
+    step(&mut app, 1);
+    let before = stamina(&app, hero);
+    press(&mut app, hero, "technique.4");
+    press(&mut app, hero, "light");
+    step(&mut app, 3);
+    assert_eq!(action(&app, hero), "b_slam", "the press behind the leap started: {:#?}", journal(&app));
+    assert!(stamina(&app, hero) <= before);
+    assert_eq!(app.world().get::<Cooldowns>(hero).unwrap().left("b_leap_far"), 0.0, "the leap paid nothing");
 }

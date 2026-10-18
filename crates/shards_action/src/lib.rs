@@ -106,6 +106,7 @@ pub mod ai;
 pub mod anim;
 mod coverage;
 pub mod bake;
+pub mod body;
 pub mod clipfile;
 pub mod combat;
 pub mod cue;
@@ -135,9 +136,13 @@ pub use anim::{
     AnimationCue, BodyStatus, ClipChoice, ClipDef, CueDef, GroundSpeeds, LayerChoice, LayerDef, Locomotion, MAX_LAYERS,
 };
 pub use combat::{
-    end_break, kill, kill_with, poise_damage, react, reset_poise, revive, stagger, Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died,
+    deal_damage, end_break, kill, kill_with, poise_damage, react, reset_poise, revive, stagger, Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died,
     Evaded, GuardBroken, HitWeight, IgnoreReason, Outcome, Parried, PerfectEvaded, Reacted, Reaction,
     StaggerCause, Staggered,
+};
+pub use body::{
+    clear_barrier, clear_damage_taken, extend_damage_taken, grant_barrier, set_damage_taken, Barrier, BarrierGranted, DamageTaken,
+    DamageTakenExpired, ProcGates, TakenMult,
 };
 pub use cue::{ActionSound, SoundCue};
 pub use def::{
@@ -277,6 +282,11 @@ impl Plugin for ActionPlugin {
             .register_type::<StatusResist>()
             .register_type::<NoStatusSlow>()
             .register_type::<Protection>()
+            .register_type::<Barrier>()
+            .register_type::<DamageTaken>()
+            .register_type::<ProcGates>()
+            .register_type::<BarrierGranted>()
+            .register_type::<DamageTakenExpired>()
             .register_type::<Knockback>()
             .register_type::<RunExtras>()
             .register_type::<LeapRun>()
@@ -318,6 +328,8 @@ impl Plugin for ActionPlugin {
             .add_engine_invariant("action.resources_in_range", invariants::resources_in_range)
             .add_engine_invariant("action.running_sane", invariants::running_sane)
             .add_engine_invariant("action.protection_sane", invariants::protection_sane)
+            .add_engine_invariant("action.barrier_sane", invariants::barrier_sane)
+            .add_engine_invariant("action.damage_taken_sane", invariants::damage_taken_sane)
             .add_engine_invariant("action.knockback_sane", invariants::knockback_sane)
             .add_engine_invariant("action.extras_follow_run", invariants::extras_follow_run)
             .add_engine_invariant("action.leap_follows_run", invariants::leap_follows_run)
@@ -361,6 +373,7 @@ impl Plugin for ActionPlugin {
                     fighter::update_fighters.in_set(ActionSystems::Fighters),
                     machine::finish_actions.in_set(ActionSystems::Fighters).after(fighter::update_fighters),
                     fighter::tick_protection.in_set(ActionSystems::Fighters).after(machine::finish_actions),
+                    body::tick_body_state.in_set(ActionSystems::Fighters).after(fighter::tick_protection),
                     status::update_statuses.in_set(ActionSystems::Statuses),
                     status::statuses_to_modifiers::<()>.in_set(ModifierSystems::Statuses),
                     status::statuses_to_modifiers::<With<Predicted>>.in_set(ModifierSystems::PredictStatuses),

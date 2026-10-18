@@ -369,6 +369,14 @@ pub enum Effect {
     /// ([`ActionSound`](crate::ActionSound)); a clip's cue sounds only where a model is drawn.
     /// The audio module's content check names a sound that is not defined.
     Sound(String),
+    /// A damage-absorbing pool on the actor ([`Barrier`](crate::Barrier)): the larger of its current and
+    /// `amount`, for `seconds`. `of_max`: `amount` is a share of max health (`0.15` is 15 %).
+    Barrier {
+        amount: f32,
+        seconds: f32,
+        #[serde(default, skip_serializing_if = "is_false")]
+        of_max: bool,
+    },
     /// A game hook registered with `add_action_effect`: `Custom("spawn_fireball")`.
     Custom(String),
 }
@@ -1072,6 +1080,13 @@ impl ContentDef for ActionDef {
                     check.refs.require::<StatusDef>(status, &format!("effects[{i}]"));
                     check.number(&format!("effects[{i}]"), *v);
                 }
+                Effect::Barrier { amount, seconds, .. } => {
+                    for (name, v) in [("amount", *amount), ("seconds", *seconds)] {
+                        if !(v > 0.0 && v.is_finite()) {
+                            check.refs.error(format!("effects[{i}] Barrier {name} must be a number above 0 (is {v})"));
+                        }
+                    }
+                }
                 // The sound is checked where the mixer is (`AudioDef`), as a telegraph's is.
                 Effect::Sound(_) | Effect::Custom(_) => {}
             }
@@ -1237,6 +1252,11 @@ impl Check<'_, '_, '_> {
             }
             if def.hold.is_some() {
                 self.refs.error("a leap and a hold loop in one action: the loop would pass the launch again; leave one out");
+            }
+            if leap.search.is_some() && (!def.turn.is_empty() || def.assist.is_some()) {
+                self.refs.error(
+                    "a leap with a search and `turn` spans or an `assist`: the run would turn away from the direction the search chose, and the landing with it; leave them out",
+                );
             }
             if let Some(s) = &leap.search {
                 if def.displacement_at(self.length) <= EPS {
@@ -1445,6 +1465,9 @@ pub struct MovesetDef {
     /// not a map: `MotionMode` has no `Ord`. Forced actions (a stagger, a death) are never cut.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub only_in: Vec<(MotionMode, Vec<String>)>,
+    /// Statuses active at once on this fighter; `None`: `CombatTuning::max_statuses`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_statuses: Option<u32>,
 }
 
 /// How a fighter's presses wait in its [`InputBuffer`](crate::InputBuffer).
@@ -1569,6 +1592,15 @@ impl ContentDef for MovesetDef {
             }
             if tags.iter().any(|t| t.is_empty() || t.contains(char::is_whitespace)) {
                 refs.error(format!("only_in {mode:?} has a tag that is empty or has spaces; tags are names like `afloat`"));
+            }
+            // A tag no action of the moveset carries (a typo) would leave the body unable to act in that mode.
+            let carried: Vec<&ActionDef> = self.inputs.values().filter_map(|a| refs.get::<ActionDef>(a)).collect();
+            if carried.len() == self.inputs.len() {
+                for tag in tags.iter().filter(|t| !carried.iter().any(|d| d.tags.contains(t))) {
+                    refs.error(format!(
+                        "only_in {mode:?} names the tag `{tag}`, which no action among the inputs carries: the body could not act in that mode (a typo?)"
+                    ));
+                }
             }
         }
         if let BufferMode::SingleSlot { priority } = &self.buffer {
@@ -2028,11 +2060,14 @@ mod tests {
             "e": (net_id: 5, phases: [("under", 1.0)], ghost: true),
             "f": (net_id: 6, phases: [("dig", 0.3), ("under", 0.6)], intangible: [Phase("under")], ghost: true, walk: [(Phase("dig"), 0.5)]),
             "g": (net_id: 7, phases: [("windup", 0.3), ("loop", 0.5)], hold: (input: "block", span: Phase("loop")), leap: (height: 1, at: 0.1)),
+            "h": (net_id: 8, phases: [("crouch", 0.2), ("air", 0.5)], displacement: [(0.7, 4.0)], turn: [(Phase("crouch"), 90)], leap: (height: 1, at: 0.1, search: (min: 1, max: 4, step: 0.5, max_rise: 0.5, max_drop: 1, probe_height: 1))),
+            "t": (net_id: 9, phases: [("a", 0.2)], tags: ["afloat", "glide"]),
         }"#;
         let movesets = r#"{
             "twice": (inputs: {}, only_in: [(Water, ["afloat"]), (Water, ["swim"])]),
             "blank": (inputs: {}, only_in: [(Water, ["two words"])]),
-            "fine": (inputs: {}, only_in: [(Water, ["afloat"]), (Glide, ["afloat", "glide"])]),
+            "typo": (inputs: {"x": "t"}, only_in: [(Water, ["afloat", "afoat"])]),
+            "fine": (inputs: {"x": "t"}, only_in: [(Water, ["afloat"]), (Glide, ["afloat", "glide"])]),
         }"#;
         let sources = [
             shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
@@ -2054,6 +2089,8 @@ mod tests {
         assert!(has("action `e`: ghost passes through characters while intangible"), "{errors:#?}");
         assert!(!has("action `f`"), "{errors:#?}");
         assert!(has("action `g`: a leap and a hold loop in one action"), "{errors:#?}");
+        assert!(has("action `h`: a leap with a search and `turn` spans or an `assist`"), "{errors:#?}");
+        assert!(has("moveset `typo`: only_in Water names the tag `afoat`") && !has("moveset `typo`: only_in Water names the tag `afloat`"), "{errors:#?}");
         assert!(has("moveset `twice`: only_in names Water twice"), "{errors:#?}");
         assert!(has("moveset `blank`: only_in Water has a tag that is empty or has spaces"), "{errors:#?}");
         assert!(!has("moveset `fine`"), "{errors:#?}");

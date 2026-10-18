@@ -27,6 +27,7 @@ use shards_motion::{
 
 use std::ops::DerefMut;
 
+use crate::body::grant_barrier;
 use crate::cue::ActionSound;
 use crate::def::{touches, ActionDef, BufferMode, CancelTo, CombatTuning, Effect, Face, MovesetDef, StaminaMode, Steer, EPS};
 use crate::fighter::{report_once, sprint_rule, Charges, Cooldowns, Dead, Fighter, Health, Stamina};
@@ -515,7 +516,12 @@ impl Blocker {
                 tags.join(" or ")
             ),
             Blocker::NoLanding { min, max } => {
-                format!("no landing spot within {}-{}m; leap toward open, level ground", fmt_m(*min), fmt_m(*max))
+                format!(
+                    "no landing spot within {}-{}m; leap toward open, level ground, and not at a target nearer than {}m",
+                    fmt_m(*min),
+                    fmt_m(*max),
+                    fmt_m(*min)
+                )
             }
         }
     }
@@ -867,13 +873,14 @@ pub(crate) fn run_machines(
             take_presses(&mut f.intent, &mut f.buffer, mode, moveset, run, running_def, ttl, &mut reject);
         }
 
-        let choice = choose(&f, &db, dt);
         let here = f.transform.translation;
         let forward = *f.transform.forward();
         let locked = f.intent.target.and_then(|id| index.get(id)).and_then(|e| positions.get(e).ok().map(|p| (e, p)));
         let target = locked.map(|(_, (t, _, _))| t.translation);
         // The lock-on target as a leap sees it: where it stands and how wide its body is.
         let target_body = locked.map(|(_, (t, _, collider))| (t.translation, radius_of(collider)));
+        // A start judges a leap's landing from where the body stands, on the host as on a client.
+        let choice = choose(&f, &db, leap_site(&f, &physics, &db, (here, forward), target_body), dt);
         // Whether the lock-on target is in sight of the fighter, for an assist that needs it (asked only then).
         let mine = body_height(f.body.and_then(|(_, p)| p));
         let sees = || {
@@ -1080,7 +1087,7 @@ pub(crate) fn run_machines(
             if !expired.is_empty() {
                 f.buffer.queued.retain(|q| q.left >= -EPS);
                 for input in expired {
-                    let view = view(&f, &db);
+                    let view = view(&f, &db, leap_site(&f, &physics, &db, (here, forward), target_body));
                     let reason = match can_start(&view, &input, dt) {
                         Err(blocker) => blocker.reason(),
                         Ok(_) => "another action started first".to_owned(),
@@ -1093,8 +1100,21 @@ pub(crate) fn run_machines(
     }
 }
 
-fn view<'a>(f: &'a FighterDataItem, db: &'a ContentDb) -> FighterView<'a> {
+/// The body of `f` as a leap's landing search sees it; `None` for a fighter with no controller.
+fn leap_site<'a>(
+    f: &'a FighterDataItem,
+    physics: &'a PhysicsWorld,
+    db: &ContentDb,
+    at: (Vec3, Vec3),
+    target: Option<(Vec3, f32)>,
+) -> Option<LeapSite<'a>> {
+    let (controller, own) = f.body?;
+    Some(LeapSite::body(physics, f.entity, at, controller.resolve(own, Some(db)), &f.intent, target))
+}
+
+fn view<'a>(f: &'a FighterDataItem, db: &'a ContentDb, leap: Option<LeapSite<'a>>) -> FighterView<'a> {
     FighterView {
+        leap,
         stamina: f.stamina.as_deref(),
         cooldowns: Some(&f.cooldowns),
         charges: f.charges.as_deref(),
@@ -1140,11 +1160,11 @@ pub(crate) fn launch_due(at: f32, lo: f32, hi: f32) -> bool {
 }
 
 /// The first buffered press that can start, else a held input that can.
-fn choose(f: &FighterDataItem, db: &ContentDb, dt: f32) -> Option<Choice> {
+fn choose<'a>(f: &'a FighterDataItem, db: &'a ContentDb, leap: Option<LeapSite<'a>>, dt: f32) -> Option<Choice> {
     if f.dead {
         return None;
     }
-    choose_in(&view(f, db), &f.buffer.queued, dt)
+    choose_in(&view(f, db, leap), &f.buffer.queued, dt)
 }
 
 /// [`choose`] over a view: the first of `queued` that can start, else a held input (the
@@ -1884,6 +1904,15 @@ pub fn apply_effect(world: &mut World, entity: Entity, action: &str, effect: &Ef
             }
         }
         Effect::Status(status, amount) => add_status_buildup(world, entity, status, *amount),
+        Effect::Barrier { amount, seconds, of_max } => {
+            let amount = if *of_max {
+                let Some(max) = world.get::<Health>(entity).map(|h| h.max) else { return };
+                amount * max
+            } else {
+                *amount
+            };
+            grant_barrier(world, entity, amount, *seconds);
+        }
         Effect::Sound(sound) => world.trigger(ActionSound { entity, action: action.to_owned(), sound: sound.clone() }),
         Effect::Custom(name) => {
             let hook = world.resource::<ActionEffects>().0.iter().find(|(n, _)| n == name).map(|(_, f)| *f);

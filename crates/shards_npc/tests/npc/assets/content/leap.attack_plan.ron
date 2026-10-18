@@ -1,0 +1,4 @@
+{
+    // A leap only.
+    "leaper": (options: [(input: "light")], rest: (0.2, 0.4)),
+}

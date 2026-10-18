@@ -31,11 +31,12 @@
 use ai_core::AiId;
 use bevy::prelude::*;
 use shards_content::ContentDb;
-use shards_core::flat;
+use shards_core::{flat, NetRole};
 use shards_motion::{
     Collider, ColliderId, LayerMask, MotionState, PhysicsWorld, QueryFilter,
 };
 
+use crate::body::{Barrier, DamageTaken};
 use crate::def::{touches, ActionDef, CombatTuning, HitFlag, MovesetDef, EPS};
 use crate::fighter::{
     grant_protection, hostile, set_reaction_immunity, Armor, Dead, Fighter, Health, Invulnerable, Knockback, Poise, Protection, Stamina, Team,
@@ -489,6 +490,11 @@ pub fn modifiers(world: &World, ctx: &mut DamageCtx) {
             }
         }
     }
+    // The multipliers the target takes (a core window, a curse); without the component nothing is multiplied.
+    if let Some(taken) = world.get::<DamageTaken>(target) {
+        ctx.taken = taken.product();
+        ctx.damage *= ctx.taken;
+    }
     if let Some(armor) = world.get::<Armor>(target) {
         ctx.damage = armor.reduce(ctx.damage);
     }
@@ -578,7 +584,7 @@ fn apply(world: &mut World, ctx: DamageCtx) {
             if let Some(mut s) = world.get_mut::<Stamina>(target) {
                 s.spend(stamina);
             }
-            let hp_left = hurt(world, target, ctx.damage);
+            let (hp_left, absorbed) = hurt(world, target, ctx.damage);
             world.trigger(Blocked {
                 attacker: credit,
                 defender: target,
@@ -587,7 +593,7 @@ fn apply(world: &mut World, ctx: DamageCtx) {
                 stamina,
                 hp_left,
                 weight,
-                absorbed: 0.0,
+                absorbed,
                 source,
             });
             if !finish_if_dead(world, target, credit, &action, source) {
@@ -600,7 +606,7 @@ fn apply(world: &mut World, ctx: DamageCtx) {
                 let all = s.current;
                 s.spend(all);
             }
-            let hp_left = hurt(world, target, ctx.damage);
+            let (hp_left, absorbed) = hurt(world, target, ctx.damage);
             world.trigger(GuardBroken {
                 attacker: credit,
                 defender: target,
@@ -608,7 +614,7 @@ fn apply(world: &mut World, ctx: DamageCtx) {
                 amount: ctx.damage,
                 hp_left,
                 weight,
-                absorbed: 0.0,
+                absorbed,
                 source,
             });
             if !finish_if_dead(world, target, credit, &action, source) {
@@ -617,7 +623,7 @@ fn apply(world: &mut World, ctx: DamageCtx) {
             }
         }
         Outcome::Hit => {
-            let hp_left = hurt(world, target, ctx.damage);
+            let (hp_left, absorbed) = hurt(world, target, ctx.damage);
             world.trigger(Damaged {
                 attacker: credit,
                 target,
@@ -629,7 +635,7 @@ fn apply(world: &mut World, ctx: DamageCtx) {
                 ignore_reason: None,
                 weight,
                 reaction: plan.reacts,
-                absorbed: 0.0,
+                absorbed,
                 source,
             });
             if finish_if_dead(world, target, credit, &action, source) {
@@ -673,13 +679,54 @@ fn apply_statuses(world: &mut World, target: Entity, status: &[(String, f32)]) {
     }
 }
 
-/// Takes `damage` off `target`'s health; returns what is left.
-fn hurt(world: &mut World, target: Entity, damage: f32) -> f32 {
-    let Some(mut health) = world.get_mut::<Health>(target) else { return 0.0 };
+/// Takes `damage` off `target`: its [`Barrier`] first, then its health. Returns the health left
+/// and what the barrier absorbed. The one place damage reaches health: the three damaging
+/// outcomes and [`deal_damage`] use it. Without a barrier it is the old two lines.
+fn hurt(world: &mut World, target: Entity, damage: f32) -> (f32, f32) {
+    if world.get::<Health>(target).is_none() {
+        return (0.0, 0.0);
+    }
+    let mut absorbed = 0.0;
+    let mut damage = damage;
+    if damage > 0.0
+        && let Some(mut barrier) = world.get_mut::<Barrier>(target)
+    {
+        absorbed = barrier.amount.min(damage);
+        barrier.amount -= absorbed;
+        damage -= absorbed;
+        if barrier.amount <= EPS {
+            world.entity_mut(target).remove::<Barrier>();
+        }
+    }
+    let mut health = world.get_mut::<Health>(target).expect("checked above");
     if damage > 0.0 {
         health.current = (health.current - damage).max(0.0);
     }
-    health.current
+    (health.current, absorbed)
+}
+
+/// Damage that is not a hit: a status hook's burn, a hazard. Takes `amount` off `target`'s barrier,
+/// then its health, and kills it when its health runs out (`Died`, with `credit` as the killer
+/// and no action). Returns the health left. Nothing is done to a dead or gone entity, to one in
+/// god mode ([`Invulnerable`]), or for an `amount` that is not a finite number above 0. It runs none of the hit
+/// pipeline (no guard, no armor, no [`DamageTaken`], no hooks, no reaction or poise) and
+/// triggers no [`Damaged`] (that event names a hit's action); a game that wants a line for it
+/// triggers its own event. A machine that does not simulate (a co-op client) changes nothing and
+/// returns the health as it is: the host's state brings the damage, so an observer that calls
+/// this on every machine does not kill twice.
+pub fn deal_damage(world: &mut World, target: Entity, amount: f32, credit: Option<Entity>) -> f32 {
+    if world.get_entity(target).is_err() || world.get::<Dead>(target).is_some() {
+        return 0.0;
+    }
+    let simulates = world.get_resource::<NetRole>().is_none_or(|r| r.simulates());
+    if !simulates || world.get::<Invulnerable>(target).is_some() || !(amount > 0.0 && amount.is_finite()) {
+        return world.get::<Health>(target).map_or(0.0, |h| h.current);
+    }
+    let (hp_left, _) = hurt(world, target, amount);
+    if world.get::<Health>(target).is_some_and(|h| h.current <= EPS) {
+        kill_with(world, target, credit, None, None);
+    }
+    hp_left
 }
 
 /// Kills `target` if its health ran out; `true` if it is dead now.

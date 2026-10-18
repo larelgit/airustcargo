@@ -2,7 +2,7 @@
 // per-hit guard costs, a perfect guard with a price, perfect evades, walls, the stamina
 // overdraft) on neutral numbers. `reactions.scenario` borrows two fighters of the arena and
 // switches their movesets to `sparring` and `duelist` (`sparring.moveset.ron`) for its length;
-// nothing in the starting world uses them. Net ids 100-119; the action timeline (B2a) below, 120-125; body and motion (B2c) is in `body.action.ron`, 126-129.
+// nothing in the starting world uses them. Net ids 100-119; the action timeline (B2a) below, 120-139 (126-129 are body and motion, B2c, in `body.action.ron`); body state (B2b), 140-149.
 {
     // A quick jab that asks for a light reaction; pressed again in its recovery it chains.
     "spar_jab": (
@@ -119,5 +119,22 @@
         displacement: [(0.35, 2.5)],
         steer: Move,
         face: Keep,
+    ),
+    // Body state (B2b), 140-149: a ward that gives a barrier of half the caster's health for 8 s,
+    // and two jabs that carry a status (a full bar of chill, a full bar of jolt).
+    "spar_ward": (
+        net_id: 140,
+        phases: [("cast", 0.5)],
+        effects: [(at: 0.3, effect: Barrier(amount: 0.5, seconds: 8, of_max: true))],
+    ),
+    "spar_frost": (
+        net_id: 141,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.2)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.4, angle: 120), damage: 2, status: [("spar_chill", 100)])],
+    ),
+    "spar_zap": (
+        net_id: 142,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.2)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.4, angle: 120), damage: 2, status: [("spar_jolt", 100)])],
     ),
 }

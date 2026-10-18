@@ -1,0 +1,10 @@
+// A leap that lands 5 to 6 m away, or not at all (a target nearer than that is too close).
+{
+    "pounce": (
+        net_id: 60,
+        phases: [("crouch", 0.3), ("air", 0.5), ("land", 0.3)],
+        displacement: [(0.3, 0.0), (0.8, 6.0)],
+        hits: [(span: Secs(0.8, 0.9), shape: Circle(radius: 2.0), damage: 4, poise: 2)],
+        leap: (height: 1.0, at: 0.3, search: (min: 5.0, max: 6.0, step: 0.5, max_rise: 0.5, max_drop: 1.0, probe_height: 1.0, toward_target: true)),
+    ),
+}
