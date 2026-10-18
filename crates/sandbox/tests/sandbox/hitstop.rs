@@ -106,6 +106,7 @@ fn a_replay_recorded_while_the_clock_was_held_verifies_with_hit_stop_off_headles
 fn a_blow_between_two_others_holds_nothing_and_the_players_blow_does() {
     let mut app = windowed(42);
     app.update();
+    sim::resume(app.world_mut());
     // The boss strikes a skeleton: neither is the local player, so no rule of the table gives a hold.
     let out = ok(&mut app, "hitstop_play", json!({"event": "damaged", "attacker": BOSS, "target": SKELETONS[0]}));
     assert!(text(&out).contains("no hold"), "{}", text(&out));
@@ -122,6 +123,7 @@ fn a_blow_between_two_others_holds_nothing_and_the_players_blow_does() {
 fn a_manual_hold_keeps_the_tables_ceiling_and_is_named_manual() {
     let mut app = windowed(42);
     app.update();
+    sim::resume(app.world_mut());
     let out = ok(&mut app, "hitstop_play", json!({"seconds": 5.0}));
     // The sandbox table's max_seconds is 0.12, below the engine's 0.5.
     assert!(text(&out).contains("manual 0.12 s"), "{}", text(&out));

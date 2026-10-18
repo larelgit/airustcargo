@@ -120,7 +120,7 @@ fn the_tool_lists_the_table_and_makes_a_hold_through_it() {
         "poise break 0.10 s (damaged): not held: nothing is drawn (headless) (0.00 s)"
     );
     assert_eq!(ok(&mut app, "hitstop_play", json!({"event": "staggered"})), "no hold: no rule of the table gives a hold for staggered");
-    assert_eq!(ok(&mut app, "hitstop_play", json!({"seconds": 9.0})), "tool 0.50 s (damaged): not held: nothing is drawn (headless) (0.00 s)");
+    assert_eq!(ok(&mut app, "hitstop_play", json!({"seconds": 9.0})), "manual 0.12 s (damaged): not held: nothing is drawn (headless) (0.00 s)");
     assert!(refused(&mut app, "hitstop_play", json!({"event": "damge"})).contains("did you mean `damaged`?"));
     assert!(refused(&mut app, "hitstop_play", json!({"weight": "huge"})).contains("weights: Light, Heavy"));
     assert!(refused(&mut app, "hitstop_play", json!({"seconds": -1.0})).contains("a duration above 0"));

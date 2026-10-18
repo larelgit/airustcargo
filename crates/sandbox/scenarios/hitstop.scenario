@@ -42,11 +42,11 @@ act hitstop
 expect result contains "hit stop: headless: never holds"
 expect result contains "settings: scale 1 (accessibility.hit_stop; 0 is off) · only the local player's blows: no"
 expect result contains "table: 8 rules · ceiling 0.12 s · cooldown 0.00 s"
-expect result contains "finisher       damaged · weight ≥ Finisher → 0.10 s"
-expect result contains "poise break    damaged · weight ≥ Break → 0.10 s"
-expect result contains "heavy hit      damaged · reaction ≥ 2 → 0.08 s"
-expect result contains "hit            damaged → 0.06 s"
-expect result contains "parry          parried → 0.10 s"
+expect result contains "finisher       damaged · weight ≥ Finisher · local player involved → 0.10 s"
+expect result contains "poise break    damaged · weight ≥ Break · local player involved → 0.10 s"
+expect result contains "heavy hit      damaged · reaction ≥ 2 · local player involved → 0.08 s"
+expect result contains "hit            damaged · local player involved → 0.06 s"
+expect result contains "parry          parried · local player involved → 0.10 s"
 act content_get kind=hitstop id=sandbox
 expect result contains "sandbox.hitstop.ron"
 expect result contains "PerfectEvaded"
@@ -68,20 +68,20 @@ expect result contains "clock: never held yet"
 # --- the tool makes the holds the table gives for the other events, as a blow would
 act hitstop_play event=damaged weight=Finisher attacker=e5
 expect result contains "finisher 0.10 s (damaged): not held: nothing is drawn (headless)"
-act hitstop_play event=damaged weight=Break
+act hitstop_play event=damaged weight=Break attacker=e5
 expect result contains "poise break 0.10 s (damaged)"
-act hitstop_play event=damaged reaction=2
+act hitstop_play event=damaged reaction=2 attacker=e5
 expect result contains "heavy hit 0.08 s (damaged)"
-act hitstop_play event=blocked
+act hitstop_play event=blocked attacker=e5
 expect result contains "block 0.06 s (blocked)"
-act hitstop_play event=parried
+act hitstop_play event=parried attacker=e5
 expect result contains "parry 0.10 s (parried)"
-act hitstop_play event=perfect_evaded
+act hitstop_play event=perfect_evaded attacker=e5
 expect result contains "perfect dodge 0.10 s (perfect_evaded)"
 act hitstop_play event=staggered
 expect result contains "no hold: no rule of the table gives a hold for staggered"
 act hitstop_play seconds=5
-expect result contains "tool 0.50 s (damaged)"
+expect result contains "manual 0.12 s (damaged)"
 
 # --- a typo names the closest, and an impossible hold is refused
 act? hitstop_play event=perfect_evade
@@ -92,13 +92,13 @@ expect result contains "a duration above 0"
 # --- the player's scale: 0 turns hit stop off and the machine says why it held nothing
 act settings_set group=accessibility key=hit_stop value=0
 expect result contains "accessibility.hit_stop 1 → 0"
-act hitstop_play event=damaged
+act hitstop_play event=damaged attacker=e5
 expect result contains "not held: hit stop is off in the settings"
 act? settings_set group=accessibility key=hit_stop value=2
 expect result contains "0 to 1"
 act settings_set group=accessibility key=hit_stop value=0.5
 act settings_set group=accessibility key=hit_stop_local_only value=true
-act hitstop_play event=damaged
+act hitstop_play seconds=1 attacker=e6 target=e7
 expect result contains "not held: the local player is not in this blow (hit_stop_local_only)"
 act settings_set group=accessibility reset=true
 

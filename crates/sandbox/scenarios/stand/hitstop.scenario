@@ -1,7 +1,8 @@
 # Hit stop in co-op (C2): no machine stops the others' clock. A host and two clients see the same
-# blow (the client gets the host's combat events), each writes its `hitstop:` line, and each holds
-# only the pictures of the two bodies in the blow: the clock is never held, on either side, and the
-# stand's members keep ticking together (a hold that stopped one clock would show as a desync).
+# blow (a client gets the host's combat events) and the sandbox table (`involves_local`) holds only the
+# blows the local player is in: the host holds the pictures of the two bodies, a client that is not
+# in the fight holds nothing, and the clock is never held, on either side (a stand's members keep ticking
+# together; a hold that stopped one clock would show as a desync).
 #
 # Against a live stand:
 #   cargo sandbox --stand 2 --headless --paused --port 0 --port-file F &
@@ -32,9 +33,13 @@ mark
 step 120
 @host expect journal "e5 -> e6 light_1 -20"
 
-# --- both machines made the hold from the same combat event and wrote their own line
+# --- the host's blow is the host's: its player is the local one there. The sandbox table keeps to
+# blows the local player is in (`involves_local`), so the clients, which are not in this fight, hold nothing
 @host expect journal "hitstop: hit 0.06 s (damaged) on e5, e6"
-@c1 expect journal "hitstop: hit 0.06 s (damaged) on e5, e6"
+@c1 act hitstop
+@c1 expect result contains "hit stop: co-op client: holds the pictures of the bodies only, never the clock"
+@c1 expect result contains "0 clock holds"
+@c1 expect result !contains "pictures held"
 
 # --- the host: a co-op machine, pictures only, never the clock
 @host act hitstop
@@ -43,22 +48,16 @@ step 120
 @host expect result contains "hit 0.06 s (damaged) on e5, e6: pictures held (0.06 s)"
 @host expect result !contains ": not held"
 
-# --- the client decided for itself, the same way
-@c1 act hitstop
-@c1 expect result contains "hit stop: co-op client: holds the pictures of the bodies only, never the clock"
-@c1 expect result contains "0 clock holds"
-@c1 expect result contains "hit 0.06 s (damaged) on e5, e6: pictures held (0.06 s)"
-@c1 expect result !contains ": not held"
-
-# --- a hold made by hand holds pictures on either side, and a stand's clocks go on together
-@c1 act hitstop_play event=parried attacker=e5 target=e6
+# --- a client's own blow (its player, e15, strikes the warden): it holds the pictures of the two bodies and not its clock
+@c1 act hitstop_play event=parried attacker=e15 target=e6
 @c1 expect result contains "parry 0.10 s (parried): pictures held (0.10 s)"
+@c1 act hitstop
+@c1 expect result contains "0 clock holds"
 step 60
 invariant !journal "desync"
 @host expect field e5 Health.current > 0
 
-# --- the other client decided the same way
-@c2 expect journal "hitstop: hit 0.06 s (damaged) on e5, e6"
+# --- the other client is in neither fight
 @c2 act hitstop
 @c2 expect result contains "hit stop: co-op client: holds the pictures of the bodies only, never the clock"
 @c2 expect result contains "0 clock holds"
