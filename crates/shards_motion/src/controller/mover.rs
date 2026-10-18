@@ -294,12 +294,13 @@ impl<'a> Mover<'a> {
     }
 
     /// Surface of the water the feet are in (the highest one).
+    #[expect(clippy::disallowed_methods, reason = "water volumes are colliders (a voxel field is never a volume): the surface is the box's top")]
     pub fn water(&self, feet: Vec3) -> Option<f32> {
         let wet = feet + Vec3::Y * 0.05;
         self.physics
             .volumes_containing(wet, None)
             .filter(|volume| matches!(volume.volume, Some(VolumeKind::Water)))
-            .map(|volume| volume.aabb_max.y)
+            .map(|volume| volume.bounds().1.y)
             .reduce(f32::max)
     }
 

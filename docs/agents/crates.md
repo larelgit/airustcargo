@@ -6,7 +6,8 @@ Read this when you need to know which crate owns what. Part of the [AGENTS.md](.
   `shards_action`, `shards_level` (levels from Blender), `shards_world` (regions, generation), `shards_npc` (enemies, navmesh),
   `shards_save` (saves: sections, slots, migrations, copies), `shards_ui` (screens and menus from content), `shards_locale`
   (languages: texts in Fluent, switching on the fly), `shards_audio` (sound: buses, voices, music in layers), `shards_look` (look: light
-  in bands, flat faces, outlines from content), `shards_scatter` (foliage and small objects by tile), `shards_fx`
+  in bands, flat faces, outlines from content), `shards_scatter` (foliage and small objects by tile), `shards_voxel` (voxel terrain core: chunked block volume,
+  palette, generation steps, hash), `shards_fx`
   (effects: particles from pools, telegraph decals), `shards_steam` (Steam: lobbies, relay for co-op, achievements, cloud;
   the umbrella's `steam` feature, off by default), `shards_dev` (developer menu and console), `ai_core`, `shards_script`,
   `shards_cli`, `sandbox` (the engine's arena). The map is in `docs/manual.md`, "Architecture".

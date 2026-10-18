@@ -66,7 +66,7 @@ Run `shards` from the game's folder or below it (the token lives in `.shards/`),
 | A new tool, an invariant, `AiVisible` describers, `AiId` | [docs/agents/tools-and-invariants.md](docs/agents/tools-and-invariants.md) |
 | Content definitions, a new content kind, Fluent text | [docs/agents/content.md](docs/agents/content.md) |
 | HUD and menus, sound and music, looks, effects, foliage, animation and baked motion | [docs/agents/ui-audio-look-fx-scatter-animation.md](docs/agents/ui-audio-look-fx-scatter-animation.md) |
-| Regions, tiles, levels, generation, the navmesh and its baking | [docs/agents/world-regions-nav.md](docs/agents/world-regions-nav.md) |
+| Regions, tiles, levels, generation (tiles and voxels), the navmesh and its baking | [docs/agents/world-regions-nav.md](docs/agents/world-regions-nav.md) |
 | NPC brains, behaviour, perception, director, attack plans, avoidance | [docs/agents/npc.md](docs/agents/npc.md) |
 | Co-op stands, `--net-sim`, Steam, lobbies, achievements | [docs/agents/net-coop-steam.md](docs/agents/net-coop-steam.md) |
 | A new engine module (crate) | [docs/agents/new-module.md](docs/agents/new-module.md) |

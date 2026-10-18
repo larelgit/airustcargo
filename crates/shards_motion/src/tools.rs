@@ -408,5 +408,14 @@ fn move_info(In(call): In<Call<MoveInfoArgs>>, world: &World) -> ToolResult<serd
         "wade_depth_offset": params.wade_depth_offset,
         "wade_air_depth_offset": params.wade_air_depth_offset,
         "climb_out_reach": params.climb_reach(),
+        "turn_speed_deg": m.turn_speed_deg,
+        "turn_free_deg": params.turn_speed_deg,
+        "turn_locked_deg": (params.locked_turn_speed_deg > 0.0).then_some(params.locked_turn_speed_deg),
+        "turn_swim_deg": (params.swim_turn_speed_deg > 0.0).then_some(params.swim_turn_speed_deg),
+        "turn_toward_input": params.turn_toward_input,
+        "entry_max_speed": (params.entry_max_speed > 0.0).then_some(params.entry_max_speed),
+        "buoyancy_omega": (params.buoyancy_omega > 0.0).then_some(params.buoyancy_omega),
+        "climb_out_time": params.climb_out_time.unwrap_or(params.mantle_time),
+        "climb_out_min_facing": params.climb_out_min_facing,
     }))
 }

@@ -5359,6 +5359,7 @@ dependencies = [
  "shards_script",
  "shards_settings",
  "shards_ui",
+ "shards_voxel",
  "shards_world",
  "winit",
 ]
@@ -5611,6 +5612,19 @@ dependencies = [
  "shards_core",
  "shards_locale",
  "shards_settings",
+]
+
+[[package]]
+name = "shards_voxel"
+version = "0.2.0"
+dependencies = [
+ "ai_core",
+ "bevy",
+ "serde",
+ "serde_json",
+ "shards_content",
+ "shards_core",
+ "shards_look",
 ]
 
 [[package]]

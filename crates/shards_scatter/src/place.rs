@@ -153,8 +153,8 @@ impl Ground for PhysicsWorld {
 
 /// What a scatter's instances on a tile centered at `center`, `extent` meters across (X, Z), can
 /// stand on or bump into: the static colliders of the world ([`Body::Static`], in
-/// [`LayerMask::WORLD`], no volume) that reach into the tile's column, where its rays and
-/// clearance checks go. A collider that moves (a platform, a door on rails) is never ground nor a
+/// [`LayerMask::WORLD`], no volume) and the voxel fields on `WORLD` that reach into the tile's
+/// column, where its rays and clearance checks go. A collider that moves (a platform, a door on rails) is never ground nor a
 /// solid: an instance would stay where it no longer is. And the queries scan the few colliders of
 /// the tile, not the whole world's.
 pub fn solids(physics: &PhysicsWorld, def: &ScatterDef, center: Vec3, extent: Vec2) -> PhysicsWorld {
@@ -165,13 +165,13 @@ pub fn solids(physics: &PhysicsWorld, def: &ScatterDef, center: Vec3, extent: Ve
     let half = extent * 0.5;
     let min = Vec3::new(center.x - half.x - pad, center.y + low - pad, center.z - half.y - pad);
     let max = Vec3::new(center.x + half.x + pad, center.y + high + pad, center.z + half.y + pad);
-    physics.subset(|c| {
-        c.body == Body::Static
-            && c.volume.is_none()
-            && c.layers.memberships.intersects(LayerMask::WORLD)
-            && c.aabb_min.cmple(max).all()
-            && min.cmple(c.aabb_max).all()
-    })
+    let meets = |(lo, hi): (Vec3, Vec3)| lo.cmple(max).all() && min.cmple(hi).all();
+    // Static colliders by their box, and the voxel fields (static by nature) by theirs.
+    #[expect(clippy::disallowed_methods, reason = "picks colliders by their box; the fields are picked by theirs")]
+    let collider = |c: &shards_motion::ColliderInfo| {
+        c.body == Body::Static && c.volume.is_none() && c.layers.memberships.intersects(LayerMask::WORLD) && meets(c.bounds())
+    };
+    physics.subset(collider, |f| f.layers().memberships.intersects(LayerMask::WORLD) && meets(f.bounds()))
 }
 
 /// Why instances found no place.
@@ -400,5 +400,32 @@ mod tests {
         assert_eq!(n, 2);
         let on_slab = still.0.iter().filter(|p| (p.at.y - 0.35).abs() < 1e-3).count();
         assert!(on_slab > 0 && still.0 != alone.0, "the static slab is ground: {on_slab} on it");
+    }
+
+    #[test]
+    fn a_voxel_field_near_the_tile_is_ground_and_one_far_away_is_left_out() {
+        use shards_motion::{VoxelCollider, VoxelField};
+        // The same floor as one collider and as a field of 0.5 m cells (two deep, its top at 0).
+        let def = ScatterDef { looks: vec!["a".into()], clearance: 0.5, ..ScatterDef::default() };
+        let extent = Vec2::splat(16.0);
+        let thrown = candidates(&def, &mut rng_for(3, "meadow", (0, 0), "grass"), extent);
+        let floor = (Shape::cuboid(Vec3::new(8.0, 0.5, 8.0)), Transform::from_xyz(0.0, -0.5, 0.0), Body::Static);
+        let boxed = solids(&physics(&[floor]), &def, Vec3::ZERO, extent);
+        let field = |origin: Vec3| {
+            let mut world = World::new();
+            world.init_resource::<PhysicsWorld>();
+            world.init_resource::<shards_motion::ColliderIds>();
+            world.spawn(VoxelCollider::new(VoxelField::new(origin, 0.5, UVec3::new(32, 2, 32), |_| true)));
+            world.run_system_cached(shards_motion::physics::sync_physics).unwrap();
+            world.remove_resource::<PhysicsWorld>().unwrap()
+        };
+        let near = solids(&field(Vec3::new(-8.0, -1.0, -8.0)), &def, Vec3::ZERO, extent);
+        assert_eq!((near.len(), near.fields().count()), (0, 1), "the field is kept");
+        let (a, b) = (settle(&def, Vec3::ZERO, &thrown, &near), settle(&def, Vec3::ZERO, &thrown, &boxed));
+        // The same places (the box's top is 6e-8 off 0 by rounding: its centre and half).
+        assert_eq!((a.0.len(), a.1), (b.0.len(), b.1));
+        assert!(a.0.len() > 100 && a.0.iter().zip(&b.0).all(|(p, q)| p.at.distance(q.at) < 1e-6 && p.rotation == q.rotation), "the same ground as the collider");
+        let far = solids(&field(Vec3::new(40.0, -1.0, -8.0)), &def, Vec3::ZERO, extent);
+        assert_eq!(far.fields().count(), 0, "40 m away");
     }
 }

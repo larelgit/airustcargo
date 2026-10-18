@@ -2,6 +2,7 @@
 
 mod common;
 mod controller;
+mod controller_parity;
 mod course;
 mod drive;
 mod edge_cases;
@@ -12,6 +13,8 @@ mod modifiers_parity;
 mod perception;
 mod physics;
 mod replays;
+mod seams;
 mod tools;
+mod voxel;
 #[cfg(feature = "render")]
 mod camera;
