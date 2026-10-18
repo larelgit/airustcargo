@@ -80,7 +80,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 133 definitions in 39 files
+cargo shards content check                 # ok: 161 definitions in 45 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -103,7 +103,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 133 definitions in 39 files
+# ok: 161 definitions in 45 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -512,10 +512,11 @@ The game's numbers and definitions live in files, not in code: attacks, prefabs,
 
 - An id is a non-empty string without spaces or control characters; it is unique within its content kind across all files.
 - The engine registers its own content kinds: `prefab`, `locomotion`, `action`, `moveset`, `status`, `combat_tuning`, `animset`,
-  `input_map`, levels `level`, world `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`, enemies `behavior`,
-  `perception`, `director`, `attack_plan`, `npc_tuning` and `nav`, mesh looks `look` (see "Stylised materials (E10.1)"),
+  `input_map`, the camera `camera` and `lock_on`, levels `level`, world `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`,
+  voxels `voxel_palette` and `voxel_region`, enemies `behavior`, `perception`, `director`, `attack_plan`, `npc_tuning` and `nav`,
+  sound `audio`, `sound` and `music`, screens `screen` and `theme`, `locale`, `save`, `net`, `perf`, `devmenu`, mesh looks `look` (see "Stylised materials (E10.1)"),
   foliage `scatter` (see "Foliage and small objects (E10.2)"), effects `effect` and `fx` (see "Effects and decals
-  (E10.3)"), with the `steam` feature, achievements `achievement` (see "Steam (E10.5)"). The game adds its own: the sandbox has `layout`, the template has
+  (E10.3)"), with the `steam` feature, achievements `achievement` (see "Steam (E10.5)"). The game adds its own: the sandbox has `layout` and `bounds`, the template has
   `arena`.
   `content_list` (the tool) shows the content kinds and the number of definitions.
 - `#[serde(deny_unknown_fields)]` on a struct turns a typo into an error with the line number; without it, a typo in an optional field silently keeps the default value.
@@ -588,13 +589,14 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 133 definitions in 39 files
-  action  23
+content: 161 definitions in 45 files
+  action  42
   animset  1
   attack_plan  3
   audio  1
   behavior  2
   bounds  1
+  camera  0
   combat_tuning  1
   devmenu  4
   director  2
@@ -605,9 +607,10 @@ content: 133 definitions in 39 files
   layout  3
   level  1
   locale  2
+  lock_on  1
   locomotion  3
   look  15
-  moveset  4
+  moveset  8
   music  1
   nav  1
   net  0
@@ -623,14 +626,12 @@ content: 133 definitions in 39 files
   screen  3
   socket_rules  1
   sound  16
-  status  0
+  status  2
   theme  0
   tile  13
   tile_map  1
-$ shards act spawn_prefab id=skeleton x=5 z=5
-spawned e15 skeleton at (5.0, 5.0)
-CHANGES
-  + e15 Skeleton  hp 40/40  poise 20/20  8.6m NE
+  voxel_palette  1
+  voxel_region  1
 ```
 
 **`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 76 definitions in 26
