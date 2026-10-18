@@ -32,7 +32,7 @@ fn is_one(v: &f32) -> bool {
 /// The value of a stick: the radial dead zone is cut out and the rest rescaled to 0..=1,
 /// the magnitude `m` becomes `m^curve` (direction kept; `curve` 1.0 leaves it alone), and
 /// each axis is multiplied by its own scale (`scale_x`/`scale_y`, or `scale` where absent).
-pub fn stick_response(raw: Vec2, deadzone: f32, scale: f32, scale_x: Option<f32>, scale_y: Option<f32>, curve: f32) -> Vec2 {
+pub(crate) fn stick_response(raw: Vec2, deadzone: f32, scale: f32, scale_x: Option<f32>, scale_y: Option<f32>, curve: f32) -> Vec2 {
     let len = raw.length();
     if len <= deadzone {
         return Vec2::ZERO;
@@ -181,14 +181,32 @@ impl Binding {
 
     /// Reads a binding written like [`text`](Self::text) gives it.
     pub fn parse(text: &str) -> Result<Binding, String> {
-        ron::from_str(text.trim()).map_err(|e| {
+        let binding: Binding = ron::from_str(text.trim()).map_err(|e| {
             format!(
                 "`{text}` is not a binding ({e}); write Key(KeyE), Mouse(Left), GamepadButton(South), \
                  GamepadAxis(axis: LeftStickX), KeyAxis(neg: KeyA, pos: KeyD), \
                  Keys2D(up: KeyW, down: KeyS, left: KeyA, right: KeyD), \
                  Buttons2D(up: DPadUp, down: DPadDown, left: DPadLeft, right: DPadRight), Stick(stick: Left) (optionally deadzone, scale, scale_x: Some(n), scale_y: Some(n), curve) or MouseMotion()"
             )
-        })
+        })?;
+        binding.check().map_err(|e| format!("`{text}`: {e}"))?;
+        Ok(binding)
+    }
+
+    /// Whether the numbers of a stick binding are usable: `curve` finite and above 0, the
+    /// scales finite (a NaN would flow into `Intent`). Other bindings pass.
+    fn check(&self) -> Result<(), String> {
+        if let Binding::Stick { stick, scale, scale_x, scale_y, curve, .. } = self {
+            if !(curve.is_finite() && *curve > 0.0) {
+                return Err(format!("{stick:?} stick `curve` is {curve}; it must be finite and above 0 (1.0 is linear)"));
+            }
+            for (name, v) in [("scale", Some(*scale)), ("scale_x", *scale_x), ("scale_y", *scale_y)] {
+                if v.is_some_and(|v| !v.is_finite()) {
+                    return Err(format!("{stick:?} stick `{name}` is not a finite number"));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -492,7 +510,15 @@ impl InputMap {
 
     /// Reads a map from RON text.
     pub fn from_text(text: &str) -> Result<InputMap, String> {
-        ron::from_str(text).map_err(|e| e.to_string())
+        let map: InputMap = ron::from_str(text).map_err(|e| e.to_string())?;
+        for ctx in &map.contexts {
+            for action in &ctx.actions {
+                for binding in &action.bindings {
+                    binding.check().map_err(|e| format!("context `{}`: action `{}`: {e}", ctx.name, action.action))?;
+                }
+            }
+        }
+        Ok(map)
     }
 
     /// Reads overrides from `path`; a missing file is no overrides. The format of the
@@ -525,21 +551,8 @@ impl ContentDef for InputMap {
         for ctx in &self.contexts {
             for action in &ctx.actions {
                 for binding in &action.bindings {
-                    if let Binding::Stick { stick, scale, scale_x, scale_y, curve, .. } = binding {
-                        if !(curve.is_finite() && *curve > 0.0) {
-                            refs.error(format!(
-                                "context `{}`: action `{}`: {stick:?} stick `curve` is {curve}; it must be finite and above 0 (1.0 is linear)",
-                                ctx.name, action.action
-                            ));
-                        }
-                        for (name, v) in [("scale", Some(*scale)), ("scale_x", *scale_x), ("scale_y", *scale_y)] {
-                            if v.is_some_and(|v| !v.is_finite()) {
-                                refs.error(format!(
-                                    "context `{}`: action `{}`: {stick:?} stick `{name}` is not a finite number",
-                                    ctx.name, action.action
-                                ));
-                            }
-                        }
+                    if let Err(e) = binding.check() {
+                        refs.error(format!("context `{}`: action `{}`: {e}", ctx.name, action.action));
                     }
                 }
             }
@@ -840,5 +853,28 @@ mod tests {
         let mut custom = InputMap::standard();
         custom.rebind("gameplay", "look", 1, look.clone()).unwrap();
         assert_eq!(InputMap::from_text(&custom.to_text().unwrap()).unwrap(), custom);
+    }
+
+    #[test]
+    fn a_rebind_or_a_saved_string_with_a_bad_stick_number_is_refused() {
+        for bad in [
+            "Stick(stick: Right, curve: 0.0)",
+            "Stick(stick: Right, curve: -1.0)",
+            "Stick(stick: Right, curve: inf)",
+            "Stick(stick: Right, curve: NaN)",
+            "Stick(stick: Right, scale: NaN)",
+            "Stick(stick: Right, scale_x: Some(NaN))",
+            "Stick(stick: Right, scale_y: Some(inf))",
+        ] {
+            let err = Binding::parse(bad).expect_err(bad);
+            assert!(err.contains("Right"), "{bad}: {err}");
+        }
+        assert!(Binding::parse("Stick(stick: Right, scale_x: Some(3.2), scale_y: Some(2.0), curve: 1.6)").is_ok());
+        // A whole saved map is checked the same way.
+        let mut map = InputMap::standard();
+        let bad = Binding::Stick { stick: Stick::Right, deadzone: 0.2, scale: 1.0, scale_x: None, scale_y: None, curve: f32::NAN };
+        map.rebind("gameplay", "look", 1, bad).unwrap();
+        let err = InputMap::from_text(&map.to_text().unwrap()).expect_err("NaN curve");
+        assert!(err.contains("gameplay") && err.contains("look") && err.contains("curve"), "{err}");
     }
 }

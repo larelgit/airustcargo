@@ -48,7 +48,7 @@ use shards_core::{Intent, LocalPlayer, Press};
 use shards_settings::{AccessibilitySettings, ControlSettings, SettingsAppExt, SettingsStorage};
 
 pub use controls::ControlSync;
-pub use map::{stick_response, ActionBinding, BindMode, Binding, InputContext, InputMap, RebindError, Stick};
+pub use map::{ActionBinding, BindMode, Binding, InputContext, InputMap, RebindError, Stick};
 
 use crate::camera::ThirdPersonCamera;
 
