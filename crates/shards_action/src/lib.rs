@@ -150,7 +150,7 @@ pub use machine::{
 };
 pub use predict::{shown_state, ActionPredictor, PredictedAction, CONFIRM_SLACK};
 pub use status::{
-    statuses_to_modifiers,
+    statuses_to_modifiers, NoStatusSlow,
     add_status_buildup, StatusApplied, StatusDef, StatusEffects, StatusExpired, StatusHook, StatusHooks, StatusResist,
     Statuses,
 };
@@ -263,6 +263,7 @@ impl Plugin for ActionPlugin {
             .register_type::<Invulnerable>()
             .register_type::<Statuses>()
             .register_type::<StatusResist>()
+            .register_type::<NoStatusSlow>()
             .register_type::<Animated>()
             // Typed for the network layer, which forwards them to clients.
             .register_type::<ActionStarted>()

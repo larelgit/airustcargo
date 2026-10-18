@@ -89,20 +89,32 @@ impl ContentDef for StatusDef {
     }
 }
 
+/// A body that takes statuses but is not slowed by them: the `speed_factor` and `speed_cap` of its
+/// active statuses are not added to its `MoveModifiers` (a `root` still is). The buildup, the
+/// effect and everything else a status does still happen; `StatusResist` is for a body that
+/// should not take the status at all. A game can also leave `speed_factor` unset and contribute
+/// the slow itself from a `ModifierSystems::Contribute` system that reads the statuses and the
+/// body's kind.
+#[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[reflect(Component, Default)]
+pub struct NoStatusSlow;
+
 /// `ModifierSystems::Statuses`: the active statuses with a `speed_factor`, `speed_cap` or `root`
 /// add them to the character's [`MoveModifiers`] (in the order the statuses were applied, so the product is the
 /// same every run: that order is part of the snapshot and the replay).
 pub fn statuses_to_modifiers<F: QueryFilter + 'static>(
     db: Res<ContentDb>,
-    mut characters: Query<(&Statuses, &mut MoveModifiers), F>,
+    mut characters: Query<(&Statuses, &mut MoveModifiers, Has<NoStatusSlow>), F>,
 ) {
-    for (statuses, mut modifiers) in &mut characters {
+    for (statuses, mut modifiers, exempt) in &mut characters {
         for entry in statuses.0.iter().filter(|e| e.active > 0.0) {
             let Some(def) = db.get::<StatusDef>(&entry.id) else { continue };
-            if def.speed_factor != 1.0 {
+            if def.speed_factor != 1.0 && !exempt {
                 modifiers.slow(def.speed_factor);
             }
-            if let Some(cap) = def.speed_cap {
+            if let Some(cap) = def.speed_cap
+                && !exempt
+            {
                 modifiers.cap_at(cap);
             }
             if def.root {

@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 use shards_content::{ContentAppExt, ContentDb};
 use shards_core::{Intent, NetSet, Predicted};
 
-pub use params::CharacterParams;
+pub use params::{CharacterParams, SprintResume};
 
 use crate::modifiers::MoveModifiers;
 use crate::physics::{Body, Collider, ColliderId, PhysicsPlugin, PhysicsWorld, VolumeEntered, VolumeExited};
@@ -247,6 +247,7 @@ impl Plugin for ControllerPlugin {
         }
         app.add_content::<CharacterParams>()
             .register_type::<CharacterParams>()
+            .register_type::<SprintResume>()
             .register_type::<CharacterController>()
             .register_type::<LocomotionInput>()
             .register_type::<MotionMode>()

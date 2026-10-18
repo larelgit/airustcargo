@@ -20,11 +20,11 @@ use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::input_names::SPRINT;
 use shards_core::{flat, Intent};
-use shards_motion::{LocomotionInput, MotionMode, MotionState, MoveModifiers};
+use shards_motion::{CharacterController, CharacterParams, LocomotionInput, MotionMode, MotionState, MoveModifiers};
 
 use crate::cue::ActionSound;
 use crate::def::{touches, ActionDef, CancelTo, CombatTuning, Effect, MovesetDef, Steer, EPS};
-use crate::fighter::{report_once, Charges, Cooldowns, Dead, Fighter, Health, Stamina};
+use crate::fighter::{report_once, sprint_rule, Charges, Cooldowns, Dead, Fighter, Health, Stamina};
 use crate::status::add_status_buildup;
 use crate::zone::{action_zones, WorldShape};
 
@@ -561,6 +561,7 @@ pub(crate) struct FighterData {
     loco: Option<&'static mut LocomotionInput>,
     motion: Option<&'static MotionState>,
     modifiers: Option<&'static MoveModifiers>,
+    body: Option<(&'static CharacterController, Option<&'static CharacterParams>)>,
     dead: Has<Dead>,
 }
 
@@ -901,14 +902,13 @@ fn telegraph(attacker: Entity, def: &ActionDef, run: &Running, feet: Vec3) -> Te
 /// owns the body, where to face; no sprinting without stamina, nor after sprinting it
 /// dry until the button is let go.
 fn steer_body(f: &mut FighterDataItem, db: &ContentDb, external: Vec3) {
-    if let Some(s) = f.stamina.as_mut()
-        && s.exhausted
-        && !f.intent.is_held(SPRINT)
-    {
-        s.exhausted = false;
+    let rule = sprint_rule(db, f.motion, f.body);
+    let held = f.intent.is_held(SPRINT);
+    if let Some(s) = f.stamina.as_mut() {
+        s.settle_exhaustion(rule, held);
     }
     let out_of_stamina =
-        !free_sprint(f.modifiers, f.motion) && f.stamina.as_ref().is_some_and(|s| s.current <= EPS || s.exhausted);
+        !free_sprint(f.modifiers, f.motion) && f.stamina.as_ref().is_some_and(|s| s.sprint_blocked(rule, held));
     let Some(loco) = f.loco.as_mut() else { return };
     steer_locomotion(loco, f.state.current.as_ref(), db, f.dead, out_of_stamina, external);
 }

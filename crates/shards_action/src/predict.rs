@@ -28,11 +28,11 @@ use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::input_names::SPRINT;
 use shards_core::{Intent, NetPrediction, Predicted};
-use shards_motion::{LocomotionInput, MotionState, MoveModifiers};
+use shards_motion::{CharacterController, CharacterParams, LocomotionInput, MotionState, MoveModifiers};
 
 use crate::combat::Died;
 use crate::def::{ActionDef, CombatTuning, MovesetDef, EPS};
-use crate::fighter::{Charges, Cooldowns, Dead, Fighter, Stamina};
+use crate::fighter::{sprint_rule, Charges, Cooldowns, Dead, Fighter, Stamina};
 use crate::machine::{
     advance, choose_in, free_sprint, steer, steer_locomotion, step_run, understands, ActionRejected, ActionStarted, ActionState,
     FighterView, Queued, Running,
@@ -117,6 +117,7 @@ pub(crate) struct PredictedBody {
     loco: &'static mut LocomotionInput,
     motion: Option<&'static MotionState>,
     modifiers: Option<&'static MoveModifiers>,
+    body: Option<(&'static CharacterController, Option<&'static CharacterParams>)>,
     shown: Option<&'static mut PredictedAction>,
     dead: Has<Dead>,
 }
@@ -318,8 +319,10 @@ pub(crate) fn predict_actions(
             None => shown = None,
         }
     }
-    let out_of_stamina = !free_sprint(b.modifiers, b.motion)
-        && b.stamina.is_some_and(|s| s.current <= EPS || (s.exhausted && b.intent.is_held(SPRINT)));
+    // The host's `steer_body` settles the lock and then asks; the prediction asks with the lock as it is.
+    let rule = sprint_rule(&db, b.motion, b.body);
+    let held = b.intent.is_held(SPRINT);
+    let out_of_stamina = !free_sprint(b.modifiers, b.motion) && b.stamina.is_some_and(|s| s.sprint_blocked(rule, held));
     steer_locomotion(&mut b.loco, shown.as_ref().map(|s| &s.run), &db, b.dead, out_of_stamina, external);
     // It ends in the tick its time runs out, as on the host.
     if shown.as_ref().is_some_and(|s| s.run.t >= s.run.length - EPS) {

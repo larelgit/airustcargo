@@ -28,6 +28,13 @@
 //! rooted: no walking, jumping, gliding or climbing (gravity and `external` still move the body)
 //! ```
 //!
+//! With `CharacterParams::caps_scale_with_input` a cap is the speed at full input and the speed
+//! below it scales (`speed *= min(1, cap / full_input_speed)`), and with `sprint_scales_with_input`
+//! a sprint is `sprint_speed * input`. A [`stance`](MoveModifiers::stance_speed) replaces the whole
+//! chain: `top * input * wade`, with neither `factor` nor `ground_factor` (a pace) and no sprint.
+//! The speed-up and slow-down rates are the params', or [`MoveModifiers::acceleration`] /
+//! [`deceleration`](MoveModifiers::deceleration) when a source sets them.
+//!
 //! Swimming takes `swim_speed` (or the fast one) times `factor` only: caps and `ground_factor`
 //! (wading, combat pace) are for walkers. A glide is not scaled.
 //!
@@ -45,7 +52,7 @@ use bevy::ecs::query::QueryFilter;
 use bevy::prelude::*;
 use shards_content::ContentDb;
 
-use crate::controller::{CharacterController, CharacterParams, MotionMode, MotionState};
+use crate::controller::{CharacterController, CharacterParams, MotionState};
 
 /// What modifies one character's movement this tick. See the [module](self) docs.
 ///
@@ -71,6 +78,30 @@ pub struct MoveModifiers {
     pub rooted: bool,
     /// Multiplies the stamina a sprint costs; 0 makes it free (and needs no stamina).
     pub sprint_cost: f32,
+    /// The wading factor alone (it is inside `ground_factor` too): what a [stance
+    /// speed](Self::stance) keeps while it ignores the other factors.
+    pub wade: f32,
+    /// A stance's own top speed, which the status `factor` and the `ground_factor` (a pace) do
+    /// not scale, but wading does. See [`StanceSpeed`].
+    pub stance: Option<StanceSpeed>,
+    /// Replaces `CharacterParams::acceleration` while set (ground and air), for a stance with
+    /// its own feel.
+    pub acceleration: Option<f32>,
+    /// Replaces `CharacterParams::deceleration` (and the `air_deceleration` it brakes at in the
+    /// air) while set.
+    pub deceleration: Option<f32>,
+}
+
+/// A stance's top speed on the ground and in the air (a guard's walk, a drinking walk): the
+/// speed of a full input, taken **instead of** the walk, run and sprint speeds, and scaled by
+/// wading only (not by `MoveModifiers::factor`, `ground_factor` or the lock-on cap; a hard `cap`
+/// still holds). Sprinting does nothing under it.
+#[derive(Reflect, Clone, Copy, Debug, PartialEq)]
+pub struct StanceSpeed {
+    /// m/s at full input.
+    pub top: f32,
+    /// `true`: a half stick walks at half of `top`. `false`: any input at all walks at `top`.
+    pub by_input: bool,
 }
 
 impl Default for MoveModifiers {
@@ -83,6 +114,10 @@ impl Default for MoveModifiers {
             no_sprint: false,
             rooted: false,
             sprint_cost: 1.0,
+            wade: 1.0,
+            stance: None,
+            acceleration: None,
+            deceleration: None,
         }
     }
 }
@@ -97,6 +132,10 @@ impl MoveModifiers {
         no_sprint: false,
         rooted: false,
         sprint_cost: 1.0,
+        wade: 1.0,
+        stance: None,
+        acceleration: None,
+        deceleration: None,
     };
 
     /// Nothing changes the character's speed (the sprint's cost may still).
@@ -107,6 +146,8 @@ impl MoveModifiers {
             && self.unsprinted_cap.is_none()
             && !self.no_sprint
             && !self.rooted
+            && self.wade == 1.0
+            && self.stance.is_none()
     }
 
     /// Nothing is modified at all.
@@ -118,6 +159,49 @@ impl MoveModifiers {
     pub fn slow(&mut self, f: f32) -> &mut Self {
         if f.is_finite() {
             self.factor *= f.max(0.0);
+        }
+        self
+    }
+
+    /// Wading by `f`: multiplies the ground and air speed like [`slow_on_ground`](Self::slow_on_ground)
+    /// (it is in `ground_factor` too), and is kept apart so a [stance](Self::stance_speed) can
+    /// still be slowed by water while ignoring the pace.
+    pub fn wade_by(&mut self, f: f32) -> &mut Self {
+        if f.is_finite() {
+            let f = f.max(0.0);
+            self.wade *= f;
+            self.ground_factor *= f;
+        }
+        self
+    }
+
+    /// A stance's top speed (see [`StanceSpeed`]); the lowest of several wins. A stance that the
+    /// status slow and the combat pace must not scale (a guard walking at 3.0 whatever the pace):
+    /// call this, and a sprint does nothing under it.
+    pub fn stance_speed(&mut self, top: f32, by_input: bool) -> &mut Self {
+        if top.is_finite() {
+            let top = top.max(0.0);
+            if self.stance.is_none_or(|s| top < s.top) {
+                self.stance = Some(StanceSpeed { top, by_input });
+            }
+        }
+        self
+    }
+
+    /// Speeds up at `rate` m/s² while this holds, instead of the params' `acceleration` (the
+    /// last source to write wins: order them).
+    pub fn accelerate_at(&mut self, rate: f32) -> &mut Self {
+        if rate.is_finite() {
+            self.acceleration = Some(rate.max(0.0));
+        }
+        self
+    }
+
+    /// Slows down at `rate` m/s² while this holds, instead of the params' `deceleration` (the
+    /// last source to write wins).
+    pub fn decelerate_at(&mut self, rate: f32) -> &mut Self {
+        if rate.is_finite() {
+            self.deceleration = Some(rate.max(0.0));
         }
         self
     }
@@ -177,26 +261,66 @@ impl MoveModifiers {
         if self.rooted {
             return (0.0, false);
         }
-        let (mut speed, sprinting) = params.ground_speed(amount, sprint && !self.no_sprint);
-        if let Some(cap) = self.cap {
-            speed = speed.min(cap);
+        if let Some(stance) = self.stance {
+            let amount = amount.clamp(0.0, 1.0);
+            let mut speed = if stance.by_input {
+                stance.top * amount
+            } else if amount > 0.0 {
+                stance.top
+            } else {
+                0.0
+            };
+            if let Some(cap) = self.cap {
+                speed = if params.caps_scale_with_input { speed * cap_ratio(cap, stance.top) } else { speed.min(cap) };
+            }
+            return (speed * self.wade, false);
         }
-        if !sprinting && let Some(cap) = self.unsprinted_cap {
-            speed = speed.min(cap);
+        let (mut speed, sprinting) = params.ground_speed(amount, sprint && !self.no_sprint);
+        if params.caps_scale_with_input {
+            // The caps are speeds at full input: the walk scales with the input below them.
+            let full = params.ground_speed(1.0, sprinting).0;
+            let mut ratio = 1.0f32;
+            if let Some(cap) = self.cap {
+                ratio = ratio.min(cap_ratio(cap, full));
+            }
+            if !sprinting && let Some(cap) = self.unsprinted_cap {
+                ratio = ratio.min(cap_ratio(cap, full));
+            }
+            speed *= ratio;
+        } else {
+            if let Some(cap) = self.cap {
+                speed = speed.min(cap);
+            }
+            if !sprinting && let Some(cap) = self.unsprinted_cap {
+                speed = speed.min(cap);
+            }
         }
         (speed * self.factor * self.ground_factor, sprinting)
     }
 
-    /// A swimming speed `top` through the modifiers (the factor only).
+    /// A swimming speed `top` through the modifiers (the factor only; 0 when rooted, as the
+    /// controller takes the swimmer's input away).
     pub fn swim_speed(&self, top: f32) -> f32 {
-        if self.factor == 1.0 { top } else { top * self.factor }
+        if self.rooted {
+            0.0
+        } else if self.factor == 1.0 {
+            top
+        } else {
+            top * self.factor
+        }
     }
 
     /// The factor the whole speed range is scaled by where it is a plain factor: what an
     /// animation or a planner needs to compare the speed the character moves at with the one
     /// its clips and numbers were made for. Caps do not enter it.
     pub fn pace(&self) -> f32 {
-        if self.rooted { 0.0 } else { self.factor * self.ground_factor }
+        if self.rooted {
+            0.0
+        } else if self.stance.is_some() {
+            self.wade
+        } else {
+            self.factor * self.ground_factor
+        }
     }
 
     /// `slowed x0.60, rooted, capped 3.0m/s`: what the AI reads. Empty when nothing is modified.
@@ -211,6 +335,12 @@ impl MoveModifiers {
         if self.ground_factor != 1.0 {
             parts.push(format!("ground x{:.2}", self.ground_factor));
         }
+        if let Some(stance) = self.stance {
+            parts.push(format!("stance {:.1}m/s{}", stance.top, if stance.by_input { "" } else { " flat" }));
+            if self.wade != 1.0 {
+                parts.push(format!("wade x{:.2}", self.wade));
+            }
+        }
         if let Some(cap) = self.cap {
             parts.push(format!("capped {cap:.1}m/s"));
         }
@@ -223,8 +353,19 @@ impl MoveModifiers {
         if self.sprint_cost != 1.0 {
             parts.push(format!("sprint cost x{:.2}", self.sprint_cost));
         }
+        if let Some(rate) = self.acceleration {
+            parts.push(format!("accel {rate:.1}"));
+        }
+        if let Some(rate) = self.deceleration {
+            parts.push(format!("decel {rate:.1}"));
+        }
         parts.join(", ")
     }
+}
+
+/// A cap as a share of the speed at full input (at most 1): a cap above `full` holds nothing back.
+fn cap_ratio(cap: f32, full: f32) -> f32 {
+    if full > 1e-6 { (cap / full).min(1.0) } else { 1.0 }
 }
 
 /// The order of the modifier systems. The reset and the sources run in `SimSet::Input`, after the orders and before the NPC brains;
@@ -284,6 +425,7 @@ pub(crate) fn plugin(app: &mut App) {
     // Derived each tick from the sources, which are state: the replay hash and the network
     // have nothing to take from it. (A snapshot holds it harmlessly: it is reset before use.)
     .register_type::<MoveModifiers>()
+    .register_type::<StanceSpeed>()
     .replay_ignore::<MoveModifiers>()
     .net_ignore::<MoveModifiers>()
     .register_ai_component::<MoveModifiers>(|m| m.describe())
@@ -329,11 +471,11 @@ fn wade<F: QueryFilter + 'static>(
     let db = db.as_deref();
     for (controller, own, state, tf, mut modifiers) in &mut characters {
         let params = controller.resolve(own, db);
-        if params.wade_factor == 1.0 || state.mode != MotionMode::Ground {
+        if !params.wades_in(state.mode) {
             continue;
         }
         if let Some(surface) = state.water_surface {
-            modifiers.slow_on_ground(params.wade_scale((surface - tf.translation.y).max(0.0)));
+            modifiers.wade_by(params.wade_scale(params.wade_depth(surface, tf.translation.y)));
         }
     }
 }

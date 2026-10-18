@@ -8,6 +8,7 @@ mod edge_cases;
 mod engine;
 mod input;
 mod modifiers;
+mod modifiers_parity;
 mod perception;
 mod physics;
 mod replays;

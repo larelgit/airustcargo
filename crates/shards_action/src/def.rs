@@ -34,6 +34,7 @@ use std::fmt;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_content::{ContentDef, Refs};
+use shards_motion::SprintResume;
 
 use crate::status::StatusDef;
 
@@ -859,13 +860,29 @@ pub struct CombatTuning {
     pub max_statuses: u32,
     /// Stamina sprinting costs per second.
     pub sprint_stamina_per_s: f32,
+    /// When a land sprint that ran the stamina dry may start again (a fast swim has its own rule in
+    /// the locomotion params). `OnRelease` (the default): after the sprint button is let go.
+    /// `Fraction(f)`: once the stamina is at least `f` of its maximum, button held or not;
+    /// `Fraction(0)`: the sprint simply stops at an empty bar and goes on as soon as there is any.
+    #[serde(skip_serializing_if = "is_on_release")]
+    pub sprint_resume: SprintResume,
     /// How far `lock_on` looks for a target (m).
     pub lock_on_range: f32,
 }
 
+fn is_on_release(v: &SprintResume) -> bool {
+    *v == SprintResume::OnRelease
+}
+
 impl Default for CombatTuning {
     fn default() -> Self {
-        Self { input_buffer: 0.15, max_statuses: 3, sprint_stamina_per_s: 10.0, lock_on_range: 20.0 }
+        Self {
+            input_buffer: 0.15,
+            max_statuses: 3,
+            sprint_stamina_per_s: 10.0,
+            sprint_resume: SprintResume::OnRelease,
+            lock_on_range: 20.0,
+        }
     }
 }
 
@@ -894,6 +911,11 @@ impl ContentDef for CombatTuning {
             if !(v >= 0.0 && v.is_finite()) {
                 refs.error(format!("{name} must be a number >= 0 (is {v})"));
             }
+        }
+        if let SprintResume::Fraction(f) = self.sprint_resume
+            && !(0.0..=1.0).contains(&f)
+        {
+            refs.error(format!("sprint_resume Fraction({f}) must be between 0 and 1"));
         }
     }
 }

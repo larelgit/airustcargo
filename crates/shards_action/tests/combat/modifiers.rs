@@ -1,7 +1,7 @@
 //! Movement modifiers from statuses, the sprint's cost multiplier, and what the AI sees.
 
 use bevy::prelude::*;
-use shards_action::add_status_buildup;
+use shards_action::{add_status_buildup, NoStatusSlow, Statuses};
 use shards_action::Stamina;
 use shards_core::Intent;
 use shards_motion::{ModifierSystems, MotionState, MoveModifiers};
@@ -78,6 +78,27 @@ fn a_root_status_holds_the_body_and_a_cap_status_caps_a_sprint() {
     assert!((speed(&app, hero) - 3.0).abs() < 1e-3, "{}", speed(&app, hero));
     let seen = ai_core::observe::observe(app.world(), &ai_core::observe::ObserveOptions::default());
     assert!(seen.contains("capped 3.0m/s"), "{seen}");
+}
+
+#[test]
+fn a_body_that_takes_statuses_but_is_not_slowed_by_them() {
+    let mut app = arena();
+    let boss = hero(app.world_mut(), "hero", Vec3::ZERO, N);
+    app.world_mut().entity_mut(boss).insert(NoStatusSlow);
+    run_north(&mut app, boss, false);
+    add_status_buildup(app.world_mut(), boss, "slow", 100.0);
+    add_status_buildup(app.world_mut(), boss, "burden", 100.0);
+    step(&mut app, 30);
+    assert!(app.world().get::<Statuses>(boss).unwrap().get("slow").is_some_and(|s| s.active > 0.0), "it has the status");
+    assert_eq!(speed(&app, boss), 5.0, "neither the slow nor the cap moves it");
+    // A root is not a slow: it still holds the body.
+    let mut app = arena();
+    let boss = hero(app.world_mut(), "hero", Vec3::ZERO, N);
+    app.world_mut().entity_mut(boss).insert(NoStatusSlow);
+    run_north(&mut app, boss, false);
+    add_status_buildup(app.world_mut(), boss, "root", 100.0);
+    step(&mut app, 30);
+    assert_eq!(speed(&app, boss), 0.0);
 }
 
 #[test]
