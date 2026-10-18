@@ -344,6 +344,21 @@ impl CharacterParams {
                 self.wade_full_depth, self.wade_min_depth
             ));
         }
+        if self.wade_factor > 1.0 {
+            errors.push(format!("wade_factor {} is above 1, wading would speed the body up", self.wade_factor));
+        }
+        if self.swim_fast_speed > 0.0 && self.swim_fast_speed < self.swim_speed {
+            errors.push(format!("swim_fast_speed {} is below swim_speed {}", self.swim_fast_speed, self.swim_speed));
+        }
+        if self.swim_fast_drain > 0.0 && self.swim_fast_speed <= 0.0 {
+            errors.push("swim_fast_drain is set but swim_fast_speed is 0, so the drain never applies".to_string());
+        }
+        if self.climb_out_auto_height.is_some_and(|h| h > self.mantle_height) {
+            errors.push(format!(
+                "climb_out_auto_height {:?} is above mantle_height {}, the second tier could never apply",
+                self.climb_out_auto_height, self.mantle_height
+            ));
+        }
         for (name, tiers) in [("landing_tiers", &self.landing_tiers), ("landing_drop_tiers", &self.landing_drop_tiers)] {
             if tiers.iter().any(|t| !(*t > 0.0 && t.is_finite())) || tiers.windows(2).any(|w| w[0] >= w[1]) {
                 errors.push(format!("{name} must be speeds > 0 in ascending order (is {tiers:?})"));

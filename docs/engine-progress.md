@@ -610,7 +610,7 @@ What does not work the way you might expect, and what is deliberately deferred:
 
 ## Port gaps
 
-Gaps found by porting a larger game onto the engine (`docs/port/` of the port), closed one change at a time.
+Gaps found by porting a larger game onto the engine (its port notes), closed one change at a time.
 
 | Gap | What | Status | Where and how it was checked |
 |---|---|---|---|

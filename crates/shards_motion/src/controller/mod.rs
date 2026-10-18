@@ -420,13 +420,13 @@ fn trigger(commands: &mut Commands, entity: Entity, note: Note, tracks: bool) {
         Note::Mode(from, to) => {
             // Ground, water and a ledge end the flight, whether or not a landing was reported.
             if tracks && matches!(to, MotionMode::Ground | MotionMode::Water | MotionMode::Mantle) {
-                commands.entity(entity).remove::<JumpedFlight>();
+                commands.entity(entity).try_remove::<JumpedFlight>();
             }
             commands.trigger(ModeChanged { entity, from, to })
         }
         Note::Jumped => {
             if tracks {
-                commands.entity(entity).insert(JumpedFlight);
+                commands.entity(entity).try_insert(JumpedFlight);
             }
             commands.trigger(Jumped { entity })
         }

@@ -271,7 +271,7 @@ fn the_shallows_break_a_fall_when_the_limit_says_so() {
 
 #[test]
 fn coyote_time_defaults_to_twelve_hundredths_and_is_content() {
-    // The default is the Godot number; a jump 0.10 s after the edge still works, 0.17 s does not
+    // The default is 0.12 s; a jump 0.10 s after the edge still works, 0.17 s does not
     // (and `coyote_time` is a field of the locomotion content, like every other number).
     assert_eq!(CharacterParams::default().coyote_time, 0.12);
     let p: CharacterParams = serde_json::from_str(r#"{"coyote_time": 0.2}"#).unwrap();
@@ -299,4 +299,17 @@ fn new_params_are_checked_and_neutral_ones_do_not_serialize() {
         assert!(json.get(field).is_none(), "{field} serialized by default");
     }
     assert!(serde_json::to_value(landing_params()).unwrap().get("landing_tiers").is_some());
+}
+
+#[test]
+fn likely_mistakes_in_the_new_params_are_errors() {
+    for (params, word) in [
+        (CharacterParams { wade_factor: 1.5, ..default() }, "wade_factor"),
+        (CharacterParams { swim_fast_speed: 1.0, ..default() }, "swim_fast_speed"),
+        (CharacterParams { swim_fast_drain: 5.0, ..default() }, "swim_fast_drain"),
+        (CharacterParams { climb_out_auto_height: Some(9.0), ..default() }, "climb_out_auto_height"),
+    ] {
+        let err = params.check().unwrap_err();
+        assert!(err.contains(word), "{err}");
+    }
 }

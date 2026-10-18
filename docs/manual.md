@@ -732,17 +732,17 @@ slower), the action machine and `update_fighters` (sprint cost) read the same co
 statuses_to_modifiers`). *Wading* is in the params: `wade_min_depth`, `wade_full_depth`, `wade_factor` (1: off); the walk slows in a straight
 line with the depth of water over the feet, and a swimmer does not wade.
 
-*Reproducing the Godot player* (`speed = base * pace * stat * wade`, base 6.7 sprinting, else 4.5 locked on, else 5.0; guard `3.0 * wade`): content
+*Composing a typical action-game pace* (`speed = base * pace * stat * wade`, base 6.7 sprinting, else 4.5 locked on, else 5.0; guard `3.0 * wade`): content
 `walk_speed` 2.5, `run_speed` 5.0, `sprint_speed` 6.7 (a stick's length maps linearly), `wade_*`; game sources: combat `slow_on_ground(0.85)` (not
 while guarding or swimming), lock-on `cap_unsprinted_at(4.5)`, guard `cap_at(3.0)` + `forbid_sprint()`, out of combat `scale_sprint_cost(0.0)`
 (a free sprint still holds the stamina regeneration back), chill `speed_factor: 0.75`. The caps come before the factors, so a locked-on walk is
-`4.5 * 0.85`. Known differences: a status slow also applies while guarding; the caps do not apply to a swim.
+`4.5 * 0.85`. Limits to know: a status slow also applies under a cap (a game exempts a state by not adding the factor); a cap clamps the absolute speed, so a partial stick under a cap is not scaled down; the jump climb-out height is measured from the swimmer's feet, so `mantle_height` must cover `float_depth` plus the wanted height above the surface; the stamina lockout after exhaustion ends on releasing sprint (no regeneration threshold); the stick-length map and one acceleration pair apply to every state; the caps do not apply to a swim.
 
 *Swimming.* `swim_fast_speed` (a sprint in water) costs `swim_fast_drain` stamina per second, always (the sprint cost multiplier does not
 apply) and ends at no stamina or `no_sprint`; `swim_acceleration`, `swim_deceleration`, `swim_turn_speed_deg` (0: the ground's numbers).
 Two-tier climb-out: with `climb_out_auto_height` (above the water surface), pushing against a ledge climbs it by itself up to that height; a higher
 one (up to `mantle_height`) needs the jump. *Landing:* `Landed` has `tier` (how many of `landing_tiers` the impact speed reached) and `jumped`
-(`landing_drop_tiers` for a fall that did not follow a jump; the controller marks a jump's flight with `JumpedFlight` only when tiers are set);
+(`landing_drop_tiers` for a fall that did not follow a jump; the controller marks a jump's flight with `JumpedFlight` only when tiers are set, so tiers added by hot reload while a character is airborne apply from its next jump);
 `landing_wade_limit` drops the event where the water over the feet is deeper. The journal says `e5 landed from 0.4m at 4.9m/s, tier 1 (jump)`.
 Coyote time is `coyote_time` (0.12 s by default).
 

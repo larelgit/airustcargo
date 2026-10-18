@@ -31,12 +31,12 @@
 //! Swimming takes `swim_speed` (or the fast one) times `factor` only: caps and `ground_factor`
 //! (wading, combat pace) are for walkers. A glide is not scaled.
 //!
-//! The Godot rules this was built for (`speed = base * pace * stat * wade`, where `base` is 6.7 for
+//! A typical action-game pace (`speed = base * pace * stat * wade`, where `base` is 6.7 for
 //! a sprint, else 4.5 when locked on, else 5.0; guarding walks at `3.0 * wade`) are then:
 //! combat pace `ground_factor *= 0.85` (not while guarding or swimming), a status slow
 //! `factor *= 0.75`, wading from [`CharacterParams`], lock-on `unsprinted_cap = 4.5`, guard
 //! `cap = 3.0` plus `no_sprint`. The caps come before the factors, so a locked-on walk is
-//! `4.5 * pace`, as there.
+//! `4.5 * pace`, as expected.
 //!
 //! Every field neutral (`1.0`, no cap, not rooted) takes the exact code path of a character
 //! that has no modifiers.
@@ -311,7 +311,7 @@ fn reset<F: QueryFilter + 'static>(mut commands: Commands, mut characters: Reset
                 }
             }
             None => {
-                commands.entity(entity).insert(MoveModifiers::default());
+                commands.entity(entity).try_insert(MoveModifiers::default());
             }
         }
     }
@@ -362,7 +362,7 @@ mod tests {
         m.slow(0.75).slow_on_ground(0.85);
         let (speed, _) = m.ground_speed(&p, 1.0, false);
         assert!((speed - 5.0 * 0.75 * 0.85).abs() < 1e-6, "{speed}");
-        // The Godot lock-on: 4.5 first, then the pace.
+        // A lock-on cap: 4.5 first, then the pace.
         let mut locked = MoveModifiers::default();
         locked.cap_unsprinted_at(4.5).slow_on_ground(0.85);
         assert!((locked.ground_speed(&p, 1.0, false).0 - 4.5 * 0.85).abs() < 1e-6);

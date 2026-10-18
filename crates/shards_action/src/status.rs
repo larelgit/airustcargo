@@ -90,8 +90,8 @@ impl ContentDef for StatusDef {
 }
 
 /// `ModifierSystems::Statuses`: the active statuses with a `speed_factor`, `speed_cap` or `root`
-/// add them to the character's [`MoveModifiers`] (in status id order, so the product is the
-/// same every run).
+/// add them to the character's [`MoveModifiers`] (in the order the statuses were applied, so the product is the
+/// same every run: that order is part of the snapshot and the replay).
 pub fn statuses_to_modifiers<F: QueryFilter + 'static>(
     db: Res<ContentDb>,
     mut characters: Query<(&Statuses, &mut MoveModifiers), F>,
