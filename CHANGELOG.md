@@ -36,7 +36,8 @@ Tags are set by the maintainer, not by agents or CI. For a release `X.Y.Z`:
 1. Raise `version` in `[workspace.package]` of the root `Cargo.toml` and run `cargo update --workspace`
    (it updates `Cargo.lock`). Move the entries from `Unreleased` into a new section `[X.Y.Z] — date` and fix the
    links at the bottom of the file. The section may already be prepared (phase B is recorded in `[0.3.0]`, phases C–E in `[0.4.0]`): then set the
-   date in it. Raising the minor version rejects the snapshots of the previous one: record `tests/replays/snapshot.json` again
+   date in it. Raising the minor version rejects the snapshots and saves of the previous one: record `tests/replays/snapshot.json`
+   and `saves.json` again (the other replays do not change)
    (`cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`).
 2. Update the `vX.Y.Z` tag in `template/Cargo.toml` (the comment about the dependency), in `template/README.md` (steps 3 and 5), in
    `README.md` (step 2 of the section "Make a game on Shards, step by step") and in `docs/manual.md` (step 2 of the section "Make a game
