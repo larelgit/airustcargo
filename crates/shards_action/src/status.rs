@@ -429,8 +429,14 @@ pub fn add_status_buildup(world: &mut World, entity: Entity, status: &str, amoun
     let limit = status_limit(world, entity);
     let gated = world.get::<ProcGates>(entity).is_some_and(|g| g.gated(status));
     let resist = world.get::<StatusResist>(entity).map_or(1.0, |r| r.of(status));
-    let uncapped: Vec<String> =
-        world.resource::<ContentDb>().iter::<StatusDef>().filter(|(_, d)| !d.capped).map(|(id, _)| id.to_owned()).collect();
+    // Only the statuses the fighter holds can count toward the limit: look those up, not the database.
+    let uncapped: Vec<String> = {
+        let db = world.resource::<ContentDb>();
+        world
+            .get::<Statuses>(entity)
+            .map(|s| s.0.iter().filter(|e| db.get::<StatusDef>(&e.id).is_some_and(|d| !d.capped)).map(|e| e.id.clone()).collect())
+            .unwrap_or_default()
+    };
     let capped = |id: &str| !uncapped.iter().any(|u| u == id);
     let Some(mut statuses) = world.get_mut::<Statuses>(entity) else { return };
     if let Some(change) = statuses.add_with(status, &def, amount * resist, limit, gated, capped) {

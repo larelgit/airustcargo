@@ -182,8 +182,19 @@ pub fn damage_taken_sane(world: &World) -> Option<String> {
     let mut bad = Offenders::default();
     with_query::<(&AiId, &DamageTaken), (), _>(world, |query| {
         for (id, t) in query.iter(world) {
-            if let Some(m) = t.0.iter().find(|m| !(m.mult.is_finite() && m.mult >= 0.0 && m.left.is_none_or(f32::is_finite))) {
-                bad.note(*id, || format!("DamageTaken `{}` mult = {}, left = {:?}: a finite mult >= 0 and a finite time", m.key, m.mult, m.left));
+            let ok = |m: &crate::TakenMult| {
+                m.mult.is_finite()
+                    && m.mult >= 0.0
+                    && m.left.is_none_or(f32::is_finite)
+                    && m.then.is_none_or(|b| b.is_finite() && b >= 0.0 && m.left.is_some())
+            };
+            if let Some(m) = t.0.iter().find(|m| !ok(m)) {
+                bad.note(*id, || {
+                    format!(
+                        "DamageTaken `{}` mult = {}, left = {:?}, then = {:?}: a finite mult >= 0, a finite time, and a base only under a window",
+                        m.key, m.mult, m.left, m.then
+                    )
+                });
             } else if let Some(w) = t.0.windows(2).find(|w| w[0].key >= w[1].key) {
                 bad.note(*id, || format!("DamageTaken keys `{}`, `{}` are not sorted and unique", w[0].key, w[1].key));
             }

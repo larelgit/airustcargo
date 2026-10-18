@@ -40,6 +40,9 @@ pub struct TakenMult {
     pub mult: f32,
     /// Seconds left; `None`: until cleared.
     pub left: Option<f32>,
+    /// For a window: the permanent multiplier the key returns to when it ends (see
+    /// [`extend_damage_taken`]); `None`: the key goes.
+    pub then: Option<f32>,
 }
 
 impl DamageTaken {
@@ -59,13 +62,20 @@ impl DamageTaken {
         self.0.iter().filter(|m| m.left.is_none_or(|l| l > EPS)).fold(1.0, |p, m| p * m.mult)
     }
 
+    fn put_then(&mut self, key: &str, then: f32) {
+        if let Some(m) = self.0.iter_mut().find(|m| m.key == key) {
+            m.then = Some(then);
+        }
+    }
+
     fn put(&mut self, key: &str, mult: f32, left: Option<f32>) {
         match self.0.binary_search_by(|m| m.key.as_str().cmp(key)) {
             Ok(at) => {
                 self.0[at].mult = mult;
                 self.0[at].left = left;
+                self.0[at].then = None;
             }
-            Err(at) => self.0.insert(at, TakenMult { key: key.to_owned(), mult, left }),
+            Err(at) => self.0.insert(at, TakenMult { key: key.to_owned(), mult, left, then: None }),
         }
     }
 }
@@ -160,24 +170,39 @@ pub fn set_damage_taken(world: &mut World, entity: Entity, key: &str, mult: f32,
 /// [`set_damage_taken`] that never shortens what the key already holds: the end is the later of
 /// the two (a window that lasts until cleared is the latest), and a timed window is never
 /// cancelled by a permanent set. The multiplier is the new one, so a game keeps one key (`core`)
-/// for its base and its windows without a timer of its own. Returns whether the key changed.
+/// for its base and its windows without a timer of its own, nor a copy of its base: the engine
+/// holds the base under the window ([`TakenMult::then`]). Returns whether the multiplier in
+/// force changed (`false` also for an invalid call).
 ///
-/// - A timed window over a held one: `left = max(held, new)`, `mult` = the new.
-/// - A timed window over a permanent multiplier: the window takes the key (the permanent one
-///   returns when the game puts it back from [`DamageTakenExpired`]).
-/// - A permanent set over a timed window: nothing changes (the window runs out first).
+/// - A timed window over a held one: `left = max(held, new)`, `mult` = the new, the base stays.
+/// - A timed window over a permanent multiplier: the window takes the key and the permanent
+///   multiplier becomes its `then`; when the window ends the key returns to it
+///   ([`DamageTakenExpired`] still fires, with the base already back).
+/// - A permanent set over a timed window: the window runs on, and the new value becomes the
+///   `then` (a base that changes mid-window is not lost). Returns `false`.
 /// - A permanent set over a permanent multiplier or an empty key: the plain set.
 pub fn extend_damage_taken(world: &mut World, entity: Entity, key: &str, mult: f32, seconds: Option<f32>) -> bool {
     if !valid_taken(world, entity, mult, seconds) {
         return false;
     }
-    let held = world.get::<DamageTaken>(entity).and_then(|t| t.left(key));
-    let left = match (held, seconds) {
-        (Some(Some(held)), None) if held > EPS => return false,
-        (Some(Some(held)), Some(new)) if held > new => Some(held),
-        _ => seconds,
+    let held = world.get::<DamageTaken>(entity).and_then(|t| t.get(key)).map(|m| (m.mult, m.left, m.then));
+    let (left, then) = match (held, seconds) {
+        (Some((_, Some(held), _)), None) if held > EPS => {
+            if let Some(mut t) = world.get_mut::<DamageTaken>(entity) {
+                t.put_then(key, mult);
+            }
+            return false;
+        }
+        (Some((_, Some(held), then)), Some(new)) if held > EPS => (Some(held.max(new)), then),
+        (Some((base, None, _)), Some(_)) => (seconds, Some(base)),
+        _ => (seconds, None),
     };
     set_damage_taken(world, entity, key, mult, left);
+    if then.is_some()
+        && let Some(mut t) = world.get_mut::<DamageTaken>(entity)
+    {
+        t.put_then(key, then.unwrap_or(1.0));
+    }
     true
 }
 
@@ -237,13 +262,20 @@ pub fn tick_body_state(world: &mut World) {
                     let next = run_down(left, dt);
                     if next <= EPS {
                         ran_out.push(m.key.clone());
+                        if let Some(base) = m.then.take() {
+                            // The window ends and the base it covered returns.
+                            m.mult = base;
+                            m.left = None;
+                            continue;
+                        }
+                        m.left = Some(0.0);
                     } else {
                         m.left = Some(next);
                     }
                 }
             }
             if !ran_out.is_empty() {
-                t.0.retain(|m| !ran_out.contains(&m.key));
+                t.0.retain(|m| m.left != Some(0.0));
                 emptied = t.0.is_empty();
                 expired.extend(ran_out.into_iter().map(|key| DamageTakenExpired { entity, key }));
             }
@@ -279,7 +311,10 @@ pub fn describe_damage_taken(t: &DamageTaken) -> String {
         .0
         .iter()
         .map(|m| match m.left {
-            Some(left) => format!("x{:.2} ({} {left:.1}s)", m.mult, m.key),
+            Some(left) => match m.then {
+                Some(then) => format!("x{:.2} ({} {left:.1}s, then x{then:.2})", m.mult, m.key),
+                None => format!("x{:.2} ({} {left:.1}s)", m.mult, m.key),
+            },
             None => format!("x{:.2} ({})", m.mult, m.key),
         })
         .collect();

@@ -281,10 +281,13 @@ fn a_window_extends_to_the_later_end_and_a_permanent_set_never_cuts_it() {
     // (b) A permanent set while the window runs changes nothing.
     assert!(!extend_damage_taken(app.world_mut(), victim, "core", 1.2, None));
     assert_eq!(state(&app), Some((1.35, Some(5.0))));
-    // The window ends on its tick (300 ticks later, 360 in all); the game puts its base back from the event.
+    // The window ends on its tick (300 ticks later, 360 in all); the base under it is back, with
+    // no timer or copy of the base on the game's side. The event still fires.
     step(&mut app, 300);
     assert_eq!(log(&app).expired, [(360, "core".to_owned())]);
-    assert!(app.world().get::<DamageTaken>(victim).is_none());
+    assert_eq!(state(&app), Some((1.2, None)));
+    assert_eq!(app.world().get::<DamageTaken>(victim).unwrap().get("core").unwrap().then, None);
+    clear_damage_taken(app.world_mut(), victim, "core");
     assert!(extend_damage_taken(app.world_mut(), victim, "core", 1.2, None));
     assert_eq!(state(&app), Some((1.2, None)));
     // The plain set replaces whatever is there, a longer window included.
@@ -474,4 +477,115 @@ fn old_statuses_are_untouched() {
     buildup(&mut app, victim, "b_a", 500.0);
     assert_eq!(status(&app, victim, "b_a").unwrap().active, 5.0, "ignored while active without stacks");
     assert!(app.world().get::<ProcGates>(victim).is_none(), "no min_proc_interval, no gate");
+}
+
+/// E46, the base: a permanent value set while a window runs is kept under it, so a base that
+/// changes mid-window (a phase change) is what the key returns to; the game stores nothing.
+#[test]
+fn a_base_set_during_a_window_is_what_the_key_returns_to() {
+    let (mut app, _, victim) = arena("b_victim");
+    let t = |app: &App| app.world().get::<DamageTaken>(victim).and_then(|t| t.get("core").cloned()).unwrap();
+    extend_damage_taken(app.world_mut(), victim, "core", 1.2, None);
+    extend_damage_taken(app.world_mut(), victim, "core", 1.35, Some(1.0));
+    assert_eq!(t(&app).then, Some(1.2));
+    // Phase 2: the base becomes 1.5 while the window runs. The window keeps the key.
+    assert!(!extend_damage_taken(app.world_mut(), victim, "core", 1.5, None), "the multiplier in force did not change");
+    let m = t(&app);
+    assert_eq!((m.mult, m.left, m.then), (1.35, Some(1.0), Some(1.5)));
+    assert_eq!(shards_action::body::describe_damage_taken(app.world().get::<DamageTaken>(victim).unwrap()), "takes x1.35 (core 1.0s, then x1.50)");
+    // A second window changes the mult and the end, not the base.
+    step(&mut app, 30);
+    extend_damage_taken(app.world_mut(), victim, "core", 1.4, Some(1.0));
+    let m = t(&app);
+    assert_eq!((m.mult, m.then), (1.4, Some(1.5)));
+    step(&mut app, 59);
+    assert_eq!(t(&app).mult, 1.4);
+    step(&mut app, 1);
+    let m = t(&app);
+    assert_eq!((m.mult, m.left, m.then), (1.5, None, None), "back to the new base, permanent");
+    assert_eq!(log(&app).expired, [(90, "core".to_owned())]);
+    // The plain set drops the base: a window the game set on purpose to replace everything.
+    set_damage_taken(app.world_mut(), victim, "core", 2.0, Some(1.0));
+    assert_eq!(t(&app).then, None);
+    step(&mut app, 60);
+    assert!(app.world().get::<DamageTaken>(victim).is_none());
+}
+
+#[test]
+fn a_regrant_restarts_the_time_even_when_shorter() {
+    // The design's rule (B2b 4.10): the pool is the larger, the time is the newest grant's.
+    let (mut app, _, v) = arena("b_victim");
+    grant_barrier(app.world_mut(), v, 30.0, 5.0);
+    step(&mut app, 60);
+    grant_barrier(app.world_mut(), v, 10.0, 1.0);
+    assert_eq!(barrier(&app, v).unwrap(), Barrier { amount: 30.0, left: 1.0 });
+}
+
+#[test]
+fn a_broken_guard_and_a_spill_report_what_the_barrier_took() {
+    let (mut app, attacker, victim) = arena("b_victim");
+    // Spill with the guard share and a multiplier together: 40 x 0.5 (guard) x 1.5 (taken) = 30;
+    // the barrier takes 12, health 18.
+    grant_barrier(app.world_mut(), victim, 12.0, 5.0);
+    set_damage_taken(app.world_mut(), victim, "core", 1.5, None);
+    hold(&mut app, victim, "block", true);
+    step(&mut app, 30);
+    press(&mut app, attacker, "heavy");
+    step(&mut app, 8);
+    let blocked = lines(&app, "blocked");
+    assert_eq!(blocked.len(), 1, "{:#?}", journal(&app));
+    assert!(blocked[0].ends_with("(hp 82) [barrier -12]"), "{}", blocked[0]);
+    assert_eq!(hp(&app, victim), 82.0);
+    assert!(barrier(&app, victim).is_none());
+}
+
+#[test]
+fn guard_broken_carries_the_absorbed_share() {
+    let (mut app, attacker, victim) = arena("b_victim");
+    // No stamina left: the guard breaks on the hit, and the barrier takes its share first.
+    grant_barrier(app.world_mut(), victim, 5.0, 5.0);
+    hold(&mut app, victim, "block", true);
+    step(&mut app, 30);
+    app.world_mut().get_mut::<Stamina>(victim).unwrap().current = 0.0;
+    press(&mut app, attacker, "heavy");
+    step(&mut app, 8);
+    let broken = lines(&app, "broke");
+    let all = journal(&app);
+    assert!(!broken.is_empty(), "{all:#?}");
+    assert!(broken[0].contains("[barrier -5]"), "{}", broken[0]);
+}
+
+#[test]
+fn damage_taken_expiries_come_out_in_ai_id_then_key_order() {
+    let (mut app, attacker, victim) = arena("b_victim");
+    // Set in the opposite order of what is expected, on the later fighter first.
+    for key in ["zeta", "alpha", "mid"] {
+        set_damage_taken(app.world_mut(), victim, key, 1.1, Some(0.5));
+    }
+    for key in ["omega", "beta"] {
+        set_damage_taken(app.world_mut(), attacker, key, 1.1, Some(0.5));
+    }
+    
+    app.init_resource::<Order>();
+    app.add_observer(|e: On<DamageTakenExpired>, ids: Query<&ai_core::AiId>, mut order: ResMut<Order>| {
+        order.0.push((ids.get(e.event().entity).unwrap().0, e.event().key.clone()));
+    });
+    step(&mut app, 30);
+    let got = app.world().resource::<Order>().0.clone();
+    let (ai, vi) = (app.world().get::<ai_core::AiId>(attacker).unwrap().0, app.world().get::<ai_core::AiId>(victim).unwrap().0);
+    let key = |s: &str| s.to_owned();
+    assert_eq!(got, [(ai, key("beta")), (ai, key("omega")), (vi, key("alpha")), (vi, key("mid")), (vi, key("zeta"))]);
+}
+
+#[derive(Resource, Default)]
+struct Order(Vec<(u32, String)>);
+
+#[test]
+fn deal_damage_does_nothing_on_a_client() {
+    let (mut app, _, victim) = arena("b_victim");
+    app.world_mut().insert_resource(shards_core::NetRole::Client);
+    assert_eq!(deal_damage(app.world_mut(), victim, 500.0, None), 100.0);
+    assert!(app.world().get::<Dead>(victim).is_none());
+    app.world_mut().remove_resource::<shards_core::NetRole>();
+    assert_eq!(deal_damage(app.world_mut(), victim, 10.0, None), 90.0);
 }

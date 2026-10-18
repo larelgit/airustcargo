@@ -31,7 +31,7 @@
 use ai_core::AiId;
 use bevy::prelude::*;
 use shards_content::ContentDb;
-use shards_core::flat;
+use shards_core::{flat, NetRole};
 use shards_motion::{
     Collider, ColliderId, LayerMask, MotionState, PhysicsWorld, QueryFilter,
 };
@@ -709,12 +709,15 @@ fn hurt(world: &mut World, target: Entity, damage: f32) -> (f32, f32) {
 /// god mode ([`Invulnerable`]), or for an `amount` that is not above 0. It runs none of the hit
 /// pipeline (no guard, no armor, no [`DamageTaken`], no hooks, no reaction or poise) and
 /// triggers no [`Damaged`] (that event names a hit's action); a game that wants a line for it
-/// triggers its own event.
+/// triggers its own event. A machine that does not simulate (a co-op client) changes nothing and
+/// returns the health as it is: the host's state brings the damage, so an observer that calls
+/// this on every machine does not kill twice.
 pub fn deal_damage(world: &mut World, target: Entity, amount: f32, credit: Option<Entity>) -> f32 {
     if world.get_entity(target).is_err() || world.get::<Dead>(target).is_some() {
         return 0.0;
     }
-    if world.get::<Invulnerable>(target).is_some() || amount.is_nan() || amount <= 0.0 {
+    let simulates = world.get_resource::<NetRole>().is_none_or(|r| r.simulates());
+    if !simulates || world.get::<Invulnerable>(target).is_some() || amount.is_nan() || amount <= 0.0 {
         return world.get::<Health>(target).map_or(0.0, |h| h.current);
     }
     let (hp_left, _) = hurt(world, target, amount);

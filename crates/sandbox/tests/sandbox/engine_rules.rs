@@ -253,7 +253,7 @@ fn a_barrier_that_is_not_a_pool_stops_the_game() {
 fn damage_taken_that_is_not_sorted_unique_and_finite_stops_the_game() {
     use shards::action::{DamageTaken, TakenMult};
     fn mult(key: &str, mult: f32) -> TakenMult {
-        TakenMult { key: key.into(), mult, left: None }
+        TakenMult { key: key.into(), mult, left: None, then: None }
     }
     // Two entries under one key.
     let mut app = sandbox::test_app(42);
@@ -288,6 +288,17 @@ fn damage_taken_that_is_not_sorted_unique_and_finite_stops_the_game() {
     });
     let line = stops_on(&mut app, "action.damage_taken_sane", 2);
     assert!(line.contains("e5 DamageTaken `core` mult = -0.5"), "{line}");
+
+    // A base under a permanent multiplier: it only lives under a window.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        let mut m = mult("core", 1.35);
+        m.then = Some(1.2);
+        world.entity_mut(player).insert(DamageTaken(vec![m]));
+    });
+    let line = stops_on(&mut app, "action.damage_taken_sane", 2);
+    assert!(line.contains("e5 DamageTaken `core` mult = 1.35, left = None, then = Some(1.2)"), "{line}");
 }
 
 #[test]

@@ -1305,7 +1305,7 @@ each when it is empty), all of them in the replay and the snapshot, none predict
 ```ron
 // combat/sparring.action.ron
 "spar_ward": (net_id: 140, phases: [("cast", 0.5)],
-              effects: [(at: 0.3, effect: Barrier(amount: 0.15, seconds: 8, of_max: true))]),   // 15 % of max health, 8 s
+              effects: [(at: 0.3, effect: Barrier(amount: 0.5, seconds: 8, of_max: true))]),   // half of max health, 8 s
 
 // combat/sparring.status.ron
 {
@@ -1317,9 +1317,9 @@ each when it is empty), all of them in the replay and the snapshot, none predict
 ```
 
 **Barrier.** `Barrier { amount, left }` takes damage before health. `grant_barrier(world, entity, amount, seconds)` gives the
-larger of the pool it holds and `amount`, for `seconds` from now (a smaller grant keeps the pool and restarts the time); it is
+larger of the pool it holds and `amount`, for `seconds` from now (a smaller or shorter grant keeps the pool and still restarts the time to its own `seconds`: the rule of the design, since a barrier is re-cast, not extended; a game that wants the later end reads `Barrier::left` and grants `max`); it is
 ignored for a dead or gone entity and for an `amount` or `seconds` that is not above 0. The `Barrier` action effect is the
-same call; with `of_max: true` the amount is a share of the actor's max health (`0.15`). It triggers `BarrierGranted {
+same call; with `of_max: true` the amount is a share of the actor's max health (`0.5` is half of it). It triggers `BarrierGranted {
 entity, amount, seconds }` (the pool now), a net event for the HUD. `hurt` is the one place damage reaches health: the
 barrier takes `min(amount, damage)` first, `Damaged`, `Blocked` and `GuardBroken` carry it as `absorbed` (their `amount`
 stays the whole hit), and the journal line gains ` [barrier -20]` only when it is above 0. A barrier that emptied is removed
@@ -1330,16 +1330,19 @@ unique; `left: None` lasts until cleared. Their product is `DamageCtx::taken`, a
 before `Armor` (so a guard's cost is still decided from the hit as it is written, and a hook sees both `taken` and
 `guard_mult`); a fighter without the component is not touched. `set_damage_taken(world, entity, key, mult, seconds:
 Option<f32>)` replaces the key; `clear_damage_taken(world, entity, key)` removes it (no event). A timed multiplier that runs
-out on a tick is removed and triggers `DamageTakenExpired { entity, key }`, in `AiId` order, then key order. A game that keeps
-a base under the key puts it back from an observer of that event. A `mult` below 0 or not finite, or `seconds` of 0 or less,
+out on a tick is removed and triggers `DamageTakenExpired { entity, key }`, in `AiId` order, then key order. A window that covers a base
+(below) leaves the base in the key, and the event still fires. A `mult` below 0 or not finite, or `seconds` of 0 or less,
 is ignored (`clear_damage_taken` cancels).
 
 *The later end wins (E46).* The Godot game let a shorter core window replace a longer one and a permanent base cancel a timed
 window; the engine does not. `extend_damage_taken(world, entity, key, mult, seconds) -> bool` is `set_damage_taken` that never
 shortens what the key holds: a timed window over a held one ends at the later of the two ends (the `mult` is the new one); a
-timed window over a permanent multiplier takes the key (the base comes back from `DamageTakenExpired`); a permanent set over a
-timed window changes nothing (returns `false`). The game needs no timer of its own for this: one key (`core`), `extend` for the
-windows and the base, an observer of `DamageTakenExpired` for the base. To read what is there, `DamageTaken::get(key) ->
+timed window over a permanent multiplier takes the key and the permanent value becomes `TakenMult::then`; a permanent set over a
+timed window leaves the window running and becomes the `then` (returns `false`: the multiplier in force did not change, so a base
+that changes mid-window, a phase change, is not lost). When the window ends the key returns to its `then`, permanent
+(`DamageTakenExpired` still fires, with the base already back); with no `then` the key goes. The game needs no timer of its
+own and no copy of its base: one key (`core`), `extend` for the windows and the base. `set_damage_taken` is the plain replace
+and drops the `then` (the Godot behaviour, if a game wants it); the describer shows `x1.35 (core 1.0s, then x1.50)`. To read what is there, `DamageTaken::get(key) ->
 Option<&TakenMult>`, `DamageTaken::left(key)` (`None` absent, `Some(None)` permanent, `Some(Some(s))` timed) and `product()`.
 The dev tool takes `keep_later=true` for it.
 
@@ -1353,7 +1356,7 @@ snapshots carry them.
 a hazard): the barrier, then health, then `kill_with(.., credit, None, None)` when health ran out; it returns the health left.
 It does nothing to a dead or gone entity, to one in god mode (`Invulnerable`), or for an amount that is not above 0, and it
 runs none of the pipeline (no guard, armor, `DamageTaken`, hooks, reaction or poise) and triggers no `Damaged` (that event names
-a hit's action); a game that wants a line for it triggers its own event.
+a hit's action); a game that wants a line for it triggers its own event. Like `extend_recovery`, it does nothing on a machine that\ndoes not simulate (a co-op client), so an observer that calls it on every machine kills once.
 
 **Status rules.** `StatusDef` gains `min_proc_interval` (after a proc, buildup that reaches the threshold again within this
 many seconds is swallowed: a `ProcGates` entry on the fighter), `cool_while_active: false` (buildup does not decay while the
@@ -1365,8 +1368,7 @@ done; reached while gated: refused; else active: `stacks` adds a stack, `refresh
 refused; else it procs, and `min_proc_interval` closes its gate. `Statuses::add` and `Statuses::tick` are unchanged for old
 callers; `Statuses::add_with(id, def, amount, limit, gated, capped)` and `Statuses::tick_with(.., gated)` hold the new rules,
 and `add_status_buildup` (hits and `Status` effects) uses them with the target's `ProcGates` and its moveset's cap. An instant
-status is active for one tick: `StatusApplied`, its `on_apply` (and `on_tick` once), then `StatusExpired`. Chill's longer
-recovery and burn's explosion are the game's.
+status is active for one tick: `StatusApplied`, its `on_apply` (and `on_tick` once), then `StatusExpired`. A `refresh` returns `Applied` like a proc, so `StatusApplied` and the game's\n`on_apply` run again and the gate closes again; a game whose `on_apply` is not repeatable checks the status's `stacks` or its\nown state. Chill's longer recovery and burn's explosion are the game's.
 
 **What the AI sees.** Describe: `barrier 15 (6.2s)`, `takes x1.35 (core 3.1s)` (several: `takes x0.50 (armor), x1.35 (core
 3.1s)`), `proc gate spar_chill 1.2s`. Journal: `e5 barrier 50 for 8.0s`, ` [barrier -15]` on a hit line. Dev tools: `barrier
