@@ -1,4 +1,4 @@
-// The sandbox's encounters, with neutral names. `ring_waves` follows the shape of an arena trial: a trigger volume that every player
+// The sandbox's encounters, with neutral names. `ring_waves` follows the shape of an arena fight: a trigger volume that every player
 // must stand in, three waves of 1, 2 and 1 members at fixed points facing the ring's center, a warning before each,
 // a captain whose home is the ring's center, a wipe that rewinds a wave, a reset after 30 s alone, won once.
 // `yard_pack` is a placed pack on markers for the pack, reset and disturbance tests.

@@ -66,12 +66,14 @@ struct World3 {
     start_met: bool,
     out: Vec<u32>,
     disturbed: Vec<u32>,
+    hunting: Vec<u32>,
+    participants: u32,
     all_home: bool,
 }
 
 impl Default for World3 {
     fn default() -> Self {
-        Self { standing: 2, near: true, start_met: false, out: vec![], disturbed: vec![], all_home: true }
+        Self { standing: 2, near: true, start_met: false, out: vec![], disturbed: vec![], hunting: vec![], participants: 2, all_home: true }
     }
 }
 
@@ -79,14 +81,14 @@ impl World3 {
     fn obs(&self, run: &Run) -> Obs {
         Obs {
             dt: DT,
-            participants: 2,
+            participants: self.participants,
             standing: self.standing,
             near: self.near,
             start_met: self.start_met,
             members: run
                 .members
                 .iter()
-                .map(|m| MemberObs { out: self.out.contains(&m.id.0), disturbed: self.disturbed.contains(&m.id.0) })
+                .map(|m| MemberObs { out: self.out.contains(&m.id.0), disturbed: self.disturbed.contains(&m.id.0), hunting: self.hunting.contains(&m.id.0) })
                 .collect(),
             all_home: self.all_home,
         }
@@ -186,7 +188,7 @@ fn the_resume_spawns_120_ticks_after_someone_stands() {
     // Tick R: someone stands. The pending wave (1) is warned at once.
     let fx = tick(&mut run, &def, &World3::default());
     assert!(has(&fx, |f| matches!(f, Fx::Resumed(r) if r.wave == 1 && r.delay == 2.0)));
-    assert!(has(&fx, |f| matches!(f, Fx::Warned(w) if w.wave == 1)));
+    assert!(has(&fx, |f| matches!(f, Fx::Warned(w) if w.wave == 1 && w.delay == 2.0)), "the cue leads the spawn by resume_after, not by the wave's delay");
     let n = ticks_until(&mut run, &def, &World3::default(), |f| matches!(f, Fx::Spawn { wave: 1 }), 400);
     assert_eq!(n, 120, "resume_after 2 s");
     assert_eq!((run.wave, &run.state), (1, &RunState::Running));
@@ -484,6 +486,31 @@ fn an_armed_placed_pack_is_pulled_into_the_fight_when_a_member_is_out_hurt_or_hu
     let mut run = run_with(&[(1, 1, true)]);
     run.state = RunState::Armed;
     assert!(tick(&mut run, &def2, &World3 { disturbed: vec![1], ..default() }).is_empty());
+}
+
+#[test]
+fn a_placed_pack_with_a_casualty_does_not_begin_again_after_a_reset() {
+    let def = def(vec![wave(0.0, true)]);
+    let mut run = run_with(&[(1, 1, true), (2, 1, true)]);
+    run.wave = 1;
+    run.state = RunState::Armed;
+    // The fight begins by the start condition; one member dies, the other is hurt.
+    let fx = tick(&mut run, &def, &World3 { start_met: true, ..default() });
+    assert!(has(&fx, |f| matches!(f, Fx::Started(_))) && run.begun);
+    let hurt = World3 { out: vec![1], disturbed: vec![1, 2], ..default() };
+    let mut fx = Vec::new();
+    let obs = hurt.obs(&run);
+    reset(&mut run, &def, &obs, ResetWhy::Dev, &mut fx);
+    run.state = RunState::Idle;
+    // Idle waits for the start condition to be false, then Armed: the corpse and the hurt
+    // survivor are not a reason to begin.
+    for _ in 0..5 {
+        assert!(tick(&mut run, &def, &hurt).is_empty());
+    }
+    assert_eq!(run.state, RunState::Armed);
+    // A survivor that hunts a standing participant is.
+    let hunted = World3 { out: vec![1], disturbed: vec![1, 2], hunting: vec![2], ..default() };
+    assert!(has(&tick(&mut run, &def, &hunted), |f| matches!(f, Fx::Started(_))));
 }
 
 #[test]

@@ -22,7 +22,7 @@ fn the_test_content_loads_and_the_defaults_are_neutral() {
     assert_eq!(ring.waves[1].members[0].count, 2);
     assert!(ring.once && ring.net_always && ring.blocks_join);
     assert_eq!(ring.lock.as_deref(), Some("barrier"));
-    // The least a definition says: everything else is 0, none or off (no Godot number is a default).
+    // The least a definition says: everything else is 0, none or off (no number of any particular game is a default).
     let single = db.get::<EncounterDef>("single").expect("single");
     assert_eq!((single.resume_after, single.reset_after, single.budget, single.rules.clone()), (0.0, None, None, None));
     assert_eq!((single.once, single.net_always, single.blocks_join, single.lock.clone()), (false, false, false, None));
@@ -83,6 +83,13 @@ fn every_row_of_the_validation_table_gives_its_error() {
             "state_no_time",
             "pull_back.deadline: 0 leaves no time to walk to the state `return_home`: give the deadline in seconds, or drop the state to place survivors home at once",
         ),
+        ("huge_count", "waves[0].members[0].count: a group spawns at most 64 members"),
+        ("big_up_to", "waves[0].members[0].count: a group spawns at most 64 members"),
+        ("zero_count", "waves[0].members[0].count: a group needs at least 1 member"),
+        ("bad_ring", "waves[0].members[0].at: a ring from 5 to 2 m is not 0 <= min <= max"),
+        ("bad_avoid", "waves[0].members[0].avoid_behind: within must be > 0 m and angle 0..=360 degrees"),
+        ("bad_leash", "waves[0].members[0].leash: 0 is not a distance > 0 meters"),
+        ("bad_within", "start.within: 0 is not a distance > 0 meters"),
         ("bad_cue_sound", "waves[0].warn.sound -> unknown sound `whosh`"),
         ("bad_cue_message", "waves[0].warn.message names message `no-such-message`"),
     ];

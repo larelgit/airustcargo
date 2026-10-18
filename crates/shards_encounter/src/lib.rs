@@ -164,6 +164,9 @@ pub fn place_encounter(world: &mut World, encounter: &str, key: Option<&str>, at
         let ids: Vec<&str> = db.peek_ids::<EncounterDef>().collect();
         return Err(format!("no encounter `{encounter}`{}; encounters: {}", def::did_you_mean(encounter, ids.iter().copied()), ids.join(", ")));
     }
+    if key.is_none() && db.peek::<EncounterDef>(encounter).is_some_and(|d| d.once) {
+        return Err(format!("encounter `{encounter}` is `once`: pass a key (a won encounter is remembered by it)"));
+    }
     let in_region = world.contains_resource::<ActiveRegion>();
     let mut entity = world.spawn((
         Name::new(format!("Encounter {encounter}")),
@@ -235,7 +238,7 @@ fn runs_hash(world: &World) -> Option<u64> {
         eat(&run.wave.to_le_bytes());
         eat(&run.absent.to_le_bytes());
         eat(&run.lock.map_or(0, |l| l.0).to_le_bytes());
-        eat(&[run.noted]);
+        eat(&[run.noted, u8::from(run.begun)]);
         for m in &run.members {
             eat(&m.id.0.to_le_bytes());
             eat(&m.wave.to_le_bytes());
@@ -261,7 +264,12 @@ fn drop_absent(world: &mut World, snapshot: &Snapshot) -> Result<Option<String>,
     if snapshot.resources.contains_key(<EncounterRuns as TypePath>::type_path()) || !world.contains_resource::<EncounterRuns>() {
         return Ok(None);
     }
-    world.remove_resource::<EncounterRuns>();
+    // A removal does not replicate: a co-op host keeps an empty resource (see ).
+    if world.get_resource::<shards_core::NetRole>().is_some_and(|r| *r == shards_core::NetRole::Host) {
+        world.insert_resource(EncounterRuns::default());
+    } else {
+        world.remove_resource::<EncounterRuns>();
+    }
     Ok(Some("encounter runs removed (the snapshot holds none)".to_owned()))
 }
 

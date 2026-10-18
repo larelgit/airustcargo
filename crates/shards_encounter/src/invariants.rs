@@ -112,7 +112,7 @@ pub fn lock_matches(world: &World) -> Option<String> {
         let Some(def) = db.peek::<EncounterDef>(&run.encounter) else { continue };
         let Some(prefab) = &def.lock else { continue };
         // A lock prefab that did not spawn is said in the journal once; it is content's to fix.
-        if run.noted & 64 != 0 {
+        if run.noted & crate::run::NOTE_LOCK != 0 {
             continue;
         }
         let want = matches!(run.state, RunState::Running | RunState::Between { .. });

@@ -149,3 +149,17 @@ fn a_whole_fight_breaks_no_rule() {
     step(&mut app, 400);
     assert!(journal(&app).iter().all(|l| !l.contains("invariant")), "{:?}", journal(&app));
 }
+
+#[test]
+fn a_won_run_that_still_lists_a_living_counted_member_stops_the_game() {
+    let mut app = app(1);
+    let _p0 = player(&mut app, 0, Vec3::new(0.0, 0.0, 6.0));
+    let key = place(&mut app, "single", "s", Vec3::ZERO);
+    step(&mut app, 2);
+    ok(&mut app, "encounter_start", json!({"key": key}));
+    run_until(&mut app, 120, |a| run(a, &key).wave == 1);
+    app.world_mut().resource_mut::<EncounterRuns>().runs[0].state = RunState::Won;
+    let text = stop(&mut app);
+    assert!(text.contains("encounter.state_sane"), "{text}");
+    assert!(journal(&app).iter().any(|l| l.contains("is Won but lists")), "{:?}", journal(&app));
+}

@@ -1,4 +1,4 @@
-//! Absence resets (E23): nobody near for `reset_after` resets the run; `Restart` and
+//! Absence resets (the absence clock): nobody near for `reset_after` resets the run; `Restart` and
 //! `KeepCleared`; survivors of a placed wave are healed and placed home; the dev reset.
 
 use shards::prelude::*;

@@ -2326,7 +2326,7 @@ members are despawned silently; a `once` key stays remembered.
 | `radius` | Meters (flat) around the anchor: the volumes, markers and points of interest the encounter binds, and the zone a participant stands in to count as near. |
 | `start` | `Trigger { volume, all_players_in }` (standing participants inside the trigger volume named `volume`, the anchor's own or the nearest within `radius`), `Near { within, all_players_in }` (within `within` meters, flat), or `Manual` (only `start_encounter` and the dev tool). |
 | `waves` | In order, at least one. A wave has a `delay` (seconds from becoming due to its spawn), an optional `warn` cue (`message`: a Fluent `@id` with `$wave` and `$waves`, `effect`, `sound`) played when the wave becomes due, `members`, and `placed`. A `placed` first wave stands when the run is made (camps, room guards) and fights from the start. |
-| `members` | Groups in spawn order: `prefab`, `count` (with `up_to`: a number in `count..=up_to` from the simulation's randomness), `at` (`Offsets` relative to the anchor and turned with its yaw, `Marker(name)`, `Poi(type)`, or `Ring { min, max }`), `face` (`Center` toward the anchor, `Anchor`, `Yaw(degrees)` clockwise), `home` (`Spawn` or `Anchor`), `leash`, `avoid_behind` (`within`, `angle`) and `overrides`. |
+| `members` | Groups in spawn order: `prefab`, `count` (1 to 64, with `up_to` up to 64: a number in `count..=up_to` from the simulation's randomness), `at` (`Offsets` relative to the anchor and turned with its yaw, `Marker(name)`, `Poi(type)`, or `Ring { min, max }`), `face` (`Center` toward the anchor, `Anchor`, `Yaw(degrees)`: the anchor's yaw plus that many degrees, a positive angle turns left), `home` (`Spawn` or `Anchor`), `leash`, `avoid_behind` (`within`, `angle`) and `overrides`. |
 | `overrides` | Component name to a merge patch, field by field, exactly as a level node's overrides and `spawn_prefab`'s: `"Health": (current: 10.0)` keeps the prefab's `max`. Written as a RON struct or map; checked with the same reading a spawn does. `Home` is not allowed (use `home` and `leash`). |
 | `tags`, `budget`, `allowed`, `forbidden`, `rules` | Validation only (below). |
 | `resume_after` | Seconds from a participant standing again after a wipe to the pending wave. |
@@ -2394,17 +2394,17 @@ is not out. Every timer is a count of whole ticks, set and counted down in the s
   happen.
 - **The edge.** A run starts on a rising edge: `Idle` waits for the start condition to be false once, so a run made under a
   player's feet (a load, a reset inside the volume) does not start at once.
-- **A placed pack is disturbed.** A placed wave goes from `Armed` to `Running` also when one of its members is out, hurt or hunts a
+- **A placed pack is disturbed, once.** A placed wave goes from `Armed` to `Running` also when one of its members is out, hurt or hunts a
   standing participant within `radius`: enemies see farther than `within`, and a pack that is being fought is not waiting. A placed pack whose members were all
-  out before the start is cleared (and won, if it is the last wave) on its first visit instead of waiting for ever.
-- **Wipe (WP08).** The participants are every player body, wherever it stands (solo included). A participant is out when it is dead,
+  out before the start is cleared (and won, if it is the last wave) on its first visit instead of waiting for ever. This holds only until the run has begun once: a corpse or a hurt survivor that stays through a reset or a pull-back does not begin the fight again (only a start condition, or a member hunting a standing participant, does), so a pack with a casualty waits for its start condition after a reset.
+- **Wipe.** The participants are every player body, wherever it stands (solo included). A participant is out when it is dead,
   or when an out rule registered with `add_encounter_out_rule` says so (a downed state plugs in there). On a wipe the adds are
   despawned; the living members of a spawned wave are despawned silently (no `Died`, no loot, no death cue), their dead entries are
   dropped, and the wave goes back by one; the survivors of a placed wave are pulled back (healed if `pull_back.heal`, sent home) and
   the run remembers that it pulled back (`pulled_back`), so the resume goes to `Idle` and not to a spawn. A wipe between waves
   rewinds nothing, so no wave repeats. A wipe in a spawned wave after a placed wave rewinds to wave 1 *without* a pull-back, and its
   pending wave comes back after the resume.
-- **Reset (E23).** In `Running`, `Between` and `Wiped` the absence clock counts the ticks with no standing participant within `radius`
+- **Reset.** In `Running`, `Between` and `Wiped` the absence clock counts the ticks with no standing participant within `radius`
   (a participant standing far away does not stop it). When it reaches `reset_after` the adds and the living members of spawned waves
   go silently, placed survivors are pulled back, and `wave` is 1 if wave 0 is placed else 0 (`Restart`), or the waves cleared stay
   cleared and the wave in progress is rewound as a wipe does (`KeepCleared`). `Resetting` lasts until everyone is home or `deadline`
@@ -2496,7 +2496,7 @@ three markers `pack` and the anchor of `yard_pack` (a placed pack of 2 to 3 skel
   `spawn.rs` (`count`/`up_to` times a session factor), and the budget check would read the same factor.
 - Walkability of spawn points is judged for the default `CharacterParams`, from the anchor to the point, and only where the region
   has a navmesh (not on a hand-made level or a voxel region).
-- E52's invulnerable walk home has no primitive to stand on (`Invulnerable` is the dev god mode); `encounter_returning` lets a
+- The invulnerable walk home of the pull-back has no primitive to stand on (`Invulnerable` is the dev god mode); `encounter_returning` lets a
   behaviour ignore targets on the way.
 - A fight is not saved: a world save keeps only what was won.
 

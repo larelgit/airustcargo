@@ -128,3 +128,16 @@ fn the_nearest_volume_of_the_name_within_the_radius_is_the_one() {
     move_to(&mut app, p0, IN);
     run_until(&mut app, 8, |a| started(a, &key));
 }
+
+#[test]
+fn starting_wave_one_of_a_placed_encounter_is_the_plain_start_and_spawns_nothing_twice() {
+    let mut app = app(1);
+    let _p0 = player(&mut app, 0, FAR);
+    let key = place(&mut app, "lone_pack", "lp", Vec3::ZERO);
+    step(&mut app, 3);
+    assert_eq!(members(&app, &key).len(), 2);
+    ok(&mut app, "encounter_start", json!({"key": key, "wave": 1}));
+    step(&mut app, 200);
+    assert_eq!(members(&app, &key).len(), 2, "the placed pack stands once: {:?}", run(&app, &key).members);
+    assert_eq!(state(&app, &key), RunState::Running);
+}

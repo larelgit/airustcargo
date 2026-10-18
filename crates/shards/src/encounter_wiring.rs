@@ -52,6 +52,10 @@ fn encounter_join_gate(world: &World, _: &JoinRequest) -> Option<String> {
     shards_encounter::join_blocked(world)
 }
 
+/// Marks a member whose `NetAlways` this module added, so that only this module's is taken off.
+#[derive(Component)]
+struct OurNetAlways;
+
 /// Adds `NetAlways` to the members of every `net_always` run in a fighting state, and takes it
 /// off the members of those that stopped. It touches only members of a `net_always` run: another
 /// module's `NetAlways` on a member of an ordinary run is its own.
@@ -59,9 +63,9 @@ fn encounter_net_always(
     mut commands: Commands,
     runs: Option<Res<EncounterRuns>>,
     db: Res<ContentDb>,
-    members: Query<(Entity, &EncounterMember, Has<NetAlways>)>,
+    members: Query<(Entity, &EncounterMember, Has<NetAlways>, Has<OurNetAlways>)>,
 ) {
-    for (entity, member, has) in &members {
+    for (entity, member, has, ours) in &members {
         let Some(run) = runs.as_ref().and_then(|r| r.get(&member.key)) else { continue };
         // Peeked: presentation of replication, not something the simulation's outcome reads.
         if !db.peek::<EncounterDef>(&run.encounter).is_some_and(|d| d.net_always) {
@@ -69,9 +73,9 @@ fn encounter_net_always(
         }
         let fighting = matches!(run.state, RunState::Running | RunState::Between { .. } | RunState::Wiped { .. } | RunState::Resetting { .. });
         if fighting && !has {
-            commands.entity(entity).insert(NetAlways);
-        } else if !fighting && has {
-            commands.entity(entity).remove::<NetAlways>();
+            commands.entity(entity).insert((NetAlways, OurNetAlways));
+        } else if !fighting && ours {
+            commands.entity(entity).remove::<(NetAlways, OurNetAlways)>();
         }
     }
 }

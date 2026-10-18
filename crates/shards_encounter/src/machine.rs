@@ -50,6 +50,8 @@ pub struct MemberObs {
     pub out: bool,
     /// Out, hurt, or has a target: a placed pack that is being fought before it started.
     pub disturbed: bool,
+    /// Has a target: a standing participant within the radius.
+    pub hunting: bool,
 }
 
 /// What the world shows about a run this tick.
@@ -121,9 +123,8 @@ fn cue_of(def: &EncounterDef, wave: u32) -> Option<CueDef> {
     def.waves.get(wave.checked_sub(1)? as usize)?.warn.clone()
 }
 
-/// A wave is due: `WaveWarned` for wave `wave` (1-based).
-fn warn(run: &Run, def: &EncounterDef, wave: u32, fx: &mut Vec<Fx>) {
-    let delay = def.waves.get(wave.saturating_sub(1) as usize).map_or(0.0, |w| w.delay);
+/// A wave is due: `WaveWarned` for wave `wave` (1-based), `delay` seconds before it spawns.
+fn warn(run: &Run, def: &EncounterDef, wave: u32, delay: f32, fx: &mut Vec<Fx>) {
     fx.push(Fx::Warned(WaveWarned {
         key: run.key.clone(),
         encounter: run.encounter.clone(),
@@ -167,7 +168,10 @@ pub fn advance(run: &mut Run, def: &EncounterDef, obs: &Obs, fx: &mut Vec<Fx>) {
         }
         RunState::Armed => {
             let view = view(run, obs);
-            let disturbed = def.placed() && view.iter().any(|(m, o)| is_placed(def, m) && o.disturbed);
+            // Once the run has begun, a corpse or a hurt survivor that stayed through a reset or a
+            // pull-back is no longer news: only a member hunting a standing participant is.
+            let disturbed = def.placed()
+                && view.iter().any(|(m, o)| is_placed(def, m) && if run.begun { o.hunting } else { o.disturbed });
             if obs.start_met || disturbed {
                 begin(run, def, obs, fx);
             }
@@ -194,7 +198,7 @@ pub fn advance(run: &mut Run, def: &EncounterDef, obs: &Obs, fx: &mut Vec<Fx>) {
                     delay,
                 }));
                 if !pulled_back && (run.wave as usize) < def.waves.len() {
-                    warn(run, def, run.wave + 1, fx);
+                    warn(run, def, run.wave + 1, delay, fx);
                 }
                 run.state = RunState::Wiped { resume: Some(ticks(delay, obs.dt)), pulled_back };
             } else if absent_due(run, def, obs.dt) {
@@ -253,13 +257,14 @@ pub fn begin(run: &mut Run, def: &EncounterDef, obs: &Obs, fx: &mut Vec<Fx>) {
         // were all out before the start.
         run.state = RunState::Running;
     } else if let Some(wave) = def.waves.get(run.wave as usize) {
-        warn(run, def, run.wave + 1, fx);
+        warn(run, def, run.wave + 1, wave.delay, fx);
         run.state = RunState::Between { left: ticks(wave.delay, obs.dt) };
     } else {
         // Nothing is left to spawn: the normal clear path ends the encounter.
         run.state = RunState::Running;
     }
     run.absent = 0;
+    run.begun = true;
 }
 
 /// `start_encounter` and the dev tool: the start as the start condition would make it, between
@@ -304,8 +309,8 @@ fn clear(run: &mut Run, def: &EncounterDef, view: &[(Member, MemberObs)], obs: &
         run.state = RunState::Won;
         run.absent = 0;
     } else {
-        warn(run, def, wave + 1, fx);
         let delay = def.waves.get(wave as usize).map_or(0.0, |w| w.delay);
+        warn(run, def, wave + 1, delay, fx);
         run.state = RunState::Between { left: ticks(delay, obs.dt) };
     }
 }
@@ -320,7 +325,7 @@ fn spawn_next(run: &mut Run, def: &EncounterDef, fx: &mut Vec<Fx>) {
     run.absent = 0;
 }
 
-/// Every participant is out (WP08). From `Running` or `Between`.
+/// Every participant is out. From `Running` or `Between`.
 fn wipe(run: &mut Run, def: &EncounterDef, obs: &Obs, fx: &mut Vec<Fx>) {
     let view = view(run, obs);
     let running = run.state == RunState::Running;

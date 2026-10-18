@@ -87,3 +87,11 @@ fn a_run_of_a_remembered_key_is_won_with_no_members_and_no_event() {
     assert!(run(&app, &key).members.is_empty());
     assert_eq!(saw(&app, "completed"), 0, "no EncounterCompleted by a load or a revisit");
 }
+
+#[test]
+fn an_anchor_for_a_once_encounter_needs_a_key() {
+    let mut app = app(1);
+    let why = shards::encounter::place_encounter(app.world_mut(), "once_one", None, Transform::IDENTITY).unwrap_err();
+    assert!(why.contains("is `once`: pass a key"), "{why}");
+    assert!(shards::encounter::place_encounter(app.world_mut(), "once_one", Some("o"), Transform::IDENTITY).is_ok());
+}

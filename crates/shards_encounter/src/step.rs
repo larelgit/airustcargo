@@ -26,15 +26,12 @@ use crate::anchor::{region_id, run_key, EncounterAnchor};
 use crate::def::{EncounterDef, StartDef};
 use crate::events::*;
 use crate::machine::{self, Fx, MemberObs, Obs};
-use crate::run::{EncounterMember, EncounterRuns, Member, Run, RunState, NOTE_CONTENT, NOTE_NO_VOLUME};
+use crate::run::{EncounterMember, EncounterRuns, Member, Run, RunState, NOTE_CONTENT, NOTE_LOCK, NOTE_NO_VOLUME};
 use crate::spawn::{self, Part};
 use crate::EncounterHooks;
 
 /// How near its home a returning member counts as home (the NPC module's `at_home`).
 const HOME_RADIUS: f32 = 0.6;
-
-/// Note bit: the lock prefab did not spawn or has no `AiId`.
-const NOTE_LOCK: u8 = 64;
 
 /// Whether a participant counts as inside the start condition.
 type Inside = Box<dyn Fn(&World, &Part) -> bool>;
@@ -280,7 +277,7 @@ fn observe(world: &mut World, run: &mut Run, def: &EncounterDef, parts: &[Part],
         .members
         .iter()
         .map(|m| {
-            let Some(entity) = index.and_then(|i| i.get(m.id)) else { return MemberObs { out: true, disturbed: true } };
+            let Some(entity) = index.and_then(|i| i.get(m.id)) else { return MemberObs { out: true, disturbed: true, hunting: false } };
             let out = world.get::<Dead>(entity).is_some();
             let hurt = world.get::<Health>(entity).is_some_and(|h| h.current < h.max - 1e-4);
             // Hunting someone standing within the radius: a member that still holds the target of a
@@ -288,7 +285,7 @@ fn observe(world: &mut World, run: &mut Run, def: &EncounterDef, parts: &[Part],
             let hunting = world.get::<NpcBrain>(entity).and_then(|b| b.target).and_then(|t| index.and_then(|i| i.get(t))).is_some_and(|target| {
                 parts.iter().any(|p| p.entity == target && !p.out && flat(p.pos - run.at).length() <= def.radius)
             });
-            MemberObs { out, disturbed: out || hurt || hunting }
+            MemberObs { out, disturbed: out || hurt || hunting, hunting }
         })
         .collect();
     let all_home = !run.members.iter().any(|m| {
@@ -404,7 +401,7 @@ fn unmark(world: &mut World, ids: &[AiId]) {
     }
 }
 
-/// Survivors of a placed wave go back (E23, E52): healed, and sent to their home by the
+/// Survivors of a placed wave go back : healed, and sent to their home by the
 /// behaviour state the encounter names, or placed there at once.
 fn pull_back(world: &mut World, def: &EncounterDef, ids: &[AiId]) {
     for (_, entity) in spawn::resolve(world, ids) {
@@ -530,7 +527,10 @@ pub fn start(world: &mut World, key: &str, wave: Option<u32>) -> Result<String, 
         if wave == 0 || wave as usize > def.waves.len() {
             return Err(format!("wave {wave} is outside 1..={} for encounter `{}`", def.waves.len(), run.encounter));
         }
-        run.wave = wave - 1;
+        // Wave 1 of a placed encounter already stands: starting it is the plain start.
+        if !(def.placed() && wave == 1) {
+            run.wave = wave - 1;
+        }
     }
     let mut fx = Vec::new();
     machine::start_now(&mut run, &def, &obs, &mut fx);
@@ -576,8 +576,13 @@ pub fn reset(world: &mut World, key: &str, forget: bool) -> Result<String, Strin
     Ok(format!("run {key} reset"))
 }
 
-/// Puts `entity` under run `key` (`adopt`). A counted add holds the wave in progress open.
+/// Puts `entity` under run `key` (`adopt`). A counted add holds the wave in progress open. Host
+/// only: it changes simulation state, so a machine that does not simulate refuses (a client sees
+/// the adoption by replication).
 pub fn adopt(world: &mut World, key: &str, entity: Entity, counted: bool) -> Result<(), String> {
+    if world.get_resource::<shards_core::NetRole>().is_some_and(|r| !r.simulates()) {
+        return Err("adopt changes the simulation: call it where the simulation runs (the host)".to_owned());
+    }
     let mut run = take_run(world, key).ok_or_else(|| crate::no_run(world, key))?;
     let id = world.get::<AiId>(entity).copied().filter(|id| id.0 != 0).ok_or("the entity has no AiId (give it AiKind), so a run cannot track it")?;
     if run.members.iter().any(|m| m.id == id) {

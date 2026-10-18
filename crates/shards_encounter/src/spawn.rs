@@ -277,19 +277,22 @@ fn ring_points(
     let mut out = Vec::with_capacity(count);
     for _ in 0..count {
         let mut walk: Vec<Vec3> = Vec::new();
+        let mut all: Vec<Vec3> = Vec::new();
         for _ in 0..8 {
             let angle = stream.f32() * std::f32::consts::TAU;
             let distance = stream.range(min, max.max(min));
             let (sin, cos) = ops::sin_cos(angle);
             let point = grounded(world, anchor + Vec3::new(cos * distance, 0.0, sin * distance));
+            all.push(point);
             if walkable(world, anchor, point) {
                 walk.push(point);
             }
         }
         if walk.is_empty() {
+            // None is on the navmesh (an anchor off the mesh makes every route fail): the grounded
+            // candidates are used all the same, as `choose` does for markers, and the journal says it.
             run.noted |= NOTE_NOT_WALKABLE;
-            out.push(anchor);
-            continue;
+            walk = all;
         }
         let open: Vec<Vec3> = match &group.avoid_behind {
             Some(avoid) => walk.iter().copied().filter(|p| !behind(*p, avoid, parts)).collect(),
@@ -362,7 +365,7 @@ fn spawn_member(world: &mut World, run: &mut Run, group: &MemberGroup, point: Ve
             if to.length() > 1e-3 { to.normalize() } else { turn(run.yaw) * Vec3::NEG_Z }
         }
         Face::Anchor => turn(run.yaw) * Vec3::NEG_Z,
-        Face::Yaw(degrees) => turn(run.yaw - degrees.to_radians()) * Vec3::NEG_Z,
+        Face::Yaw(degrees) => turn(run.yaw + degrees.to_radians()) * Vec3::NEG_Z,
     };
     let transform = Transform::from_translation(point).looking_to(toward, Vec3::Y);
     let patch = patch_for(world, group, run, point);

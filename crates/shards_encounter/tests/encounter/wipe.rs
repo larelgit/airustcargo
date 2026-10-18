@@ -1,4 +1,4 @@
-//! Wipes (WP08): a wipe in a running wave despawns it silently and rewinds one wave; in a wave
+//! Wipes: a wipe in a running wave despawns it silently and rewinds one wave; in a wave
 //! before the first it goes to 0; between waves it rewinds nothing; the resume is tick exact; a
 //! placed wave is pulled back, not despawned; an out rule stands in for a downed state.
 

@@ -138,6 +138,10 @@ pub struct MemberGroup {
     pub overrides: BTreeMap<String, Value>,
 }
 
+/// The most members one group spawns (`count` and `up_to`): a larger number is a typo, and a
+/// wave of billions would hang the tick.
+pub const MAX_GROUP: u32 = 64;
+
 fn one() -> u32 {
     1
 }
@@ -167,7 +171,8 @@ pub enum Face {
     Center,
     /// The anchor's facing.
     Anchor,
-    /// Degrees clockwise from the anchor's facing.
+    /// The anchor's yaw plus this many degrees (counterclockwise seen from above: a positive
+    /// angle turns left).
     Yaw(f32),
 }
 
@@ -342,6 +347,9 @@ impl EncounterDef {
         if group.count == 0 {
             refs.error(format!("{at}.count: a group needs at least 1 member"));
         }
+        if group.count > MAX_GROUP || group.up_to.is_some_and(|u| u > MAX_GROUP) {
+            refs.error(format!("{at}.count: a group spawns at most {MAX_GROUP} members (count {}, up_to {:?})", group.count, group.up_to));
+        }
         if let Some(up_to) = group.up_to
             && up_to < group.count
         {
@@ -421,12 +429,12 @@ impl EncounterDef {
                     ));
                     continue;
                 };
-                let most = group.up_to.unwrap_or(group.count).max(group.count);
+                let most = group.up_to.unwrap_or(group.count).max(group.count).min(MAX_GROUP);
                 groups.push((g, role, group.count, most));
             }
             if let Some(budget) = self.budget {
-                let cost: u32 = groups.iter().map(|(_, role, _, most)| role.cost * most).sum();
-                if cost > budget {
+                let cost: u64 = groups.iter().map(|(_, role, _, most)| u64::from(role.cost) * u64::from(*most)).sum();
+                if cost > u64::from(budget) {
                     let parts: Vec<String> =
                         groups.iter().map(|(g, role, _, most)| format!("{} x{most} at {}", wave.members[*g].prefab, role.cost)).collect();
                     refs.error(format!(

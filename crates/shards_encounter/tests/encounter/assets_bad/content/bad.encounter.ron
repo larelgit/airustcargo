@@ -35,5 +35,12 @@
     "once_fight": (radius: 10.0, start: Manual, once: true, waves: [(members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, 0.0)]))])]),
     "bad_cue_sound": (radius: 10.0, start: Manual, waves: [(warn: Some((sound: Some("whosh"))), members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, 0.0)]))])]),
     "bad_cue_message": (radius: 10.0, start: Manual, waves: [(warn: Some((message: Some("@no-such-message"))), members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, 0.0)]))])]),
+    "huge_count": (radius: 10.0, start: Manual, budget: Some(5), waves: [(members: [(prefab: "brute", count: 3000000000, at: Ring(min: 1.0, max: 2.0))])]),
+    "big_up_to": (radius: 10.0, start: Manual, waves: [(members: [(prefab: "grunt", up_to: Some(65), at: Ring(min: 1.0, max: 2.0))])]),
+    "zero_count": (radius: 10.0, start: Manual, waves: [(members: [(prefab: "grunt", count: 0, at: Ring(min: 1.0, max: 2.0))])]),
+    "bad_ring": (radius: 10.0, start: Manual, waves: [(members: [(prefab: "grunt", at: Ring(min: 5.0, max: 2.0))])]),
+    "bad_avoid": (radius: 10.0, start: Manual, waves: [(members: [(prefab: "grunt", at: Ring(min: 1.0, max: 2.0), avoid_behind: Some((within: 0.0, angle: 400.0)))])]),
+    "bad_leash": (radius: 10.0, start: Manual, waves: [(members: [(prefab: "grunt", at: Ring(min: 1.0, max: 2.0), leash: Some(0.0))])]),
+    "bad_within": (radius: 10.0, start: Near(within: 0.0), waves: [(members: [(prefab: "grunt", at: Ring(min: 1.0, max: 2.0))])]),
     "typo_field": (radius: 10.0, start: Manual, wavez: [], waves: [(members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, 0.0)]))])]),
 }

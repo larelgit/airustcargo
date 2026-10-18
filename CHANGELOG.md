@@ -94,7 +94,7 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   `EncounterAppExt::add_encounter_out_rule` (a downed state counts as out) and `add_encounter_despawn_hook` (what a member owns is
   cleaned up before a silent despawn); `adopt`, `start_encounter`, `reset_encounter`, `place_encounter`, `join_blocked`. The umbrella
   sends the events to clients, plays a warning's effect and sound, keeps `NetAlways` on the members of a `net_always` fight, and holds
-  joiners while a `blocks_join` fight is on. Module `encounter` (out with `npc` or `world`). Manual: "Encounters (G9)".
+  joiners while a `blocks_join` fight is on. Module `encounter` (out with `npc` or `world`). A placed pack that has begun once does not begin again for a casualty after a reset; a resume cue leads the spawn by `resume_after`; `count` and `up_to` are at most 64; `Face::Yaw(d)` is the anchor's yaw plus `d`. Manual: "Encounters (G9)".
 - `NetHooks::join_gates`: a list of gates (`fn(&World, &JoinRequest) -> Option<String>`) that the new default `join_policy`
   (`default_join_policy`) consults; a gate's reason makes a newcomer wait. A request whose player already has a body (a rejoin within the
   grace) skips them. `gates_say` for a game with a policy of its own.

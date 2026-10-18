@@ -37,9 +37,23 @@ fn offsets_turn_with_the_anchors_yaw_and_members_face_the_anchor() {
     run_until(&mut app, 120, |a| run(a, "world/y").wave == 1);
     let (_, member) = members(&app, "world/y")[0];
     assert!(close(pos(&app, member), Vec3::new(5.0, 0.0, 0.0)), "{:?}", pos(&app, member));
-    // `Center`: it looks at the anchor (east, +X), as Godot's spawns face the arena's centre.
+    // `Center`: it looks at the anchor (east, +X), as a member at a ring faces its middle.
     let forward = *app.world().get::<Transform>(member).unwrap().forward();
     assert!(close(forward, Vec3::X), "{forward:?}");
+}
+
+#[test]
+fn a_yaw_face_adds_to_the_anchors_own_yaw() {
+    let mut app = app(1);
+    let _p0 = player(&mut app, 0, FAR);
+    // The anchor faces west (a quarter turn left); Yaw(90) adds another: south.
+    let at = Transform::from_xyz(0.0, 0.0, 0.0).with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2));
+    shards::encounter::place_encounter(app.world_mut(), "overridden", Some("yy"), at).unwrap();
+    step(&mut app, 2);
+    start_manual(&mut app, "world/yy");
+    let all = members(&app, "world/yy");
+    let yawed = all.iter().map(|(_, e)| *e).find(|e| app.world().get::<Transform>(*e).unwrap().forward().z > 0.9).expect("a member facing south");
+    assert!(close(*app.world().get::<Transform>(yawed).unwrap().forward(), Vec3::Z));
 }
 
 #[test]
@@ -62,9 +76,10 @@ fn faces_and_homes_and_overrides_are_patched_into_the_spawn() {
     let m1 = by(2.0);
     let home = app.world().get::<Home>(m1).unwrap();
     assert_eq!((home.pos, home.leash), (Some(Vec3::ZERO), 15.0));
-    // Yaw(90): ninety degrees clockwise from the anchor's facing (north) is east.
+    // Yaw(90): the anchor's yaw (0, facing north) plus ninety degrees is west: a positive angle
+    // turns left.
     let m2 = by(4.0);
-    assert!(close(*app.world().get::<Transform>(m2).unwrap().forward(), Vec3::X));
+    assert!(close(*app.world().get::<Transform>(m2).unwrap().forward(), Vec3::NEG_X));
     // Anchor: the anchor's facing, north.
     let m3 = by(-4.0);
     assert!(close(*app.world().get::<Transform>(m3).unwrap().forward(), Vec3::NEG_Z));

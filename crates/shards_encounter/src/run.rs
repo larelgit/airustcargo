@@ -76,6 +76,10 @@ pub struct Run {
     pub lock: Option<AiId>,
     /// One-time notes already journaled (a bit each, see `NOTE_*`).
     pub noted: u8,
+    /// The run has begun at least once. After that, a casualty or a hurt survivor of a placed
+    /// pack that stayed through a reset or a pull-back is not a reason to begin again: only a
+    /// start condition, or a member hunting a standing participant, is.
+    pub begun: bool,
 }
 
 /// One member of a run, or an add the game adopted.
@@ -154,3 +158,5 @@ pub(crate) const NOTE_ALL_BEHIND: u8 = 4;
 pub(crate) const NOTE_TOO_FEW: u8 = 8;
 pub(crate) const NOTE_CONTENT: u8 = 16;
 pub(crate) const NOTE_NOT_WALKABLE: u8 = 32;
+/// The lock prefab did not spawn or has no `AiId`.
+pub(crate) const NOTE_LOCK: u8 = 64;
