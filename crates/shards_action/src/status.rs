@@ -14,6 +14,8 @@
 //! { "bleed": (threshold: 100, decay_per_s: 10, duration: 3, effect: "bleed") }
 //! ```
 
+use std::collections::BTreeSet;
+
 use ai_core::AiId;
 use bevy::ecs::query::QueryFilter;
 use bevy::prelude::*;
@@ -368,10 +370,6 @@ fn run_changes(world: &mut World, entity: Entity, changes: Vec<StatusChange>) {
 /// The dead's are frozen (no hooks run on a corpse); a revive resumes them.
 pub fn update_statuses(world: &mut World) {
     let dt = world.resource::<Time>().delta_secs();
-    let db = world.resource::<ContentDb>();
-    let limit = CombatTuning::of(db).max_statuses as usize;
-    let defs: Vec<(String, StatusDef)> = db.iter::<StatusDef>().map(|(id, d)| (id.to_owned(), d.clone())).collect();
-    let def = |id: &str| defs.iter().find(|(d, _)| d == id).map(|(_, d)| d);
     let mut order: Vec<(u32, Entity)> = world
         .query_filtered::<(Entity, Option<&AiId>, &Statuses), Without<Dead>>()
         .iter(world)
@@ -379,6 +377,14 @@ pub fn update_statuses(world: &mut World) {
         .map(|(e, id, _)| (id.map_or(u32::MAX, |i| i.0), e))
         .collect();
     order.sort();
+    // The definitions of the statuses someone carries, each by id: a status nobody has is not
+    // read (one added to content leaves a session that never meets it as it was).
+    let ids: BTreeSet<String> =
+        order.iter().filter_map(|(_, e)| world.get::<Statuses>(*e)).flat_map(|s| s.0.iter().map(|entry| entry.id.clone())).collect();
+    let db = world.resource::<ContentDb>();
+    let limit = CombatTuning::of(db).max_statuses as usize;
+    let defs: Vec<(String, StatusDef)> = ids.into_iter().filter_map(|id| Some((id.clone(), db.get::<StatusDef>(&id)?.clone()))).collect();
+    let def = |id: &str| defs.iter().find(|(d, _)| d == id).map(|(_, d)| d);
     for (_, entity) in order {
         let Some(mut statuses) = world.get_mut::<Statuses>(entity) else { continue };
         let changes = statuses.tick(def, dt, limit);

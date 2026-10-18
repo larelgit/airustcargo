@@ -151,8 +151,12 @@ fn the_state_codec_carries_a_played_world_into_another_app() {
     assert_eq!(again.resources, changes.resources);
     // The replay's state hash also covers what stays on the host (`net_ignore`: an NPC's
     // senses, path and steering), so it differs; with those taken across too it is the same.
+    // So does the content the host's simulation read (the `content` check), which a snapshot
+    // carries and the state codec does not.
     assert_ne!(replay::state_hash(client.world()), replay::state_hash(host.world()));
     copy_host_only(&mut host, &mut client);
+    let read: Vec<String> = host.world().resource::<ContentDb>().used_parts().into_iter().map(|(name, _)| name).collect();
+    client.world().resource::<ContentDb>().set_used(&read.iter().map(String::as_str).collect());
     assert_eq!(replay::state_hash(client.world()), replay::state_hash(host.world()));
     let gone = act(&mut client, "inspect", json!({"id": "e7"}));
     assert!(text(&gone).contains("e7 is out of view since tick 180"), "{}", text(&gone));

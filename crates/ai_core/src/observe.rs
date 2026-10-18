@@ -411,6 +411,9 @@ pub fn inspect(world: &World, entity: Entity, viewer_subject: Option<Entity>) ->
 pub struct Digest(pub BTreeMap<AiId, EntityFacts>);
 
 pub fn digest(world: &World) -> Digest {
+    // A digest only describes: an action replayed inside a tick and one made live between ticks
+    // read the same ([`SimScope`](crate::SimScope)).
+    let _quiet = crate::scope::suspend(world);
     Digest(all_facts(world).into_iter().map(|f| (f.id, f)).collect())
 }
 

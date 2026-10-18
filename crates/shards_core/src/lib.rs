@@ -576,6 +576,13 @@ impl Plugin for CorePlugin {
                     state::restore_game_schedules
                         .in_set(StateTransitionSystems::EnterSchedules)
                         .after(EnterSchedules::<EngineState>::default()),
+                    last_transition::<EngineState>
+                        .pipe(state::open_transition_scope)
+                        .in_set(StateTransitionSystems::ExitSchedules)
+                        .before(ExitSchedules::<EngineState>::default()),
+                    state::close_transition_scope
+                        .in_set(StateTransitionSystems::EnterSchedules)
+                        .after(EnterSchedules::<EngineState>::default()),
                 ),
             )
             .add_systems(OnEnter(EngineState::MainMenu), menu::enter_menu)

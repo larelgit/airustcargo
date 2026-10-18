@@ -146,6 +146,8 @@ impl Budgets {
 
 impl ContentDef for PerfDef {
     const KIND: &'static str = "perf";
+    // Only what a machine shows or plays, or what lies outside a session: never in the replay check.
+    const SIMULATION: bool = false;
 
     fn validate(&self, _: &str, refs: &mut Refs) {
         if let Some(PerfRegion { region, .. }) = &self.region {

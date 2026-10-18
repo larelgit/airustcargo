@@ -67,6 +67,7 @@ use crate::sim::{self, SimGate};
 use crate::state::{self, from_json, to_json, Decoder, Encoder, StateChanges, StateEncoder, StateRule};
 use crate::spatial::AiOccluder;
 use crate::tools::{register_tool, Call, ToolKind, ToolResult};
+use crate::replay::ReplayCheckParts;
 use crate::{describe::AiKind, replay};
 
 /// Format tag written into every snapshot file.
@@ -102,6 +103,11 @@ pub struct Snapshot {
     /// Hashes of what the world is built around (hex), by check name: content, static
     /// colliders. A load refuses where they differ.
     pub checks: BTreeMap<String, String>,
+    /// The parts of each check with parts (hex hashes by part name: `content` lists the
+    /// definitions the session read). A load compares the parts, and names the ones that differ.
+    /// A check with parts that has no list here was taken whole, and is compared whole.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub check_parts: BTreeMap<String, BTreeMap<String, String>>,
     /// The `AiId` counter and tombstones.
     pub ids: IdState,
     /// Registered resources, by type path.
@@ -211,7 +217,24 @@ struct SnapshotPrepare {
 struct SnapshotCheck {
     name: &'static str,
     hint: &'static str,
+    /// The value; for a check with parts, the one it had before it had them.
     check: fn(&World) -> u64,
+    parts: Option<ReplayCheckParts>,
+}
+
+impl SnapshotCheck {
+    /// The parts of this check now, unless it has none or this session computes it whole.
+    fn parts_now(&self, world: &World) -> Option<BTreeMap<String, String>> {
+        let parts = self.parts?;
+        let whole = world.get_resource::<replay::ReplayHashing>().is_some_and(|h| h.hashes_whole(self.name));
+        (!whole).then(|| parts(world).into_iter().map(|(name, hash)| (name, format!("{hash:016x}"))).collect())
+    }
+}
+
+/// The hash a check's hex parts add up to ([`replay::parts_hash`]).
+fn hex_parts_hash(parts: &BTreeMap<String, String>) -> u64 {
+    let parts: Vec<(String, u64)> = parts.iter().map(|(name, hex)| (name.clone(), u64::from_str_radix(hex, 16).unwrap_or(0))).collect();
+    replay::parts_hash(&parts)
 }
 
 /// What modules registered with [`AiAppExt`](crate::AiAppExt)'s `add_snapshot_*`.
@@ -241,7 +264,13 @@ impl SnapshotRegistry {
 
     pub(crate) fn add_check(&mut self, name: &'static str, hint: &'static str, check: fn(&World) -> u64) {
         self.checks.retain(|c| c.name != name);
-        self.checks.push(SnapshotCheck { name, hint, check });
+        self.checks.push(SnapshotCheck { name, hint, check, parts: None });
+    }
+
+    /// A check with parts: the snapshot keeps them, a load compares them part by part.
+    pub(crate) fn add_parts_check(&mut self, name: &'static str, hint: &'static str, parts: ReplayCheckParts, whole: fn(&World) -> u64) {
+        self.checks.retain(|c| c.name != name);
+        self.checks.push(SnapshotCheck { name, hint, check: whole, parts: Some(parts) });
     }
 
     pub(crate) fn add_prepare(&mut self, name: &'static str, after: Option<&'static str>, covers: &'static [&'static str], run: PrepareFn) {
@@ -338,7 +367,21 @@ pub fn capture(world: &World) -> Result<Snapshot, String> {
         .collect();
     let resources = encoder.encode_resources(&mut left_out);
 
-    let checks = modules.checks.iter().map(|c| (c.name.to_owned(), format!("{:016x}", (c.check)(world)))).collect();
+    // Hashing only reads: what it reads is not the simulation's.
+    let _quiet = crate::scope::suspend(world);
+    let mut checks = BTreeMap::new();
+    let mut check_parts = BTreeMap::new();
+    for check in &modules.checks {
+        let value = match check.parts_now(world) {
+            Some(parts) => {
+                let value = hex_parts_hash(&parts);
+                check_parts.insert(check.name.to_owned(), parts);
+                value
+            }
+            None => (check.check)(world),
+        };
+        checks.insert(check.name.to_owned(), format!("{value:016x}"));
+    }
     Ok(Snapshot {
         format: FORMAT.to_owned(),
         tick: sim::tick(world),
@@ -347,6 +390,7 @@ pub fn capture(world: &World) -> Result<Snapshot, String> {
         engine: ENGINE_VERSION.to_owned(),
         state_hash: replay::state_hash(world),
         checks,
+        check_parts,
         ids: IdState { next: index.next_id(), graveyard: index.graveyard().cloned().collect() },
         resources,
         entities,
@@ -448,6 +492,9 @@ pub fn restore_exact(world: &mut World, snapshot: &Snapshot, force: bool) -> Res
 }
 
 fn restore_with(world: &mut World, snapshot: &Snapshot, force: bool, exact: bool) -> Result<LoadReport, String> {
+    // A load puts a state back: what it reads (a region built again, caches) is the snapshot's,
+    // not the simulation's.
+    let _quiet = crate::scope::suspend(world);
     let mut warnings = Vec::new();
     let modules = world.get_resource::<SnapshotRegistry>().cloned().unwrap_or_default();
     let covered: BTreeSet<&str> = modules.prepares.iter().flat_map(|p| p.covers.iter().copied()).collect();
@@ -482,6 +529,10 @@ fn restore_with(world: &mut World, snapshot: &Snapshot, force: bool, exact: bool
     for (_, rebuild) in &modules.rebuilds {
         rebuild(world);
     }
+    // A check with parts the snapshot does not list was taken whole: this session computes it so
+    // from here on, as the session it was taken in did (and by its parts where it lists them).
+    let whole_before = world.get_resource_or_init::<replay::ReplayHashing>().whole_names();
+    world.resource_mut::<replay::ReplayHashing>().follow_file(|name| snapshot.check_parts.contains_key(name));
 
     // Save it again: the restored world must say what the file says. A forced load past a
     // mismatch is not meant to reproduce the original's hash.
@@ -490,6 +541,7 @@ fn restore_with(world: &mut World, snapshot: &Snapshot, force: bool, exact: bool
         let reason = format!("the restored state differs from the snapshot in {} place(s)", differences.len());
         let why = LoadReport { differences, ..Default::default() }.explain_differences();
         // Taken above whenever `exact`.
+        world.resource_mut::<replay::ReplayHashing>().set_whole_names(whole_before);
         let Some(before) = before else { return Err(why) };
         // The restore moved the clock too.
         sim::set_tick(world, before.world.tick);
@@ -706,6 +758,23 @@ fn check_compatible(
     let modules = world.get_resource::<SnapshotRegistry>();
     let checks: &[SnapshotCheck] = modules.map_or(&[], |m| &m.checks);
     for check in checks.iter().filter(|c| checked(c.name)) {
+        // A check with parts is compared part by part where the snapshot lists them (this game's
+        // own parts are what a prepare made them: the snapshot's), whole where it does not.
+        if let (Some(parts), Some(saved)) = (check.parts, snapshot.check_parts.get(check.name)) {
+            let now: Vec<(String, u64)> = parts(world);
+            let then: BTreeMap<String, u64> =
+                saved.iter().map(|(name, hex)| (name.clone(), u64::from_str_radix(hex, 16).unwrap_or(0))).collect();
+            let differences = replay::part_differences(&then, &now);
+            let hash = format!("{:016x}", replay::parts_hash(&now));
+            if !differences.is_empty() {
+                problems.push(format!("{} differs ({}): {}", check.name, differences.join(", "), check.hint));
+            } else if snapshot.checks.get(check.name).is_some_and(|saved| *saved != hash) {
+                // The parts match, the hash the snapshot keeps for them does not: it was edited.
+                let saved = &snapshot.checks[check.name];
+                problems.push(format!("{} differs (snapshot {saved}, this game {hash}): {}", check.name, check.hint));
+            }
+            continue;
+        }
         let now = format!("{:016x}", (check.check)(world));
         match snapshot.checks.get(check.name) {
             Some(saved) if *saved != now => problems.push(format!(
@@ -1009,6 +1078,7 @@ pub fn differences(a: &Snapshot, b: &Snapshot) -> Vec<String> {
     }
     for (name, x, y) in [
         ("checks", serde_json::to_value(&a.checks), serde_json::to_value(&b.checks)),
+        ("check_parts", serde_json::to_value(&a.check_parts), serde_json::to_value(&b.check_parts)),
         ("left_out", serde_json::to_value(&a.left_out), serde_json::to_value(&b.left_out)),
     ] {
         if let Some((at, x, y)) = first_difference(&json(x), &json(y)) {

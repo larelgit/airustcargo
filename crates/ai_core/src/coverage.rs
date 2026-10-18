@@ -182,6 +182,8 @@ pub(crate) fn plugin(app: &mut App, on: bool) {
 /// After every tick: one signature per visible entity.
 fn record_tick(world: &mut World) {
     let tick = sim::tick(world);
+    // Counting only watches: a game with coverage on reads what one without it does.
+    let _quiet = crate::scope::suspend(world);
     let parts = world.resource::<CoverageParts>().parts.clone();
     let entities: Vec<Entity> = world.query_filtered::<Entity, With<AiVisible>>().iter(world).collect();
     // Each entity as its parts; sorted by signature, so the order the world yields entities in

@@ -168,7 +168,7 @@ pub(crate) fn finish_loading(world: &mut World) {
     let db = ContentDb::build(&kinds, &sources);
     let summary = db.summary();
     let errors: Vec<String> = failed.into_iter().chain(db.errors().map(ToString::to_string)).collect();
-    world.insert_resource(db);
+    crate::install(world, db);
     crate::edits::refresh(world);
     world.resource_mut::<ContentLoading>().seen = sources.into_iter().map(|s| (s.path, Some(s.text))).collect();
     for error in &errors {
@@ -402,7 +402,7 @@ fn restore_for_playback(world: &mut World) {
     let current = world.resource::<ContentDb>();
     let restore: Vec<DefChange> = first
         .into_iter()
-        .filter(|c| current.get_json(&c.kind, &c.id) != c.def.as_ref().and_then(|d| kinds.normalize(&c.kind, d)).as_ref())
+        .filter(|c| current.json_of(&c.kind, &c.id) != c.def.as_ref().and_then(|d| kinds.normalize(&c.kind, d)).as_ref())
         .collect();
     if restore.is_empty() {
         return;

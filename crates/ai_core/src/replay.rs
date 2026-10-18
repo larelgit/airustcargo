@@ -42,6 +42,7 @@
 
 use std::any::TypeId;
 use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::str::FromStr;
 
@@ -164,6 +165,85 @@ pub struct Replay {
     pub events: Vec<ReplayEvent>,
     /// State hashes along the way, every `check_every` ticks.
     pub checks: Vec<Check>,
+    /// What each check with parts ([`add_parts_check`](crate::AiAppExt::add_parts_check)) was made
+    /// of, as it changed: at each check tick (the end's included), the parts that appeared,
+    /// changed or went. A check with parts that has no list here was recorded when it hashed its
+    /// whole state, and a playback computes it that way ([`ReplayHashing::hashes_whole`]).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub check_parts: BTreeMap<String, Vec<PartsAt>>,
+}
+
+/// The parts of a check with parts that changed at the check of `tick`: those that appeared or
+/// got another hash (`set`), and those that went (`gone`).
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct PartsAt {
+    pub tick: u64,
+    #[serde(with = "hex_map", default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub set: BTreeMap<String, u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gone: Vec<String>,
+}
+
+/// The parts a check was made of at `tick`, from the changes recorded up to it.
+pub fn parts_at(log: &[PartsAt], tick: u64) -> BTreeMap<String, u64> {
+    let mut parts = BTreeMap::new();
+    for at in log.iter().take_while(|at| at.tick <= tick) {
+        for gone in &at.gone {
+            parts.remove(gone);
+        }
+        parts.extend(at.set.iter().map(|(name, hash)| (name.clone(), *hash)));
+    }
+    parts
+}
+
+/// The change from `then` to `now` at `tick`; `None` when nothing changed.
+fn parts_change(then: &BTreeMap<String, u64>, now: &[(String, u64)], tick: u64) -> Option<PartsAt> {
+    let set: BTreeMap<String, u64> = now.iter().filter(|(name, hash)| then.get(name) != Some(hash)).cloned().collect();
+    let present: BTreeSet<&str> = now.iter().map(|(name, _)| name.as_str()).collect();
+    let gone: Vec<String> = then.keys().filter(|name| !present.contains(name.as_str())).cloned().collect();
+    (!set.is_empty() || !gone.is_empty()).then_some(PartsAt { tick, set, gone })
+}
+
+/// What differs between the parts a check had (`then`) and has (`now`), part by part in name
+/// order: `action/light_1 differs`, `prefab/boss missing` (not there now), `tile/swamp extra`
+/// (not there then). At most [`MAX_LISTED`], then how many more.
+pub fn part_differences(then: &BTreeMap<String, u64>, now: &[(String, u64)]) -> Vec<String> {
+    let now_by_name: BTreeMap<&str, u64> = now.iter().map(|(name, hash)| (name.as_str(), *hash)).collect();
+    let mut found: Vec<(&str, &str)> = Vec::new();
+    for (name, hash) in then {
+        match now_by_name.get(name.as_str()) {
+            Some(h) if h == hash => {}
+            Some(_) => found.push((name, "differs")),
+            None => found.push((name, "missing")),
+        }
+    }
+    for (name, _) in now.iter().filter(|(n, _)| !then.contains_key(n)) {
+        found.push((name, "extra"));
+    }
+    found.sort();
+    let more = found.len().saturating_sub(MAX_LISTED);
+    let mut lines: Vec<String> = found.into_iter().take(MAX_LISTED).map(|(name, how)| format!("{name} {how}")).collect();
+    if more > 0 {
+        lines.push(format!("… and {more} more"));
+    }
+    lines
+}
+
+/// An empty list for each check with parts this session computes by its parts: a recording made
+/// from it (heavy mode's twin) says it lists them.
+pub(crate) fn empty_parts_lists(world: &World) -> BTreeMap<String, Vec<PartsAt>> {
+    let Some(hashing) = world.get_resource::<ReplayHashing>() else { return BTreeMap::new() };
+    hashing.parts_checks().filter(|(name, _, _)| !hashing.hashes_whole(name)).map(|(name, _, _)| (name.to_owned(), Vec::new())).collect()
+}
+
+/// The value a check with parts adds to the hash: its parts, names and hashes, in order.
+pub fn parts_hash(parts: &[(String, u64)]) -> u64 {
+    let mut h = Fnv::new();
+    for (name, hash) in parts {
+        h.bytes(name.as_bytes());
+        h.u64(*hash);
+    }
+    h.0
 }
 
 /// State hash of the game after `tick` ticks.
@@ -407,6 +487,10 @@ pub struct AiReplay {
     /// Counts the restarts of the recording (a load, recording turned off): what was
     /// recorded before one belongs to another run. Heavy mode slices its events by it.
     generation: u64,
+    /// The recorded changes of each check with parts ([`Replay::check_parts`]).
+    parts_log: BTreeMap<String, Vec<PartsAt>>,
+    /// The parts of each check with parts at the last check recorded.
+    parts_now: BTreeMap<String, BTreeMap<String, u64>>,
 }
 
 impl Default for AiReplay {
@@ -427,6 +511,8 @@ impl Default for AiReplay {
             current_call: None,
             not_recording: false,
             generation: 0,
+            parts_log: BTreeMap::new(),
+            parts_now: BTreeMap::new(),
         }
     }
 }
@@ -479,6 +565,33 @@ impl AiReplay {
         self.events.get(from..).unwrap_or_default()
     }
 
+    /// Records the parts of the checks with parts at the check of `tick`: what changed since the
+    /// last one (a check whose parts never change still gets its list, empty: the file then says
+    /// the check had parts).
+    fn log_parts(&mut self, tick: u64, listed: &[(String, Vec<(String, u64)>)]) {
+        for (name, parts) in listed {
+            let now = self.parts_now.entry(name.clone()).or_default();
+            let log = self.parts_log.entry(name.clone()).or_default();
+            if let Some(change) = parts_change(now, parts, tick) {
+                log.push(change);
+                *now = parts.iter().cloned().collect();
+            }
+        }
+    }
+
+    /// The parts lists of the recording, with what `listed` (the end's parts) changed at `tick`.
+    fn parts_with_end(&self, tick: u64, listed: &[(String, Vec<(String, u64)>)]) -> BTreeMap<String, Vec<PartsAt>> {
+        let mut log = self.parts_log.clone();
+        for (name, parts) in listed {
+            let entries = log.entry(name.clone()).or_default();
+            let then = self.parts_now.get(name).cloned().unwrap_or_default();
+            if let Some(change) = parts_change(&then, parts, tick) {
+                entries.push(change);
+            }
+        }
+        log
+    }
+
     /// Ticks between checks and what each keeps, as this session records them.
     pub(crate) fn check_settings(&self) -> (u64, CheckDetail) {
         (self.check_every, self.check_detail)
@@ -507,6 +620,8 @@ pub fn set_recording(world: &mut World, on: bool) {
     if !on {
         replay.events.clear();
         replay.checks.clear();
+        replay.parts_log.clear();
+        replay.parts_now.clear();
         replay.current_call = None;
         replay.generation += 1;
     }
@@ -542,6 +657,8 @@ pub(crate) fn restart_from(world: &mut World, start: Snapshot, interrupt_playbac
     let dropped = replay.events.len();
     replay.events.clear();
     replay.checks.clear();
+    replay.parts_log.clear();
+    replay.parts_now.clear();
     replay.start = Some(start);
     replay.current_call = None;
     replay.generation += 1;
@@ -778,10 +895,16 @@ pub type ReplayCheck = fn(&World) -> u64;
 /// not even the check's name.
 pub type OptionalReplayCheck = fn(&World) -> Option<u64>;
 
+/// The parts a check with parts is made of, by name in order, each with its hash
+/// ([`add_parts_check`](crate::AiAppExt::add_parts_check)).
+pub type ReplayCheckParts = fn(&World) -> Vec<(String, u64)>;
+
 #[derive(Clone, Copy)]
 enum HashedCheck {
     Always(ReplayCheck),
     WhenSome(OptionalReplayCheck),
+    /// Named parts; `whole` is the value the check had before it had parts.
+    Parts { parts: ReplayCheckParts, whole: ReplayCheck },
 }
 
 /// What goes into [`state_hash`] besides AI-visible entities, and what stays out.
@@ -794,6 +917,9 @@ pub struct ReplayHashing {
     checks: Vec<(String, HashedCheck)>,
     /// Components already reported as not serializable.
     reported: HashSet<&'static str>,
+    /// Checks with parts this session computes whole: it plays a recording, or loaded a snapshot,
+    /// made before they had parts.
+    whole: BTreeSet<String>,
 }
 
 impl ReplayHashing {
@@ -833,6 +959,56 @@ impl ReplayHashing {
         self.push_check(name, HashedCheck::WhenSome(check));
     }
 
+    /// A check made of named parts: its value hashes them ([`parts_hash`]), and a recording keeps
+    /// them as they change, so a divergence names the parts that differ. `whole` is what the check
+    /// was before it had parts: a session that plays or loads a file made then computes that.
+    pub fn add_parts_check(&mut self, name: &str, parts: ReplayCheckParts, whole: ReplayCheck) {
+        self.push_check(name, HashedCheck::Parts { parts, whole });
+    }
+
+    /// Whether check `name`, which has parts, is computed whole in this session: it plays a
+    /// recording or loaded a snapshot whose file has no parts for it.
+    pub fn hashes_whole(&self, name: &str) -> bool {
+        self.whole.contains(name)
+    }
+
+    /// The checks with parts, by name, with their parts and whole functions.
+    pub(crate) fn parts_checks(&self) -> impl Iterator<Item = (&str, ReplayCheckParts, ReplayCheck)> {
+        self.checks.iter().filter_map(|(name, check)| match check {
+            HashedCheck::Parts { parts, whole } => Some((name.as_str(), *parts, *whole)),
+            _ => None,
+        })
+    }
+
+    /// Computes the checks with parts whole where `has_parts` says a file has none for them, as
+    /// the file was made; by their parts where it has. Returns the names that changed mode.
+    pub(crate) fn follow_file(&mut self, has_parts: impl Fn(&str) -> bool) -> Vec<String> {
+        let names: Vec<String> = self.parts_checks().map(|(name, _, _)| name.to_owned()).collect();
+        let mut changed = Vec::new();
+        for name in names {
+            let whole = !has_parts(&name);
+            let was = self.whole.contains(&name);
+            if whole != was {
+                if whole {
+                    self.whole.insert(name.clone());
+                } else {
+                    self.whole.remove(&name);
+                }
+                changed.push(name);
+            }
+        }
+        changed
+    }
+
+    /// The names computed whole now, to put back after a refused load.
+    pub(crate) fn whole_names(&self) -> BTreeSet<String> {
+        self.whole.clone()
+    }
+
+    pub(crate) fn set_whole_names(&mut self, names: BTreeSet<String>) {
+        self.whole = names;
+    }
+
     fn push_check(&mut self, name: &str, check: HashedCheck) {
         self.checks.retain(|(n, _)| n != name);
         self.checks.push((name.to_owned(), check));
@@ -847,13 +1023,24 @@ impl ReplayHashing {
 /// describer keeps old replays valid. Components only a window adds are engine types
 /// and stay out too.
 pub fn state_hash(world: &World) -> u64 {
-    hash_state(world, CheckDetail::None).0.hash
+    hash_state(world, CheckDetail::None).check.hash
 }
 
-/// The check of the current state, with its breakdown at `detail`, and the components
-/// left out because they do not serialize. The breakdown comes from the same bytes in
-/// the same pass; the hash is the same at every detail.
-fn hash_state(world: &World, detail: CheckDetail) -> (Check, Vec<&'static str>) {
+/// A check of the current state ([`hash_state`]).
+struct Hashed {
+    check: Check,
+    /// Components left out because they do not serialize.
+    failed: Vec<&'static str>,
+    /// The parts of each check with parts that is not computed whole, by name.
+    listed: Vec<(String, Vec<(String, u64)>)>,
+}
+
+/// The check of the current state, with its breakdown at `detail`, the components left out
+/// because they do not serialize, and the parts of the checks with parts. The breakdown comes
+/// from the same bytes in the same pass; the hash is the same at every detail.
+fn hash_state(world: &World, detail: CheckDetail) -> Hashed {
+    // Hashing only reads: what it reads is not the simulation's.
+    let _quiet = crate::scope::suspend(world);
     let tick = sim::tick(world);
     let mut h = Fnv::new();
     h.u64(tick);
@@ -864,8 +1051,9 @@ fn hash_state(world: &World, detail: CheckDetail) -> (Check, Vec<&'static str>) 
     let mut parts = (detail != CheckDetail::None).then(Breakdown::default);
     let mut failed = Vec::new();
     let mut buf = Vec::new();
+    let mut listed = Vec::new();
     let Some(index) = world.get_resource::<AiIndex>() else {
-        return (Check { tick, hash: h.0, parts }, failed);
+        return Hashed { check: Check { tick, hash: h.0, parts }, failed, listed };
     };
     for id in index.ids() {
         let Some(entity) = index.get(id).filter(|e| world.get::<AiVisible>(*e).is_some()) else {
@@ -931,6 +1119,13 @@ fn hash_state(world: &World, detail: CheckDetail) -> (Check, Vec<&'static str>) 
                 Some(value) => value,
                 None => continue,
             },
+            HashedCheck::Parts { whole, .. } if hashing.is_some_and(|c| c.hashes_whole(name)) => whole(world),
+            HashedCheck::Parts { parts, .. } => {
+                let parts = parts(world);
+                let value = parts_hash(&parts);
+                listed.push((name.clone(), parts));
+                value
+            }
         };
         h.bytes(name.as_bytes());
         h.u64(value);
@@ -940,7 +1135,7 @@ fn hash_state(world: &World, detail: CheckDetail) -> (Check, Vec<&'static str>) 
     }
     failed.sort_unstable();
     failed.dedup();
-    (Check { tick, hash: h.0, parts }, failed)
+    Hashed { check: Check { tick, hash: h.0, parts }, failed, listed }
 }
 
 /// What each component is called in a breakdown: its short type name, or its full path
@@ -960,17 +1155,17 @@ fn component_keys(components: &[(&'static str, &dyn PartialReflect)]) -> Vec<Cow
 
 /// The check of the current state at this session's detail, journaling (once each) the
 /// components it had to leave out.
-fn check_now(world: &mut World) -> Check {
+fn check_now(world: &mut World) -> Hashed {
     let detail = world.resource::<AiReplay>().check_detail;
-    let (check, failed) = hash_state(world, detail);
-    for path in failed {
+    let hashed = hash_state(world, detail);
+    for &path in &hashed.failed {
         let new = world.get_resource_or_init::<ReplayHashing>().reported.insert(path);
         if new {
             let text = format!("replay checks leave out {path}: it does not serialize through reflection");
             journal::log(world, JournalKind::Warn, text);
         }
     }
-    check
+    hashed
 }
 
 /// `Entity` values hash as the `AiId` they point to: render entities a window spawns
@@ -1030,17 +1225,18 @@ fn check_state(world: &mut World) {
     if replay.not_recording && replay.playback.is_none() {
         return;
     }
-    let check = check_now(world);
+    let Hashed { check, listed, .. } = check_now(world);
     let replay = world.resource::<AiReplay>();
     // Only the first divergence is explained: later ones follow from it.
     let found = replay.playback.as_ref().and_then(|playback| {
         let expected = playback.replay.checks.iter().find(|c| c.tick == tick)?;
         let first = expected.hash != check.hash && playback.diverged_at.is_none();
-        Some((expected.hash == check.hash, first.then(|| divergence(world, &playback.replay, expected, &check))))
+        Some((expected.hash == check.hash, first.then(|| divergence(world, &playback.replay, expected, &check, &listed))))
     });
     let mut replay = world.resource_mut::<AiReplay>();
     if !replay.not_recording {
         replay.checks.push(check);
+        replay.log_parts(tick, &listed);
     }
     let (Some(playback), Some((matched, found))) = (&mut replay.playback, found) else {
         return;
@@ -1065,14 +1261,23 @@ fn journal_divergence(world: &mut World, found: &Divergence) {
 }
 
 /// What differs between the recorded check and this run's, both at the same tick.
-fn divergence(world: &World, replay: &Replay, recorded: &Check, live: &Check) -> Divergence {
+fn divergence(world: &World, replay: &Replay, recorded: &Check, live: &Check, listed: &[(String, Vec<(String, u64)>)]) -> Divergence {
     let mut found = Divergence { tick: live.tick, entities: Vec::new(), more: 0, checks: Vec::new(), no_details: None };
     let (Some(then), Some(now)) = (&recorded.parts, &live.parts) else {
-        found.no_details = Some(if replay.format == FORMAT_V2 {
+        let mut why = if replay.format == FORMAT_V2 {
             "replay format 2".to_owned()
         } else {
             format!("the recording keeps hashes only (check detail {})", replay.check_detail)
-        });
+        };
+        // The lists of a check with parts are kept at every detail: they still say what of it differs.
+        for (name, parts) in listed {
+            let Some(log) = replay.check_parts.get(name) else { continue };
+            let differences = part_differences(&parts_at(log, live.tick), parts);
+            if !differences.is_empty() {
+                why.push_str(&format!("; replay check {name} differs: {}", differences.join(", ")));
+            }
+        }
+        found.no_details = Some(why);
         return found;
     };
 
@@ -1132,7 +1337,13 @@ fn divergence(world: &World, replay: &Replay, recorded: &Check, live: &Check) ->
     for (name, value) in &then.game {
         match now.game.iter().find(|(n, _)| n == name) {
             Some((_, v)) if v == value => {}
-            Some(_) => found.checks.push(format!("{name} differs")),
+            Some(_) => found.checks.push(match parts_differences(replay, name, live.tick, listed) {
+                Some(parts) => format!("{name} differs: {parts}"),
+                None if world.get_resource::<ReplayHashing>().is_some_and(|h| h.hashes_whole(name)) => {
+                    format!("{name} differs (recorded whole: the recording lists no parts of it)")
+                }
+                None => format!("{name} differs"),
+            }),
             None => found.checks.push(format!("{name} missing")),
         }
     }
@@ -1143,6 +1354,18 @@ fn divergence(world: &World, replay: &Replay, recorded: &Check, live: &Check) ->
         found.no_details = Some("every entity and replay check matches its recorded hash".to_owned());
     }
     found
+}
+
+/// What of check `name`, which has parts, differs at `tick` between the recording and `listed`
+/// (the parts in this run): `action/light_1 differs, tile/swamp extra`. `None` when the check is
+/// computed whole in this run.
+fn parts_differences(replay: &Replay, name: &str, tick: u64, listed: &[(String, Vec<(String, u64)>)]) -> Option<String> {
+    let (_, parts) = listed.iter().find(|(n, _)| n == name)?;
+    let Some(log) = replay.check_parts.get(name) else {
+        return Some("the recording does not list its parts".to_owned());
+    };
+    let differences = part_differences(&parts_at(log, tick), parts);
+    (!differences.is_empty()).then(|| differences.join(", "))
 }
 
 /// The components whose hashes differ (or that one side lacks); `None` if none do.
@@ -1306,6 +1529,13 @@ pub fn play(world: &mut World, replay: Replay) -> Result<(), String> {
     }
     let end = replay.end.tick;
     let pending_start = replay.start.clone();
+    // A check with parts the file does not list was recorded whole: this session computes it so
+    // (its own checks, its snapshots and the branch it saves), and it lists them where it does.
+    let whole = world.get_resource_or_init::<ReplayHashing>().follow_file(|name| replay.check_parts.contains_key(name));
+    for name in whole.iter().filter(|name| !replay.check_parts.contains_key(*name)) {
+        let text = format!("replay: the recording does not list the parts of check `{name}`: it hashes its whole state, as the build that recorded it did");
+        journal::log(world, JournalKind::Sim, text);
+    }
     let mut state = world.resource_mut::<AiReplay>();
     state.report = None;
     // Check at the recording's ticks with its detail. The recording made from here on
@@ -1459,7 +1689,7 @@ fn replay_call(world: &mut World, agent: &str, scope: Scope, subject: Option<AiI
 }
 
 fn finish(world: &mut World) {
-    let check = check_now(world);
+    let Hashed { check, listed, .. } = check_now(world);
     let tick = sim::tick(world);
     let Some(playback) = world.resource_mut::<AiReplay>().playback.take() else {
         return;
@@ -1475,7 +1705,7 @@ fn finish(world: &mut World) {
     if check.hash == playback.replay.end.hash {
         report.matched += 1;
     } else if report.diverged_at.is_none() {
-        let found = divergence(world, &playback.replay, &playback.replay.end, &check);
+        let found = divergence(world, &playback.replay, &playback.replay.end, &check, &listed);
         journal_divergence(world, &found);
         report.diverged_at = Some(tick);
         report.divergence = Some(found);
@@ -1507,6 +1737,7 @@ fn interrupt(world: &mut World, why: String) {
 /// The recording so far, ending in the current state.
 pub fn save(world: &World) -> Replay {
     let replay = world.resource::<AiReplay>();
+    let end = hash_state(world, replay.check_detail);
     Replay {
         format: FORMAT.to_owned(),
         seed: world.get_resource::<SimSeed>().map_or(0, |s| s.0),
@@ -1514,7 +1745,8 @@ pub fn save(world: &World) -> Replay {
         check_every: replay.check_every,
         check_detail: replay.check_detail,
         start: replay.start.clone(),
-        end: hash_state(world, replay.check_detail).0,
+        check_parts: replay.parts_with_end(end.check.tick, &end.listed),
+        end: end.check,
         events: replay.events.clone(),
         checks: replay.checks.clone(),
     }
@@ -1629,11 +1861,28 @@ pub(crate) mod hex_u64 {
     }
 }
 
-fn hex(v: u64) -> String {
+/// Name → hex hash, in name order.
+pub(crate) mod hex_map {
+    use std::collections::BTreeMap;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(values: &BTreeMap<String, u64>, s: S) -> Result<S::Ok, S::Error> {
+        let text: BTreeMap<&str, String> = values.iter().map(|(name, v)| (name.as_str(), super::hex(*v))).collect();
+        text.serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<BTreeMap<String, u64>, D::Error> {
+        let text = BTreeMap::<String, String>::deserialize(d)?;
+        text.into_iter().map(|(name, v)| super::parse_hex(&v).map(|v| (name, v))).collect::<Result<_, _>>().map_err(serde::de::Error::custom)
+    }
+}
+
+pub(crate) fn hex(v: u64) -> String {
     format!("{v:016x}")
 }
 
-fn parse_hex(text: &str) -> Result<u64, String> {
+pub(crate) fn parse_hex(text: &str) -> Result<u64, String> {
     u64::from_str_radix(text, 16).map_err(|e| format!("`{text}` is not a hex hash: {e}"))
 }
 
@@ -2113,5 +2362,155 @@ mod tests {
         // The live binding itself still resolves to its body afterwards.
         call_tool(world, "p1", "who", json!({}));
         assert_eq!(world.resource::<SeenBodies>().0[2], Some(AiId(1)));
+    }
+
+    /// What the world is built around, as named parts: books on a shelf.
+    #[derive(Resource, Default, Clone)]
+    struct Shelf(BTreeMap<String, u64>);
+
+    fn shelf_parts(world: &World) -> Vec<(String, u64)> {
+        world.get_resource::<Shelf>().map_or_else(Vec::new, |s| s.0.iter().map(|(k, v)| (k.clone(), *v)).collect())
+    }
+
+    fn shelf_whole(world: &World) -> u64 {
+        world.get_resource::<Shelf>().map_or(0, |s| 1000 + s.0.values().sum::<u64>())
+    }
+
+    /// [`game`] with books `a` and `b` on the shelf, checked part by part; with `parts: false`
+    /// as a build before it had parts checked it: whole.
+    fn shelf_game(parts: bool) -> App {
+        use crate::AiAppExt;
+        let mut app = game();
+        app.world_mut().insert_resource(Shelf([("a".to_owned(), 1), ("b".to_owned(), 2)].into()));
+        if parts {
+            app.add_parts_check("shelf", "put the books back", shelf_parts, shelf_whole);
+        } else {
+            app.add_replay_check("shelf", shelf_whole);
+            crate::AiAppExt::add_snapshot_check(&mut app, "shelf", "put the books back", shelf_whole);
+        }
+        app
+    }
+
+    fn run(app: &mut App, ticks: u64) {
+        sim::step(app.world_mut(), ticks, std::time::Duration::from_secs(5), |_| None).unwrap();
+    }
+
+    fn books(list: &[(&str, u64)]) -> BTreeMap<String, u64> {
+        list.iter().map(|(k, v)| ((*k).to_owned(), *v)).collect()
+    }
+
+    #[test]
+    fn a_check_with_parts_keeps_them_as_they_change_and_a_divergence_names_them() {
+        let mut app = shelf_game(true);
+        turn_and_run(&mut app, 3, CHECK_EVERY);
+        let shelf = &mut app.world_mut().resource_mut::<Shelf>().0;
+        shelf.insert("b".into(), 7);
+        shelf.insert("c".into(), 9);
+        turn_and_run(&mut app, 4, CHECK_EVERY);
+        app.world_mut().resource_mut::<Shelf>().0.remove("a");
+        run(&mut app, CHECK_EVERY + 7);
+        let recording = save(app.world());
+        let log = &recording.check_parts["shelf"];
+        assert_eq!(
+            log,
+            &[
+                PartsAt { tick: 60, set: books(&[("a", 1), ("b", 2)]), gone: vec![] },
+                PartsAt { tick: 120, set: books(&[("b", 7), ("c", 9)]), gone: vec![] },
+                PartsAt { tick: 180, set: BTreeMap::new(), gone: vec!["a".into()] },
+            ],
+            "the end (tick 187) changed nothing more"
+        );
+        assert_eq!(parts_at(log, 179), books(&[("a", 1), ("b", 7), ("c", 9)]));
+        let text = serde_json::to_value(&recording).unwrap();
+        assert_eq!(text["check_parts"]["shelf"][2], json!({"tick": 180, "gone": ["a"]}));
+        assert_eq!(text["check_parts"]["shelf"][0]["set"]["b"], "0000000000000002");
+        let back: Replay = serde_json::from_value(text).unwrap();
+        assert_eq!(back.check_parts, recording.check_parts);
+
+        // A playback on a shelf that stays as it was at the start diverges where it first
+        // differs, and names the books.
+        let mut again = shelf_game(true);
+        play(again.world_mut(), recording).unwrap();
+        run(&mut again, 187);
+        again.update();
+        let report = again.world().resource::<AiReplay>().report().cloned().unwrap();
+        assert_eq!(report.diverged_at, Some(120), "{report}");
+        assert_eq!(report.divergence.unwrap().summary(), "replay check shelf differs: b differs, c missing");
+    }
+
+    #[test]
+    fn a_recording_without_parts_is_checked_whole_as_the_build_that_made_it_was() {
+        let mut old = shelf_game(false);
+        turn_and_run(&mut old, 3, CHECK_EVERY * 2);
+        let recording = save(old.world());
+        assert!(recording.check_parts.is_empty());
+
+        let mut new = shelf_game(true);
+        play(new.world_mut(), recording).unwrap();
+        assert!(new.world().resource::<ReplayHashing>().hashes_whole("shelf"));
+        run(&mut new, CHECK_EVERY * 2);
+        new.update();
+        let report = new.world().resource::<AiReplay>().report().cloned().unwrap();
+        assert!(report.identical(), "{report}");
+        assert!(journal_lines(&new).iter().any(|l| l.contains("does not list the parts of check `shelf`")));
+        // What the session saves from here is whole too, so it plays back the same way.
+        assert!(!save(new.world()).check_parts.contains_key("shelf"));
+
+        // Other books, in a playback of it: it diverges, and says it cannot name them.
+        let mut other = shelf_game(true);
+        other.world_mut().resource_mut::<Shelf>().0 = books(&[("a", 1), ("b", 5)]);
+        play(other.world_mut(), save(old.world())).unwrap();
+        run(&mut other, CHECK_EVERY * 2);
+        other.update();
+        let report = other.world().resource::<AiReplay>().report().cloned().unwrap();
+        assert!(report.to_string().contains("shelf differs (recorded whole: the recording lists no parts of it)"), "{report}");
+
+        // A recording with parts is checked by its parts again.
+        let mut fresh = shelf_game(true);
+        turn_and_run(&mut fresh, 3, CHECK_EVERY);
+        let mut newer = shelf_game(true);
+        play(newer.world_mut(), save(fresh.world())).unwrap();
+        assert!(!newer.world().resource::<ReplayHashing>().hashes_whole("shelf"));
+    }
+
+    fn journal_lines(app: &App) -> Vec<String> {
+        app.world().resource::<crate::AiJournal>().after(0).0.map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn a_snapshot_keeps_the_parts_and_a_load_names_the_ones_that_differ() {
+        let mut app = shelf_game(true);
+        turn_and_run(&mut app, 3, 10);
+        let snapshot = crate::snapshot::capture(app.world()).unwrap();
+        assert_eq!(snapshot.check_parts["shelf"], [("a".to_owned(), hex(1)), ("b".to_owned(), hex(2))].into());
+        assert_eq!(snapshot.checks["shelf"], hex(parts_hash(&shelf_parts(app.world()))));
+
+        // The same books: it loads.
+        let mut same = shelf_game(true);
+        crate::snapshot::restore(same.world_mut(), &snapshot, false).unwrap();
+        // Other books: refused, naming them.
+        let mut other = shelf_game(true);
+        other.world_mut().resource_mut::<Shelf>().0 = books(&[("a", 1), ("b", 5), ("d", 3)]);
+        let refused = crate::snapshot::restore(other.world_mut(), &snapshot, false).unwrap_err();
+        assert!(refused.contains("shelf differs (b differs, d extra): put the books back"), "{refused}");
+        // The parts match, the hash the file keeps for them does not: the file was edited.
+        let mut edited = snapshot.clone();
+        edited.checks.insert("shelf".into(), hex(0xff));
+        let refused = crate::snapshot::restore(same.world_mut(), &edited, false).unwrap_err();
+        assert!(refused.contains("shelf differs (snapshot 00000000000000ff"), "{refused}");
+
+        // A snapshot taken whole is compared whole, and the session goes on whole.
+        let mut legacy = snapshot.clone();
+        legacy.check_parts.clear();
+        legacy.checks.insert("shelf".into(), hex(shelf_whole(app.world())));
+        crate::snapshot::restore(same.world_mut(), &legacy, false).unwrap();
+        assert!(same.world().resource::<ReplayHashing>().hashes_whole("shelf"));
+        let again = crate::snapshot::capture(same.world()).unwrap();
+        assert!(!again.check_parts.contains_key("shelf") && again.checks["shelf"] == hex(shelf_whole(same.world())));
+        // A snapshot with parts makes it check by parts again; a refused one leaves it as it was.
+        let refused = crate::snapshot::restore_exact(other.world_mut(), &snapshot, false);
+        assert!(refused.is_err());
+        crate::snapshot::restore(same.world_mut(), &snapshot, false).unwrap();
+        assert!(!same.world().resource::<ReplayHashing>().hashes_whole("shelf"));
     }
 }

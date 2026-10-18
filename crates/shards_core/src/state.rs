@@ -201,6 +201,29 @@ pub(crate) fn close_pause_when_resumed(
     }
 }
 
+/// The simulation's scope while a change of `EngineState` runs: its `OnExit`/`OnEnter` systems
+/// build and take down the simulation's world (`OnEnter(InGame)` spawns it), so what they read
+/// counts as the simulation's ([`ai_core::SimScope`]), in a playback and with a window as in the
+/// session that was recorded.
+#[derive(Resource, Default)]
+pub(crate) struct TransitionScope(Option<ai_core::ScopeOpen>);
+
+/// `StateTransition`, before the exit schedules of `EngineState`: opens the scope when the state
+/// changes now.
+pub(crate) fn open_transition_scope(In(transition): In<Option<StateTransitionEvent<EngineState>>>, world: &mut World) {
+    if transition.is_some() {
+        let open = ai_core::scope::open(world);
+        world.get_resource_or_init::<TransitionScope>().0 = open;
+    }
+}
+
+/// `StateTransition`, after the enter schedules of `EngineState`: closes it.
+pub(crate) fn close_transition_scope(world: &mut World) {
+    if let Some(mut scope) = world.get_resource_mut::<TransitionScope>() {
+        scope.0 = None;
+    }
+}
+
 /// Whether a region trip keeps the game, and the schedules hidden while its transition runs.
 #[derive(Resource, Default)]
 pub(crate) struct RegionTrip {

@@ -247,7 +247,12 @@ fn missing_and_extra_entities_are_named_and_the_list_is_capped() {
     assert_eq!(found.more, 2, "{gone}");
     assert!(found.entities.iter().all(|e| matches!(e.change, EntityChange::Missing { .. })), "{gone}");
     let listed: Vec<String> = (15..25).map(|id| format!("e{id} missing")).collect();
-    assert!(gone.headline().ends_with(&format!("DIVERGED at tick 60: {}; … and 2 more", listed.join("; "))), "{gone}");
+    // What the spawned skeletons read is missing too: their claw, and the director they share.
+    let unread = "replay check content differs: action/claw missing, director/default missing";
+    assert!(
+        gone.headline().ends_with(&format!("DIVERGED at tick 60: {}; … and 2 more; {unread}", listed.join("; "))),
+        "{gone}"
+    );
 
     // And one where a thirteenth one joins them: e27 is extra.
     let mut more = replay;
@@ -294,7 +299,10 @@ fn a_version_2_replay_verifies_by_its_hashes() {
     for check in file["checks"].as_array_mut().unwrap() {
         check.as_object_mut().unwrap().remove("parts");
     }
-    assert!(!v2.to_string().contains("parts"));
+    // The content parts stay: this recording's hashes are of them (a file without them is
+    // checked with every definition hashed, as the builds before them did).
+    assert!(v2.get("check_parts").is_some());
+    assert!(v2["checks"].as_array().unwrap().iter().chain([&v2["end"]]).all(|c| c.get("parts").is_none()));
     let v2: Replay = serde_json::from_value(v2).unwrap();
 
     let same = report(&played(v2.clone()));

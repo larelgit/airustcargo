@@ -4,15 +4,24 @@
 //! One path builds it, whatever the text came from: the asset server at start, the
 //! file watcher, `content_reload` and `content_check` reading the disk, or
 //! [`check_dir`] in a game's CI. A replay changes it only through recorded
-//! `content_apply` calls, so its [hash](ContentDb::hash) is part of every replay check.
+//! `content_apply` calls.
+//!
+//! It also notes what the simulation reads: a definition read by id, a kind read whole (its
+//! ids, or every definition of it). Reads count while the world's [`SimScope`] is open (a fixed
+//! tick, an action call, the world being built), and only for kinds the simulation depends on
+//! ([`ContentDef::SIMULATION`]). The replay check `content` hashes those definitions
+//! ([`ContentDb::used_parts`]), not every one: content a session never read can change without
+//! its replays diverging. The co-op handshake compares the whole [hash](ContentDb::hash).
 
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use ai_core::SimScope;
 use bevy::prelude::*;
 use bevy::reflect::TypeRegistry;
 use ron::value::RawValue;
@@ -43,6 +52,14 @@ pub const CONTENT_DIR: &str = "content";
 pub trait ContentDef: Serialize + DeserializeOwned + Clone + Send + Sync + 'static {
     /// File kind: `"attack"` for `*.attack.ron`. Lowercase, no dots.
     const KIND: &'static str;
+
+    /// Whether the simulation's outcome can depend on this kind. `false` for a kind that only
+    /// shapes what a machine shows or plays (a look, an effect, a sound, a screen's theme) or
+    /// what lies outside a session (settings, saves, Steam): reading it never counts for the
+    /// replay check `content` (see the [module](self)), so editing it never makes a replay
+    /// diverge. A kind the simulation reads keeps `true` (the default): a replay recorded with
+    /// other numbers would otherwise play on without noticing.
+    const SIMULATION: bool = true;
 
     /// Checks one definition against the whole database: report problems with
     /// [`Refs::error`], declare references with [`Refs::require`] (a missing one
@@ -168,6 +185,8 @@ pub struct KindInfo {
     pub kind: &'static str,
     /// Rust type of its definitions.
     pub type_name: &'static str,
+    /// [`ContentDef::SIMULATION`].
+    pub simulation: bool,
     type_id: TypeId,
     fns: KindFns,
 }
@@ -208,7 +227,8 @@ impl ContentKinds {
             return;
         }
         let fns = KindFns { parse: parse_file::<T>, from_json: def_from_json::<T>, to_json: def_to_json::<T>, validate: validate_def::<T> };
-        self.kinds.push(KindInfo { kind: T::KIND, type_name: std::any::type_name::<T>(), type_id: TypeId::of::<T>(), fns });
+        let type_name = std::any::type_name::<T>();
+        self.kinds.push(KindInfo { kind: T::KIND, type_name, simulation: T::SIMULATION, type_id: TypeId::of::<T>(), fns });
         self.kinds.sort_by_key(|k| k.kind);
     }
 
@@ -412,7 +432,76 @@ struct Entry {
     def: AnyDef,
     /// The definition as JSON: compared for changes, hashed, shown by `content_get`.
     json: Value,
+    /// FNV-1a of its kind, id and JSON: its part of the replay check `content`.
+    hash: u64,
+    /// The simulation has read it.
+    used: Used,
 }
+
+impl Entry {
+    fn new(kind: &str, id: &str, file: String, def: AnyDef, json: Value) -> Entry {
+        let hash = def_hash(kind, id, &json);
+        Entry { file, def, json, hash, used: Used::default() }
+    }
+}
+
+/// A flag the simulation sets the first time it reads something, from any thread of a tick:
+/// once it is set a read only loads it, so systems reading the same definition in parallel
+/// share the cache line. A copy of the database copies the flag's value.
+#[derive(Default)]
+struct Used(AtomicBool);
+
+impl Used {
+    #[inline]
+    fn get(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    fn mark(&self) {
+        if !self.get() {
+            self.0.store(true, Ordering::Relaxed);
+        }
+    }
+
+    fn put(&self, on: bool) {
+        self.0.store(on, Ordering::Relaxed);
+    }
+}
+
+impl Clone for Used {
+    fn clone(&self) -> Self {
+        Used(AtomicBool::new(self.get()))
+    }
+}
+
+/// What the database knows of a kind besides its definitions.
+#[derive(Clone, Default)]
+struct KindState {
+    /// [`ContentDef::SIMULATION`].
+    simulation: bool,
+    /// The simulation read the kind whole (its ids, or every definition).
+    whole: Used,
+}
+
+/// FNV-1a over a definition's kind, id and JSON, each length-terminated, as
+/// [`ContentDb::hash`] feeds them.
+fn def_hash(kind: &str, id: &str, json: &Value) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut feed = |bytes: &[u8]| {
+        for b in bytes.iter().chain(&(bytes.len() as u64).to_le_bytes()) {
+            h = (h ^ *b as u64).wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    feed(kind.as_bytes());
+    feed(id.as_bytes());
+    feed(json.to_string().as_bytes());
+    h
+}
+
+/// The suffix of the part of the replay check `content` that says a kind was read whole
+/// (`tile (all)`): every definition of the kind is a part then, those never read by id too.
+pub const WHOLE_KIND: &str = " (all)";
 
 /// One content file as text: what the asset server and disk reads hand over.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -438,6 +527,11 @@ pub struct ContentDb {
     /// Problems between definitions (references, validation).
     def_errors: Vec<ContentError>,
     loaded: bool,
+    /// Per registered kind: whether the simulation depends on it, and whether it read it whole.
+    states: BTreeMap<&'static str, KindState>,
+    /// The world's scope, while the database is its resource ([`ContentDb::watch`]): reads count
+    /// while it is open. `None`: nothing counts (a database built to compare or check files).
+    scope: Option<SimScope>,
 }
 
 impl ContentDb {
@@ -455,6 +549,7 @@ impl ContentDb {
         let mut db = ContentDb { loaded: true, ..default() };
         for kind in &kinds.kinds {
             db.tables.insert(kind.kind, BTreeMap::new());
+            db.states.insert(kind.kind, KindState { simulation: kind.simulation, whole: Used::default() });
         }
         let mut sources: Vec<&Source> = sources.iter().collect();
         sources.sort_by(|a, b| a.path.cmp(&b.path));
@@ -509,12 +604,15 @@ impl ContentDb {
                     continue;
                 }
             };
-            table.insert(id, Entry { file: path.to_owned(), def, json });
+            let entry = Entry::new(kind.kind, &id, path.to_owned(), def, json);
+            table.insert(id, entry);
         }
     }
 
     /// Runs every definition's [`ContentDef::validate`] against the database as it is.
     fn revalidate(&mut self, kinds: &ContentKinds) {
+        // Validation is not the simulation: what a check reads (`refs.db()`) does not count.
+        let _quiet = self.scope.as_ref().map(SimScope::suspend);
         let guard = kinds.registry.as_ref().map(|r| r.read());
         let registry = guard.as_deref();
         let mut errors = Vec::new();
@@ -543,22 +641,118 @@ impl ContentDb {
         self.def_errors = errors;
     }
 
-    /// The definition `id` of kind `T`.
+    /// The definition `id` of kind `T`. In the simulation's scope it counts as read.
     pub fn get<T: ContentDef>(&self, id: &str) -> Option<&T> {
+        let entry = self.tables.get(T::KIND)?.get(id)?;
+        if T::SIMULATION && !entry.used.get() && self.counting() {
+            entry.used.mark();
+        }
+        entry.def.downcast_ref::<T>()
+    }
+
+    /// Ids of kind `T`, sorted. In the simulation's scope the kind counts as read whole: a
+    /// definition added to it can change what the reader does.
+    pub fn ids<T: ContentDef>(&self) -> impl Iterator<Item = &str> {
+        if T::SIMULATION {
+            self.read_whole(T::KIND);
+        }
+        self.peek_ids::<T>()
+    }
+
+    /// Definitions of kind `T` by id, sorted. In the simulation's scope the kind counts as read
+    /// whole.
+    pub fn iter<T: ContentDef>(&self) -> impl Iterator<Item = (&str, &T)> {
+        if T::SIMULATION {
+            self.read_whole(T::KIND);
+        }
+        self.peek_iter::<T>()
+    }
+
+    /// [`get`](Self::get) for a reader that is not the simulation even inside its scope (a screen
+    /// being shown, a describer): it never counts as read. Whatever the simulation's outcome
+    /// depends on is read with [`get`](Self::get).
+    pub fn peek<T: ContentDef>(&self, id: &str) -> Option<&T> {
         self.tables.get(T::KIND)?.get(id)?.def.downcast_ref::<T>()
     }
 
-    /// Ids of kind `T`, sorted.
-    pub fn ids<T: ContentDef>(&self) -> impl Iterator<Item = &str> {
+    /// [`ids`](Self::ids) that never counts as read (see [`peek`](Self::peek)).
+    pub fn peek_ids<T: ContentDef>(&self) -> impl Iterator<Item = &str> {
         self.tables.get(T::KIND).into_iter().flat_map(|t| t.keys().map(String::as_str))
     }
 
-    /// Definitions of kind `T` by id, sorted.
-    pub fn iter<T: ContentDef>(&self) -> impl Iterator<Item = (&str, &T)> {
+    /// [`iter`](Self::iter) that never counts as read (see [`peek`](Self::peek)).
+    pub fn peek_iter<T: ContentDef>(&self) -> impl Iterator<Item = (&str, &T)> {
         self.tables
             .get(T::KIND)
             .into_iter()
             .flat_map(|t| t.iter().filter_map(|(id, e)| Some((id.as_str(), e.def.downcast_ref::<T>()?))))
+    }
+
+    /// Reads count now: the world's scope is open.
+    #[inline]
+    fn counting(&self) -> bool {
+        self.scope.as_ref().is_some_and(SimScope::is_open)
+    }
+
+    /// `kind` read whole, if reads count now.
+    fn read_whole(&self, kind: &str) {
+        if let Some(state) = self.states.get(kind)
+            && state.simulation
+            && !state.whole.get()
+            && self.counting()
+        {
+            state.whole.mark();
+        }
+    }
+
+    /// Makes this database count what the simulation of the world with `scope` reads: done
+    /// wherever a database becomes a world's resource ([`install`](crate::install)).
+    pub fn watch(&mut self, scope: Option<SimScope>) {
+        self.scope = scope;
+    }
+
+    /// What the simulation has read, as the parts of the replay check `content`, in name order:
+    /// `kind/id` with the definition's hash for each definition read by id, and for a kind read
+    /// whole `kind (all)` and then every definition of it. Kinds the simulation does not depend
+    /// on ([`ContentDef::SIMULATION`]) are never listed.
+    pub fn used_parts(&self) -> Vec<(String, u64)> {
+        let mut parts = Vec::new();
+        for (kind, table) in &self.tables {
+            let Some(state) = self.states.get(kind).filter(|s| s.simulation) else { continue };
+            let whole = state.whole.get();
+            if whole {
+                parts.push((format!("{kind}{WHOLE_KIND}"), 0));
+            }
+            for (id, entry) in table.iter().filter(|(_, e)| whole || e.used.get()) {
+                parts.push((format!("{kind}/{id}"), entry.hash));
+            }
+        }
+        parts
+    }
+
+    /// Makes what counts as read exactly `parts` (names as [`used_parts`](Self::used_parts)
+    /// writes them; a name of nothing here is left out): a snapshot load puts back what the
+    /// session it was taken in had read.
+    pub fn set_used(&self, parts: &BTreeSet<&str>) {
+        for (kind, table) in &self.tables {
+            if let Some(state) = self.states.get(kind) {
+                state.whole.put(parts.contains(format!("{kind}{WHOLE_KIND}").as_str()));
+            }
+            for (id, entry) in table {
+                entry.used.put(parts.contains(format!("{kind}/{id}").as_str()));
+            }
+        }
+    }
+
+    /// Whether `kind` is registered (never counts as read).
+    pub fn has_kind(&self, kind: &str) -> bool {
+        self.tables.contains_key(kind)
+    }
+
+    /// [`get_json`](Self::get_json) that never counts as read: the database's own machinery (an
+    /// edit checked against what is there, a replay putting back its starting content).
+    pub(crate) fn json_of(&self, kind: &str, id: &str) -> Option<&Value> {
+        self.tables.get(kind)?.get(id).map(|e| &e.json)
     }
 
     /// The file definition `id` of kind `T` came from: `content/combat/attacks.attack.ron`.
@@ -571,14 +765,22 @@ impl ContentDb {
         self.tables.keys().copied()
     }
 
-    /// Ids of `kind`, sorted; `None` for a kind nobody registered.
+    /// Ids of `kind`, sorted; `None` for a kind nobody registered. In the simulation's scope the
+    /// kind counts as read whole, as with [`ids`](Self::ids).
     pub fn ids_of(&self, kind: &str) -> Option<Vec<&str>> {
-        self.tables.get(kind).map(|t| t.keys().map(String::as_str).collect())
+        let table = self.tables.get(kind)?;
+        self.read_whole(kind);
+        Some(table.keys().map(String::as_str).collect())
     }
 
-    /// The definition as JSON, for tools and other untyped readers.
+    /// The definition as JSON, for tools and other untyped readers. In the simulation's scope it
+    /// counts as read, as with [`get`](Self::get).
     pub fn get_json(&self, kind: &str, id: &str) -> Option<&Value> {
-        self.tables.get(kind)?.get(id).map(|e| &e.json)
+        let entry = self.tables.get(kind)?.get(id)?;
+        if !entry.used.get() && self.states.get(kind).is_some_and(|s| s.simulation) && self.counting() {
+            entry.used.mark();
+        }
+        Some(&entry.json)
     }
 
     /// The file a definition of `kind` came from.
@@ -682,6 +884,7 @@ impl ContentDb {
             let info = kinds.get(&change.kind).ok_or_else(|| {
                 format!("no content kind `{}`; registered: {}", change.kind, kinds.names().join(", "))
             })?;
+            db.states.entry(info.kind).or_insert_with(|| KindState { simulation: info.simulation, whole: Used::default() });
             let table = db.tables.entry(info.kind).or_default();
             match &change.def {
                 Some(json) => {
@@ -689,7 +892,13 @@ impl ContentDb {
                     let def = (info.fns.from_json)(json).map_err(what)?;
                     let file = change.file.clone().or_else(|| table.get(&change.id).map(|e| e.file.clone())).unwrap_or_default();
                     let json = (info.fns.to_json)(&def).map_err(what)?;
-                    table.insert(change.id.clone(), Entry { file, def, json });
+                    let entry = Entry::new(info.kind, &change.id, file, def, json);
+                    // A definition the session read is still read: the replay check hashes its
+                    // new version from now on.
+                    if let Some(old) = table.get(&change.id) {
+                        entry.used.put(old.used.get());
+                    }
+                    table.insert(change.id.clone(), entry);
                 }
                 None => {
                     table.remove(&change.id);
@@ -1052,5 +1261,144 @@ mod tests {
         assert_eq!(position_in_file(text, part, (2, 7)), (3, 7));
         // Text that is not a piece of the file is left alone.
         assert_eq!(position_in_file(text, "(a: 1)", (1, 3)), (1, 3));
+    }
+
+    /// A kind only a picture reads.
+    #[derive(Serialize, Deserialize, Clone, Debug)]
+    struct Glow {
+        strength: f32,
+    }
+    impl ContentDef for Glow {
+        const KIND: &'static str = "glow";
+        const SIMULATION: bool = false;
+    }
+
+    /// Strikes `a`, `b`, `c` and glows `soft`, `hard`, watched by a scope of their own.
+    fn watched() -> (ContentDb, SimScope, ContentKinds) {
+        let mut kinds = ContentKinds::default();
+        kinds.register::<Strike>();
+        kinds.register::<Glow>();
+        let sources = [
+            Source { path: "content/a.strike.ron".into(), text: r#"{ "a": (damage: 1.0), "b": (damage: 2.0), "c": (damage: 3.0) }"#.into() },
+            Source { path: "content/a.glow.ron".into(), text: r#"{ "soft": (strength: 0.2), "hard": (strength: 0.9) }"#.into() },
+        ];
+        let mut db = ContentDb::build(&kinds, &sources);
+        assert_eq!(db.errors().count(), 0);
+        let scope = SimScope::default();
+        db.watch(Some(scope.clone()));
+        (db, scope, kinds)
+    }
+
+    fn names(db: &ContentDb) -> Vec<String> {
+        db.used_parts().into_iter().map(|(name, _)| name).collect()
+    }
+
+    #[test]
+    fn only_the_simulations_reads_count_and_only_of_kinds_it_depends_on() {
+        let (db, scope, _) = watched();
+        // Closed: a frame, a query, a check.
+        db.get::<Strike>("a");
+        db.iter::<Strike>().count();
+        assert!(names(&db).is_empty());
+        // Open, but suspended: a rule or a hash inside a tick.
+        let open = scope.open();
+        let quiet = scope.suspend();
+        db.get::<Strike>("a");
+        db.get_json("strike", "c");
+        assert!(names(&db).is_empty());
+        drop(quiet);
+        // Open: a tick, an action call.
+        db.get::<Strike>("b");
+        db.get_json("strike", "c");
+        db.peek::<Strike>("a");
+        db.peek_iter::<Strike>().count();
+        db.get::<Glow>("soft");
+        db.iter::<Glow>().count();
+        db.get::<Strike>("nothing");
+        drop(open);
+        db.get::<Strike>("a");
+        assert_eq!(names(&db), ["strike/b", "strike/c"], "peeks, a picture's kind and a missing id are not reads");
+        // The part's value is the definition's own hash: its kind, id and JSON.
+        let (_, hash) = db.used_parts()[0].clone();
+        assert_eq!(hash, def_hash("strike", "b", db.json_of("strike", "b").unwrap()));
+    }
+
+    #[test]
+    fn a_kind_read_whole_lists_every_definition_of_it() {
+        for read in ["iter", "ids", "ids_of"] {
+            let (db, scope, _) = watched();
+            let _open = scope.open();
+            db.get::<Strike>("a");
+            match read {
+                "iter" => assert_eq!(db.iter::<Strike>().count(), 3),
+                "ids" => assert_eq!(db.ids::<Strike>().count(), 3),
+                _ => assert_eq!(db.ids_of("strike").map(|ids| ids.len()), Some(3)),
+            }
+            assert_eq!(names(&db), ["strike (all)", "strike/a", "strike/b", "strike/c"], "{read}");
+            // A picture's kind read whole is still not a part.
+            db.ids_of("glow");
+            assert_eq!(names(&db).len(), 4, "{read}");
+        }
+    }
+
+    #[test]
+    fn what_was_read_survives_an_edit_and_a_snapshot_puts_it_back_exactly() {
+        let (db, scope, kinds) = watched();
+        {
+            let _open = scope.open();
+            db.get::<Strike>("a");
+            db.get::<Strike>("b");
+        }
+        let before = db.used_parts();
+        // `content_apply` replaces `a` (read) and adds `d` (never read): `a` is read still, with
+        // its new hash; `d` is not a part.
+        let changes = [
+            DefChange { kind: "strike".into(), id: "a".into(), file: None, def: Some(serde_json::json!({"damage": 5.0})), before: None },
+            DefChange { kind: "strike".into(), id: "d".into(), file: None, def: Some(serde_json::json!({"damage": 9.0})), before: None },
+            DefChange { kind: "strike".into(), id: "b".into(), file: None, def: None, before: None },
+        ];
+        let next = db.with_changes(&kinds, &[], &changes).unwrap();
+        let after = next.used_parts();
+        assert_eq!(after.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["strike/a"], "b went with its definition");
+        assert_ne!(after[0].1, before[0].1, "a's part has the new version's hash");
+        // A copy counts for the same world: reads in its scope mark the copy.
+        {
+            let _open = scope.open();
+            next.get::<Strike>("d");
+        }
+        assert_eq!(names(&next), ["strike/a", "strike/d"]);
+        assert_eq!(names(&db), ["strike/a", "strike/b"], "the original keeps its own flags");
+        // A snapshot load makes the reads exactly the snapshot's.
+        next.set_used(&["strike (all)", "strike/c", "glow/soft", "nothing/here"].into_iter().collect());
+        assert_eq!(names(&next), ["strike (all)", "strike/a", "strike/c", "strike/d"]);
+        next.set_used(&BTreeSet::new());
+        assert!(names(&next).is_empty());
+    }
+
+    #[test]
+    fn validation_reads_nothing_even_inside_the_scope() {
+        #[derive(Serialize, Deserialize, Clone)]
+        struct Combo {
+            strikes: Vec<String>,
+        }
+        impl ContentDef for Combo {
+            const KIND: &'static str = "combo";
+            fn validate(&self, _: &str, refs: &mut Refs) {
+                for strike in &self.strikes {
+                    refs.require::<Strike>(strike, "strikes");
+                    refs.get::<Strike>(strike);
+                }
+                refs.iter::<Strike>().count();
+                refs.db().ids_of("strike");
+            }
+        }
+        let (db, scope, mut kinds) = watched();
+        kinds.register::<Combo>();
+        let change = DefChange { kind: "combo".into(), id: "x".into(), file: None, def: Some(serde_json::json!({"strikes": ["a", "b"]})), before: None };
+        let _open = scope.open();
+        let next = db.with_changes(&kinds, &[], &[change]).unwrap();
+        assert_eq!(next.errors().count(), 0);
+        assert!(names(&next).is_empty(), "{:?}", names(&next));
+        assert!(scope.is_open(), "the suspension ended with the validation");
     }
 }

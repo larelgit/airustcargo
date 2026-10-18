@@ -544,7 +544,7 @@ content/combat/fighters.moveset.ron: moveset `player`: inputs.light -> unknown a
 The cause is the first line; the second follows from it. The whole file adds nothing to the database only when its map is broken: a syntax error (an unpaired bracket, no comma between definitions, a cut-off value), an empty id, an id repeated within the file, or an id with a space. That is one error per file (a failure inside a definition names its id). A running game does not stop on errors: they go to the journal, and it runs with what did load (`content loaded: 2 definitions in 1 file, 1 with
 errors`); `--check-content` exits with code 1 on any error.
 
-**Reading content.** In systems, use `Content<T>` (`attacks.get("sword")`); outside them, use `ContentDb::get::<T>(id)`. Gameplay does not write content.
+**Reading content.** In systems, use `Content<T>` (`attacks.get("sword")`); outside them, use `ContentDb::get::<T>(id)`. Gameplay does not write content. A read the simulation makes is noted for the replay check `content`; read one definition by its id when that is all you need (going over a kind with `iter` or `ids` makes the whole kind count). Code that runs in the simulation's scope and is not the simulation (a describer, a picture) reads with `peek`, `peek_ids`, `peek_iter`. A kind only the picture, the sound or services outside the session read sets `const SIMULATION: bool = false;` (see "What the content check covers").
 
 **Hot reload** (`hot_reload`, on by default): an edit, a creation or a deletion of a file is checked together with the whole database. A clean edit is applied with the `content_apply` tool, so it is written to the replay on its own tick and
 the replay repeats it; the journal shows `content reloaded: combat/player.action.ron (1 definition changed)`. A broken
@@ -556,7 +556,7 @@ edit stays in the journal as an error with the file and the line, and the previo
 
 A file is applied as a whole: while even one definition in the changed file is broken (and also if it was broken since loading), the previous version applies to all of its definitions, including the valid ones, and the edit waits until the errors are fixed.
 
-The database hash is part of the replay checks: a recording made with other numbers diverges at the next check (that is expected; the reference replays are recorded again). How edits apply on the fly: movement and combat numbers take effect from the next tick; levels and prefabs are read when entities are created (new entities, for example after `spawn_prefab`, see the edit, but entities that already exist do not).
+What the session's simulation read is part of the replay checks: a recording made with other numbers in a definition it read diverges at the next check (that is expected; the reference replays are recorded again), and one it never read changes nothing ("What the content check covers"). How edits apply on the fly: movement and combat numbers take effect from the next tick; levels and prefabs are read when entities are created (new entities, for example after `spawn_prefab`, see the edit, but entities that already exist do not).
 
 **Prefabs** are entities defined as data. Components are named by short names or full paths, and their values are read through
 reflection, as in Bevy scenes; each component must have `#[derive(Reflect)]` and `#[reflect(Component)]`. Fields that
@@ -946,7 +946,7 @@ The `shards_action` crate. An attack, a block, a parry, a roll and a flask are a
 **Window side** (feature `render`; without a window the same systems are built, but they draw nothing):
 
 - **Animation** (`anim`, `render::bridge`). The `animset` content kind is a library of clips from glTF. It says which clip shows which movement state and which action, the blending, and the time cues (`cues` → `AnimationCue`; these are for effects and sound only, gameplay does not depend on them). **Gameplay leads, animation follows:** an action's clip is scrubbed to the action's progress (gameplay time, scaled to the clip's length), and movement clips loop at a speed matched to the body's speed. There is one `AnimationGraph` per set, shared by all `Animated` characters. Characters with the same skeleton (the same node names) share clips. A clip can sit in another file with the same skeleton (the clip's `source`): the graph waits for every file of the set. The model is a child entity of the character (`WorldAssetRoot`). `root_motion` names the root bone. The bridge keeps it in place on the ground (x and z as in the rest pose, after `AnimationSystems`). The body is moved by the action's displacement, which is baked from that same bone (see "Displacement from a clip"). With the asset folder (`--check-content`, `content_check`), the set is checked against the files. A missing file, a missing animation (the error lists the ones that exist), a missing root bone, or a missing layer bone is a content error.
-  **Layers (upper and lower body).** An action can play on part of the body while the movement clip keeps the rest: drinking from a flask while walking, or blocking while stepping sideways. A part of the body is a layer of the set: `layers: {"upper": (root: "spine")}` is a bone and everything under it (no more than 64 layers). The action mapping picks the layer: `actions: {"drink": (clip: "drink", layer: "upper")}` (the same in `tags`). The old form `"drink": "drink"` plays on the whole body. While the action runs, the layer's bones follow its clip (scrubbed to the action's progress, like any action clip), and the rest of the body follows the movement clip. The content decides this, not the code. The mechanism uses Bevy masks. A layer clip has its own node in the graph, and a mask keeps it off the bones **outside** the layer. (The layer's mask group is built from the model's bones when the player is bound.) Movement clips run on all the bones, as they do without layers. The weight is set by the share. On the layer's bones the pose is the weighted average of the clips, and the movement clips sum to 1. So a layer clip with share `s` plays at weight `s / (1 − s)`. The bridge ramps the share up and down itself. (`AnimationTransitions` keeps one "main" clip, and a layer clip in its place would push the movement out of the legs too.) The ramp takes the same time as normal blending: into the action clip, its `blend` (or `action_blend`); back to movement, the `blend` of the movement clip. One layer clip changes into another with no gap in the movement. The share never reaches 1 (the last 0.001% of movement on the layer's bones is not visible). A layer bone that the model does not have is a warning, and the action keeps the movement clip. Layers are for the picture only: `ActionState`, the replay and the snapshot do not see them. (For the replay, one thing matters: the content hash also counts the animation sets, so editing a set changes `content` in the reference replays.)
+  **Layers (upper and lower body).** An action can play on part of the body while the movement clip keeps the rest: drinking from a flask while walking, or blocking while stepping sideways. A part of the body is a layer of the set: `layers: {"upper": (root: "spine")}` is a bone and everything under it (no more than 64 layers). The action mapping picks the layer: `actions: {"drink": (clip: "drink", layer: "upper")}` (the same in `tags`). The old form `"drink": "drink"` plays on the whole body. While the action runs, the layer's bones follow its clip (scrubbed to the action's progress, like any action clip), and the rest of the body follows the movement clip. The content decides this, not the code. The mechanism uses Bevy masks. A layer clip has its own node in the graph, and a mask keeps it off the bones **outside** the layer. (The layer's mask group is built from the model's bones when the player is bound.) Movement clips run on all the bones, as they do without layers. The weight is set by the share. On the layer's bones the pose is the weighted average of the clips, and the movement clips sum to 1. So a layer clip with share `s` plays at weight `s / (1 − s)`. The bridge ramps the share up and down itself. (`AnimationTransitions` keeps one "main" clip, and a layer clip in its place would push the movement out of the legs too.) The ramp takes the same time as normal blending: into the action clip, its `blend` (or `action_blend`); back to movement, the `blend` of the movement clip. One layer clip changes into another with no gap in the movement. The share never reaches 1 (the last 0.001% of movement on the layer's bones is not visible). A layer bone that the model does not have is a warning, and the action keeps the movement clip. Layers are for the picture only: `ActionState`, the replay and the snapshot do not see them. (Animation sets are outside the replay check `content`, `SIMULATION = false`: editing a set never makes a replay diverge. A baked `displacement` lives in the action, which does count.)
   The game adds `Animated` and the model to the body only when it draws (`config.draws()`). The replay does not check `Animated`, and the host does not send it to its clients. Gameplay does not depend on the clip. Without a window nothing is loaded. A snapshot taken with the picture on records `Animated`. (Without a model, it does nothing.)
   ```ron
   // content/anim/humanoid.animset.ron (sandbox, shortened)
@@ -2914,7 +2914,7 @@ A frame in which a call ran ticks on pause (`step`) is one the player does not s
   built is counted, although Bevy will skip it (during warm-up the number can be higher than what is drawn; the measurement runs after it). Without
   GPU preprocessing (no compute shaders: WebGL), the binned phases' sets are hidden inside Bevy, and there is no number: `null`, and the `draws`
   budget shows `-`. At a `render_scale` other than 1, the commands of the camera that shows the image are added to each frame (5 of them in the sandbox).
-  The `draws` budget in `reference.perf.ron` is 150 (measured at 75–76). The `perf` definitions are part of the sandbox's content hash (it is computed from the definition's JSON), so a budget that was not set (`draws`, `nav_bake_s`) does not appear in the JSON: a new field does not shift the hash for those who did not name it, but a line with it in the file does, and the reference replays are then recorded again.
+  The `draws` budget in `reference.perf.ron` is 150 (measured at 75–76). The `perf` definitions are part of the content hash a co-op session compares (it is computed from the definition's JSON), so a budget that was not set (`draws`, `nav_bake_s`) does not appear in the JSON: a new field does not shift the hash for those who did not name it. They are outside the replay check `content` (`SIMULATION = false`): a budget changed never makes a replay diverge.
 - The `counts` field is always there: `entities` is every entity in the world (with `AiId`, the `entities` field next to it), `meshes` is the entities with
   `Mesh3d`, `visible_meshes` is the meshes that some view draws (a camera or a light's shadow map; a directional light sees
   the whole region), `camera_meshes` is the meshes of the active cameras, each camera with its own count: the draws of the picture before Bevy puts them into batches;
@@ -3108,7 +3108,7 @@ Recording always runs from tick 0 and costs almost nothing. It records:
 - **action calls** (`teleport`, `set`, `spawn_prefab`, `attack`, `content_apply`, `regen`, `region_load`, `goto_tile`,
   `spawn_level`, `level_reload`, `npc_set_state`, …) along with the scope and the agent's "body". Calls made from inside another tool are not written: the outer call repeats them. `control` tools (pause, step, possess, content_reload, rebind) are not written. Raw edits through BRP (`world.insert_components`) bypass the tools and are not written either. A live content edit is written as `content_apply` on its own tick;
 - **rules**: `assert_add`, `assert_remove`, `assert_reset` with the tick they were called on (see "Invariants (E11)");
-- **checks**: a hash of the game data every `check_every` ticks (60 by default) and at the end of the recording. For each entity with `AiVisible`, in `AiId` order, it covers the entity's id and all reflectable game components (serialised through reflection, components in type-name order). It also covers the values of `add_replay_check` (the content database hash is one of them). Next to the hash is its breakdown, computed in the same pass: the hash of each component of each entity, and each `add_replay_check` value under its own name. The report uses it to say what exactly diverged.
+- **checks**: a hash of the game data every `check_every` ticks (60 by default) and at the end of the recording. For each entity with `AiVisible`, in `AiId` order, it covers the entity's id and all reflectable game components (serialised through reflection, components in type-name order). It also covers the values of `add_replay_check` (`content` is one of them: the definitions the session's simulation read, see "What the content check covers"). Next to the hash is its breakdown, computed in the same pass: the hash of each component of each entity, and each `add_replay_check` value under its own name. The report uses it to say what exactly diverged.
 
 ```bash
 shards save-replay                          # or ai/act {"tool": "replay_save", "args": {"path": …}}
@@ -3121,7 +3121,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify -
 # replay finished at tick 1010: identical to the recording (17 checks) [1010 ticks in 3.00s, 22 frames]
 ```
 
-**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`) and saves (`saves`), each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay or content has changed on purpose, record them again: `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
+**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`) and saves (`saves`), each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
 (for the template: `cargo test --test game record_reference_replays -- --ignored`).
 
 - Game data follows the same rule as `inspect`: everything except the `bevy_*` types and the internal markers of `ai_core`, plus `Transform` and `Name`. So components that only the window adds (`Visibility`, `GlobalTransform`, meshes) do not change the hash, and an `Entity` inside a component is hashed as its `AiId`. Labels and describe fragments are text for the AI and are not part of the hash: a new wording or a new describer does not break old replays.
@@ -3134,7 +3134,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify -
   (teleport)`).
 - During playback, recording continues, so a branch is saved as one replay.
 - The state of recording and playback is shown in `ai/status` (the `replay` field), and the result is written to the journal.
-- There is one format: JSON `shards-replay/3` — `seed`, `tick_hz`, `check_every`, `check_detail`, an optional `start` (the snapshot the replay starts from), `end`, `events`, `checks`; hashes are hex strings. Events are `call`, `input` and `assert` (rules). A check has `parts` besides `tick` and `hash`: `{"entities": {"e6": {"Health": "…", "Transform":
+- There is one format: JSON `shards-replay/3` — `seed`, `tick_hz`, `check_every`, `check_detail`, an optional `start` (the snapshot the replay starts from), `end`, `events`, `checks`, and `check_parts` (what the `content` check was made of, as it changed: see "What the content check covers"); hashes are hex strings. Events are `call`, `input` and `assert` (rules). A check has `parts` besides `tick` and `hash`: `{"entities": {"e6": {"Health": "…", "Transform":
   "…"}}, "game": {"content": "…"}}`. Everything added to the format is optional: a `/3` file without `check_every` and `check_detail` (as the build before the breakdown wrote them) is read as checks every 60 ticks without a breakdown, and is checked by the overall hash. A divergence there names only the tick (`no details: the recording keeps hashes only (check detail none)`). The overall hash is computed the same way, byte for byte, at any detail level. This build also plays `shards-replay/2` replays (always from tick 0, with no rules, interval or breakdown) and checks them by the overall hash (`no details: replay format 2`). A `shards-replay/1` replay hashed text, and this build does not check it: `play` replies `this replay was recorded by an older
   build (…); record it again`, and `--verify` exits with code 2.
 - A replay starts at tick 0 or from a snapshot: see "Snapshots (E11.4)". A replay from a snapshot keeps the same breakdown of checks.
@@ -3162,7 +3162,7 @@ cargo sandbox --replay replays/boss-pillar.json --verify
 #   e1 now: Transform { translation: Vec3(-18.0, 0.0, -19.0), rotation: Quat(0.0, -0.0, -0.0, 1.0), scale: Vec3(1.0, 1.0, 1.0) }
 ```
 
-- The list can contain: `e6 Boss: Health, Transform differ` (components diverged, including missing or extra ones), `e15 missing (Skeleton despawned at tick 40)` (the entity is in the recording but not in the game; in brackets, what the index knows about its id), `e27 extra (Skeleton)` (in the game but not in the recording), `replay check content differs` (the value of `add_replay_check`). The list shows no more than 10 entities; the rest are on one line: `… and 7 more`.
+- The list can contain: `e6 Boss: Health, Transform differ` (components diverged, including missing or extra ones), `e15 missing (Skeleton despawned at tick 40)` (the entity is in the recording but not in the game; in brackets, what the index knows about its id), `e27 extra (Skeleton)` (in the game but not in the recording), `replay check weather differs` (the value of `add_replay_check`), `replay check content differs: action/light_1 differs` (a check with parts names them). The list shows no more than 10 entities; the rest are on one line: `… and 7 more`.
 - A value is the debug output of reflection without module paths, no longer than 240 characters. Only the first divergence is explained. The later checks diverge because of it.
 - The journal gets the error `replay diverged at tick 60: e6 Boss: Health differs` and one `replay: e6 now: …` entry for each value. The `replay.last_report` field in `ai/status` holds the same text.
 - The check rate is set when recording: `--check-every N` for the game, or `check_every` in `EngineConfig` (60 by default). It is stored in the file, and playback checks on the same ticks. `--check-every` together with `--replay` is an error. At a check rate of 60, the tick in the report is the first check after the divergence. To find the exact tick, record the replay with `--check-every 1`.
@@ -3183,66 +3183,98 @@ cargo sandbox --replay replays/boss-pillar.json --verify
 
 The replay check `content` ties a recording to the content it was played with, but only to the definitions the session's
 simulation read. Adding a definition, or changing one the session never read, leaves a recorded replay verifying; changing one it
-read makes it diverge at the next check, and the report names it:
+read makes it diverge at the first check after the read, and the report names it. Real output, on copies of the sandbox's
+assets (`BEVY_ASSET_ROOT` at the copy): the first with `light_1` hitting for 21 instead of 20; the second with a prefab added, the
+health of a prefab the session never spawns changed, and the player's look recoloured:
 
 ```text
-replay finished at tick 2307: DIVERGED at tick 60: replay check content differs: action/light_1 differs [2307 ticks in 3.21s]
+$ cargo sandbox --replay tests/replays/combat_prototype.json --verify
+replay finished at tick 2307: DIVERGED at tick 300: replay check content differs: action/light_1 differs [2307 ticks in 1.34s]
+$ cargo sandbox --replay tests/replays/combat_prototype.json --verify
+replay finished at tick 2307: identical to the recording (39 checks) [2307 ticks in 2.18s]
 ```
 
-**What counts as read.** Each definition in the database carries a flag, and each kind a second one ("read whole"). A typed read
-(`ContentDb::get`, `Content<T>::get`, `get_json`) sets the definition's flag; going over a kind (`iter`, `ids`, `ids_of`: a
-director choosing among all plans, the generator choosing among all tiles) sets the kind's, and then every definition of that kind
-counts, so adding one to it diverges too. A flag is set only while the **simulation's scope** is open (`ai_core::SimScope`, one
-per world), and only for kinds that the simulation may read:
+What still makes a recording diverge: a change to a definition it read (by id, or a kind it read whole), a definition added to or
+removed from a kind it read whole, a definition it read removed, and of course any change to gameplay. What no longer does: a new
+definition of a kind it reads by id, a change to one it never read, and any change to a kind outside the simulation (below).
 
-- *Open*: every fixed tick (`FixedMain`, around Bevy's `run_fixed_main`: also the recorded calls, which play back in `FixedFirst`);
-  the body of every `action` tool call (live calls run between ticks, recorded ones inside a tick: both count the same); the
-  engine's state transitions (`OnEnter(InGame)` builds the world, `RegionLoading`); and the builders themselves, whatever schedule
-  calls them: the start region, `change_region`, `spawn_prefab`, `spawn_level`. Reads that build the world before tick 0 count.
-- *Suspended* inside it, for what only watches: invariants (engine invariants are off in a `dist` build and with
-  `--no-engine-invariants`, so their reads must not change what counts), coverage counting, replay and snapshot hashing, a snapshot
-  load putting a state back, and the database's own work (validation, `refs.require`, `content_apply` checking an edit,
-  playback restoring the recording's definitions).
+**What counts as read.** Each definition in the database carries a flag, and each kind a second one ("read whole"). A typed read
+(`ContentDb::get`, `Content<T>::get`, `get_json`) sets the definition's flag; going over a kind (`iter`, `ids`, `ids_of`: the
+generator choosing among all tiles, the sandbox building every layout) sets the kind's, and then every definition of the kind
+counts, so a definition added to it counts too. A lookup of an id that does not exist sets nothing: a recording that looked for
+`status/burn` while there was none diverges once there is one, because its playback reads it (`status/burn extra`). The engine's
+own readers look up by id what they need by id: a spawn reads its prefab and the prefabs it extends, the statuses tick with the
+definitions of the statuses someone carries. A flag is set only while the **simulation's scope** is open (`ai_core::SimScope`, one
+per world), and only for kinds the simulation depends on:
+
+- *Open*: every fixed tick (`FixedMain`, around Bevy's `run_fixed_main`: the recorded calls too, which play back in `FixedFirst`);
+  the body of every `action` tool call (live calls run between ticks, recorded ones inside a tick: both count the same); a change
+  of `EngineState` (`OnEnter(InGame)` builds the world); and the builders, whatever calls them: the start region before tick 0,
+  `change_region`, `spawn_region`, `spawn_level`. So the reads that build the world before tick 0 count. A prefab spawned anywhere
+  inside these (a tick, an action, a region being built) counts.
+- *Suspended* inside it, for what only watches: the invariants (engine invariants are off in a `dist` build and with
+  `--no-engine-invariants`, so their reads must not count), coverage, replay and snapshot hashing, a snapshot load putting a state
+  back, the digests of an action call (its `CHANGES`), the tiles' visuals streaming in, and the database's own work (validation and
+  `refs`, `content_apply` checking an edit against what is there, a playback restoring the recording's definitions).
 - *Closed*: everything else. Frames (`Update`, `PostUpdate`, the render world, a window's input), query and control tools
-  (`content_list`, `observe`, `npc_state`, `step`'s stop conditions), validation without a game (`--check-content`). Queries are
-  not replay events: a read they made could never be repeated by the playback, so they never count.
-- *Kinds outside the simulation* (`ContentDef::SIMULATION = false`) never count, read anywhere: what only the picture, the sound,
-  menus and services outside the simulation read: `look`, `effect`, `fx`, `scatter`, `animset`, `sound`, `music`, `audio`,
-  `theme`, `locale`, `devmenu`, `input_map`, `net`, `achievement`, `save`, `perf`. The engine guarantees they never change the
-  world. `screen` does count, but only when a screen is pressed (`ui_click`, `ui_navigate`, `ui_set` are recorded, and the
-  screen decides what a press does); opening one reads it with `ContentDb::peek`, the read that never counts.
+  (`content_list`, `observe`, `npc_state`), validation without a game (`--check-content`). Queries are not replay events: a read
+  they made could never be repeated by a playback, so it never counts.
+- *Kinds outside the simulation* (`ContentDef::SIMULATION = false`) never count, read anywhere: `look`, `effect`, `fx`,
+  `scatter`, `animset`, `sound`, `music`, `audio`, `theme`, `locale`, `devmenu`, `input_map` (a replay records `Intent`, not keys),
+  `achievement`, `save` and `perf`. What only the picture, the sound, menus and services outside the session read. A game's own
+  kind of that sort sets `const SIMULATION: bool = false;` in its `ContentDef`; one the simulation reads keeps the default `true`.
+  `net` counts (the host spawns `player_prefab` for a joining player). `screen` counts only when a screen is pressed (`ui_click`,
+  `ui_navigate`, `ui_set` are recorded, and the screen decides what a press does); showing one reads it with `ContentDb::peek`,
+  the read that never counts. Code that runs inside the scope and is not the simulation (a describer, a picture) reads with `peek`,
+  `peek_ids` and `peek_iter`.
 
 **Why the counted set is the same headless, offscreen and in a window.** It changes only inside the scope, and the scope holds
 only what the recording and its playback both run, tick for tick: the fixed tick, the recorded action calls and the world they
-build. Whatever differs between those modes (drawing, a window's input, looks, effects, foliage, animation, the HUD, a person's
-or an agent's queries) runs outside it or reads kinds that never count. A drawing path inside a tick that must read a
-simulation kind (a model put on a body only when the game draws) reads it with `peek`. The proof is the reference replays: each
-verifies headless, `--offscreen` and in a window with the content check compared at every check, and
-`content_reads_are_the_same_headless_and_drawn` compares the counted sets of each directly. Bevy's multithreaded executor
-does not get in the way: the flags are atomics, and the scope belongs to the world (a heavy-mode twin and a stand's players have
-their own), whose schedules run one at a time.
+build. What differs between those modes (drawing, a window's input, looks, effects, foliage, animation, the HUD, the tiles'
+visuals, a person's or an agent's queries) runs outside the scope, suspends it, or reads kinds that never count. The checks:
+`content_reads_are_the_same_headless_and_drawn` (an ignored test, it needs a GPU) plays one session headless and offscreen, with
+frames between the ticks and some 14 700 meshes drawn, and compares what each counted, part by part; every reference replay
+verifies headless (`--verify`) and plays identically in an offscreen game; CI verifies them in a window under Xvfb. Bevy's
+multithreaded executor does not get in the way: the flags are atomics set once (a read after that only loads), and the scope
+belongs to the world (a heavy-mode twin and a stand's players have their own), whose schedules run one at a time.
 
-**What the replay keeps.** The check's value hashes its parts: `kind/id` → the definition's hash for each counted definition, and
-`kind (all)` for each kind read whole. Next to `checks`, the file has `check_parts`: for each check with parts, the parts that
-appeared, changed or went at each check tick (a handful of lists per file: the set grows early and then stays). A divergence of
-the check folds the lists up to its tick and names each part that differs, is missing (counted in the recording, not now) or is
-extra (counted now, not in the recording): `action/light_1 differs`, `tile/swamp extra`.
+**What the replay keeps.** The check's value hashes its parts: `kind/id` → the definition's hash (FNV-1a of its kind, id and JSON)
+for each counted definition, and `kind (all)` for each kind read whole, followed by all of its definitions. Next to `checks`, the
+file has `check_parts`: for each check with parts, the parts that appeared, changed (`set`) or went (`gone`) at each check tick,
+`{"tick": 60, "set": {"action/light_1": "…", …}}`. The set grows while the session meets new things and then stays, so the lists
+are short (1 to 3 KB a file: 2.6 KB of the combat prototype's 372). A divergence of the check folds the lists up to its tick and names each part
+that differs, is missing (counted in the recording, not now) or is extra (counted now, not in the recording): `action/light_1
+differs`, `layout/empty extra`, no more than 10, then `… and N more`. A check whose recording keeps hashes only
+(`--check-detail none`) still names them after its `no details` reason. Any module can make a check of this kind:
+`add_parts_check(name, hint, parts, whole)` registers it for replays and snapshots at once.
 
 **Content edits in a session.** `content_apply` (and `content_reload` and hot reload, which go through it) is a replay event: a
-changed definition keeps its flag and gets its new hash, at the same tick in the recording and in the playback, which starts from
-the recording's versions as before.
+changed definition keeps its flag and gets its new hash, at the same tick in the recording and in its playback, which starts from
+the recording's versions as before. A definition the edit adds or changes and the session never read stays out of the parts.
 
-**Snapshots** check the same parts. A snapshot stores the counted parts with their hashes (`check_parts.content`); a load
-compares the loading game's definitions with them (other definitions may differ: `content differs (…): action/light_1 differs`)
-and then sets the flags to exactly the snapshot's, so the restored state hashes as the original did, a heavy-mode twin goes on
-counting what the original counts, and a replay from a snapshot plays where the content it never read has changed.
+**Snapshots** compare the same parts. A snapshot stores the counted parts with their hashes (`check_parts.content`); a load
+compares the loading game's versions of those definitions (others may differ) and refuses one that differs, naming it:
+`content differs (action/light_1 differs): the content the session read differs from this game's: …`. Then it sets the flags to
+exactly the snapshot's, so the restored state hashes as the original did, a heavy-mode twin counts what the original counts, and a
+replay from a snapshot plays in a game whose unread content has changed. A refused load puts the game's own flags back with its
+state.
 
-**Co-op** keeps the hash of the whole database: the host and its clients compare it when one joins (and a Steam lobby shows it),
-because a client must be able to run anything the host may read later, not only what the session read so far.
+**Co-op** keeps the hash of the whole database (`ContentDb::hash`): the host and a client compare it when the client joins (and a
+Steam lobby shows it), because a client must be able to run anything the host may read later, not only what was read so far. The
+desync check (`world_hash`) does not include replay checks, so nothing changes there.
 
-**Older files.** A replay or snapshot without `check_parts` was made when the content check hashed the whole database. It plays,
-loads and verifies as before: the game computes the check over the whole database for that session (and for the snapshots it
-takes and the branches it saves), so old recordings and crash reports keep verifying with the content they were made with.
+**Older files.** The format stays `shards-replay/3`: `check_parts` is optional. A replay or snapshot without it was made when the
+content check hashed the whole database, and it plays, loads and verifies as before: the game computes the check over the whole
+database for that session (and for the snapshots it takes and the branches it saves), and says so in the journal (`replay: the
+recording does not list the parts of check `content`: …`); a divergence there reads `replay check content differs (recorded whole:
+the recording lists no parts of it)`. So old recordings and crash reports keep verifying with the content they were made with, and
+are recorded again only to stop depending on content they never read.
+
+**Cost.** A read checks the definition's flag first (one atomic load, set already after the first read), then the scope (two
+atomic loads); no lock. The parts are listed at each check (every 60 ticks), and each definition's hash is computed once, when it
+is loaded or edited, instead of hashing every definition's JSON at every check as before. On the combat prototype (release build,
+`--replay … --verify`, the two builds run in turns) the tick time is the same within the measurement's noise; see the PR that made
+the change for the numbers.
 
 ## Snapshots (E11.4)
 
@@ -3266,9 +3298,10 @@ shards load-snapshot snapshots/boss_phase2.json   # or act snapshot_load path=�
 - **rebuilt** after loading (`add_snapshot_rebuild`): caches derived from what was saved — `PhysicsWorld`,
   the remembered values of the replay recording's inputs, **the region's navmesh** (`navmesh`: built again for the region and the solid bodies
   that the snapshot brought back; the NPCs of a game loaded from a snapshot walk the same routes as in the original one);
-- **checked** (`add_snapshot_check`): what the world is built around. The snapshot stores hashes of the content database, of colliders without
-  `AiId` (level geometry) and of placed levels, and does not load where they differ: `content differs (snapshot …, this
-  game …): the content files differ …`. `force=true` loads it anyway;
+- **checked** (`add_snapshot_check`, `add_parts_check`): what the world is built around. The snapshot stores hashes of the content the session
+  read (each definition, `check_parts.content`), of colliders without `AiId` (level geometry) and of placed levels, and does not load where they
+  differ: `content differs (action/light_1 differs): the content the session read differs …` (content it never read may differ; see "What the
+  content check covers"). `force=true` loads it anyway;
 - **not state**: settings (tools, hooks, registries), the journal, agent sessions (they name entities by id), and everything that
   only the window shows. The seed and the tick rate are in the header and must match (`start the game with --seed 7`);
   the engine version in the header must match too: a different minor version (`0.2` and `0.3`) is refused (`force` skips this check), and a different patch version only gives a warning.
@@ -3300,7 +3333,7 @@ ran 120 ticks (332 → 452)
   ~ e25 Skeleton "Den Guard": +ground 1.6m/s; fight e5 · token · leash 9/10m → fight e5 · circle · leash 7/10m; -active claw 0.10s (zone cone 1.8m 100°); moved 1.8m S
 ```
 
-**Content edits and levels placed by id.** Content is files, and the snapshot checks their hash. But `content_apply` puts
+**Content edits and levels placed by id.** Content is files, and the snapshot checks the hashes of the definitions its session read. But `content_apply` puts
 definitions that are not in the files, and they are part of the session. `ContentEdits` lists the definitions where the database differs from
 its files (the resource exists only while such an edit exists, so the snapshot of a game with no edits is the same file as before), and
 the `content` preparation puts the snapshot's edits on top of the files of the game it is loaded into, before the `content` check (the game's own edits are dropped in the process).
@@ -4056,7 +4089,7 @@ What a surface looks like is set by content of the `look` kind (`*.look.ron`). T
 
 **Outline.** The mesh is drawn once more, inside out. A child entity, `OutlineHull`, draws only its back faces. Its vertices move `width` screen pixels along the normal on screen, so the line stays one width near and far. The outline's normals are averaged over the mesh's points: positions closer than 0.1 mm count as one point, and each face is weighted by its corner's angle. So there are no gaps on a cube's edges or at flat faces. The outline is built from the source mesh, not from a flat copy. A skinned mesh gives its outline the same `SkinnedMesh`, so the outline bends with it. The outline casts no shadow and is not drawn in the prepass. It is only around the silhouette, so there are no edges inside. The outline takes the mesh's `RenderLayers` (and follows them), `NoFrustumCulling` and `VisibilityRange`. These meshes get no outline: transparent materials (`alpha_mode` not `Opaque`: glass, cut-out leaf cards, where the shell would show through or outline the whole card), meshes with morph targets (the shell would not follow them), a mesh whose data has gone to the GPU, and a mesh that is not a triangle list. A mesh with morph targets has no flat copy either.
 
-**Only the picture.** Meshes change only with the `render` feature of the umbrella crate, in a window or with `--offscreen`. Without a picture (`--headless`) nothing is styled: the look systems run only when there is a picture (`ai_core::display::drawn`). A `Look` on a body from a prefab is an ordinary component of the prefab. It is part of the replay and the snapshot, and it goes to co-op clients. Otherwise a client would draw the bodies that the host spawned after the client joined, without a look. So code that sets a `Look` only for the picture sets it on mesh children without an `AiId`, not on the bodies (this is what `visuals.rs` in the sandbox and the template do). The outline is an entity without an `AiId`. Look definitions are part of the content base's hash, like any content: a new look, or an edit to a look, makes an old replay diverge at the `content` check, and the reference replays are recorded again.
+**Only the picture.** Meshes change only with the `render` feature of the umbrella crate, in a window or with `--offscreen`. Without a picture (`--headless`) nothing is styled: the look systems run only when there is a picture (`ai_core::display::drawn`). A `Look` on a body from a prefab is an ordinary component of the prefab. It is part of the replay and the snapshot, and it goes to co-op clients. Otherwise a client would draw the bodies that the host spawned after the client joined, without a look. So code that sets a `Look` only for the picture sets it on mesh children without an `AiId`, not on the bodies (this is what `visuals.rs` in the sandbox and the template do). The outline is an entity without an `AiId`. Looks are part of the content hash a co-op session compares, but not of the replay check `content` (`SIMULATION = false`): a new look, or an edit to one, never makes a replay diverge.
 
 **For agents.** `looks` (Dev, query) lists the looks (colour, light, flat faces, outline, glow, glTF materials) and how many meshes each one draws now, then the meshes without a look, then the meshes that wait for their files. `look_outlines on=false` (Dev, query; with no argument, it turns them on) hides the outlines or brings them back. They stay built, so turning them on again costs nothing. The setting is the resource `LookSettings`, not part of the replay or the snapshot.
 
@@ -4211,7 +4244,7 @@ content/region/wilds.scatter.ron: scatter `grass`: spacing: meters, 0 (any) or 0
 content/region/wilds.scatter.ron: scatter `grass`: density: 20/m² on a tile of `wilds` (256 m²) with 2 levels of detail is 10240 mesh entities a tile, more than 10000; lower the density or the levels (each tile keeps its first 5000 instances)
 ```
 
-Also checked: a tag that no tile has, a region that does not exist, an empty `looks`, more than 4 levels of detail, numbers outside their allowed ranges, and a glTF file that is not in the assets folder. Definitions are part of the content hash, like all content: a new definition makes an old replay diverge at the `content` check, and the reference replays are recorded again.
+Also checked: a tag that no tile has, a region that does not exist, an empty `looks`, more than 4 levels of detail, numbers outside their allowed ranges, and a glTF file that is not in the assets folder. Definitions are part of the content hash a co-op session compares, but not of the replay check `content` (`SIMULATION = false`): a new or edited definition never makes a replay diverge.
 
 **How the game uses it.** (1) Foliage looks without an outline in `*.look.ron` (in the sandbox: `grass`, `grass_dry`, `bush`,
 `rock`). (2) A `*.scatter.ron` file with tiles, density and meshes: in the sandbox, `region/wilds.scatter.ron`, and in the template,

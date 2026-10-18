@@ -6,7 +6,7 @@
   "check_detail": "components",
   "end": {
     "tick": 353,
-    "hash": "b64fa2d65e58dfa3",
+    "hash": "6809679630af414e",
     "parts": {
       "entities": {
         "e1": {
@@ -442,7 +442,7 @@
         }
       },
       "game": {
-        "content": "7873792dbaa8f017",
+        "content": "b13411d364ba07df",
         "level": "27c97e12837f822e"
       }
     }
@@ -766,7 +766,7 @@
   "checks": [
     {
       "tick": 60,
-      "hash": "02ffd4d41cb0bb39",
+      "hash": "da17147a77e4e360",
       "parts": {
         "entities": {
           "e1": {
@@ -1206,14 +1206,14 @@
           }
         },
         "game": {
-          "content": "7873792dbaa8f017",
+          "content": "b13411d364ba07df",
           "level": "c32b4cdf79e99ece"
         }
       }
     },
     {
       "tick": 120,
-      "hash": "6ebef436a89b4f13",
+      "hash": "e0c76643f2f96c86",
       "parts": {
         "entities": {
           "e1": {
@@ -1653,14 +1653,14 @@
           }
         },
         "game": {
-          "content": "7873792dbaa8f017",
+          "content": "b13411d364ba07df",
           "level": "c32b4cdf79e99ece"
         }
       }
     },
     {
       "tick": 180,
-      "hash": "24bef19071b44373",
+      "hash": "bb75864d12dcfb26",
       "parts": {
         "entities": {
           "e1": {
@@ -2100,14 +2100,14 @@
           }
         },
         "game": {
-          "content": "7873792dbaa8f017",
+          "content": "b13411d364ba07df",
           "level": "c32b4cdf79e99ece"
         }
       }
     },
     {
       "tick": 240,
-      "hash": "464a6ccefd212f8a",
+      "hash": "ccc7d1e3fcd58ccf",
       "parts": {
         "entities": {
           "e1": {
@@ -2547,14 +2547,14 @@
           }
         },
         "game": {
-          "content": "7873792dbaa8f017",
+          "content": "b13411d364ba07df",
           "level": "c32b4cdf79e99ece"
         }
       }
     },
     {
       "tick": 300,
-      "hash": "2fff8132a0db2992",
+      "hash": "8dbe2469a54bd0e7",
       "parts": {
         "entities": {
           "e1": {
@@ -2994,10 +2994,62 @@
           }
         },
         "game": {
-          "content": "7873792dbaa8f017",
+          "content": "b13411d364ba07df",
           "level": "c32b4cdf79e99ece"
         }
       }
     }
-  ]
+  ],
+  "check_parts": {
+    "content": [
+      {
+        "tick": 60,
+        "set": {
+          "attack_plan/skeleton": "ae670062e200e500",
+          "attack_plan/warden": "68e4d9a58c9130e5",
+          "behavior/skeleton": "0ca103408741deda",
+          "behavior/warden": "7b30285714479162",
+          "combat_tuning/default": "7fc354d607b29452",
+          "layout (all)": "0000000000000000",
+          "layout/arena": "091851d57d80f2e4",
+          "layout/course": "f65397f9b47f46e1",
+          "layout/watch": "dc738a5676554d89",
+          "locomotion/player": "25720e5c56082052",
+          "locomotion/skeleton": "ba33bb652bf0630e",
+          "locomotion/warden": "9a9e3ea79d7406f7",
+          "moveset/player": "e4c47a54d6754e1d",
+          "moveset/skeleton": "b6201dac07a1f664",
+          "moveset/warden": "425a35b2df390679",
+          "nav/default": "2dc1d1a458e871b3",
+          "poi/camp": "74a31e6b847c004a",
+          "poi/den": "5eded0c8c36763e0",
+          "poi/shrine": "0b192011a6544cf1",
+          "poi/spawn": "c7361f8f593f6acf",
+          "prefab/camp_skeleton": "d8a881c544517717",
+          "prefab/den_guard": "0dfbd33a696d0124",
+          "prefab/frost_warden": "396192b3dab6d75f",
+          "prefab/pillar": "47858a8acf05b851",
+          "prefab/player": "7c4beeeaf906c152",
+          "prefab/skeleton": "0bffca73f472ecd8",
+          "region/wilds": "38108560efbe2622",
+          "socket_rules/default": "5d51df07d8369480",
+          "tile (all)": "0000000000000000",
+          "tile/expanse_gate": "78fe6330f9bcb3a2",
+          "tile/expanse_grove": "c4f2b96bc19091d0",
+          "tile/expanse_meadow": "7ba9c05f10f6aa87",
+          "tile/expanse_ruin": "656c863ad4197f34",
+          "tile/gate": "4431e0cfe600844e",
+          "tile/grass": "5f8be379f8b0bded",
+          "tile/hall": "c10368c26c23c289",
+          "tile/pillars": "35c2ffa1dae1fdbf",
+          "tile/road_bend": "d67c6ba670362fbe",
+          "tile/road_end": "8e2122ca36e10266",
+          "tile/road_straight": "0d62aa5e23506fa2",
+          "tile/road_t": "5299559aa46d9693",
+          "tile/ruin": "9e2d81b9dd8d54aa",
+          "tile_map/wilds_safe": "fd30d1861a02dde1"
+        }
+      }
+    ]
+  }
 }

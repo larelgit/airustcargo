@@ -10,11 +10,38 @@
     "seed": 42,
     "tick_hz": 59.99999880000003,
     "engine": "0.2.0",
-    "state_hash": "cebf4247f5a71c72",
+    "state_hash": "aab4e6bca4e2a5e3",
     "checks": {
-      "content": "7873792dbaa8f017",
+      "content": "3108343362490b4b",
       "levels": "cbf29ce484222325",
       "static_colliders": "b16a4682932b69b4"
+    },
+    "check_parts": {
+      "content": {
+        "action/player_death": "0b5c0c94f6fe919b",
+        "attack_plan/skeleton": "ae670062e200e500",
+        "attack_plan/warden": "68e4d9a58c9130e5",
+        "behavior/skeleton": "0ca103408741deda",
+        "behavior/warden": "7b30285714479162",
+        "combat_tuning/default": "7fc354d607b29452",
+        "director/boss": "9938c1890b3c4d09",
+        "layout (all)": "0000000000000000",
+        "layout/arena": "091851d57d80f2e4",
+        "layout/course": "f65397f9b47f46e1",
+        "layout/watch": "dc738a5676554d89",
+        "locomotion/player": "25720e5c56082052",
+        "locomotion/skeleton": "ba33bb652bf0630e",
+        "locomotion/warden": "9a9e3ea79d7406f7",
+        "moveset/player": "e4c47a54d6754e1d",
+        "moveset/skeleton": "b6201dac07a1f664",
+        "moveset/warden": "425a35b2df390679",
+        "perception/boss": "112d106d316a39d7",
+        "perception/skeleton": "2cd6b58f2255fd1b",
+        "prefab/frost_warden": "396192b3dab6d75f",
+        "prefab/pillar": "47858a8acf05b851",
+        "prefab/player": "7c4beeeaf906c152",
+        "prefab/skeleton": "0bffca73f472ecd8"
+      }
     },
     "ids": {
       "next": 15,
@@ -1560,7 +1587,7 @@
   },
   "end": {
     "tick": 157,
-    "hash": "3acfc68399ca2b72",
+    "hash": "dd5a4326350a6290",
     "parts": {
       "entities": {
         "e1": {
@@ -1783,7 +1810,7 @@
         }
       },
       "game": {
-        "content": "7873792dbaa8f017"
+        "content": "38c9df426708d932"
       }
     }
   },
@@ -1898,7 +1925,7 @@
   "checks": [
     {
       "tick": 60,
-      "hash": "c5d21ac2ba170bb8",
+      "hash": "6171e79ba259f09a",
       "parts": {
         "entities": {
           "e1": {
@@ -2121,13 +2148,13 @@
           }
         },
         "game": {
-          "content": "7873792dbaa8f017"
+          "content": "38c9df426708d932"
         }
       }
     },
     {
       "tick": 120,
-      "hash": "78e2f0c6023c8f78",
+      "hash": "85449bbab593a7da",
       "parts": {
         "entities": {
           "e1": {
@@ -2350,9 +2377,42 @@
           }
         },
         "game": {
-          "content": "7873792dbaa8f017"
+          "content": "38c9df426708d932"
         }
       }
     }
-  ]
+  ],
+  "check_parts": {
+    "content": [
+      {
+        "tick": 60,
+        "set": {
+          "action/light_1": "9aa61d0f52a80f83",
+          "action/player_death": "0b5c0c94f6fe919b",
+          "attack_plan/skeleton": "ae670062e200e500",
+          "attack_plan/warden": "68e4d9a58c9130e5",
+          "behavior/skeleton": "0ca103408741deda",
+          "behavior/warden": "7b30285714479162",
+          "combat_tuning/default": "7fc354d607b29452",
+          "director/boss": "9938c1890b3c4d09",
+          "layout (all)": "0000000000000000",
+          "layout/arena": "091851d57d80f2e4",
+          "layout/course": "f65397f9b47f46e1",
+          "layout/watch": "dc738a5676554d89",
+          "locomotion/player": "25720e5c56082052",
+          "locomotion/skeleton": "ba33bb652bf0630e",
+          "locomotion/warden": "9a9e3ea79d7406f7",
+          "moveset/player": "e4c47a54d6754e1d",
+          "moveset/skeleton": "b6201dac07a1f664",
+          "moveset/warden": "425a35b2df390679",
+          "perception/boss": "112d106d316a39d7",
+          "perception/skeleton": "2cd6b58f2255fd1b",
+          "prefab/frost_warden": "396192b3dab6d75f",
+          "prefab/pillar": "47858a8acf05b851",
+          "prefab/player": "7c4beeeaf906c152",
+          "prefab/skeleton": "0bffca73f472ecd8"
+        }
+      }
+    ]
+  }
 }

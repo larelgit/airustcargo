@@ -169,6 +169,12 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   formats them with `shards::locale::text(world, id, &Args)` as whole sentences with parameters, not by joining pieces.
   The sandbox does the same: its world, prefabs, attacks, movesets and movement are in `crates/sandbox/assets/content/`. A new content kind is
   a struct with `ContentDef` and `add_content`; references to other definitions are checked in `validate` (`refs.require`).
+  The replay check `content` covers only the definitions the simulation read (a fixed tick, an action call, the world being built):
+  read one definition by id when that is all the code needs (`iter`/`ids` make the whole kind count); code inside the simulation's
+  scope that is not the simulation (a describer, a picture) reads with `peek`/`peek_iter`; a kind only the picture, the sound or
+  services outside the session read sets `const SIMULATION: bool = false;`. A builder called outside a tick or an action opens the
+  scope (`ai_core::scope::open`), and what only watches inside one suspends it (`scope::suspend`). The test
+  `content_reads_are_the_same_headless_and_drawn` (GPU, ignored) checks that drawing reads nothing that counts.
 - **Create the world in `OnEnter(EngineState::InGame)`**, not in `Startup`: content exists only after loading. The order of
   spawning is the same in every run, otherwise `AiId` and `ColliderId` will diverge.
 - All gameplay runs in `FixedUpdate`, in one of the `SimSet` sets; randomness comes only from `SimRng`.
@@ -371,7 +377,9 @@ It is written when a panic happens on another thread (the render thread, a task)
   (`ok`, `OVER`, `-`) and exits with code 0, 1 (a budget is exceeded or the game did not reach the measurement) or 2 (no such definition, or `--offscreen`
   has no GPU). A debug build gives no verdict.
 - The reference replays `tests/replays/*.json` (obstacle course, combat prototype, token director, guard on the navmesh, region changes,
-  a replay from a snapshot, a replay of the sandbox's saves and the hit-outcome sparring) are checked by `cargo test` (and by nextest). After a deliberate change to gameplay or content, record them again:
+  a replay from a snapshot, a replay of the sandbox's saves and the hit-outcome sparring) are checked by `cargo test` (and by nextest). After a deliberate change to gameplay, or to a definition they read (by id, or a kind
+  they read whole: `check_parts.content` in the file lists them), record them again; content they never read, and kinds outside the
+  simulation (looks, sounds, effects, animation sets, screens' themes), do not make them diverge:
   `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays` (for the template —
   `cargo test --test game record_reference_replays -- --ignored` in `template/`).
 - The long checks are not run by hand but by `.github/workflows/nightly.yml` (every reference replay with `--heavy 10 --heavy-span 30`, worldgen on 100000 seeds, the GPU tests, performance), `soak.yml` (half an hour of a live stand) and `cross.yml` (the reference replays on Windows and Ubuntu 22.04, weekly); a failed night opens an issue labelled `nightly`. Their commands are the ones above with bigger numbers: the nightly worldgen is `--worldgen-report wilds --seeds 1..100000` (and `valley` in the template), not the 1000 seeds of `ci.yml`.
