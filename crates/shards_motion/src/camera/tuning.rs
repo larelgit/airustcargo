@@ -205,6 +205,8 @@ pub struct CameraTuning {
     /// A body that moved farther than this (m) in one tick was placed, not walked (a teleport, a
     /// respawn, a region change): the render interpolation ([`Interpolated`](crate::Interpolated))
     /// starts over there instead of drawing the body flying across.
+    /// Presentation tuning only: it lives in the non-simulation `camera` kind (a headless game never
+    /// reads it, so it is outside the replay content check), not in a character definition.
     #[serde(skip_serializing_if = "body_snap_distance_is_default")]
     pub body_snap_distance: f32,
     /// Framing a locked target.
