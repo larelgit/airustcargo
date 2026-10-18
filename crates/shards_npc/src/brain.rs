@@ -13,7 +13,7 @@
 //! Engine conditions: `target_known`, `target_seen`, `target_heard`, `target_lost`,
 //! `target_within {meters}`, `target_in_leash {margin}`, `beyond_leash {margin}`, `at_home
 //! {within}`, `arrived`, `has_token`, `attack_done`, `resting`, `busy`, `timer_done`,
-//! `in_state {secs}`, `health_below {fraction}`, `heard_noise`, `chance {p}`.
+//! `in_state {secs}`, `health_below {fraction}`, `heard_noise`, `chance {p}`, `deciding`.
 //!
 //! Engine states: `idle`, `hold`, `patrol {speed, within, wait}`, `chase {speed, within}`,
 //! `return_home {speed, heal}`, `wait_token {speed}`, `attack {speed}`, `flee {speed,
@@ -149,6 +149,15 @@ pub struct NpcBrain {
     pub orbit: f32,
 }
 
+/// The decision timer of an NPC whose behaviour has a [`BehaviorDef::think`] cadence: only
+/// those NPCs carry it. Gameplay state: kept in replays and snapshots.
+#[derive(Component, Reflect, Clone, Debug, PartialEq, Default)]
+#[reflect(Component, Default)]
+pub struct NpcThink {
+    /// Seconds until its next decision tick; counted down only while it runs no action.
+    pub left: f32,
+}
+
 /// What an NPC wants this tick: its state hook's [`NpcOutput`], refined by the director
 /// (waiting roles) and the planner (approach, strike). The nav agent and the `Intent` writer
 /// carry it out.
@@ -267,6 +276,8 @@ pub struct NpcCtx<'a> {
     seed: u64,
     /// Separates the random streams of conditions evaluated in one tick.
     salt: u64,
+    /// This tick is one of the NPC's decision ticks ([`BehaviorDef::think`]).
+    deciding: bool,
 }
 
 impl<'a> NpcCtx<'a> {
@@ -305,7 +316,16 @@ impl<'a> NpcCtx<'a> {
             tick: ai_core::sim::tick(world),
             seed: world.get_resource::<SimSeed>().map_or(0, |s| s.0),
             salt: 0,
+            deciding: true,
         })
+    }
+
+    /// Whether this tick is one the NPC decides on: always, unless its behaviour has a
+    /// [`BehaviorDef::think`] cadence, then once per period of its free time (the first free
+    /// tick is one). A hook that decides (a choice, a roll) does it only when this holds; its
+    /// per-tick work (aiming, moving) does not wait for it.
+    pub fn deciding(&self) -> bool {
+        self.deciding
     }
 
     /// The NPC's random stream for this tick (`SimRng`'s, keyed by its id), separated by
@@ -447,6 +467,19 @@ struct Decided {
     changed: Option<(String, String)>,
     /// The rest its plan starts with, drawn when its brain first runs.
     first_rest: Option<f32>,
+    /// What its decision timer comes to.
+    think: Think,
+}
+
+/// What an NPC's decision timer is after this tick.
+#[derive(Clone, Copy)]
+enum Think {
+    /// Untouched (an inactive NPC).
+    Keep,
+    /// The behaviour has no cadence: no timer.
+    Off,
+    /// Seconds left.
+    Left(f32),
 }
 
 /// `NpcSystems::Decide`: every active NPC, in `AiId` order, takes at most one transition and
@@ -472,6 +505,24 @@ pub(crate) fn decide(world: &mut World) {
             && let Some(mut plan) = e.get_mut::<NpcPlan>()
         {
             plan.rest = rest;
+        }
+        match d.think {
+            Think::Keep => {}
+            Think::Left(left) => match e.get_mut::<NpcThink>() {
+                Some(mut think) => {
+                    if think.left != left {
+                        think.left = left;
+                    }
+                }
+                None => {
+                    e.insert(NpcThink { left });
+                }
+            },
+            Think::Off => {
+                if e.contains::<NpcThink>() {
+                    e.remove::<NpcThink>();
+                }
+            }
         }
         let heal = d.drive.as_ref().map_or(0.0, |o| o.heal);
         if let Some(mut drive) = e.get_mut::<NpcDrive>() {
@@ -501,12 +552,12 @@ fn decide_all(world: &World, hooks: &NpcHooks, dt: f32) -> (Vec<Decided>, Vec<(S
     for (id, entity) in npcs_in_order(world) {
         let (Some(npc), Some(brain)) = (world.get::<Npc>(entity), world.get::<NpcBrain>(entity)) else { continue };
         if !brain.active {
-            decided.push(Decided { entity, brain: brain.clone(), drive: None, changed: None, first_rest: None });
+            decided.push(Decided { entity, brain: brain.clone(), drive: None, changed: None, first_rest: None, think: Think::Keep });
             continue;
         }
         check_ids(db, id, npc, &mut problems);
         let Some(behavior) = db.get::<BehaviorDef>(&npc.behavior) else {
-            decided.push(Decided { entity, brain: brain.clone(), drive: None, changed: None, first_rest: None });
+            decided.push(Decided { entity, brain: brain.clone(), drive: None, changed: None, first_rest: None, think: Think::Keep });
             continue;
         };
         decided.push(decide_one(world, entity, brain, behavior, &npc.behavior, hooks, dt, &mut problems));
@@ -560,12 +611,13 @@ fn decide_one(
 ) -> Decided {
     let mut next = brain.clone();
     next.target = world.get::<Perceived>(entity).and_then(|p| p.focus);
+    let (deciding, think) = think_tick(world, entity, behavior, dt);
     let mut changed = None;
     if behavior.states.contains_key(&next.state) {
         next.since += dt;
         next.timer = (next.timer - dt).max(0.0);
         let state = &behavior.states[&next.state];
-        if let Some(ctx) = NpcCtx::new(world, entity, &next, dt) {
+        if let Some(ctx) = NpcCtx::new(world, entity, &next, dt).map(|c| NpcCtx { deciding, ..c }) {
             let taken = state.transitions.iter().enumerate().find(|(ti, t)| {
                 t.when.iter().enumerate().all(|(ci, cond)| {
                     let salt = salt::CONDITION + (*ti as u64) * 64 + ci as u64;
@@ -584,13 +636,13 @@ fn decide_one(
         enter(world, entity, &mut next, behavior, to);
     }
     let Some(state) = behavior.states.get(&next.state) else {
-        return Decided { entity, brain: next, drive: None, changed: None, first_rest: None };
+        return Decided { entity, brain: next, drive: None, changed: None, first_rest: None, think };
     };
     let kind = behavior.kind_of(&next.state);
     let mut out = NpcOutput::default();
     match hooks.states.get(kind) {
         Some(run) => {
-            if let Some(ctx) = NpcCtx::new(world, entity, &next, dt) {
+            if let Some(ctx) = NpcCtx::new(world, entity, &next, dt).map(|c| NpcCtx { deciding, ..c }) {
                 run(&ctx, &state.params, &mut out);
             }
         }
@@ -615,7 +667,21 @@ fn decide_one(
     // The first state of a new NPC is no change worth a journal line, but its pause is drawn.
     let first_rest = changed.as_ref().filter(|(from, _)| from.is_empty()).and_then(|_| first_rest(world, entity));
     let changed = changed.filter(|(from, _)| !from.is_empty());
-    Decided { entity, brain: next, drive: Some(out), changed, first_rest }
+    Decided { entity, brain: next, drive: Some(out), changed, first_rest, think }
+}
+
+/// Whether this tick is a decision tick of NPC `entity`, and what its timer is after it:
+/// with a `think` cadence the timer counts down while the NPC runs no action, a busy NPC
+/// neither counts nor decides, and it starts at zero, so the first free tick decides.
+fn think_tick(world: &World, entity: Entity, behavior: &BehaviorDef, dt: f32) -> (bool, Think) {
+    let Some(period) = behavior.think else { return (true, Think::Off) };
+    let left = world.get::<NpcThink>(entity).map_or(0.0, |t| t.left);
+    if world.get::<ActionState>(entity).is_some_and(|s| s.current.is_some()) {
+        return (false, Think::Left(left));
+    }
+    // Sums of tick lengths: a hair of slack, as every timer here.
+    let left = left - dt;
+    if left <= 1e-4 { (true, Think::Left(period)) } else { (false, Think::Left(left)) }
 }
 
 /// The pause an NPC starts with (its plan's `first_rest`), drawn from its own stream.
@@ -731,6 +797,8 @@ pub(crate) fn engine_conditions() -> Vec<(&'static str, NpcCondition)> {
         ("health_below", |c, p| c.health_fraction() < p.num("fraction", 0.3)),
         ("heard_noise", |c, _| c.perceived.noise.is_some()),
         ("chance", |c, p| c.rng(0).chance(p.num("p", 0.5))),
+        // A decision tick of the NPC: always, or once per `think` of its free time.
+        ("deciding", |c, _| c.deciding()),
     ]
 }
 

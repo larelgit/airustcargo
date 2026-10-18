@@ -1,0 +1,17 @@
+// Behaviours of the duel rules. `probe` is the test's own state hook: it counts the ticks it
+// was allowed to decide on in `NpcBrain.step`.
+{
+    // A decision every 0.15 s of free time.
+    "thinker": (initial: "probe", think: Some(0.15), states: {"probe": ()}),
+    // The same without a cadence: it decides every tick.
+    "eager": (initial: "probe", states: {"probe": ()}),
+    // A transition that waits for a decision tick.
+    "gated": (
+        initial: "a",
+        think: Some(0.25),
+        states: {
+            "a": (kind: "probe", transitions: [(to: "b", when: ["deciding"])]),
+            "b": (kind: "probe", transitions: [(to: "a", when: ["deciding"])]),
+        },
+    ),
+}

@@ -3,6 +3,8 @@
 //! `perception.rs`). Counted in ticks, from the actions that start.
 
 use bevy::prelude::*;
+use shards_npc::NpcThink;
+use shards_npc::prelude::*;
 use shards_action::{stagger, StaggerCause};
 
 use crate::common::*;
@@ -86,4 +88,86 @@ fn the_first_rest_is_a_pause_at_spawn() {
     // Only once: the rests after the attacks are the plan's own.
     let jabs = starts(&paused, b, "jab");
     assert_eq!(jabs[1] - jabs[0], 54 + 30, "{jabs:?}");
+}
+
+// --- N5: decision cadence ------------------------------------------------------------------
+
+/// The test's state hook: counts decision ticks in `NpcBrain.step`.
+fn probe(c: &NpcCtx, _: &Params, out: &mut NpcOutput) {
+    if c.deciding() {
+        out.step = Some(c.brain.step + 1);
+    }
+}
+
+fn watcher(behavior: &str) -> (App, Entity) {
+    let mut app = app_with(|app| {
+        app.add_npc_state("probe", probe);
+    });
+    let e = npc(app.world_mut(), "grunt", Npc::new(behavior, "grunt"), Vec3::new(0.0, 0.0, 20.0), N);
+    (app, e)
+}
+
+fn decisions(app: &App, e: Entity) -> u32 {
+    app.world().get::<NpcBrain>(e).unwrap().step
+}
+
+/// Ticks (1-based) on which the NPC decided, over `ticks` ticks.
+fn decision_ticks(app: &mut App, e: Entity, ticks: u64) -> Vec<u64> {
+    let mut out = Vec::new();
+    for t in 1..=ticks {
+        let before = decisions(app, e);
+        step(app, 1);
+        if decisions(app, e) > before {
+            out.push(t);
+        }
+    }
+    out
+}
+
+#[test]
+fn a_think_cadence_decides_once_per_period_of_free_time() {
+    let (mut app, e) = watcher("thinker");
+    let ticks = decision_ticks(&mut app, e, 100);
+    // The first free tick decides (tick 1 is the brain's first run: it enters its state and
+    // decides), then every 0.15 s: nine ticks of 1/60 s.
+    assert_eq!(&ticks[..4], &[1, 10, 19, 28], "{ticks:?}");
+    assert!(ticks.windows(2).all(|w| w[1] - w[0] == 9), "{ticks:?}");
+    assert!(app.world().get::<NpcThink>(e).is_some(), "the timer is a component of the NPC");
+    // Without a cadence it decides every tick, and carries no timer.
+    let (mut app, e) = watcher("eager");
+    assert_eq!(decision_ticks(&mut app, e, 30), (1..=30).collect::<Vec<_>>());
+    assert!(app.world().get::<NpcThink>(e).is_none());
+}
+
+#[test]
+fn the_decision_timer_stands_still_while_the_npc_is_busy() {
+    let (mut app, e) = watcher("thinker");
+    let before = decision_ticks(&mut app, e, 14); // decided on 1 and 10; 4 ticks into the next period
+    assert_eq!(before, vec![1, 10]);
+    let left = app.world().get::<NpcThink>(e).unwrap().left;
+    assert!(stagger(app.world_mut(), e, StaggerCause::Dev));
+    // The stagger lasts 36 ticks: no decisions, and the timer does not move.
+    let during = decision_ticks(&mut app, e, 35);
+    assert!(during.is_empty(), "{during:?}");
+    assert_eq!(app.world().get::<NpcThink>(e).unwrap().left, left);
+    // Free again after the stagger; the rest of the period runs out, then it is regular.
+    let after = decision_ticks(&mut app, e, 40);
+    // 4 ticks of the period had run before the stagger, 5 are left: the fifth free tick after
+    // the stagger (tick 14 + 36) decides, on tick 55; then every 9.
+    assert_eq!(after, [6, 15, 24, 33], "free from the next tick, decides on the fifth");
+}
+
+#[test]
+fn a_transition_can_wait_for_a_decision_tick() {
+    let (mut app, e) = watcher("gated");
+    let mut changes = Vec::new();
+    for t in 1..=80 {
+        let before = state(&app, e);
+        step(&mut app, 1);
+        if state(&app, e) != before {
+            changes.push((t, state(&app, e)));
+        }
+    }
+    let names: Vec<(u64, &str)> = changes.iter().map(|(t, s)| (*t, s.as_str())).collect();
+    assert_eq!(names, [(1, "a"), (16, "b"), (31, "a"), (46, "b"), (61, "a"), (76, "b")], "a flip per decision, 0.25 s = 15 ticks apart");
 }

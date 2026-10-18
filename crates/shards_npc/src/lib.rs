@@ -108,7 +108,7 @@ use shards_world::{WorldAppExt, WorldSystems};
 
 pub use brain::{
     clamp_to_leash, force_state, Home, Npc, NpcActivity, NpcBrain, NpcCondition, NpcCtx, NpcDrive, NpcHooks, NpcOutput,
-    NpcState, NpcStateChanged, Patrol, TargetView,
+    NpcState, NpcStateChanged, NpcThink, Patrol, TargetView,
 };
 pub use def::{
     AttackOption, AttackPlanDef, AvoidanceDef, BehaviorDef, Cond, DirectorDef, NpcTuning, Param, Params, PerceptionDef, Role,
@@ -196,7 +196,8 @@ impl Plugin for NpcPlugin {
             .register_type::<Perceived>()
             .register_type::<NavAgent>()
             .register_type::<AttackToken>()
-            .register_type::<NpcPlan>();
+            .register_type::<NpcPlan>()
+            .register_type::<NpcThink>();
         // Known to the world from the start, so `&World` queries (tools) work before the
         // first NPC.
         let world = app.world_mut();

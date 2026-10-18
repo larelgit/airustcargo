@@ -203,6 +203,13 @@ pub struct BehaviorDef {
     /// walks its way whoever stands there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avoidance: Option<AvoidanceDef>,
+    /// Decision cadence (seconds): a per-NPC timer that ticks down only while the NPC runs
+    /// no action. Each time it runs out is a decision tick ([`NpcCtx::deciding`], the
+    /// condition `deciding`), and it starts over; the first tick the NPC is free is one.
+    /// Without it every tick is a decision tick. The state hooks and conditions that decide
+    /// consult it; the engine's own states re-derive their output every tick and ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub think: Option<f32>,
 }
 
 impl BehaviorDef {
@@ -225,6 +232,11 @@ impl ContentDef for BehaviorDef {
         };
         if let Some(avoidance) = &self.avoidance {
             avoidance.check(refs, "avoidance");
+        }
+        if let Some(think) = self.think
+            && !(think > 0.0 && think.is_finite())
+        {
+            refs.error(format!("think must be > 0 seconds (is {think}); leave it out to decide every tick"));
         }
         if self.states.is_empty() {
             refs.error("states is empty; give at least one, e.g. {\"idle\": ()}");
