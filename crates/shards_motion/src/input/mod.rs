@@ -429,7 +429,15 @@ impl Devices<'_> {
                 Vec2::new(live * scale, 0.0)
             }
             Binding::Stick { stick, deadzone, scale, scale_x, scale_y, curve } => {
-                map::stick_response(self.stick_raw(*stick), *deadzone, *scale, *scale_x, *scale_y, *curve)
+                let raw = self
+                    .pads
+                    .iter()
+                    .map(|p| match stick {
+                        Stick::Left => p.left_stick(),
+                        Stick::Right => p.right_stick(),
+                    })
+                    .fold(Vec2::ZERO, |best, v| if v.length_squared() > best.length_squared() { v } else { best });
+                map::stick_response(raw, *deadzone, *scale, *scale_x, *scale_y, *curve)
             }
             // Mouse deltas are per frame already; a stick's value is a rate, so the look
             // axis multiplies sticks by the frame time (see `read_input`).
@@ -437,27 +445,6 @@ impl Devices<'_> {
             Binding::MouseWheel { scale } => self.scroll * *scale,
             Binding::Key(_) | Binding::Mouse(_) | Binding::GamepadButton(_) => Vec2::ZERO,
         }
-    }
-
-    /// The stick deflected the most among the gamepads, as they report it.
-    fn stick_raw(&self, stick: Stick) -> Vec2 {
-        self.pads
-            .iter()
-            .map(|p| match stick {
-                Stick::Left => p.left_stick(),
-                Stick::Right => p.right_stick(),
-            })
-            .fold(Vec2::ZERO, |best, v| if v.length_squared() > best.length_squared() { v } else { best })
-    }
-
-    /// What a flick measures of a stick binding: its deflection past the dead zone, rescaled to
-    /// 0..1, before its curve and its scales (C9's `scale_x`/`scale_y` included). An axis whose
-    /// scale is negative keeps its flipped side, as the look axis does; one whose scale is 0 reads 0.
-    fn stick_deflection(&self, binding: &Binding) -> Option<Vec2> {
-        let Binding::Stick { stick, deadzone, scale, scale_x, scale_y, .. } = binding else { return None };
-        let side = |s: f32| if s == 0.0 { 0.0 } else { s.signum() };
-        let (x, y) = (side(scale_x.unwrap_or(*scale)), side(scale_y.unwrap_or(*scale)));
-        Some(map::stick_response(self.stick_raw(*stick), *deadzone, 1.0, Some(x), Some(y), 1.0))
     }
 }
 
@@ -527,13 +514,20 @@ fn read_input(
                 frame.axes.insert(action.action.clone(), axis);
             }
             if action.action == "look" {
-                // What a flick is measured in: the mouse's pixels and the stick's deflection, each before its scale
-                // (and the stick's before its curve: `stick_deflection`).
+                // What a flick is measured in: the mouse's pixels and the stick's deflection, each before its scale.
                 for binding in action.bindings.iter().filter(|b| b.is_axis()) {
                     match binding {
                         Binding::MouseMotion { .. } => frame.look_pointer_px += Vec2::new(devices.motion.x, -devices.motion.y),
-                        Binding::Stick { .. } => {
-                            let deflection = devices.stick_deflection(binding).unwrap_or_default();
+                        &Binding::Stick { stick, deadzone, scale, scale_x, scale_y, .. } => {
+                            // The deflection past the deadzone, before the response curve and the scales,
+                            // keeping only each scale's sign: an inverted binding keeps its flipped side, as
+                            // the look axis does, and an axis scaled to 0 stays off.
+                            let side = |s: Option<f32>| {
+                                let s = s.unwrap_or(scale);
+                                Some(if s == 0.0 { 0.0 } else { s.signum() })
+                            };
+                            let raw = Binding::Stick { stick, deadzone, scale: 1.0, scale_x: side(scale_x), scale_y: side(scale_y), curve: 1.0 };
+                            let deflection = devices.value(&raw);
                             if deflection.length_squared() > frame.look_stick.length_squared() {
                                 frame.look_stick = deflection;
                             }

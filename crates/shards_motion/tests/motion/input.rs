@@ -476,6 +476,30 @@ fn an_inverted_look_stick_keeps_its_flipped_side_in_the_flick() {
 }
 
 #[test]
+fn the_flick_reads_the_stick_before_its_curve_and_per_axis_scales() {
+    let mut app = input_app();
+    local_player(&mut app);
+    let stick = Binding::Stick {
+        stick: shards_motion::input::Stick::Right,
+        deadzone: 0.15,
+        scale: 2.8,
+        scale_x: Some(-4.0),
+        scale_y: Some(0.0),
+        curve: 2.0,
+    };
+    app.world_mut().resource_mut::<InputMap>().rebind("gameplay", "look", 1, stick).unwrap();
+    let pad = app.world_mut().spawn(Gamepad::default()).id();
+    let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).unwrap();
+    gamepad.analog_mut().set(GamepadInput::Axis(GamepadAxis::RightStickX), 0.9);
+    gamepad.analog_mut().set(GamepadInput::Axis(GamepadAxis::RightStickY), 0.0);
+    frame(&mut app);
+    let state = app.world().resource::<ControlState>();
+    let linear = (0.9 - 0.15) / 0.85;
+    assert!((state.look_stick().x + linear).abs() < 1e-4, "linear and flipped, not curved: {}", state.look_stick());
+    assert!(state.axis("look").x < 0.0 && state.axis("look").y == 0.0, "{}", state.axis("look"));
+}
+
+#[test]
 fn rebinding_moves_a_control_and_conflicts_name_the_other_action() {
     let mut app = input_app();
     let e = local_player(&mut app);
