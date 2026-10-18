@@ -1,6 +1,6 @@
 //! Same seed + same inputs = same game, bit for bit. This is what makes replays, tests
 //! on thousands of seeds and (later) co-op possible; a game keeps it by following the
-//! rules in AGENTS.md of the engine: gameplay in `FixedUpdate` inside a `SimSet`,
+//! rules in AGENTS.md of the engine (docs/agents/determinism.md): gameplay in `FixedUpdate` inside a `SimSet`,
 //! randomness only through `SimRng`, iteration in `AiId` order, input only through `Intent`.
 
 use shards::prelude::*;
