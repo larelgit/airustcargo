@@ -149,17 +149,17 @@ are in [template/README.md](../template/README.md).
    ```
 2. **Depend on the engine by tag or commit.** In `Cargo.toml`, use a git dependency instead of the path
    (`../crates/shards`). Versions and tags are described in [CHANGELOG.md](../CHANGELOG.md). The template uses saves,
-   co-op, screens and texts, so it needs the engine of phases C–E (the future `0.4.0`). The earlier versions `0.2.0` and
-   `0.3.0` will not work. Until the maintainer sets a tag, pin a commit:
+   co-op, screens and texts, so it needs the engine of phases C–E (`0.4.0`). The earlier versions `0.2.0` and
+   `0.3.0` will not work. Pin the tag `v0.4.0`:
    ```toml
    [dependencies]
-   shards = { git = "https://github.com/larelgit/shards-engine", rev = "<hash>", default-features = false }
+   shards = { git = "https://github.com/larelgit/shards-engine", tag = "v0.4.0", default-features = false }
    ```
-   After the `v0.4.0` release, replace `rev = "<hash>"` with `tag = "v0.4.0"`. The build does not change until you change
-   `rev` or `tag` yourself. `default-features = false` is needed so that the game turns on the features (`render`,
+   To follow unreleased changes on the main branch instead, pin a commit with `rev = "<hash>"`. The build does not change
+   until you change `tag` or `rev` yourself. `default-features = false` is needed so that the game turns on the features (`render`,
    `remote`, `hot_reload`, `audio`, `gamepad`, …) in its own `[features]`. There are no other dependencies: Bevy, serde
    and schemars come through `shards` (`shards::prelude::*`, `shards::serde`, `shards::schemars`). Install the CLI at the
-   same version: `cargo install shards_cli --git … --rev <hash>` (after the release, `--tag v0.4.0`).
+   same version: `cargo install shards_cli --git … --tag v0.4.0` (or `--rev <hash>` for a pinned commit).
 3. **`main` is one line.** `shards::run` reads the command line (`--headless --seed --port --port-file --no-remote
    --paused --hz --replay --verify --windowed --check-every --check-detail --tick-budget-ms --frame-budget-ms --check-content
    --worldgen-report --seeds --bake-nav --smoke --perf`), catches `kill` and a closed terminal:

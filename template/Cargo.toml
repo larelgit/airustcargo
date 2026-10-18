@@ -46,8 +46,7 @@ dist = ["render", "audio", "gamepad", "shards/dist"]
 # Here the template sits inside the engine repository, so it points at the folder. In
 # your own repository pin the engine instead (see CHANGELOG.md of the engine). The template
 # needs saves, co-op, screens and texts of phases C-E (0.4.0), so neither v0.2.0 nor v0.3.0;
-# until the maintainer tags v0.4.0 pin a commit, afterwards a tag:
-#   shards = { git = "https://github.com/larelgit/shards-engine", rev = "<commit>", default-features = false }
+# pin the tag v0.4.0 (or a commit, rev = "<commit>", to follow the main branch):
 #   shards = { git = "https://github.com/larelgit/shards-engine", tag = "v0.4.0", default-features = false }
 shards = { path = "../crates/shards", default-features = false }
 

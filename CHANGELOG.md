@@ -10,7 +10,7 @@ From `1.0.0` on, breaking changes come only in a major version. All engine crate
 ## How a game depends on the engine
 
 A game depends on one crate, `shards`, and pins the engine to a **git tag**. This way the build does not change until
-you change the tag yourself. While there are no tags, pin a commit: `rev = "<hash>"` (and `--rev <hash>` for the CLI).
+you change the tag yourself. To follow unreleased changes on the main branch, pin a commit instead: `rev = "<hash>"` (and `--rev <hash>` for the CLI).
 
 ```toml
 # The game's Cargo.toml
@@ -35,7 +35,7 @@ Tags are set by the maintainer, not by agents or CI. For a release `X.Y.Z`:
 
 1. Raise `version` in `[workspace.package]` of the root `Cargo.toml` and run `cargo update --workspace`
    (it updates `Cargo.lock`). Move the entries from `Unreleased` into a new section `[X.Y.Z] — date` and fix the
-   links at the bottom of the file. The section may already be prepared (phase B is recorded in `[0.3.0]`, phases C–E in `[0.4.0]`, both marked "unreleased"): then set the
+   links at the bottom of the file. The section may already be prepared (phase B is recorded in `[0.3.0]`, phases C–E in `[0.4.0]`): then set the
    date in it. Raising the minor version rejects the snapshots of the previous one: record `tests/replays/snapshot.json` again
    (`cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`).
 2. Update the `vX.Y.Z` tag in `template/Cargo.toml` (the comment about the dependency), in `template/README.md` (steps 3 and 5), in
@@ -168,12 +168,11 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
 - The host cleans a network client's input before it reaches `Intent`: a `move_dir` that is not finite becomes zero, one longer than 1 is cut to 1, a non-finite `aim` is dropped. An honest client sends clamped input, so replays do not change. Without it a bad frame would stop the host on `core.intent_sane`.
 - A world that breaks an engine rule and the game's `health_in_range` at once now stops with the engine rule's name first (`stopped: invariant action.resources_in_range violated at tick 1 (+1 more)`); the sandbox keeps `health_in_range` as the example of a game rule.
 
-## [0.4.0] — phases C–E: co-op, saves, UI and platform (unreleased)
+## [0.4.0] — 2026-10-18 — phases C–E: co-op, saves, UI and platform
 
 Everything that landed in the main branch after phase B (`0.3.0`): co-op and saves (phase C), UI, localization and audio
 (phase D), the platform — rendering, performance, Steam, builds for players (phase E), and the spec follow-ups after them (the
-leftovers of E4, E5, E6, E9, E11). The section is prepared in advance, like `[0.3.0]`: the version in `Cargo.toml` is not raised, the tag is not set; at
-release, set the date (see "Releasing a version (for the maintainer)").
+leftovers of E4, E5, E6, E9, E11). Released as the tag `v0.4.0`; the version in `[workspace.package]` is `0.4.0`.
 
 ### Added
 
