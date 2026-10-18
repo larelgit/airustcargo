@@ -219,8 +219,9 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   are not part of the replay hash or the snapshot; the replay records session rules (`assert_add`) as events.
   The engine's own rules are named `<module>.<rule>` and registered with `add_engine_invariant(name, rule)` (shards_core): on by
   default, off in a `dist` build and with `--no-engine-invariants` (`EngineConfig::engine_invariants`; tests, `--verify`, fuzz and soak
-  keep them on). A rule not yet proven on all content (`voxel.body_in_solid`) is offered with `add_opt_in_engine_invariant`
-  and checked only when named: `--engine-invariant NAME` (`EngineConfig::opt_in_invariants`). Each states in its doc comment what it checks and why any carve-out exists, and has a control test that breaks the
+  keep them on). A rule not yet proven on all content is offered with `add_opt_in_engine_invariant`
+  and checked only when named: `--engine-invariant NAME` (`EngineConfig::opt_in_invariants`); none is today (`voxel.body_in_solid`
+  was, until its fuzz runs). Each states in its doc comment what it checks and why any carve-out exists, and has a control test that breaks the
   state on purpose. If one fires, it is a bug in the engine or the game: fix the bug, do not weaken the rule without saying why.
 - A new tool is an argument struct with doc comments (they become the schema's description)
   and a Bevy system `In<Call<Args>> -> ToolResult`. Kinds: `query` reads, `action` changes the world

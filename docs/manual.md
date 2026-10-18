@@ -427,7 +427,7 @@ line, and tests take `shards::testing::config()`.
 | `frame_budget` | a frame longer than this counts as "over budget" (`--frame-budget-ms`; the `frames` field in `ai/status`); `None` — 1/60 s. Frames exist only in a game that draws |
 | `report_perf` | the `ticks:` line under the `step` reply and `perf` entries in the journal; off in `shards::testing::config()` |
 | `engine_invariants` | check the engine's own invariant rules after every tick (see "Invariants (E11)"). On by default, off in a build with the `dist` feature, and off with `--no-engine-invariants`; `shards::testing::config()` and `--verify` always turn it on. Read when the plugins are built, so set it before `EnginePlugins::new(config)` |
-| `opt_in_invariants` | the engine rules that are off by default, turned on by name (`--engine-invariant NAME`, repeatable): today only `voxel.body_in_solid`. Needs `engine_invariants`; read when the plugins are built |
+| `opt_in_invariants` | the engine rules that are off by default, turned on by name (`--engine-invariant NAME`, repeatable): none today (`voxel.body_in_solid`, the first, is on by default since its fuzz runs). Needs `engine_invariants`; read when the plugins are built |
 | `after_loading` | where `Loading` goes after loading (`InGame`; `MainMenu` for a game with a main menu). `menu` decides whether this launch shows the menu, and `start_state()` gives the result |
 | `menu` | `MenuLaunch`: `Auto` (the default) shows the main menu only when the game draws (a window, `--offscreen`), with no session and no named slots (`--world`, `--character`); `Show` (`--menu`) always does, even without a window; `Skip` (`--no-menu`) never does. Replays, checks, `--smoke` and `--perf` always bypass the menu |
 | `loading_image` | an image under the asset folder (`ui/loading.png`), full screen, while the game loads (`Loading`) and while a region loads for longer than one call (`RegionLoading`), if anything is drawn. There is no content yet at that point, so it is in the config and not in the content; `--check-content` checks that the file exists. `None` — nothing |
@@ -736,11 +736,12 @@ ledge`, `e5 air → water`, `e5 reached goal`).
 - A field is not saved and has no `AiId` (as level geometry, the region that spawned it spawns it again); the snapshot check
   `static_colliders` hashes every field (size, cell, origin, cast mode, bits and layers), and a world without one hashes as before. The
   engine rule `voxel.body_in_solid` (`BODY_IN_SOLID`, `body_in_solid`) names a character whose capsule centre is in a solid cell of a
-  field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). It is **off by
-  default** (mantle and sloped-step ticks may graze a cell) until fuzz runs on voxel terrain pass (the voxel design, 6.4): the motion
-  plugin offers it with `add_opt_in_engine_invariant`, which registers an engine rule only when `EngineConfig::opt_in_invariants` names
-  it, and a game run turns it on with `--engine-invariant voxel.body_in_solid` (a name it does not offer is refused, and the flag does not
-  go with `--no-engine-invariants`).
+  field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). It is **on by
+  default**, an ordinary engine rule: it was offered off by default (mantle and sloped-step ticks might graze a cell) until fuzz runs on
+  voxel terrain passed (the voxel design, 6.4), and 50 runs of `shards fuzz --steps 600` on the sandbox's voxel arena with it on (20
+  without chaos, 20 with `--chaos 0.02`, 10 more with `--chaos 0.02 --steer`) stopped on nothing. `add_opt_in_engine_invariant` stays for the
+  next such rule: it registers an engine rule only when `EngineConfig::opt_in_invariants` names it, and `--engine-invariant NAME` names
+  one (a name the build does not offer is refused, and the flag does not go with `--no-engine-invariants`); none is offered today.
 - Checked by `crates/shards_motion/tests/motion/seams.rs`: each scenario runs in four worlds, one cuboid collider per cell, the merged
   boxes as colliders, the field, and the field with the merge off (stand on seams, an edge and a corner; one-cell walls; mixed
   heights; steps of 0.3, 0.5 and 1 m; a mantle; tunnels, with the probe, the hooks and `clearance` at 1350 spots in and around
@@ -2780,7 +2781,7 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `ai.index_consistent` | the `AiIndex` and the `AiId` components agree both ways (every entity with an id is in the index under it, every entry points at an entity that carries it) and the counts match, so no id is used twice. Tombstones are history and are not looked at. Catches an id written in place, which skips the hooks |
 | `core.intent_sane` | every `Intent` has a finite `move_dir` of length at most 1 (+ 1e-4) and a finite `aim`. The movement code survives garbage, so the rule names the writer that forgot to clamp. The host cleans a network client's input before it reaches `Intent`, so a bad frame cannot stop the host |
 | `motion.finite` | every `AiVisible` entity has a finite `Transform` translation and a finite rotation of length 1 ± 1e-3, and a finite `MotionState` (velocity, ground normal, timers, mantle, fall height, water surface, updraft, placed position). Scale is not judged |
-| `voxel.body_in_solid` | **off by default** (`--engine-invariant voxel.body_in_solid`): no character has its capsule centre in a solid cell of a voxel field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). Off until fuzz runs on voxel terrain pass, since mantle and sloped-step ticks may graze a cell (see "Voxel fields") |
+| `voxel.body_in_solid` | no character has its capsule centre in a solid cell of a voxel field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). On by default since the fuzz runs on the voxel arena (see "Voxel fields") |
 | `action.resources_in_range` | `Health`, `Stamina` and `Poise` are finite with `max > 0` and `0 <= current <= max`. Dead bodies are checked too (`current` is 0). A game that wants a buff above `max` raises `max` with it |
 | `action.running_sane` | a running action of a fighter exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. Without a content database the rule passes |
 | `action.protection_sane` | every `Protection` (the reaction and poise timers, B1) holds finite timers, none below 0. A NaN stays a NaN through the countdown and would shield its fighter for ever |

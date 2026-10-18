@@ -118,21 +118,20 @@ fn bury(world: &mut World) {
     world.get_mut::<Transform>(player).unwrap().translation = Vec3::new(120.5, -20.0, 0.5);
 }
 
-/// The sandbox with `voxel.body_in_solid` on (`--engine-invariant voxel.body_in_solid`), or not.
+/// The sandbox with the engine's rules on (the default, `voxel.body_in_solid` among them), or off
+/// (`--no-engine-invariants`).
 fn voxel_rule(on: bool) -> App {
     sandbox::test_app_with(|config| {
         config.seed = 42;
-        if on {
-            config.opt_in_invariants = vec![shards::motion::BODY_IN_SOLID.into()];
-        }
+        config.engine_invariants = on;
     })
 }
 
 #[test]
-fn a_body_in_a_solid_voxel_cell_stops_the_game_once_the_rule_is_on() {
+fn a_body_in_a_solid_voxel_cell_stops_the_game() {
     use shards::motion::{body_in_solid, BODY_IN_SOLID};
     let names = |app: &App| app.world().resource::<AiInvariants>().rule_names().join(",");
-    // Off by default: not even listed, and a body in rock goes unjudged.
+    // With the engine's rules off: not even listed, and a body in rock goes unjudged.
     let mut app = voxel_rule(false);
     assert!(!names(&app).contains(BODY_IN_SOLID), "{}", names(&app));
     block(&mut app);
@@ -140,7 +139,7 @@ fn a_body_in_a_solid_voxel_cell_stops_the_game_once_the_rule_is_on() {
     let out = called(&mut app, "step", json!({"ticks": 20}));
     assert!(out.halted.is_none(), "{}", text(&out));
 
-    // On. A world without fields is not judged.
+    // On, by default. A world without fields is not judged.
     let app = voxel_rule(true);
     assert!(names(&app).starts_with("ai.index_consistent") && names(&app).contains(BODY_IN_SOLID), "{}", names(&app));
     assert_eq!(body_in_solid(app.world()), None);

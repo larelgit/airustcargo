@@ -151,7 +151,7 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   `PhysicsWorld::extent_at`, `top_under` and `solid_span` answer what readers used to read off a collider's box, and every such reader
   uses them (the gate of `clearance` and `path_to`, `Terrain::blocker_top`, the nav bake's seed, `ground_below`);
   `PhysicsWorld::subset` keeps fields (the scatter's solids take the fields near a tile); the snapshot check `static_colliders` hashes
-  every field. The engine rule `voxel.body_in_solid` (`BODY_IN_SOLID`), off by default. Engine rules off by default:
+  every field. The engine rule `voxel.body_in_solid` (`BODY_IN_SOLID`), off by default (on by default since A2c, under Changed). Engine rules off by default:
   `add_opt_in_engine_invariant(name, rule)` registers one only when `EngineConfig::opt_in_invariants` names it, and `shards::run` takes
   `--engine-invariant NAME` (repeatable; only the names offered; not with `--no-engine-invariants`). A world without fields runs the code it ran
   before: the reference replays verify byte for byte. The guard against a reader that forgets fields: `PhysicsWorld::collider`,
@@ -163,6 +163,9 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
 
 ### Changed
 
+- The engine rule `voxel.body_in_solid` is on by default (it was off, behind `--engine-invariant`): 50 runs of `shards fuzz
+  --steps 600` on the sandbox's voxel arena with it on (20 without chaos, 20 with `--chaos 0.02`, 10 more steered by coverage) stopped on
+  nothing, nor did the reference replays. `--engine-invariant` offers no name today.
 - The palette's part of a generated voxel world's hash is `VoxelPalette::semantics` (names, order, solid, liquid, foliage, tags), not
   `fingerprint` (which also covers colours): a recoloured palette is the same world. The golden world hash changed with it.
 - `regen` of a dungeon says `N rooms` (it said `N tiles`), as does `region_load`; `goto_tile` outside a region says `chunks` or
