@@ -72,7 +72,7 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   kinds, `encounter` (`EncounterDef`: `radius`, `start` as `Trigger`, `Near` or `Manual`, `waves` with `delay`, `placed`, a `warn` cue and
   groups with `count`/`up_to`, `at` as `Offsets`, `Marker`, `Poi` or `Ring`, `face`, `home`, `leash`, `avoid_behind` and JSON-patch
   `overrides`; `tags`, `budget`, `allowed`, `forbidden`, `rules`, `resume_after`, `reset_after`, `on_reset`, `pull_back`, `lock`, `once`,
-  `net_always`, `blocks_join`; every default is 0, none or off) and `encounter_rules` (`limits` with `unless`, `needs`; not simulation
+  `net_always`, `blocks_join`; every default is 0, none or off but `pull_back.heal`, which is on) and `encounter_rules` (`limits` with `unless`, `needs`; not simulation
   content). Two components: `EncounterAnchor` (a prefab, a tile piece, a level node or `place_encounter` puts an encounter anywhere;
   `shards_world` does not change) and `EncounterRole` (a prefab's cost and tags for the checks). Content checks name the file, the
   encounter, the wave, the group and the fix (budget, tags, limits, needs, overrides read like a prefab spawn, `pull_back.state` in each
