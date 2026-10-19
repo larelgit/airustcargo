@@ -15,6 +15,12 @@ Read this when you touch enemy brains, behaviour, perception, the director, atta
   disagree. A rule that can refuse existing content must not stop the action machine from being asked where it is asked now (after the
   weight, the cooldown and the bans, of a closed option too): what the machine reads is part of the replay's `content` check, so a
   recording made before would diverge; `refusal_passes_exactly_what_the_old_rules_passed` compares the reads. Count the players the director counts with `schedule::living_players`.
+- **Gates on an option** (`angle`, `players`, `max_repeats`, `forbid_after`; the boss scheduler, N8). They are fields with a neutral default
+  and `skip_serializing_if` it, so content that does not use them serializes, replays and hashes as before. History and cooldowns live on the
+  NPC (`NpcPlan`), keyed by option name, and a game's phase machine swaps `Npc::plan` and keeps them; add no state to `NpcPlan`, `PastAttack`,
+  `Grant` or `Npc` for a gate (they are hashed). `npc_schedule` reports what `refusal()` says by building its inputs with `inputs()`: never
+  re-derive a rule in the tool. The invariant `npc.plan_sequence` judges the press with its own short code on purpose, so a planner path that
+  skips `refusal()` is caught; change the two together.
 - **Encounters** (`shards_encounter`, "Encounters (G9)" in the manual) spawn NPCs in waves and pull the survivors of a placed wave back home
   on a wipe or a reset: they `force_state` the behaviour state the encounter's `pull_back.state` names (so a behaviour needs that state,
   `return_home` kind, which the content check enforces: a state of any other kind is refused), and set `EncounterMember.returning` until the member is home; the NPC condition
