@@ -11,6 +11,7 @@ mod golden;
 mod hits;
 mod lethal;
 mod lock;
+mod lock_points;
 mod modifiers;
 mod objects;
 mod outcome;

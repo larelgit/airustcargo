@@ -911,6 +911,20 @@ pub(crate) struct Choice {
     pub queued: Option<usize>,
 }
 
+/// Where a leap at the lock-on target `target` lands by, and how wide that body is: a lock point's
+/// (a part's, R3) body, else the target itself. The host's machine and a client's prediction both.
+pub(crate) fn leap_target(
+    target: Option<AiId>,
+    index: &AiIndex,
+    parts: &Query<&crate::parts::Part>,
+    positions: &Query<(&Transform, Option<&CharacterParams>, Option<&Collider>)>,
+) -> Option<(Vec3, f32)> {
+    let id = target?;
+    let body = index.get(id).and_then(|e| parts.get(e).ok()).map_or(id, |p| p.body);
+    let (tf, _, collider) = positions.get(index.get(body)?).ok()?;
+    Some((tf.translation, radius_of(collider)))
+}
+
 /// `SimSet::Act`: every fighter's machine, in `AiId` order: presses into the buffer,
 /// at most one action started, the running action advanced (effects, telegraphs),
 /// expired presses rejected, and `LocomotionInput` told what the action wants.
@@ -925,6 +939,7 @@ pub(crate) fn run_machines(
     mut pairs: ResMut<PendingPairs>,
     mut commands: Commands,
     positions: Query<(&Transform, Option<&CharacterParams>, Option<&Collider>)>,
+    parts: Query<&crate::parts::Part>,
     fallen: Query<(Has<Dead>, Has<Downed>)>,
     mut fighters: Query<FighterData>,
 ) {
@@ -966,8 +981,9 @@ pub(crate) fn run_machines(
         let here = f.transform.translation;
         let forward = *f.transform.forward();
         let locked = f.intent.target.and_then(|id| index.get(id)).and_then(|e| positions.get(e).ok().map(|p| (e, p)));
-        // The lock-on target as a leap sees it: where it stands and how wide its body is.
-        let target_body = locked.map(|(_, (t, _, collider))| (t.translation, radius_of(collider)));
+        // The lock-on target as a leap sees it: where it stands and how wide its body is (a lock point's
+        // body: a leap at a hand or a horn lands by the body, not under the point).
+        let target_body = leap_target(f.intent.target, &index, &parts, &positions);
         // A start judges a leap's landing from where the body stands, on the host as on a client.
         let choice = choose(&f, &db, leap_site(&f, &physics, &db, (here, forward), target_body), dt);
         // A paired action aims at its victim, lock-on or not: the one it starts on, the one it holds while it runs.

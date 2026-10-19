@@ -14,8 +14,10 @@
 //! { "default": (range: 30.0, obstruction_s: Some(2.0), weights: (distance: 1.0, screen: 1.0)) }
 //! ```
 //!
-//! **One lock point per body**: the aim point is `aim_height` of the body's height above its
-//! feet. Several points on one body (a boss's head, a limb) are not supported.
+//! **Aim points**: a body's is `aim_height` of its height above its feet. A big body can carry
+//! several lock points (a boss's hand, a leg): entities of their own marked [`LockPoint`] (the
+//! action module's body parts, R3), each aimed at its centre; which of them may be locked on to
+//! is the hook's to say ([`LockHooks::lockable`]).
 
 use std::f32::consts::{FRAC_PI_2, PI};
 
@@ -26,7 +28,7 @@ use shards_content::{ContentDb, ContentDef, Refs};
 use shards_core::{flat, Intent};
 
 use super::math::Side;
-use super::LockOnTarget;
+use super::{LockOnTarget, LockPoint};
 use crate::physics::{Collider, LayerMask, PhysicsWorld, QueryFilter};
 
 /// A body without a collider is taken to be this tall (m) for its aim point and its eye.
@@ -400,10 +402,15 @@ pub fn eye_of(world: &World, body: Entity, def: &LockOnDef) -> Option<Vec3> {
     Some(body_point(tf, world.get::<Collider>(body), def.eye_height))
 }
 
-/// A body's aim point ([`LockOnDef::aim_height`]).
+/// A body's aim point ([`LockOnDef::aim_height`]); a [`LockPoint`]'s is its centre.
 pub fn aim_of(world: &World, body: Entity, def: &LockOnDef) -> Option<Vec3> {
     let tf = world.get::<Transform>(body)?;
-    Some(body_point(tf, world.get::<Collider>(body), def.aim_height))
+    Some(body_point(tf, world.get::<Collider>(body), aim_fraction(world, body, def)))
+}
+
+/// How far up its body a candidate is aimed at: `aim_height`, or the middle of a [`LockPoint`].
+fn aim_fraction(world: &World, entity: Entity, def: &LockOnDef) -> f32 {
+    if world.get::<LockPoint>(entity).is_some() { 0.5 } else { def.aim_height }
 }
 
 /// Every body `viewer` may lock on to now ([`LockHooks::lockable`]), in `AiId` order, within
@@ -421,7 +428,7 @@ pub fn lock_candidates(world: &World, viewer: Entity, def: &LockOnDef) -> Vec<(E
         .filter(|(e, ..)| (hooks.lockable)(world, viewer, *e))
         .map(|(e, id, tf, collider)| {
             let threat = danger.iter().filter(|(d, _)| *d == e).map(|(_, v)| *v).fold(0.0, f32::max);
-            let c = Lockable { key: id.0, feet: tf.translation, aim: body_point(tf, collider, def.aim_height), danger: threat, current: current == Some(*id) };
+            let c = Lockable { key: id.0, feet: tf.translation, aim: body_point(tf, collider, aim_fraction(world, e, def)), danger: threat, current: current == Some(*id) };
             (e, c)
         })
         .collect();

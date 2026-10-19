@@ -7,15 +7,20 @@
 // - A horn on its head, out of a sword's reach: 80 hp.
 // - A core in its chest that starts closed (`part ... op=on` opens it): a hit there is tripled and
 //   tagged `weak` for a game's damage hooks.
+//
+// Every part is a lock point (R3, `lock: true`) and the body itself is not (`lock_body: false`): the
+// lock-on takes the hand, a leg, the core or the horn, and a swing that overlaps the locked part goes
+// through it. A broken part is a lock point no more.
 {
     "colossus": (
         body_hurtbox: false,
+        lock_body: false,
         parts: {
-            "core": (shape: Sphere(radius: 0.6), at: (forward: 0.9, up: 2.0), damage: 3.0, tags: ["weak"], enabled: false),
-            "hand": (shape: Sphere(radius: 0.5), at: (forward: 1.4, up: 1.2, right: 1.0), health: Some(60), to_body: 0.5),
-            "horn": (shape: Sphere(radius: 0.5), at: (forward: 0.3, up: 5.7), health: Some(80)),
-            "leg_left": (shape: Capsule(half_height: 0.8, radius: 0.45), at: (forward: 0.3, up: 1.2, right: -0.7), poise: 2.0),
-            "leg_right": (shape: Capsule(half_height: 0.8, radius: 0.45), at: (forward: 0.3, up: 1.2, right: 0.7), poise: 2.0),
+            "core": (shape: Sphere(radius: 0.6), at: (forward: 0.9, up: 2.0), damage: 3.0, tags: ["weak"], enabled: false, lock: true),
+            "hand": (shape: Sphere(radius: 0.5), at: (forward: 1.4, up: 1.2, right: 1.0), health: Some(60), to_body: 0.5, lock: true),
+            "horn": (shape: Sphere(radius: 0.5), at: (forward: 0.3, up: 5.7), health: Some(80), lock: true),
+            "leg_left": (shape: Capsule(half_height: 0.8, radius: 0.45), at: (forward: 0.3, up: 1.2, right: -0.7), poise: 2.0, lock: true),
+            "leg_right": (shape: Capsule(half_height: 0.8, radius: 0.45), at: (forward: 0.3, up: 1.2, right: 0.7), poise: 2.0, lock: true),
         },
     ),
 }

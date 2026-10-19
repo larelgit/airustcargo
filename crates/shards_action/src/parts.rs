@@ -41,7 +41,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use shards_content::{ContentAppExt, ContentDb, ContentDef, PrefabDef, Refs};
 use shards_core::{Intent, NetRole};
-use shards_motion::{Body, Collider, CollisionLayers, LayerMask, Shape};
+use shards_motion::{Body, Collider, CollisionLayers, LayerMask, LockOnTarget, LockPoint, Shape};
 
 use crate::def::{Local, EPS};
 
@@ -58,11 +58,15 @@ pub struct PartsDef {
     /// through a part (a giant whose capsule is far bigger than its limbs).
     #[serde(skip_serializing_if = "is_true")]
     pub body_hurtbox: bool,
+    /// Whether the lock-on may take the body itself beside its lock points (parts with `lock`);
+    /// `false`: only its points (a giant locked at its core or a limb, never at its feet).
+    #[serde(skip_serializing_if = "is_true")]
+    pub lock_body: bool,
 }
 
 impl Default for PartsDef {
     fn default() -> Self {
-        Self { parts: BTreeMap::new(), body_hurtbox: true }
+        Self { parts: BTreeMap::new(), body_hurtbox: true, lock_body: true }
     }
 }
 
@@ -98,6 +102,11 @@ pub struct PartDef {
     /// Whether it takes hits from the start; `false`: only once [`set_part`] turns it on.
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub enabled: bool,
+    /// A lock point (R3): the lock-on may take it as a target of its own, and the camera frames
+    /// it. It stays one while it is off (a weak spot that closes keeps the lock) and stops being
+    /// one when it breaks. With `enabled: false` it is a pure aim point that is never hit.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub lock: bool,
 }
 
 /// A part's own turn in the body's frame, in degrees: `pitch` about the body's right, `yaw` about
@@ -130,6 +139,10 @@ fn is_one(v: &f32) -> bool {
 
 fn is_true(v: &bool) -> bool {
     *v
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 fn is_zero_local(v: &Local) -> bool {
@@ -176,6 +189,9 @@ impl PartsDef {
             if p.tags.iter().any(|t| t.trim().is_empty()) {
                 out.push(format!("part `{id}`: an empty tag"));
             }
+        }
+        if !self.lock_body && !self.parts.values().any(|p| p.lock) {
+            out.push("`lock_body: false` and no part with `lock: true`: nothing to lock on to".to_owned());
         }
         out
     }
@@ -304,6 +320,9 @@ pub(crate) fn spawn_parts(world: &mut World) {
             if let Some(h) = p.health {
                 e.insert(PartHealth { current: h, max: h });
             }
+            if p.lock {
+                e.insert((LockOnTarget, LockPoint));
+            }
             ids.push(*e.get::<AiId>().expect("AiKind requires an AiId"));
         }
         world.entity_mut(body).insert(SpawnedParts(ids));
@@ -348,9 +367,10 @@ pub(crate) fn place_parts(
 
 /// The bodies a hit's overlaps stand for, one entry each, with the part it landed on: a part
 /// that is on stands for its body (among a body's parts the hit overlaps, the one whose centre is
-/// nearest `near`, ties to the lower `AiId`), and a body whose definition says
-/// `body_hurtbox: false` is hit only through a part. In no particular order.
-pub(crate) fn hit_bodies(world: &World, overlapping: Vec<Entity>, near: Vec3) -> Vec<(Entity, Option<Entity>)> {
+/// nearest `near`, ties to the lower `AiId`; `prefer`, the part the attacker is locked on to, when
+/// the hit overlaps it), and a body whose definition says `body_hurtbox: false` is hit only through
+/// a part. In no particular order.
+pub(crate) fn hit_bodies(world: &World, overlapping: Vec<Entity>, near: Vec3, prefer: Option<Entity>) -> Vec<(Entity, Option<Entity>)> {
     struct Seen {
         body: Entity,
         own: bool,
@@ -365,7 +385,10 @@ pub(crate) fn hit_bodies(world: &World, overlapping: Vec<Entity>, near: Vec3) ->
                     continue;
                 }
                 let Some(body) = index.and_then(|i| i.get(p.body)) else { continue };
-                let distance = world.get::<Transform>(e).map_or(f32::MAX, |t| t.translation.distance_squared(near));
+                let distance = match Some(e) == prefer {
+                    true => f32::NEG_INFINITY,
+                    false => world.get::<Transform>(e).map_or(f32::MAX, |t| t.translation.distance_squared(near)),
+                };
                 (body, Some((distance, world.get::<AiId>(e).map_or(u32::MAX, |i| i.0), e)))
             }
             None => (e, None),
@@ -439,7 +462,34 @@ pub(crate) fn break_part_entity(world: &mut World, part: Entity, by: Option<Enti
     if let Some(mut collider) = world.get_mut::<Collider>(part) {
         collider.layers = layers(false);
     }
+    // No lock point any more: a lock on it is let go of by the lock check (`lock released`).
+    world.entity_mut(part).remove::<(LockOnTarget, LockPoint)>();
     world.trigger(PartBroken { body, part, id: p.id, by });
+}
+
+/// The body `entity` stands for: its body when it is a part (and the body is there), else itself.
+/// What the lock-on names may be a part (R3); what fights, dies and pairs is its body.
+pub fn body_of(world: &World, entity: Entity) -> Entity {
+    world
+        .get::<Part>(entity)
+        .and_then(|p| world.get_resource::<AiIndex>()?.get(p.body))
+        .unwrap_or(entity)
+}
+
+/// Whether the lock-on may take `body` itself: not when its parts definition says `lock_body: false`
+/// (only its lock points then).
+pub fn body_takes_lock(world: &World, body: Entity) -> bool {
+    let Some(parts) = world.get::<BodyParts>(body) else { return true };
+    world.get_resource::<ContentDb>().and_then(|db| db.get::<PartsDef>(&parts.0)).is_none_or(|d| d.lock_body)
+}
+
+/// The ids of `body`'s lock points that are not broken, in the definition's order.
+pub fn lock_points_of(world: &World, body: Entity) -> Vec<String> {
+    parts_of(world, body)
+        .into_iter()
+        .filter(|p| world.get::<LockOnTarget>(*p).is_some())
+        .filter_map(|p| world.get::<Part>(p).map(|q| q.id.clone()))
+        .collect()
 }
 
 /// The part entity `id` of `body`, or why there is none (the error lists the body's parts).
@@ -513,15 +563,23 @@ fn describe_part(e: EntityRef) -> Option<String> {
 
 /// A prefab's `BodyParts` names a parts definition some file defines.
 fn check_prefab(prefab: &PrefabDef, _id: &str, refs: &mut Refs) {
+    let is = |refs: &Refs, name: &str, ty: std::any::TypeId, short: &str| match refs.type_registry() {
+        Some(registry) => shards_content::prefab::resolve_component(registry, name).is_ok_and(|reg| reg.type_id() == ty),
+        None => name == short,
+    };
+    let marked = prefab.components.keys().any(|name| is(refs, name, std::any::TypeId::of::<LockOnTarget>(), "LockOnTarget"));
     for (name, value) in &prefab.components {
-        let ours = match refs.type_registry() {
-            Some(registry) => shards_content::prefab::resolve_component(registry, name)
-                .is_ok_and(|reg| reg.type_id() == std::any::TypeId::of::<BodyParts>()),
-            None => name == "BodyParts",
-        };
         // A value that does not read is the prefab's own error.
-        if ours && let Ok(parts) = ron::from_str::<BodyParts>(value.get_ron()) {
-            refs.require::<PartsDef>(&parts.0, "BodyParts");
+        if is(refs, name, std::any::TypeId::of::<BodyParts>(), "BodyParts")
+            && let Ok(parts) = ron::from_str::<BodyParts>(value.get_ron())
+            && refs.require::<PartsDef>(&parts.0, "BodyParts")
+            && marked
+            && refs.get::<PartsDef>(&parts.0).is_some_and(|d| !d.lock_body)
+        {
+            refs.error(format!(
+                "LockOnTarget on a body whose parts `{}` say `lock_body: false`: the lock-on takes only its lock points; leave the marker out",
+                parts.0
+            ));
         }
     }
 }
@@ -542,7 +600,8 @@ pub enum PartOp {
 /// the body you are locked on. A broken part stays off.
 #[derive(Deserialize, JsonSchema)]
 pub struct PartArgs {
-    /// The body (default: the one you are locked on).
+    /// The body, or one of its parts (default: the one you are locked on, or the body of the lock
+    /// point you are locked on).
     pub id: Option<Id>,
     /// The part's id in the body's definition (`observe` lists them: `horn of e12`).
     pub name: String,
@@ -559,7 +618,9 @@ fn part_tool(In(call): In<Call<PartArgs>>, world: &mut World) -> ToolResult {
             .map(Id)
             .ok_or("you are locked on to nothing; pass `id`")?,
     };
-    let body = who.entity(world)?;
+    // A lock on a lock point (R3) stands for its body, as an `id` naming a part does.
+    let body = body_of(world, who.entity(world)?);
+    let who = world.get::<AiId>(body).map_or(who, |id| Id(*id));
     let name = call.args.name;
     match call.args.op {
         PartOp::On => set_part(world, body, &name, true).map(|()| format!("{who} {name} on")),
@@ -607,7 +668,7 @@ mod tests {
     use super::*;
 
     fn def(parts: &[(&str, PartDef)]) -> PartsDef {
-        PartsDef { parts: parts.iter().map(|(id, p)| ((*id).to_owned(), p.clone())).collect(), body_hurtbox: true }
+        PartsDef { parts: parts.iter().map(|(id, p)| ((*id).to_owned(), p.clone())).collect(), ..default() }
     }
 
     fn sphere() -> PartDef {
@@ -636,6 +697,20 @@ mod tests {
         }
         assert!(def(&[]).problems()[0].contains("no parts"));
         assert!(def(&[("horn", sphere())]).problems().is_empty());
+    }
+
+    #[test]
+    fn lock_points_read_and_a_body_without_any_is_named() {
+        let set: PartsDef = ron::from_str("(lock_body: false, parts: {\"hand\": (shape: Sphere(radius: 0.5), lock: true)})").unwrap();
+        assert!(!set.lock_body && set.parts["hand"].lock);
+        assert!(set.problems().is_empty(), "{:?}", set.problems());
+        let written = ron::to_string(&set).unwrap();
+        assert!(written.contains("lock_body:false") && written.contains("lock:true"), "{written}");
+        let plain = def(&[("hand", sphere())]);
+        assert!(plain.lock_body && !plain.parts["hand"].lock, "a body is a target and a part is none by default");
+        assert!(!ron::to_string(&plain).unwrap().contains("lock"), "defaults are not written");
+        let blind = PartsDef { lock_body: false, ..plain };
+        assert!(blind.problems().join("\n").contains("`lock_body: false` and no part with `lock: true`"), "{:?}", blind.problems());
     }
 
     #[test]

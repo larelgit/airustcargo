@@ -1244,7 +1244,10 @@ fn a_body_with_parts_comes_back_mid_swing() {
     // "spawned e15 colossus at (0.0, 4.0)"
     let colossus = spawned.result.as_str().and_then(|t| t.split_whitespace().nth(1)).unwrap().to_owned();
     step(&mut app, 2);
+    // Its lock points (R3): the lock on the body goes to one of them; then the core by name.
     ok(&mut app, "lock_on", json!({"target": colossus}));
+    let locked = ok(&mut app, "lock_on", json!({"point": "core"})).result.as_str().unwrap_or_default().to_owned();
+    assert!(locked.contains(&format!("(core of {colossus})")), "{locked}");
     step(&mut app, 31);
     ok(&mut app, "part", json!({"name": "hand", "op": "break"}));
     ok(&mut app, "part", json!({"name": "core", "op": "on"}));
@@ -1261,6 +1264,18 @@ fn a_body_with_parts_comes_back_mid_swing() {
     assert!(parts.contains(&("hand".into(), false, true, Some(0.0))) && parts.contains(&("core".into(), true, false, None)), "{parts:?}");
     assert_eq!(app.world_mut().query::<&SpawnedParts>().iter(app.world()).map(|s| s.0.len()).sum::<usize>(), 5);
     assert_continues_alike("a body with parts, mid-swing", app, |app| {
+        // The lock on the core and the lock points come back; the broken hand is none.
+        let seen = ok(app, "inspect", json!({"id": PLAYER})).result.to_string();
+        assert!(seen.contains(&format!("(core of {colossus})")), "{seen}");
+        let points: Vec<(String, bool)> = {
+            let world = app.world_mut();
+            let mut q = world.query::<(&Part, Has<shards::motion::LockOnTarget>)>();
+            let mut v: Vec<_> = q.iter(world).map(|(p, marked)| (p.id.clone(), marked)).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(points.iter().filter(|(_, marked)| *marked).count(), 4, "{points:?}");
+        assert!(points.contains(&("hand".into(), false)), "{points:?}");
         ok(app, "step", json!({"ticks": 60, "until": [{"journal": "at core"}]}));
         step(app, 2);
         let parts = app.world_mut().query::<&Part>().iter(app.world()).count();

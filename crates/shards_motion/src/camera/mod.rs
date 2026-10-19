@@ -144,6 +144,12 @@ impl Default for CameraSettings {
 #[reflect(Component, Default)]
 pub struct LockOnTarget;
 
+/// Marks a lock-on target that is a point on another body (a body part, R1/R3), not a body: the
+/// camera frames it at its own position (its centre), where it frames a body at its chest.
+#[derive(Component, Reflect, Default, Clone, Copy, Debug)]
+#[reflect(Component, Default)]
+pub struct LockPoint;
+
 /// The camera's current shake: `trauma` in 0..1 decays on its own.
 #[derive(Resource, Default, Clone, Copy, Debug, PartialEq)]
 pub struct CameraShake {
@@ -176,6 +182,7 @@ pub(crate) fn plugin(app: &mut App) {
         .register_type::<CameraTuning>()
         .register_type::<CameraOffsets>()
         .register_type::<LockOnTarget>()
+        .register_type::<LockPoint>()
         .register_type::<LockOnDef>()
         .add_content::<CameraTuning>()
         .add_content::<LockOnDef>()

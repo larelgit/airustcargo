@@ -21,6 +21,20 @@
             "shin": (shape: Sphere(radius: 0.3), at: (forward: 0.7, up: 0.3, right: 0.6)),
         },
     ),
+    // Lock points (R3): a body taken by the lock-on only through its parts. Two on the line ahead of it
+    // (the front one nearer the middle of a swing at it), a hand off to its right with 20 hp, a leg off
+    // to its left, and a crest that is no lock point.
+    "pointed": (
+        body_hurtbox: false,
+        lock_body: false,
+        parts: {
+            "back": (shape: Sphere(radius: 0.3), at: (forward: 0.6, up: 0.8), lock: true),
+            "crest": (shape: Sphere(radius: 0.3), at: (up: 3.0)),
+            "front": (shape: Sphere(radius: 0.3), at: (forward: 1.2, up: 0.8), lock: true),
+            "hand": (shape: Sphere(radius: 0.3), at: (forward: 1.0, up: 1.0, right: 1.0), health: Some(20), lock: true),
+            "leg": (shape: Sphere(radius: 0.3), at: (forward: 1.0, up: 0.6, right: -1.0), lock: true),
+        },
+    ),
     // One part on a body whose own capsule still takes hits.
     "open": (parts: {"arm": (shape: Sphere(radius: 0.3), at: (forward: 0.8, up: 1.0, right: 0.5))}),
 }

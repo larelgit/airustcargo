@@ -319,7 +319,10 @@ fn meant_facing(world: &World, entity: Entity, from: PairAngle) -> Vec3 {
     let locked = intent
         .and_then(|i| i.target)
         .and_then(|id| world.resource::<AiIndex>().get(id))
-        .filter(|e| world.get::<Dead>(*e).is_none() && world.get::<Downed>(*e).is_none())
+        .filter(|e| {
+            let body = crate::parts::body_of(world, *e);
+            world.get::<Dead>(body).is_none() && world.get::<Downed>(body).is_none()
+        })
         .and_then(|e| world.get::<Transform>(e))
         .zip(here)
         .and_then(|(there, here)| flat(there.translation - here).try_normalize());
@@ -401,7 +404,11 @@ pub fn pair_victim(world: &World, entity: Entity, select: &PairSelect) -> Option
     let here = world.get::<Transform>(entity)?.translation;
     let face = meant_facing(world, entity, select.angle_from);
     if select.prefer_target
-        && let Some(locked) = world.get::<Intent>(entity).and_then(|i| i.target).and_then(|id| world.resource::<AiIndex>().get(id))
+        && let Some(locked) = world
+            .get::<Intent>(entity)
+            .and_then(|i| i.target)
+            .and_then(|id| world.resource::<AiIndex>().get(id))
+            .map(|e| crate::parts::body_of(world, e))
         && qualifies(world, entity, locked, select, face)
     {
         return Some(locked);

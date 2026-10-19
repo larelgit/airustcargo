@@ -17,7 +17,7 @@ use super::math::{
     aim_assist, arm_length, arm_reach, lock_framing, lock_holds, next_lock_target, orbit_angles, orbit_position, pick_lock_target,
     pitch_limits, resolve_camera_collision, shake_offset_with, wrap_angle, FlickState, LockCandidate, LockView,
 };
-use super::{CameraOffsets, CameraSettings, CameraShake, CameraSystems, CameraTuning, LockOnTarget, ThirdPersonCamera};
+use super::{CameraOffsets, CameraSettings, CameraShake, CameraSystems, CameraTuning, LockOnTarget, LockPoint, ThirdPersonCamera};
 use crate::input::{ControlState, ControlSystems};
 use crate::interp::{shown_translation, InterpSystems, Interpolated};
 use crate::physics::{LayerMask, PhysicsWorld, QueryFilter};
@@ -25,7 +25,7 @@ use crate::physics::{LayerMask, PhysicsWorld, QueryFilter};
 /// The local player, as opposed to the camera that follows it.
 type LocalPlayerFilter = (With<LocalPlayer>, Without<ThirdPersonCamera>);
 
-type LockOnTargets<'w, 's> = Query<'w, 's, (&'static AiId, &'static Transform), (With<LockOnTarget>, Without<ThirdPersonCamera>)>;
+type LockOnTargets<'w, 's> = Query<'w, 's, (&'static AiId, &'static Transform, Has<LockPoint>), (With<LockOnTarget>, Without<ThirdPersonCamera>)>;
 
 /// What the lock-on rules read of the camera, and the local player they lock for.
 type RuleCamera = (&'static Transform, Option<&'static Projection>);
@@ -58,6 +58,11 @@ fn apply_motion_blur(settings: Option<Res<AccessibilitySettings>>, mut cameras: 
 /// The chest of a character: where the camera aims and rays go.
 fn chest(tf: &Transform) -> Vec3 {
     chest_at(tf.translation)
+}
+
+/// Where a lock-on target is aimed at: a character's chest, a [`LockPoint`]'s own position (its centre).
+fn aim_point(tf: &Transform, point: bool) -> Vec3 {
+    if point { tf.translation } else { chest(tf) }
 }
 
 /// The chest of a character standing (or drawn) at `feet`.
@@ -102,7 +107,7 @@ fn lock_on(
         half_angle_deg: settings.lock_cone_deg,
     };
     let mut all: Vec<LockCandidate> =
-        targets.iter().filter(|(id, _)| Some(*id) != me).map(|(id, tf)| LockCandidate { key: id.0, position: chest(tf) }).collect();
+        targets.iter().filter(|(id, ..)| Some(*id) != me).map(|(id, tf, point)| LockCandidate { key: id.0, position: aim_point(tf, point) }).collect();
     all.sort_by_key(|c| c.key);
     let position_of = |id: AiId| all.iter().position(|c| c.key == id.0);
 
@@ -293,6 +298,7 @@ fn orbit_camera(
     players: Query<(Entity, &Intent), LocalPlayerFilter>,
     followed: Query<&Transform, Without<ThirdPersonCamera>>,
     lockable: LockOnTargets,
+    points: Query<(), With<LockPoint>>,
     children: Query<&Children>,
     visuals: Query<&Interpolated>,
     mut cameras: Query<(&mut ThirdPersonCamera, &mut Transform, Option<&mut Projection>)>,
@@ -316,7 +322,11 @@ fn orbit_camera(
             .and_then(|(_, intent)| intent.target)
             .and_then(|id| index.get(id))
             .and_then(|e| followed.get(e).ok().map(|tf| (e, tf)))
-            .map(|(e, tf)| chest_at(shown_translation(e, tf, &children, &visuals)));
+            // A body is framed at its chest, a lock point on a body (a part) at its own centre.
+            .map(|(e, tf)| {
+                let at = shown_translation(e, tf, &children, &visuals);
+                if points.contains(e) { at } else { chest_at(at) }
+            });
 
         let subject_at = shown_translation(subject.unwrap_or(Entity::PLACEHOLDER), subject_tf, &children, &visuals);
         let head = subject_at + Vec3::Y * camera.height;
@@ -397,8 +407,8 @@ fn crosshair_error(camera: &ThirdPersonCamera, lockable: &LockOnTargets) -> Opti
     let eye = orbit_position(camera.focus, camera.yaw, camera.pitch, camera.distance);
     lockable
         .iter()
-        .map(|(_, tf)| {
-            let (yaw, pitch) = orbit_angles(eye - chest(tf));
+        .map(|(_, tf, point)| {
+            let (yaw, pitch) = orbit_angles(eye - aim_point(tf, point));
             Vec2::new(wrap_angle(yaw - camera.yaw), pitch - camera.pitch)
         })
         .min_by(|a, b| a.length_squared().total_cmp(&b.length_squared()))

@@ -68,7 +68,7 @@ use shards_core::EngineAppExt;
 pub use invariants::{body_in_solid, launch_sane, motion_finite, BODY_IN_SOLID};
 
 pub use ai::{describe_motion, physics_line_of_sight, MotionAi};
-pub use camera::{CameraSettings, LockHooks, LockOnDef, LockOnTarget, ThirdPersonCamera};
+pub use camera::{CameraSettings, LockHooks, LockOnDef, LockOnTarget, LockPoint, ThirdPersonCamera};
 pub use controller::{
     character, CharacterController, CharacterParams, ControllerPlugin, ControllerSystems, Ghost, Jumped, JumpedFlight, Landed, Launch,
     SprintResume,

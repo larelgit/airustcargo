@@ -17,6 +17,7 @@ use crate::fighter::{Charges, Cooldowns, Dead, Fighter, Stamina};
 use crate::context::ContextInputs;
 use crate::leap::{radius_of, LeapSite};
 use crate::machine::{can_start, ActionRejected, ActionState, FighterView};
+use crate::parts::Part;
 
 /// Walks this close (a share of the action's reach) before attacking.
 const APPROACH: f32 = 0.9;
@@ -44,8 +45,8 @@ type Attackers<'w, 's> = Query<
     ),
 >;
 
-/// Where an order's target stands, whether it is dead, its body, whether it is down.
-type Target = (&'static Transform, Has<Dead>, Option<&'static Collider>, Has<Downed>);
+/// Where an order's target stands, whether it is dead, its body, whether it is down, and the part it is (a lock point, R3).
+type Target = (&'static Transform, Has<Dead>, Option<&'static Collider>, Has<Downed>, Option<&'static Part>);
 
 /// A client's predicted body: its fighter, intent, place, whether it is dead and whether it is down.
 type Walker = (&'static Fighter, &'static mut Intent, &'static Transform, Has<Dead>, Has<Downed>);
@@ -68,8 +69,8 @@ pub(crate) fn follow_attack_orders(
         if dead || downed {
             continue;
         }
-        let goal = index.get(target).and_then(|e| targets.get(e).ok()).filter(|(_, target_dead, _, target_down)| !target_dead && !target_down);
-        let Some((target_tf, _, collider, _)) = goal else {
+        let goal = goal_of(&index, &targets, target);
+        let Some((target_tf, collider)) = goal else {
             end(&mut intent);
             // The lock-on to a corpse goes with the order.
             if intent.target == Some(target) {
@@ -77,7 +78,8 @@ pub(crate) fn follow_attack_orders(
             }
             continue;
         };
-        if !approach(&db, fighter, &mut intent, tf.translation, target, input, target_tf.translation, collider) {
+        let keep = same_body(&index, &targets, intent.target, target);
+        if !approach(&db, fighter, &mut intent, tf.translation, target, input, target_tf.translation, collider, keep) {
             continue;
         }
         let site = controller.map(|c| {
@@ -114,8 +116,26 @@ pub(crate) fn follow_attack_orders(
     }
 }
 
-/// Aims at the order's target (`there`) and takes over the lock-on, walks towards it until
-/// in reach of the action `input` starts: whether it is in reach (and stands).
+/// The body `id` stands for: a part's body (a lock point, R3), else itself.
+fn body_id(index: &AiIndex, targets: &Query<Target>, id: AiId) -> AiId {
+    index.get(id).and_then(|e| targets.get(e).ok()).and_then(|t| t.4).map_or(id, |p| p.body)
+}
+
+/// Where an order's target is, while its body stands: a part (a lock point) falls with its body.
+fn goal_of<'a>(index: &AiIndex, targets: &'a Query<Target>, target: AiId) -> Option<(&'a Transform, Option<&'a Collider>)> {
+    let stands = |id: AiId| index.get(id).and_then(|e| targets.get(e).ok()).is_some_and(|(_, dead, _, down, _)| !dead && !down);
+    let (tf, _, collider, ..) = index.get(target).and_then(|e| targets.get(e).ok())?;
+    stands(body_id(index, targets, target)).then_some((tf, collider))
+}
+
+/// The lock-on is on the order's target's body already (a lock point of it, or the body): the order leaves it.
+fn same_body(index: &AiIndex, targets: &Query<Target>, locked: Option<AiId>, target: AiId) -> bool {
+    locked.is_some_and(|l| body_id(index, targets, l) == body_id(index, targets, target))
+}
+
+/// Aims at the order's target (`there`) and takes over the lock-on (unless `keep_lock`: it is on
+/// the target's body already), walks towards it until in reach of the action `input` starts:
+/// whether it is in reach (and stands).
 #[allow(clippy::too_many_arguments)]
 fn approach(
     db: &ContentDb,
@@ -126,6 +146,7 @@ fn approach(
     input: &str,
     there: Vec3,
     collider: Option<&Collider>,
+    keep_lock: bool,
 ) -> bool {
     let reach = db
         .get::<MovesetDef>(&fighter.moveset)
@@ -139,7 +160,7 @@ fn approach(
     }
     // Attacks and facing follow a lock-on before the aim point: the order's target
     // takes it over, or the order would swing at the wrong enemy forever.
-    if intent.target.is_some_and(|locked| locked != target) {
+    if !keep_lock && intent.target.is_some_and(|locked| locked != target) {
         intent.target = Some(target);
     }
     if to.length() > reach * APPROACH + radius {
@@ -171,10 +192,11 @@ pub(crate) fn steer_attack_orders(
         if dead || downed {
             continue;
         }
-        let goal = index.get(target).and_then(|e| targets.get(e).ok()).filter(|(_, target_dead, _, target_down)| !target_dead && !target_down);
+        let goal = goal_of(&index, &targets, target);
         match goal {
-            Some((there, _, collider, _)) => {
-                approach(&db, fighter, &mut intent, tf.translation, target, &input, there.translation, collider);
+            Some((there, collider)) => {
+                let keep = same_body(&index, &targets, intent.target, target);
+                approach(&db, fighter, &mut intent, tf.translation, target, &input, there.translation, collider, keep);
             }
             None => end(&mut intent),
         }
