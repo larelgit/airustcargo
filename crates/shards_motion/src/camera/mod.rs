@@ -34,9 +34,9 @@ use shards_content::{ContentAppExt, ContentDb};
 use shards_settings::{AccessibilitySettings, ControlSettings};
 
 pub use math::{
-    aim_assist, arm_length, arm_reach, critically_damped_step, damp, fit_tilt, lock_framing, lock_holds, next_lock_target, orbit_angles,
-    orbit_offset, orbit_position, pick_lock_target, pitch_limits, resolve_camera_collision, shake_offset, shake_offset_with,
-    wrap_angle, FlickState, LockCandidate, LockView, ShakeOffset, Side,
+    aim_assist, arm_length, arm_reach, critically_damped_step, damp, fit_room, fit_tilt, lock_framing, lock_holds, next_lock_target,
+    orbit_angles, orbit_offset, orbit_position, pick_lock_target, pitch_limits, resolve_camera_collision, shake_offset,
+    shake_offset_with, wrap_angle, FlickState, LockCandidate, LockView, ShakeOffset, Side,
 };
 pub use lock::{
     body_point, in_frustum, lock_candidates, lock_score, pick_lock, signed_bearing, sight_clear, switch_lock, switch_target, LockHooks,

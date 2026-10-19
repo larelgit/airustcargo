@@ -266,23 +266,37 @@ pub fn lock_framing(yaw: f32, pitch: f32, focus: Vec3, target: Vec3, framing: &F
     )
 }
 
-/// How far the view of a camera standing at `eye` and looking at `focus` turns up (radians,
-/// about its own horizontal axis) to keep a locked `target` inside the frame's top margin
-/// while the player's `feet` stay inside the bottom one (R4); `half_fov` is half the vertical
-/// field of view. Never down and never past `fit.tilt_max`; when both cannot be kept, the
-/// feet are (the target goes off the top). Measured in the vertical plane through each point,
-/// which the framing's yaw keeps the target and the player close to.
+/// The angle (radians, up positive) above its view axis at which a camera at `eye` looking at
+/// `focus` (with no roll, as `Transform::looking_at` with +Y up turns it) sees `p`: measured in
+/// the camera's own frame, so a point off to the side lands where the frame's height says.
+/// Turning the view up by `t` about its horizontal axis moves every point down by exactly `t`.
+fn view_angle(eye: Vec3, focus: Vec3, p: Vec3) -> f32 {
+    let forward = (focus - eye).normalize_or(Vec3::NEG_Z);
+    let up = forward.cross(Vec3::Y).normalize_or(Vec3::X).cross(forward);
+    let d = p - eye;
+    ops::atan2(d.dot(up), d.dot(forward))
+}
+
+/// How far off the view axis a point may be seen and still be inside the fit's margin.
+fn fit_reach(half_fov: f32, fit: &FitTuning) -> f32 {
+    ops::atan((1.0 - fit.margin) * ops::tan(half_fov))
+}
+
+/// The most the view of a camera standing at `eye` and looking at `focus` may turn up (radians,
+/// about its own horizontal axis, R4): before the player's `feet` would leave the frame's bottom
+/// margin, and never past `fit.tilt_max`; 0 when the feet are already at or below the margin.
+/// `half_fov` is half the vertical field of view. A hard limit: the camera holds its tilt to it
+/// on every frame, so a wall that shortens the arm or a lower `tilt_max` never lets the feet out.
+pub fn fit_room(eye: Vec3, focus: Vec3, feet: Vec3, half_fov: f32, fit: &FitTuning) -> f32 {
+    (view_angle(eye, focus, feet) + fit_reach(half_fov, fit)).min(fit.tilt_max).max(0.0)
+}
+
+/// How far the view of a camera standing at `eye` and looking at `focus` wants to turn up
+/// (radians) to keep a locked `target` inside the frame's top margin (R4): never down, and
+/// never past [`fit_room`]: when both cannot be kept, the feet are (the target goes off the
+/// top).
 pub fn fit_tilt(eye: Vec3, focus: Vec3, feet: Vec3, target: Vec3, half_fov: f32, fit: &FitTuning) -> f32 {
-    let elevation = |p: Vec3| {
-        let d = p - eye;
-        ops::atan2(d.y, Vec2::new(d.x, d.z).length())
-    };
-    let axis = elevation(focus);
-    // How far off the axis a point may be seen and still be inside the margin.
-    let reach = ops::atan((1.0 - fit.margin) * ops::tan(half_fov));
-    let up = elevation(target) - reach - axis;
-    let room = elevation(feet) + reach - axis;
-    up.min(room).min(fit.tilt_max).max(0.0)
+    (view_angle(eye, focus, target) - fit_reach(half_fov, fit)).min(fit_room(eye, focus, feet, half_fov, fit)).max(0.0)
 }
 
 /// The nominal length of the arm after a frame: it follows `wanted` (the camera's `distance`)
@@ -831,10 +845,14 @@ mod tests {
         let fit = FitTuning::default();
         let half = 35f32.to_radians();
         let (eye, focus, feet) = (Vec3::new(0.0, 2.3, 5.4), Vec3::new(0.0, 1.5, 0.0), Vec3::ZERO);
-        let elevation = |p: Vec3| ops::atan2(p.y - eye.y, Vec2::new(p.x - eye.x, p.z - eye.z).length());
-        // Where a point in the vertical plane of the view lands (-1 bottom, 1 top), the view
-        // turned up by `tilt` from the focus.
-        let screen = |p: Vec3, tilt: f32| ops::tan(elevation(p) - elevation(focus) - tilt) / ops::tan(half);
+        // Where a point lands in the frame (y: -1 bottom, 1 top) of the camera `orbit_camera`
+        // makes: looking at the focus, then turned up by `tilt`.
+        let screen = |p: Vec3, tilt: f32| {
+            let mut tf = Transform::from_translation(eye).looking_at(focus, Vec3::Y);
+            tf.rotation *= Quat::from_rotation_x(tilt);
+            let v = tf.rotation.inverse() * (p - eye);
+            v.y / -v.z / ops::tan(half)
+        };
         let fits = |target: Vec3, fit: &FitTuning| fit_tilt(eye, focus, feet, target, half, fit);
         // A target ahead at chest height, or below the focus: no turn.
         assert_eq!(fits(Vec3::new(0.0, 1.2, -4.0), &fit), 0.0);
@@ -847,8 +865,18 @@ mod tests {
         let higher = Vec3::new(0.0, 12.0, -2.0);
         let t = fits(higher, &fit);
         assert!((screen(feet, t) + 0.85).abs() < 1e-4 && screen(higher, t) > 1.0, "{t}");
-        // Never past the most the tuning allows.
+        // Off to the side (a camera still turning to a new lock): measured in the camera's
+        // frame, it lands on the top margin too.
+        let aside = Vec3::new(5.0, 6.0, 0.0);
+        let t = fits(aside, &fit);
+        assert!((screen(aside, t) - 0.85).abs() < 1e-4 && screen(feet, t) > -0.85, "{t}: {}", screen(aside, t));
+        // Never past the most the tuning allows, nor past the feet's room.
         assert_eq!(fits(higher, &FitTuning { tilt_max: 0.1, ..default() }), 0.1);
+        assert_eq!(fit_room(eye, focus, feet, half, &FitTuning { tilt_max: 0.1, ..default() }), 0.1);
+        let room = fit_room(eye, focus, feet, half, &fit);
+        assert!((screen(feet, room) + 0.85).abs() < 1e-4 && room == fits(higher, &fit), "{room}");
+        // Feet already below the margin: no room at all.
+        assert_eq!(fit_room(eye, focus, Vec3::new(0.0, -6.0, 0.0), half, &fit), 0.0);
     }
 
     #[test]

@@ -978,7 +978,7 @@ For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, spr
 | `trauma.decay` | `1.4` (`TRAUMA_DECAY`, linear) | trauma drained per second |
 | `trauma.shift_m` / `pitch_deg` / `yaw_deg` / `roll_deg` | `0.12` / `2` / `2` / `3` | the most a shake of trauma 1 moves and turns the view (scaled by trauma squared) |
 
-The ranges of `pitch`, `follow_rate`, the rates, thresholds and amplitudes are content errors when out of range (a rate must be above 0, a re-arm level below the threshold, and so on). `framing.pitch_clamp` must not have its low end above its high end, and `framing.fit` needs a margin in [0, 1), a `tilt_max` within ±(π/2 − 0.02) and a rate above 0; it may be wider than `pitch`, since the framed pitch is then held to the pitch limits like any other. Two things stay constants on purpose: the engine's 30..120 limit on the field of view (the player's setting is clamped to it too) and the shake's noise frequencies (the look of the noise, not a feel number).
+The ranges of `pitch`, `follow_rate`, the rates, thresholds and amplitudes are content errors when out of range (a rate must be above 0, a re-arm level below the threshold, and so on). `framing.pitch_clamp` must not have its low end above its high end, and `framing.fit` needs a margin in [0, 1), a `tilt_max` within [0, π/2 − 0.02] and a rate above 0; it may be wider than `pitch`, since the framed pitch is then held to the pitch limits like any other. Two things stay constants on purpose: the engine's 30..120 limit on the field of view (the player's setting is clamped to it too) and the shake's noise frequencies (the look of the noise, not a feel number).
 
 *Smoothing.* Every smoothing is the exact exponential `1 - exp(-rate * dt)` through `bevy::math::ops::exp`, so it does not depend on the frame rate (`damp`, `lock_framing`, `arm_reach`). `critically_damped_step(x, v, target, omega, dt)` is the closed form of a critically damped spring (for a landing dip: kick `v`, aim at 0); one step of `2 dt` equals two of `dt`. *The arm*: a wall pulls it in at once; once it lets go the shortfall below the nominal length shrinks at `arm.follow_rate` (the rate acts on the shortfall, so a plain zoom is smoothed once, by `arm_length`; `ThirdPersonCamera::arm_reach` is where it stood last frame, `arm_length` its nominal length), never past what is free and never closer than `arm.min_distance` (as far as the room allows). A jump of the focus (a teleport) resets it.
 
@@ -994,7 +994,9 @@ third, below the player's feet, stays empty. The measurement (`tests/motion/came
 point 6 m up at 2 m ahead, 9 m up at 8 m and 12 m up at any distance reach its top edge or pass it. A `framing.fit` keeps both: the camera stands
 where the framing puts it, but its view turns up from the focus about its own horizontal axis (`ThirdPersonCamera::tilt`,
 `fit_tilt`) just far enough to put the target on the top margin, and never so far that the feet leave the bottom margin; when
-both cannot be kept, the player is (the player and the threat, not the whole silhouette). With the defaults a point fits up
+both cannot be kept, the player is. Both are measured in the camera's own frame, so a target off to the side (a camera still
+turning to a new lock) lands where the frame's height says. The turn eases toward the target at `fit.rate`, but the feet's limit
+and `tilt_max` (`fit_room`) hold it on every frame: a wall that shortens the arm or a lower `tilt_max` never lets the feet out (the player and the threat, not the whole silhouette). With the defaults a point fits up
 to about 9 m at 2 m ahead, 10 m at 4 m, and 12 m from 6 m out. The view never turns down, a target the frame
 already holds (a body of a person's height, framed at its chest) gives the very same camera as without a fit, and after the lock
 the view comes back to the focus at `fit.rate`. A lower camera needs no new number: `framing.pitch_clamp`'s low end is how far

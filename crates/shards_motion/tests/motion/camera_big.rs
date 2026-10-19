@@ -188,3 +188,27 @@ fn the_view_comes_back_to_the_player_after_the_lock() {
     let to_focus = (cam(&s).focus - tf.translation).normalize();
     assert!(tf.forward().dot(to_focus) > 0.9999, "looks at the focus again");
 }
+
+#[test]
+fn the_feet_and_tilt_max_hold_the_tilt_on_the_very_next_frame() {
+    let mut s = scene(2.0, 9.0, fitted());
+    settle(&mut s);
+    let held = cam(&s).tilt;
+    assert!(held > 0.2, "{held}");
+    // A lower maximum while the fit holds the view up: no easing down to it.
+    s.app.world_mut().resource_mut::<CameraTuning>().framing.fit.as_mut().unwrap().tilt_max = 0.1;
+    s.app.update();
+    assert!(cam(&s).tilt <= 0.1, "{}", cam(&s).tilt);
+    s.app.insert_resource(fitted());
+    settle(&mut s);
+    // A shorter arm (as a wall makes it) sees the feet lower in the frame: the tilt drops at
+    // once, so the feet never leave the bottom margin on the way.
+    let camera = s.camera;
+    s.app.world_mut().get_mut::<ThirdPersonCamera>(camera).unwrap().distance = 2.5;
+    for frame in 0..30 {
+        s.app.update();
+        let feet = on_screen(&s, feet_of(&s));
+        assert!(feet.y > -0.851, "frame {frame}: the feet at {feet}, tilt {}", cam(&s).tilt);
+    }
+    assert!(cam(&s).tilt < held, "{} against {held}", cam(&s).tilt);
+}
