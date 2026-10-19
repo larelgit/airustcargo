@@ -416,7 +416,7 @@ pub(crate) fn part_hit(world: &World, body: Entity, part: Entity) -> Option<(Par
 /// Takes `damage` off a part's own health; whether that broke it (it had health, was on and not
 /// broken, and has none left). A part without health takes nothing.
 pub(crate) fn hurt_part(world: &mut World, part: Entity, damage: f32) -> bool {
-    if !(damage > 0.0) || world.get::<Part>(part).is_none_or(|p| !p.on || p.broken) {
+    if damage.is_nan() || damage <= 0.0 || world.get::<Part>(part).is_none_or(|p| !p.on || p.broken) {
         return false;
     }
     let Some(mut health) = world.get_mut::<PartHealth>(part) else { return false };

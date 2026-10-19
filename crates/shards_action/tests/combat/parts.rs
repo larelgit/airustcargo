@@ -184,3 +184,19 @@ fn parts_go_with_their_body() {
     step(&mut app, 2);
     assert!(parts.iter().all(|p| app.world().get_entity(*p).is_err()), "every part went");
 }
+
+/// A swing goes through the part nearest the middle of its cone (half way up), not nearest the
+/// attacker's feet where the cone starts: the chest straight ahead, though the shin off to the
+/// side is nearer the feet.
+#[test]
+fn a_swing_goes_through_the_part_nearest_the_middle_of_its_cone() {
+    let (mut app, hero, brute) = arena("tall");
+    let (chest, shin) = (part(&app, brute, "chest"), part(&app, brute, "shin"));
+    let at = |e: Entity| app.world().get::<Transform>(e).unwrap().translation;
+    let feet = app.world().get::<Transform>(hero).unwrap().translation;
+    assert!(at(shin).distance(feet) < at(chest).distance(feet), "the shin is nearer the feet");
+    swing(&mut app, hero);
+    let d = &seen(&app).damaged;
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(d[0].part, Some(chest), "through the chest");
+}
