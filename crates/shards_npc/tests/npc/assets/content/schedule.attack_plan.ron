@@ -47,4 +47,50 @@
         in_range_only: true,
         rest: (0.1, 0.2),
     ),
+
+    // Plans of the tokenless tests (N8b). The boss fights without tokens, never waits for the spacing and
+    // waits in a strafe of its own (2.4 m out, a side every second); its one option reaches 2.9 m, and it rests a second between attacks.
+    "sched_boss": (
+        options: [(input: "light", max: Some(2.9))],
+        in_range_only: true,
+        rest: (1.0, 1.0),
+        tokenless: true,
+        ignores_spacing: true,
+        wait: Some((role: Strafe, distance: 2.4, speed: 1.0, orbit: 2.0, period: 1.0)),
+    ),
+    // The same boss that fights by the tokens like anyone: a counted twin, the control of the tests.
+    "sched_boss_counted": (options: [(input: "light", max: Some(2.9))], in_range_only: true, rest: (1.0, 1.0)),
+    // The same two with a short pause, to meet an add's attack in flight.
+    "sched_boss_quick": (
+        options: [(input: "light", max: Some(2.9))],
+        in_range_only: true,
+        rest: (0.5, 0.5),
+        tokenless: true,
+        wait: Some((role: Strafe, distance: 2.4, speed: 1.0, orbit: 2.0, period: 1.0)),
+    ),
+    "sched_boss_quick_counted": (options: [(input: "light", max: Some(2.9))], in_range_only: true, rest: (0.5, 0.5)),
+    // An add: a plain jab by the tokens.
+    "sched_add": (options: [(input: "light")], in_range_only: true, rest: (0.1, 0.1)),
+    // Nothing in reach, ever (a window 8-9 m out, in range only): the NPC holds its grant and waits.
+    "sched_stuck_boss": (
+        options: [(input: "light", min: 8.0, max: Some(9.0))],
+        in_range_only: true,
+        rest: (0.1, 0.1),
+        first_rest: Some((1.0, 1.0)),
+        tokenless: true,
+        wait: Some((role: Strafe, distance: 2.4, speed: 1.0, orbit: 2.0, period: 1.0)),
+    ),
+    // The same boss deciding on the NPC's decision ticks only (a behaviour with a `think` cadence).
+    "sched_stuck_decide": (
+        options: [(input: "light", min: 8.0, max: Some(9.0))],
+        in_range_only: true,
+        press_on_decision: true,
+        rest: (0.1, 0.1),
+        first_rest: Some((1.0, 1.0)),
+        tokenless: true,
+        wait: Some((role: Strafe, distance: 2.4, speed: 1.0, orbit: 2.0, period: 1.0)),
+    ),
+    "sched_stuck": (options: [(input: "light", min: 8.0, max: Some(9.0))], in_range_only: true, rest: (0.1, 0.1)),
+    // An add that cannot be granted: its only option is on a long cooldown (planted by the test).
+    "sched_cooled": (options: [(input: "light", cooldown: 99.0)], in_range_only: true, rest: (0.1, 0.1)),
 }

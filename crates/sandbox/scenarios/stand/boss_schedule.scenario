@@ -1,8 +1,11 @@
-# The boss scheduler in co-op (N8a2): the warden fights (its plan is gameplay state every member hashes), a host and two
+# The boss scheduler in co-op (N8a2, N8b): the warden fights (its plan is gameplay state every member hashes), a host and two
 # clients on 100 ms links with 1% loss. `npc_schedule` counts the session's living players (three), the stand must not report a
 # desync, and when a client's body dies the host counts two. A co-op session refuses `content_apply`, so the gated plans of
 # the single-game scenario cannot be applied here: the check is the player count the `players` gate reads. A client shows the
-# host's plan (history, no token) and refuses `npc_schedule`: the host owns NPC plans.
+# host's plan (history, no token) and refuses `npc_schedule`: the host owns NPC plans. The warden here
+# fights by the tokens (its plan is not tokenless, and a co-op session cannot apply the tokenless plan of the single-game
+# scenario), so the token check is the counted half: the host holds the grant of an attack under way and a client sees
+# `token: null` for it (`AttackToken` is not replicated, tokenless or not).
 #
 #   cargo sandbox --stand 2 --headless --paused --port 0 --port-file F &
 #   SHARDS_PORT_FILE=F cargo shards wait --peer all
@@ -49,6 +52,15 @@ expect result !contains "\"history\": []"
 # and it does not answer for the host
 @c1 act? npc_schedule id=e6 target=e5
 expect result contains "the host owns NPC plans: ask the host"
+
+# --- the token of an attack under way is the host's: it holds the grant, a client sees none
+@host step 600 --until named:npc_attacking
+@host act npc_state id=e6
+expect result contains "\"held_for\""
+expect result contains "\"started\": true"
+@c1 act npc_state id=e6
+expect result contains "\"token\": null"
+invariant !journal "desync"
 
 # --- a client's body falls: the host counts two
 @host act set id=e15 component=Health path=current value=0

@@ -8,5 +8,6 @@
     ),
     // The victim: the tuning's cap (2) and a cap of one of its own.
     "b_victim": (inputs: {"block": "b_guard"}),
+    "b_victim_poise": (inputs: {"block": "b_guard_poise"}),
     "b_capped": (inputs: {}, max_statuses: 1),
 }

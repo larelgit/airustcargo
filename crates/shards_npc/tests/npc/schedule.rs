@@ -9,10 +9,10 @@ use ai_core::replay::{self, parts_at};
 use ai_core::{AgentSessions, Scope};
 use bevy::prelude::*;
 use serde_json::{json, Value};
-use shards_action::{Cooldown, Cooldowns};
+use shards_action::{Cooldown, Cooldowns, Dead};
 use shards_motion::CharacterParams;
 use shards_npc::prelude::*;
-use shards_npc::NpcPlan;
+use shards_npc::{Grant, NpcPlan};
 
 use crate::common::*;
 
@@ -450,4 +450,401 @@ fn the_queries_read_no_definition_the_simulation_does_not() {
     let (quiet, asking) = (play(false), play(true));
     assert!(quiet.iter().any(|p| p.starts_with("attack_plan/")), "{quiet:?}");
     assert_eq!(quiet, asking);
+}
+
+// --- N8b: tokenless grants and a plan's waiting role ----------------------------------------------
+
+/// A hero at the origin and one NPC per plan around it (south, east, west), 1.2 m out and facing it,
+/// all fighting by `director`.
+fn ring(app: &mut App, director: &str, plans: &[&str]) -> Vec<Entity> {
+    let world = app.world_mut();
+    player(world, 0, Vec3::ZERO);
+    let spots = [Vec3::new(0.0, 0.0, 1.2), Vec3::new(1.2, 0.0, 0.0), Vec3::new(-1.2, 0.0, 0.0)];
+    plans
+        .iter()
+        .zip(spots)
+        .map(|(plan, at)| npc(world, "sched", Npc::new("grunt", "grunt").with_plan(*plan).with_director(director), at, (-at).normalize()))
+        .collect()
+}
+
+fn jabs(app: &App, who: Entity) -> Vec<u64> {
+    app.world().resource::<Started>().0.iter().filter(|(_, e, a)| *e == who && a == "jab").map(|(t, ..)| *t).collect()
+}
+
+fn grant(app: &App, who: Entity) -> Option<Grant> {
+    app.world().get::<AttackToken>(who).unwrap().held.clone()
+}
+
+fn flying(app: &App, who: Entity) -> bool {
+    grant(app, who).is_some_and(|g| g.in_flight())
+}
+
+/// Whether a journal line (`tick text`) says `who` (`e7`) does something: `12 e7 takes an attack token ...`.
+fn says(line: &str, who: &str) -> bool {
+    line.split_whitespace().nth(1) == Some(who)
+}
+
+// --- 12.2 run 3: a boss among its adds ---------------------------------------------------------
+
+/// One tokenless boss with `boss` as its plan and two adds on one director that spaces strikes 0.7 s
+/// (42 ticks) and has two tokens, fighting for `ticks` ticks.
+fn boss_among_adds(boss: &str, ticks: u64) -> (App, Vec<Entity>) {
+    let mut app = app_seeded(7, record_starts);
+    let who = ring(&mut app, "sched_arena", &[boss, "sched_add", "sched_add"]);
+    // `step` fails the test when `npc.tokens_within_limit`, `npc.strike_spacing` or `npc.plan_sequence` breaks.
+    step(&mut app, ticks);
+    (app, who)
+}
+
+#[test]
+fn a_boss_takes_no_token_and_delays_the_adds_that_never_delay_it() {
+    let (app, who) = boss_among_adds("sched_boss", 2400);
+    let (boss, adds) = (jabs(&app, who[0]), [jabs(&app, who[1]), jabs(&app, who[2])]);
+    assert!(boss.len() >= 8 && adds.iter().all(|a| a.len() >= 3), "everyone strikes: boss {boss:?}, adds {adds:?}");
+    // (a) An add never starts a strike within 42 ticks after the boss's start.
+    for add in &adds {
+        for t in add {
+            if let Some(b) = boss.iter().rfind(|b| **b <= *t) {
+                assert!(t - b >= 42, "an add began at {t}, {} ticks after the boss at {b}", t - b);
+            }
+        }
+    }
+    // (b) The boss starts within 42 ticks after an add's start at least once: it does not wait.
+    let early = boss.iter().any(|b| adds.iter().flatten().any(|a| *a < *b && b - a < 42));
+    assert!(early, "the boss never struck inside an add's spacing: boss {boss:?}, adds {adds:?}");
+    // (c) The adds take the director's tokens, the boss none: `(1/2)` and `(2/2)` name the adds only.
+    let boss_id = id(&app, who[0]);
+    let granted = lines(&app, "takes an attack token");
+    assert!(granted.len() >= 6, "{granted:?}");
+    assert!(granted.iter().all(|l| !says(l, &boss_id)), "{granted:?}");
+    assert!(granted.iter().any(|l| l.ends_with("(1/2)")), "{granted:?}");
+    assert!(lines(&app, "returns its attack token").iter().all(|l| !says(l, &boss_id)));
+    // (d) The rules held on every tick (`step` would have stopped): the books and the spacing.
+    assert_eq!(shards_npc::tokens_within_limit(app.world()), None);
+    assert_eq!(shards_npc::strike_spacing(app.world()), None);
+}
+
+#[test]
+fn both_adds_hold_a_token_while_the_boss_attacks() {
+    let mut app = app_seeded(7, record_starts);
+    let who = ring(&mut app, "sched_arena", &["sched_boss", "sched_add", "sched_add"]);
+    let mut together = 0;
+    for _ in 0..2400 {
+        step(&mut app, 1);
+        if flying(&app, who[0]) && has_token(&app, who[1]) && has_token(&app, who[2]) {
+            together += 1;
+        }
+    }
+    assert!(together >= 1, "the boss's attack never overlapped two token holders");
+    // Its grant is not one of the tokens: both of the adds' two were out.
+    assert!(!lines(&app, "(2/2)").is_empty());
+}
+
+#[test]
+fn without_the_mode_the_boss_takes_a_token_like_anyone() {
+    let (app, who) = boss_among_adds("sched_boss_counted", 1200);
+    let boss_id = id(&app, who[0]);
+    assert!(lines(&app, "takes an attack token").iter().any(|l| says(l, &boss_id)), "the counted boss takes tokens");
+}
+
+// --- 12.2 run 4: the books of a tokenless grant -----------------------------------------------------
+
+#[test]
+fn a_tokenless_grant_with_nothing_in_reach_is_never_returned_unused() {
+    let mut app = app_seeded(3, record_starts);
+    let who = ring(&mut app, "sched_arena", &["sched_stuck_boss"]);
+    step(&mut app, 120);
+    let held = grant(&app, who[0]).expect("a grant: an option may be chosen, distance aside");
+    step(&mut app, 600);
+    let later = grant(&app, who[0]).expect("still holds it");
+    assert_eq!(later.since, held.since, "never returned and granted again");
+    assert!(later.age > 10.0, "held for {} s with patience 3", later.age);
+    assert!(lines(&app, "attack token").is_empty(), "no token event: {:?}", lines(&app, "attack token"));
+    // The control: by the tokens, the same plan gives it back after `patience`.
+    let mut counted = app_seeded(3, record_starts);
+    ring(&mut counted, "sched_arena", &["sched_stuck"]);
+    step(&mut counted, 720);
+    assert!(lines(&counted, "returns its attack token unused: unused").len() >= 2, "{:?}", lines(&counted, "attack token"));
+}
+
+/// A hero, a far hero (a second living player, out of everyone's sight), a counted add and the boss
+/// (spawned after it) on director `sched_lowering` (one token for one player, two for two), both
+/// with nothing in reach so their grants stay.
+fn two_players(boss: &str) -> (App, Entity, Entity, Entity) {
+    let mut app = app_seeded(3, record_starts);
+    let world = app.world_mut();
+    player(world, 0, Vec3::ZERO);
+    let far = player(world, 1, Vec3::new(55.0, 0.0, 55.0));
+    let mk = |world: &mut World, plan: &str, at: Vec3| {
+        npc(world, "sched", Npc::new("grunt", "grunt").with_plan(plan).with_director("sched_lowering"), at, (-at).normalize())
+    };
+    let add = mk(world, "sched_stuck", Vec3::new(1.2, 0.0, 0.0));
+    let boss = mk(world, boss, Vec3::new(0.0, 0.0, 1.2));
+    (app, far, add, boss)
+}
+
+#[test]
+fn a_lowered_limit_never_takes_a_tokenless_grant() {
+    let (mut app, far, add, boss) = two_players("sched_stuck_boss");
+    step(&mut app, 120);
+    assert!(has_token(&app, add) && has_token(&app, boss), "both hold a grant");
+    let held = grant(&app, boss).unwrap().since;
+    // A player dies: one token is left, and it is the add's.
+    app.world_mut().entity_mut(far).insert(Dead);
+    step(&mut app, 60);
+    assert!(has_token(&app, add) && has_token(&app, boss), "the add's counted token fits, the boss's is outside the books");
+    assert_eq!(grant(&app, boss).unwrap().since, held);
+    assert!(lines(&app, "limit lowered").is_empty(), "{:?}", lines(&app, "attack token"));
+    // The control: counted, the boss's grant is the newest and goes back.
+    let (mut counted, far, add, boss) = two_players("sched_stuck");
+    step(&mut counted, 120);
+    counted.world_mut().entity_mut(far).insert(Dead);
+    step(&mut counted, 60);
+    assert!(has_token(&counted, add) && !has_token(&counted, boss), "the newest grant goes back");
+    assert_eq!(lines(&counted, "limit lowered").len(), 1, "{:?}", lines(&counted, "attack token"));
+}
+
+/// The far boss's plan as content text, with `tokenless` on or off.
+fn far_boss(tokenless: bool) -> Value {
+    json!({
+        "options": [{"input": "light", "min": 8.0, "max": 9.0}],
+        "in_range_only": true,
+        "rest": [0.1, 0.1],
+        "first_rest": [1.0, 1.0],
+        "tokenless": tokenless,
+        "wait": {"role": "Strafe", "distance": 2.4, "speed": 1.0, "orbit": 2.0, "period": 1.0},
+    })
+}
+
+#[test]
+fn a_hot_reload_that_turns_tokenless_off_counts_the_grant_and_gives_it_back_over_the_limit() {
+    let mut app = app_seeded(3, record_starts);
+    let world = app.world_mut();
+    player(world, 0, Vec3::ZERO);
+    let mk = |world: &mut World, plan: &str, at: Vec3| {
+        npc(world, "sched", Npc::new("grunt", "grunt").with_plan(plan).with_director("sched_lowering"), at, (-at).normalize())
+    };
+    let add = mk(world, "sched_stuck", Vec3::new(1.2, 0.0, 0.0));
+    let boss = mk(world, "sched_stuck_boss", Vec3::new(0.0, 0.0, 1.2));
+    step(&mut app, 120);
+    assert!(has_token(&app, add) && has_token(&app, boss), "one counted token (1/1) and the boss's grant");
+    assert!(lines(&app, "(1/1)").len() == 1, "{:?}", lines(&app, "attack token"));
+    let change = json!([{"kind": "attack_plan", "id": "sched_stuck_boss", "before": far_boss(true), "def": far_boss(false)}]);
+    ok(&mut app, "content_apply", json!({"changes": change}));
+    step(&mut app, 2);
+    // Counted now, it is over the limit and not in flight: the newest grant goes back, and it does not get one again.
+    assert!(has_token(&app, add) && !has_token(&app, boss));
+    assert_eq!(lines(&app, "limit lowered").len(), 1, "{:?}", lines(&app, "attack token"));
+    step(&mut app, 20);
+    assert!(!has_token(&app, boss), "the one token is the add's");
+    // And back: tokenless again, it takes a grant at once, outside the limit.
+    let change = json!([{"kind": "attack_plan", "id": "sched_stuck_boss", "before": far_boss(false), "def": far_boss(true)}]);
+    ok(&mut app, "content_apply", json!({"changes": change}));
+    step(&mut app, 10);
+    assert!(has_token(&app, boss), "tokenless again, it holds a grant the limit does not count");
+}
+
+// --- 12.2 run 5: the plan's own waiting role ---------------------------------------------------------
+
+/// The change of `orbit` between two ticks, wrapped to -pi..pi.
+fn turn(a: f32, b: f32) -> f32 {
+    (b - a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+}
+
+#[test]
+fn an_npc_with_its_own_waiting_role_takes_no_slot_and_moves_by_its_role() {
+    let mut app = app_seeded(3, record_starts);
+    // The adds cannot be granted (their only option is on a long cooldown), so they wait in slots.
+    let who = ring(&mut app, "sched_slots", &["sched_stuck_boss", "sched_cooled", "sched_cooled"]);
+    for add in &who[1..] {
+        app.world_mut().get_mut::<NpcPlan>(*add).unwrap().cooldowns.push(shards_npc::PlanCooldown { name: "light".into(), left: 99.0 });
+    }
+    let mut samples: Vec<(bool, Option<String>, Option<u32>, f32)> = Vec::new();
+    for _ in 0..240 {
+        step(&mut app, 1);
+        let brain = app.world().get::<NpcBrain>(who[0]).unwrap();
+        samples.push((has_token(&app, who[0]), brain.role.clone(), brain.slot, brain.orbit));
+    }
+    // The adds took slots 0 and 1; the boss none.
+    let mut slots: Vec<u32> = who[1..].iter().filter_map(|e| app.world().get::<NpcBrain>(*e).unwrap().slot).collect();
+    slots.sort_unstable();
+    assert_eq!(slots, [0, 1], "the others' slots do not move");
+    assert!(samples.iter().all(|s| s.2.is_none()), "the boss never takes a slot");
+    // Without a grant (its first rest, 1 s) and with one and nothing in reach, it moves by its role,
+    // its orbit changing from tick to tick.
+    let moving = |range: std::ops::Range<usize>, held: bool| {
+        let part: Vec<_> = samples[range].iter().filter(|s| s.0 == held && s.1.as_deref() == Some("strafe")).collect();
+        let changes = part.windows(2).filter(|w| turn(w[0].3, w[1].3).abs() > 1e-5).count();
+        (part.len(), changes)
+    };
+    let (len, changes) = moving(5..55, false);
+    assert!(len >= 40 && changes + 2 >= len, "waiting without a grant: {changes} changes in {len} ticks");
+    let (len, changes) = moving(90..240, true);
+    assert!(len >= 120 && changes + 2 >= len, "holding a grant with nothing in reach: {changes} changes in {len} ticks");
+    // The strafe turns back after its period (1 s = 60 ticks): both directions in 150 ticks.
+    let turns: Vec<f32> = samples[90..240].windows(2).map(|w| turn(w[0].3, w[1].3)).collect();
+    assert!(turns.iter().any(|t| *t > 1e-5) && turns.iter().any(|t| *t < -1e-5), "one direction only");
+    let flips = turns.windows(2).filter(|w| w[0] * w[1] < 0.0).count();
+    assert!((1..=4).contains(&flips), "{flips} turns in 2.5 s with a period of 1 s");
+}
+
+#[test]
+fn a_press_clears_the_role_until_it_waits_again() {
+    let mut app = app_seeded(3, record_starts);
+    let who = ring(&mut app, "sched_arena", &["sched_boss"]);
+    let boss = who[0];
+    let (mut pressed, mut after_press, mut waited_again) = (0, Vec::new(), 0);
+    for _ in 0..900 {
+        step(&mut app, 1);
+        let now = app.world().resource::<ai_core::SimTick>().0;
+        let role = app.world().get::<NpcBrain>(boss).unwrap().role.clone();
+        match grant(&app, boss) {
+            Some(g) if g.pressed == Some(now) => {
+                pressed += 1;
+                assert_eq!(role, None, "tick {now}: the press clears the role");
+            }
+            Some(g) if g.in_flight() => after_press.push(role),
+            _ if role.is_some() && !after_press.is_empty() => waited_again += 1,
+            _ => {}
+        }
+    }
+    assert!(pressed >= 5, "{pressed} presses");
+    assert!(after_press.iter().all(Option::is_none), "no role while the attack is in flight");
+    assert!(waited_again >= 5, "and it waits in its role again after each: {waited_again}");
+}
+
+// --- 12.2 run 11: the budget ------------------------------------------------------------------------
+
+#[test]
+fn a_boss_presses_while_an_adds_attack_is_in_flight_and_the_add_waits_for_the_boss() {
+    let run = |boss: &str| {
+        let mut app = app_seeded(5, record_starts);
+        let who = ring(&mut app, "sched_budget", &[boss, "sched_add"]);
+        step(&mut app, 1800);
+        (jabs(&app, who[0]), jabs(&app, who[1]))
+    };
+    // A jab is 54 ticks long. The boss costs 1.0 and the target's budget is 1.0.
+    let (boss, add) = run("sched_boss_quick");
+    assert!(boss.len() >= 8 && add.len() >= 3, "boss {boss:?}, add {add:?}");
+    assert!(
+        boss.iter().any(|b| add.iter().any(|a| *b > *a + 2 && *b < *a + 50)),
+        "the boss never struck inside the add's attack: boss {boss:?}, add {add:?}"
+    );
+    assert!(
+        add.iter().all(|a| boss.iter().all(|b| *a <= *b + 2 || *a >= *b + 50)),
+        "an add struck inside the boss's attack: boss {boss:?}, add {add:?}"
+    );
+    // By the tokens (the control), the boss waits for the add like anyone.
+    let (boss, add) = run("sched_boss_quick_counted");
+    assert!(boss.len() >= 3 && add.len() >= 3, "boss {boss:?}, add {add:?}");
+    assert!(boss.iter().all(|b| add.iter().all(|a| *b <= *a + 2 || *b >= *a + 50)), "a counted boss struck inside the add's attack");
+}
+
+// --- 12.2 run 10: snapshots ---------------------------------------------------------------------------
+
+#[test]
+fn a_fight_with_a_tokenless_boss_loaded_at_any_tick_ends_the_same() {
+    use ai_core::snapshot::{self, differences};
+    let end = 420;
+    let mut original = app_seeded(7, |_| {});
+    let who = ring(&mut original, "sched_arena", &["sched_boss", "sched_add", "sched_add"]);
+    let (mut saved, mut held) = (Vec::new(), 0);
+    for at in (30..end).step_by(30) {
+        step(&mut original, 30);
+        held += usize::from(grant(&original, who[0]).is_some());
+        saved.push((at, snapshot::capture(original.world()).unwrap()));
+    }
+    step(&mut original, 30);
+    let last = snapshot::capture(original.world()).unwrap();
+    assert!(held >= 6, "the boss held a grant at {held} checkpoints");
+    let boss = last.entities.iter().find(|e| e.id == aid(&original, who[0]).0).unwrap();
+    assert!(boss.components.keys().any(|k| k.ends_with("::AttackToken")));
+    for (at, snapshot) in saved {
+        let mut copy = app_seeded(7, |_| {});
+        let report = snapshot::restore(copy.world_mut(), &snapshot, false).unwrap_or_else(|e| panic!("tick {at}: {e}"));
+        assert!(report.exact(), "tick {at}: {:?}", report.differences);
+        step(&mut copy, end - at);
+        let diff = differences(&last, &snapshot::capture(copy.world()).unwrap());
+        assert!(diff.is_empty(), "loaded at tick {at}:\n{}", diff.join("\n"));
+    }
+}
+
+
+/// Run 5, between decisions: a boss on a plan decided by the NPC's think cadence holds a grant with
+/// nothing in reach, and on the ticks that are not decisions its role stays and its orbit moves.
+#[test]
+fn a_waiting_role_is_kept_and_moves_the_orbit_between_decision_ticks_too() {
+    let mut app = app_seeded(3, record_starts);
+    let world = app.world_mut();
+    player(world, 0, Vec3::ZERO);
+    let boss = npc(world, "sched", Npc::new("grunt_think", "grunt").with_plan("sched_stuck_decide").with_director("sched_arena"), Vec3::new(0.0, 0.0, 1.2), N);
+    step(&mut app, 100);
+    let boss_id = id(&app, boss);
+    let (mut between, mut moved) = (0, 0);
+    let mut last = app.world().get::<NpcBrain>(boss).unwrap().orbit;
+    for _ in 0..150 {
+        let says = schedule(&mut app, json!({"id": boss_id}))["chooses"].as_str().unwrap().to_owned();
+        step(&mut app, 1);
+        let brain = app.world().get::<NpcBrain>(boss).unwrap();
+        if says == "between decisions: waits in its role" {
+            between += 1;
+            assert_eq!(brain.role.as_deref(), Some("strafe"), "the role is kept between decisions");
+            assert!(brain.slot.is_none(), "and no slot is taken");
+            if turn(last, brain.orbit).abs() > 1e-5 {
+                moved += 1;
+            }
+        }
+        last = brain.orbit;
+    }
+    assert!(between >= 20, "{between} ticks between decisions");
+    assert!(moved + 2 >= between, "the orbit moved on {moved} of {between} ticks between decisions");
+}
+
+#[test]
+fn the_tools_say_when_a_grant_is_not_one_of_the_tokens() {
+    let mut app = app_seeded(3, record_starts);
+    let world = app.world_mut();
+    player(world, 0, Vec3::ZERO);
+    let boss = npc(world, "sched", Npc::new("grunt_think", "grunt").with_plan("sched_stuck_decide").with_director("sched_arena"), Vec3::new(0.0, 0.0, 1.2), N);
+    let add = npc(world, "sched", Npc::new("grunt_think", "grunt").with_plan("sched_stuck").with_director("sched_arena"), Vec3::new(1.2, 0.0, 0.0), W);
+    step(&mut app, 20);
+    let (boss_id, add_id) = (id(&app, boss), id(&app, add));
+    // Its first rest: no grant yet, and it does not say tokens are in use.
+    let early = schedule(&mut app, json!({"id": boss_id}));
+    assert_eq!(early["tokenless"], true);
+    assert!(early["chooses"].as_str().unwrap().starts_with("resting"), "{early}");
+    step(&mut app, 100);
+    let state = ok(&mut app, "npc_state", json!({"id": boss_id})).result;
+    assert_eq!(state["token"]["counted"], false, "{state}");
+    assert_eq!(state["plan"]["tokenless"], true);
+    assert_eq!(state["role"], "strafe");
+    // Nothing in reach: between its decisions it waits in its role.
+    let mut says = Vec::new();
+    for _ in 0..20 {
+        says.push(schedule(&mut app, json!({"id": boss_id}))["chooses"].as_str().unwrap().to_owned());
+        step(&mut app, 1);
+    }
+    assert!(says.iter().any(|s| s == "between decisions: waits in its role"), "{says:?}");
+    assert!(says.iter().any(|s| s == "the next tick decides"), "{says:?}");
+    // An NPC that fights by the tokens keeps the old answers.
+    let state = ok(&mut app, "npc_state", json!({"id": add_id})).result;
+    assert!(state["token"].get("counted").is_none() && state["plan"].get("tokenless").is_none(), "{state}");
+    let counted = schedule(&mut app, json!({"id": add_id}));
+    assert!(counted.get("tokenless").is_none(), "{counted}");
+}
+
+#[test]
+fn the_tokens_in_use_leave_out_a_tokenless_grant() {
+    let mut app = app_seeded(3, record_starts);
+    let world = app.world_mut();
+    player(world, 0, Vec3::ZERO);
+    let boss = npc(world, "sched", Npc::new("grunt", "grunt").with_plan("sched_stuck_boss").with_director("sched_arena"), Vec3::new(0.0, 0.0, 1.2), N);
+    let add = npc(world, "sched", Npc::new("grunt", "grunt").with_plan("sched_cooled").with_director("sched_arena"), Vec3::new(1.2, 0.0, 0.0), W);
+    app.world_mut().get_mut::<NpcPlan>(add).unwrap().cooldowns.push(shards_npc::PlanCooldown { name: "light".into(), left: 99.0 });
+    step(&mut app, 120);
+    assert!(has_token(&app, boss) && !has_token(&app, add));
+    // The boss holds a grant; the director has two tokens and none is out, and the add says so.
+    let add_id = id(&app, add);
+    let report = schedule(&mut app, json!({"id": add_id}));
+    assert_eq!(report["chooses"], "no grant yet: tokens 0/2 in use", "{report}");
 }
