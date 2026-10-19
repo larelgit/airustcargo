@@ -177,7 +177,7 @@ pub use predict::{shown_queue, shown_state, ActionPredictor, PredictedAction, CO
 pub use stance::{actions_to_modifiers, hold_regen_during_actions};
 pub use status::{
     statuses_to_modifiers, NoStatusSlow,
-    add_status_buildup, StatusApplied, StatusDef, StatusEffects, StatusExpired, StatusHook, StatusHooks, StatusResist,
+    add_status_buildup, add_status_buildup_from, StatusApplied, StatusSource, StatusDef, StatusEffects, StatusExpired, StatusHook, StatusHooks, StatusResist,
     Statuses,
 };
 pub use objects::{
@@ -363,6 +363,7 @@ impl Plugin for ActionPlugin {
             .add_content::<AnimSet>()
             .init_resource::<DamageHooks>()
             .init_resource::<StatusEffects>()
+            .init_resource::<StatusSource>()
             .init_resource::<ActionEffects>()
             .init_resource::<machine::PendingEffects>()
             .init_resource::<context::PendingPairs>()

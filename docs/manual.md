@@ -1652,6 +1652,8 @@ callers; `Statuses::add_with(id, def, amount, limit, gated, capped)` and `Status
 and `add_status_buildup` (hits and `Status` effects) uses them with the target's `ProcGates` and its moveset's cap. An instant
 status is active for one tick: `StatusApplied`, its `on_apply` (and `on_tick` once), then `StatusExpired`. A `refresh` returns `Applied` like a proc, so `StatusApplied` and the game's `on_apply` run again and the gate closes again; a game whose `on_apply` is not repeatable checks the status's `stacks` or its own state. Chill's longer recovery and burn's explosion are the game's.
 
+**The source of a status (FU4).** `StatusApplied` carries `source: Option<AiId>`: who built the status up. A hit passes its attacker (the credited owner when a combat object hit, `DamageCtx::credit`); `add_status_buildup_from(world, entity, status, amount, source)` takes it from a caller that has one, and `add_status_buildup` (no source, the old signature) passes `None`, as does a `Status` action effect on its own body and a status that took a free slot while waiting at full buildup. The `on_apply` hook has no event, so it reads the same value from the resource `StatusSource` (set for that call only, `None` at any other time; transient, so not in snapshots). A game that wants the source later keeps it itself (for example a power per status id on the target, written in `on_apply`).
+
 **What the AI sees.** Describe: `barrier 15 (6.2s)`, `takes x1.35 (core 3.1s)` (several: `takes x0.50 (armor), x1.35 (core
 3.1s)`), `proc gate spar_chill 1.2s`. Journal: `e5 barrier 50 for 8.0s`, ` [barrier -15]` on a hit line. Dev tools: `barrier
 id= amount= seconds=` (a grant; `amount=0` removes it), `damage_taken id= key= mult= seconds=` (`clear=true` removes the key,

@@ -108,6 +108,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("shards_action::predict::ActionPredictor", "a co-op client's predicted actions; a host or a single player never uses it"),
     ("shards_action::render::", "animation graphs, the threat HUD and the combat overlay: the picture"),
     ("shards_action::status::StatusEffects", "the status effect hooks, registered at build time"),
+    ("shards_action::status::StatusSource", "the source of the status whose on_apply hook is running: None between calls"),
     // shards_audio
     ("shards_audio::", "the mixer, the music's diagnostics and the audio device: sound only reads the world"),
     // shards_content
