@@ -49,4 +49,7 @@
     // A fighter's action that ends into another one.
     "t_chain_a": (net_id: 312, phases: [("a", 0.2)], then: "t_chain_b"),
     "t_chain_b": (net_id: 313, phases: [("b", 0.3)], effects: [(at: 0.0, effect: Sound("chain"))]),
+    // A bolt that builds bleed up: the status source of an object's hit is its owner.
+    "t_fly_bleed": (net_id: 330, phases: [("fly", 2.0)],
+                    hits: [(span: Phase("fly"), shape: Sphere(radius: 0.3), damage: 1, status: [("bleed", 100)])]),
 }

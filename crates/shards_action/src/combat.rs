@@ -48,7 +48,7 @@ use crate::fighter::{
     grant_protection, hostile, set_reaction_immunity, Armor, Dead, Fighter, Health, Invulnerable, Knockback, Poise, Protection, Stamina, Team,
 };
 use crate::machine::{force_action, intangible, interrupted, ActionEnd, ActionEnded, ActionState, InputBuffer, RunExtras};
-use crate::status::{add_status_buildup, clear_statuses};
+use crate::status::{add_status_buildup_from, clear_statuses};
 use crate::zone::WorldShape;
 
 /// What became of a hit. Damage hooks may change it.
@@ -331,7 +331,7 @@ pub enum LethalCause {
 pub enum Fate {
     /// It dies ([`kill`]).
     Die,
-    /// It lives on with `health` (clamped to `(2Â·EPS, max]`, so `check_deaths` never finds a survivor out of health) and `grace` seconds of [`Grace`]; the
+    /// It lives on with `health` (clamped to `(2 * EPS, max]`, so `check_deaths` never finds a survivor out of health) and `grace` seconds of [`Grace`]; the
     /// rest of the blow (its statuses, poise and reaction) goes on.
     Survive { health: f32, grace: f32 },
     /// It goes down ([`go_down`]) with `bleed` seconds before it dies (`None`: until it is revived
@@ -863,7 +863,7 @@ fn apply(world: &mut World, mut ctx: DamageCtx) {
                 source,
             });
             if !finish_if_dead(world, target, credit, &action, source, fate) {
-                apply_statuses(world, target, &ctx.status);
+                apply_statuses(world, target, credit, &ctx.status);
                 take_poise(world, target, ctx.poise);
             }
         }
@@ -885,7 +885,7 @@ fn apply(world: &mut World, mut ctx: DamageCtx) {
                 source,
             });
             if !finish_if_dead(world, target, credit, &action, source, fate) {
-                apply_statuses(world, target, &ctx.status);
+                apply_statuses(world, target, credit, &ctx.status);
                 guard_break(world, target);
             }
         }
@@ -916,7 +916,7 @@ fn apply(world: &mut World, mut ctx: DamageCtx) {
                 }
                 return;
             }
-            apply_statuses(world, target, &ctx.status);
+            apply_statuses(world, target, credit, &ctx.status);
             match ctx.reaction {
                 // The old rule, line for line.
                 None => {
@@ -945,12 +945,16 @@ fn parry_staggers(world: &World, defender: Entity) -> bool {
         .unwrap_or(true)
 }
 
-fn apply_statuses(world: &mut World, target: Entity, status: &[(String, f32)]) {
+/// The hit's statuses build up on `target`, credited to `credit` ([`StatusApplied::source`](crate::StatusApplied)). A body
+/// that fell while they apply (an `on_apply` hook's damage killed it or laid it down, which cleared its statuses) takes no
+/// more of them.
+fn apply_statuses(world: &mut World, target: Entity, credit: Entity, status: &[(String, f32)]) {
+    let source = world.get::<AiId>(credit).copied();
     for (id, amount) in status {
-        if world.get::<Dead>(target).is_some() {
+        if world.get::<Dead>(target).is_some() || world.get::<Downed>(target).is_some() {
             return;
         }
-        add_status_buildup(world, target, id, *amount);
+        add_status_buildup_from(world, target, id, *amount, source);
     }
 }
 

@@ -9,6 +9,7 @@ Read this when you touch enemy brains, behaviour, perception, the director, atta
   `NpcSystems::Drive`, before `drive_intents`, it edits the route input `NavAgent::desired` (which `drive_intents` writes to
   `Intent`), and its own state `NavAgent::avoiding` and `side`; neighbours are taken in `AiId` order, with no randomness; its numbers are `avoidance` in
   `npc_tuning` or in the behaviour, not constants in code.
+- **A brain's target for spawned objects is `AimTarget`**, not `Intent.target` (the lock-on): `drive_intents` mirrors `NpcBrain::target` into it every tick (only a standing one: never a dead or downed body) and `shards_action`'s `target_of` reads it after the lock-on, again only while its body stands. Do not make a brain write `Intent.target`.
 - **One judge for an attack option.** Whether an option may be chosen now is `refusal()` (`shards_npc/src/planner.rs`) over the inputs that
   `schedule::inputs()` builds; the director's grant (`direct`, step 3) and `plan_attacks` both call it. A new rule for options goes into
   `refusal()` (and `Refusal`, in its place in the order), never into the director or the planner alone, so the grant and the choice cannot

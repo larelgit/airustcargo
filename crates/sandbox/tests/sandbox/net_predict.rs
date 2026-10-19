@@ -1087,3 +1087,41 @@ fn a_leap_in_the_air_is_refused_on_both_sides() {
     assert_eq!(stand.world(HOST).get::<shards::action::Stamina>(theirs).unwrap().current, before, "nothing was paid");
     assert_eq!(prediction(&stand, C1).mispredicted, 0, "{:#?}", journal(&stand, C1));
 }
+
+/// A paired run aims at its victim, not at the lock (FU4): the client is locked on e8 east of it,
+/// (this pins that `Pairing` reaches the client and the two bodies agree; it does not fail without the predictor change, the host corrects it)
+/// finishes the broken e7 to the north, and its copy of the pair is on the body while the run goes,
+/// so the prediction faces the victim as the host does.
+#[test]
+fn a_client_finisher_faces_its_victim_not_its_lock() {
+    let (mut stand, id, mine) = context_stand();
+    for (tool, args) in [
+        ("heal", json!({"id": "e8"})),
+        ("teleport", json!({"id": "e8", "x": 1.8, "y": 0, "z": 0})),
+    ] {
+        let out = stand.call(HOST, tool, args);
+        assert!(out.ok, "{tool}: {}", out.result);
+    }
+    stand.run(30);
+    let out = stand.call(C1, "lock_on", json!({"target": "e8"}));
+    assert!(out.ok, "{}", out.result);
+    stand.run(10);
+    let out = stand.call(HOST, "stagger", json!({"id": "e7", "poise": true}));
+    assert!(out.ok, "{}", out.result);
+    run_until(&mut stand, 120, "the client shows the finisher", |s| finisher_shown(s, mine));
+    let out = stand.call(C1, "light_attack", json!({}));
+    assert!(out.ok, "{}", out.result);
+    let takes = format!("{id} takes e7 with spar_finisher");
+    run_until(&mut stand, 120, "the host takes e7", |s| has_line(s, HOST, &takes));
+    run_until(&mut stand, 60, "the client has the pair", |s| s.world(C1).get::<shards::action::Pairing>(mine).is_some());
+    stand.run(6);
+    let host = entity(&stand, HOST, &id).unwrap();
+    let north = Vec3::NEG_Z;
+    let host_face = *stand.world(HOST).get::<Transform>(host).unwrap().forward();
+    let client_face = *stand.world(C1).get::<Transform>(mine).unwrap().forward();
+    assert!(host_face.dot(north) > 0.9, "the host faces the victim: {host_face}");
+    assert!(client_face.dot(north) > 0.9, "the client shows the victim too: {client_face}");
+    stand.run(150);
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+    verify_host(&stand);
+}

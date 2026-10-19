@@ -9,7 +9,7 @@ use shards_action::{
     pair_victim, remember, ContextInputs, DamageCtx, Damaged, GuardArm, HitWeight, Memory, PairEnd, PairEnded, Paired, Pairing,
     Protection, RunHalted,
 };
-use shards_action::{forget, ActionAppExt, ActionDef};
+use shards_action::{can_start, forget, ActionAppExt, ActionDef, FighterView};
 use shards_content::ContentDb;
 use shards_core::{Intent, PlayerId};
 
@@ -651,7 +651,8 @@ fn a_finisher_that_kills_its_victim_does_not_cleave_the_next_foe() {
     finisher(&mut app, hero, foe);
     step(&mut app, 40);
     assert!(app.world().get::<Dead>(foe).is_some(), "{:#?}", journal(&app));
-    assert!(!lines(&app, "(lost)").is_empty(), "{:#?}", journal(&app));
+    assert!(!lines(&app, "(killed)").is_empty(), "{:#?}", journal(&app));
+    assert!(lines(&app, "(lost)").is_empty(), "a victim killed by the blow is not lost: {:#?}", journal(&app));
     assert_eq!(hp(&app, other), 100.0, "the foe beside it is not hit: {:#?}", journal(&app));
 }
 
@@ -740,4 +741,159 @@ fn the_remember_tool_takes_a_few_seconds_not_a_billion() {
     assert!(err.contains("from 0 to"), "{err}");
     let out = ok(&mut app, "remember", json!({"id": who, "key": "parried", "seconds": 5.0}));
     assert!(out.contains("remembers parried"), "{out}");
+}
+
+// --- a binding the medium refuses does not bind (FU4) ---------------------------------------
+
+/// A pool 5 m deep at x 80..120, with a floor: a body put in it swims in a few ticks.
+fn pool(app: &mut App) -> Vec3 {
+    use shards_motion::{Collider, CollisionLayers, Shape, Volume, VolumeKind};
+    let world = app.world_mut();
+    wall(world, Vec3::new(80.0, -6.0, -20.0), Vec3::new(120.0, -5.0, 20.0));
+    world.spawn((
+        Collider::new(Shape::cuboid(Vec3::new(20.0, 2.5, 20.0))).with_layers(CollisionLayers::VOLUME),
+        Volume { kind: VolumeKind::Water },
+        Transform::from_translation(Vec3::new(100.0, -2.5, 0.0)),
+    ));
+    Vec3::new(100.0, -1.1, 0.0)
+}
+
+#[test]
+fn a_binding_the_medium_refuses_falls_to_the_movesets_action() {
+    // On the ground a broken foe in reach binds the light to the finisher...
+    let (mut app, _, foe) = arena();
+    let swimmer = hero(app.world_mut(), "c_swimmer", Vec3::new(10.0, 0.0, 0.0), N);
+    app.world_mut().get_mut::<Transform>(foe).unwrap().translation = Vec3::new(10.0, 0.0, -1.8);
+    break_poise(&mut app, foe);
+    step(&mut app, 2);
+    assert_eq!(bound(&app, swimmer, "light").as_deref(), Some("c_finisher"));
+    assert!(app.world().get::<ContextInputs>(swimmer).is_some_and(|c| c.victim().is_some()), "the HUD would prompt on the ground");
+
+    // ...in water the moveset's `only_in` refuses it: nothing binds, the HUD's `you.finisher` source
+    // (`ContextInputs::victim`) and the AI's `finishable by` (the same list) see none, and the light is the stroke.
+    let (mut app, _, foe) = arena();
+    let at = pool(&mut app);
+    let swimmer = hero(app.world_mut(), "c_swimmer", at, N);
+    app.world_mut().get_mut::<Transform>(foe).unwrap().translation = at + Vec3::new(0.0, 0.0, -1.8);
+    break_poise(&mut app, foe);
+    step(&mut app, 30);
+    assert_eq!(app.world().get::<shards_motion::MotionState>(swimmer).unwrap().mode, shards_motion::MotionMode::Water);
+    assert!(pair_victim_exists(&app, swimmer), "the foe is still a candidate: only the medium refuses");
+    assert_eq!(bound(&app, swimmer, "light"), None, "{:?}", app.world().get::<ContextInputs>(swimmer));
+    assert!(app.world().get::<ContextInputs>(swimmer).is_none_or(|c| c.victim().is_none()));
+    let view = FighterView::of(app.world(), swimmer).unwrap();
+    assert_eq!(can_start(&view, "light", 1.0 / 60.0).map(|s| s.action), Ok("c_stroke".to_owned()));
+    press(&mut app, swimmer, "light");
+    step(&mut app, 2);
+    assert_eq!(action(&app, swimmer), "c_stroke");
+}
+
+/// Whether `e`'s pair `select` (the finisher's) takes some victim now, whatever the medium says.
+fn pair_victim_exists(app: &App, e: Entity) -> bool {
+    let db = app.world().resource::<ContentDb>();
+    let select = db.get::<ActionDef>("c_finisher").and_then(|d| d.pair.as_ref()).map(|p| p.select.clone()).unwrap();
+    pair_victim(app.world(), e, &select).is_some()
+}
+
+#[test]
+fn a_paired_run_aims_at_its_victim_not_at_the_lock() {
+    // The lock is on a foe to the east that is not broken; the victim is the broken foe to the north.
+    let (mut app, hero, victim) = arena();
+    let other = foe_at(&mut app, Vec3::new(2.5, 0.0, 0.0));
+    let other_id = *app.world().get::<AiId>(other).unwrap();
+    app.world_mut().get_mut::<Intent>(hero).unwrap().target = Some(other_id);
+    finisher(&mut app, hero, victim);
+    let (h, v) = (id(&app, hero), id(&app, victim));
+    assert_eq!(app.world().get::<Pairing>(hero).map(|p| p.victim), app.world().get::<AiId>(victim).copied(), "the lock is not the victim");
+    step(&mut app, 30);
+    assert_eq!(lines(&app, &format!("{h} -> {v} c_finisher -20")).len(), 1, "the blow lands on the victim: {:#?}", journal(&app));
+    assert_eq!(hp(&app, victim), 80.0);
+    assert_eq!(hp(&app, other), 100.0, "the locked foe is not what it turned to");
+    // The run faced the victim all along (north), not the lock (east).
+    let facing = app.world().get::<Transform>(hero).unwrap().forward();
+    assert!(facing.dot(Vec3::NEG_Z) > 0.9, "{facing:?}");
+    // An action that is not paired still follows the lock.
+    step(&mut app, 60);
+    press(&mut app, hero, "heavy");
+    step(&mut app, 12);
+    let facing = app.world().get::<Transform>(hero).unwrap().forward();
+    assert!(facing.dot(Vec3::X) > 0.9, "a plain swing turns to the lock: {facing:?}");
+}
+
+#[test]
+fn a_paired_run_started_from_a_moveset_input_aims_at_the_victim_the_select_finds() {
+    // `technique.1` is a hold with no `When::Pair` binding: its victim is found when the run starts (the nearest foe, to the
+    // north), while the lock is on a foe to the east that is farther.
+    let (mut app, hero, near) = arena();
+    put(&mut app, near, Vec3::new(0.0, 0.0, -1.0));
+    let other = foe_at(&mut app, Vec3::new(1.8, 0.0, 0.0));
+    let other_id = *app.world().get::<AiId>(other).unwrap();
+    app.world_mut().get_mut::<Intent>(hero).unwrap().target = Some(other_id);
+    step(&mut app, 1);
+    press(&mut app, hero, "technique.1");
+    step(&mut app, 1);
+    assert_eq!(action(&app, hero), "c_grab", "{:#?}", journal(&app));
+    assert_eq!(app.world().get::<Pairing>(hero).map(|p| p.victim), app.world().get::<AiId>(near).copied());
+    step(&mut app, 2);
+    let facing = app.world().get::<Transform>(hero).unwrap().forward();
+    assert!(facing.dot(Vec3::NEG_Z) > 0.9, "the run faces the victim, not the lock: {facing:?}");
+}
+
+#[test]
+fn a_pairs_angle_can_be_measured_from_what_the_fighter_means() {
+    let (mut app, hero, foe) = arena();
+    let other = foe_at(&mut app, Vec3::new(0.0, 0.0, 5.0));
+    broken(&mut app, foe);
+    step(&mut app, 1);
+    let facing = select(&app);
+    let intent = app.world().resource::<ContentDb>().get::<ActionDef>("c_finisher_intent").unwrap().pair.clone().unwrap().select;
+    assert_eq!(facing.angle_from, shards_action::PairAngle::Facing, "the default");
+    assert_eq!(intent.angle_from, shards_action::PairAngle::Intent);
+    let foe_id = *app.world().get::<AiId>(foe).unwrap();
+    let other_id = *app.world().get::<AiId>(other).unwrap();
+    let victim = |app: &App, s: &shards_action::PairSelect| pair_victim(app.world(), hero, s);
+    // The body looks south, away from the broken foe in the north.
+    app.world_mut().get_mut::<Transform>(hero).unwrap().look_to(S, Vec3::Y);
+    assert_eq!(victim(&app, &facing), None, "from the facing: behind");
+    assert_eq!(victim(&app, &intent), None, "no lock, no stick: the facing");
+    // The stick toward it: the direction meant.
+    app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = N;
+    assert_eq!(victim(&app, &intent), Some(foe));
+    assert_eq!(victim(&app, &facing), None, "the default ignores the stick");
+    // The stick away from it.
+    app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = S;
+    assert_eq!(victim(&app, &intent), None);
+    // The lock first: locked on the broken foe, with the stick away from it, it is the foe that counts...
+    app.world_mut().get_mut::<Intent>(hero).unwrap().target = Some(foe_id);
+    assert_eq!(victim(&app, &intent), Some(foe), "the lock direction beats the stick");
+    assert_eq!(victim(&app, &facing), None, "the default ignores the lock");
+    // ...and locked on a foe in the other direction, the stick toward the broken one does not count.
+    app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = N;
+    app.world_mut().get_mut::<Intent>(hero).unwrap().target = Some(other_id);
+    assert_eq!(victim(&app, &intent), None, "the lock points south");
+}
+
+#[test]
+fn a_victim_killed_by_something_else_during_the_pair_is_lost_not_killed() {
+    let (mut app, hero, foe) = arena();
+    let ends = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let into = ends.clone();
+    app.world_mut().add_observer(move |e: On<PairEnded>| into.lock().unwrap().push((e.event().end, e.event().killed)));
+    // The finisher's own blow kills: `Lost`, and the event says it was the blow.
+    app.world_mut().get_mut::<Health>(foe).unwrap().current = 10.0;
+    finisher(&mut app, hero, foe);
+    step(&mut app, 40);
+    assert_eq!(ends.lock().unwrap().as_slice(), [(PairEnd::Lost, true)]);
+    assert!(app.world().get::<shards_action::PairKilled>(hero).is_none(), "the mark goes with the pair");
+    // A second pair whose victim dies of something else (a kill with no killer) is lost.
+    let (mut app, hero, foe) = arena();
+    let into = ends.clone();
+    ends.lock().unwrap().clear();
+    app.world_mut().add_observer(move |e: On<PairEnded>| into.lock().unwrap().push((e.event().end, e.event().killed)));
+    finisher(&mut app, hero, foe);
+    step(&mut app, 3);
+    shards_action::kill(app.world_mut(), foe, None, None);
+    step(&mut app, 2);
+    assert_eq!(ends.lock().unwrap().as_slice(), [(PairEnd::Lost, false)]);
+    assert!(!lines(&app, "(lost)").is_empty() && lines(&app, "(killed)").is_empty(), "{:#?}", journal(&app));
 }

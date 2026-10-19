@@ -446,6 +446,9 @@ fn the_victim_keeps_the_rest_of_its_break_in((mut app, hero, foe): (App, Entity,
     assert!((run.length - run.t - broken).abs() < 1e-4, "the stagger ends with the break: {} left, {broken} broken", run.length - run.t);
     assert!(app.world().get::<Paired>(foe).is_none());
     assert!(!lines(&app, &format!("{} lets go of {} (cut)", id(&app, hero), id(&app, foe))).is_empty(), "{:#?}", journal(&app));
+    // The attacker fell, not the victim: FU4's `killed` word and its mark stay out of it.
+    assert!(lines(&app, "(killed)").is_empty(), "{:#?}", journal(&app));
+    assert!(app.world().get::<shards_action::PairKilled>(hero).is_none());
     assert_eq!(lines(&app, &format!("{} staggered", id(&app, foe))).len(), staggers, "no new stagger");
     // The two end on the same tick.
     let ticks = (broken / DT).round() as u64;
@@ -574,4 +577,102 @@ fn a_body_killed_while_the_deaths_are_carried_out_is_not_asked_about_nor_spared(
     assert!(app.world().get::<Grace>(foe).is_none());
     assert!(lines(&app, "survived").is_empty(), "{:#?}", journal(&app));
     assert_eq!(asked(&app).len(), 1, "only the hero was asked: {:?}", asked(&app));
+}
+
+// --- with FU4: the status source, the pair's end word, the victim aim ---------------------------
+
+/// What a `StatusApplied` said: the body, the status and its source.
+type Applied = (Entity, String, Option<ai_core::AiId>);
+
+/// Every `StatusApplied` from now on.
+fn watch_applied(app: &mut App) -> std::sync::Arc<std::sync::Mutex<Vec<Applied>>> {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let into = seen.clone();
+    app.world_mut().add_observer(move |e: On<shards_action::StatusApplied>| {
+        into.lock().unwrap().push((e.event().entity, e.event().status.clone(), e.event().source));
+    });
+    seen
+}
+
+#[test]
+fn a_survived_blow_credits_its_statuses_to_the_attacker_and_a_downed_body_takes_none() {
+    // Survive: the rest of the blow goes on, and its status names the foe that built it up.
+    let (mut app, hero, foe) = arena(Some(&[Fate::Survive { health: 1.0, grace: 1.0 }]));
+    let applied = watch_applied(&mut app);
+    smash(&mut app, foe);
+    let f = app.world().get::<ai_core::AiId>(foe).copied();
+    assert!(f.is_some());
+    assert_eq!(applied.lock().unwrap().as_slice(), [(hero, "slow".to_owned(), f)], "{:#?}", journal(&app));
+    assert_eq!(app.world().resource::<shards_action::StatusSource>().0, None, "the source is set for a hook's call only");
+    // Down: the statuses are cleared and the blow's own never build up, so no status names a source.
+    let (mut app, hero, foe) = arena(Some(&[Fate::Down { bleed: None }]));
+    let applied = watch_applied(&mut app);
+    smash(&mut app, foe);
+    assert!(downed(&app, hero).is_some());
+    assert!(applied.lock().unwrap().is_empty(), "{:?}", applied.lock().unwrap());
+    assert!(app.world().get::<Statuses>(hero).is_none_or(|s| s.0.is_empty()));
+}
+
+#[test]
+fn a_finisher_whose_blow_downs_its_victim_ends_lost_not_killed() {
+    let setup = app_with(|app| {
+        app.add_lethal_hook(|_, _| Fate::Down { bleed: None });
+    });
+    let (mut app, hero, foe) = finisher_holding_in(setup);
+    let ends = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let into = ends.clone();
+    app.world_mut().add_observer(move |e: On<shards_action::PairEnded>| into.lock().unwrap().push((e.event().end, e.event().killed)));
+    app.world_mut().get_mut::<Health>(foe).unwrap().current = 10.0;
+    for _ in 0..30 {
+        step(&mut app, 1);
+        if downed(&app, foe).is_some() {
+            break;
+        }
+    }
+    // The blow laid it down, it did not kill it: the pair's end is `Lost`, the word `lost` (FU4's `killed` is for a death).
+    assert!(downed(&app, foe).is_some() && app.world().get::<Dead>(foe).is_none(), "{:#?}", journal(&app));
+    assert_eq!(ends.lock().unwrap().as_slice(), [(shards_action::PairEnd::Lost, false)]);
+    assert!(app.world().get::<shards_action::PairKilled>(hero).is_none());
+    assert!(app.world().get::<shards_action::RunHalted>(hero).is_some(), "the run goes on with its lunge stopped");
+    assert!(!lines(&app, &format!("{} lets go of {} (lost)", id(&app, hero), id(&app, foe))).is_empty(), "{:#?}", journal(&app));
+    assert!(lines(&app, "(killed)").is_empty(), "{:#?}", journal(&app));
+}
+
+#[test]
+fn a_revive_turns_to_its_downed_ally_not_to_the_lock() {
+    // The hero is locked on the foe to the north; the downed mate lies to the east. The revive's victim is the mate (the
+    // binding found it among the downed), and its run aims at it, as a paired run aims at its victim (FU4).
+    let (mut app, hero, foe) = arena(None);
+    let mate = mate(&mut app, "l_hero");
+    let foe_id = app.world().get::<ai_core::AiId>(foe).copied();
+    app.world_mut().get_mut::<shards_core::Intent>(hero).unwrap().target = foe_id;
+    smash_on(&mut app, mate);
+    assert!(ok(&mut app, "interact", json!({"hold": true})).contains("ok: l_revive"));
+    step(&mut app, 2);
+    assert_eq!(action(&app, hero), "l_revive");
+    assert_eq!(app.world().get::<Pairing>(hero).map(|p| p.victim), app.world().get::<ai_core::AiId>(mate).copied());
+    let facing = app.world().get::<ActionState>(hero).unwrap().current.as_ref().unwrap().facing;
+    assert!(facing.dot(Vec3::X) > 0.9, "the run faces the downed mate (east), not the lock (north): {facing:?}");
+    step(&mut app, 30);
+    let body = app.world().get::<Transform>(hero).unwrap().forward();
+    assert!(body.dot(Vec3::X) > 0.9, "the body turned to it: {body:?}");
+}
+
+#[test]
+fn a_revive_lets_go_of_an_ally_that_stood_up_another_way() {
+    // A revive holds only a downed ally (the rule it took it by) or the one its own revive stood up: one a `heal` (or a game's
+    // `revive_downed`) stood up first is let go at once, not held and untouchable to the end of the run.
+    let (mut app, hero, _foe, mate) = reviving(&[]);
+    let (h, m) = (id(&app, hero), id(&app, mate));
+    step(&mut app, 10);
+    assert!(ok(&mut app, "heal", json!({"id": m})).contains("revived"));
+    step(&mut app, 1);
+    assert!(downed(&app, mate).is_none());
+    assert!(app.world().get::<Pairing>(hero).is_none() && app.world().get::<Paired>(mate).is_none(), "{:#?}", journal(&app));
+    assert!(!lines(&app, &format!("{h} lets go of {m} (lost)")).is_empty(), "{:#?}", journal(&app));
+    // The run's revive, when its time comes, has nobody to stand up.
+    let hp_after_heal = hp(&app, mate);
+    step(&mut app, 60);
+    assert!(lines(&app, &format!("{m} revived by {h}")).is_empty(), "{:#?}", journal(&app));
+    assert_eq!(hp(&app, mate), hp_after_heal);
 }

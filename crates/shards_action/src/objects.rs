@@ -304,9 +304,28 @@ fn owner_of(world: &World, spawner: Entity) -> Option<AiId> {
     }
 }
 
-/// What a spawner aims at: its lock-on target, else (an object) the target its projectile flies at.
+/// The target a body that does not lock on aims its spawned objects at (`SpawnAim::Target`, `AtTarget`), read after
+/// [`Intent::target`] (the lock-on) and before a flight's. An NPC's drive mirrors its brain's current target into it
+/// every tick (`shards_npc`), so a spawn pressed by a brain finds its target with no `lock_on`. Derived state, never input:
+/// it is left out of replays (`replay_ignore`) and written again every tick before anything reads it.
+#[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[reflect(Component, Default)]
+pub struct AimTarget(pub Option<AiId>);
+
+/// What a spawner aims at: its lock-on target, else its [`AimTarget`], else (an object) the target its projectile flies at;
+/// each only while it stands (B5's [`Standing`](crate::Standing): a dead or downed body is no target). A lock or a brain's
+/// target on a body that fell is let go a tick later (the lock check, the brain's perception); a spawn in between passes
+/// over it to the next one, and with none it is skipped.
 fn target_of(world: &World, spawner: Entity) -> Option<AiId> {
-    world.get::<Intent>(spawner).and_then(|i| i.target).or_else(|| world.get::<ProjectileFlight>(spawner).and_then(|f| f.target))
+    let stands = |id: &AiId| {
+        world.resource::<AiIndex>().get(*id).is_some_and(|e| world.get::<Dead>(e).is_none() && world.get::<Downed>(e).is_none())
+    };
+    world
+        .get::<Intent>(spawner)
+        .and_then(|i| i.target)
+        .filter(stands)
+        .or_else(|| world.get::<AimTarget>(spawner).and_then(|a| a.0).filter(stands))
+        .or_else(|| world.get::<ProjectileFlight>(spawner).and_then(|f| f.target).filter(stands))
 }
 
 /// One object of a spawn, placed: its index on the lists, where, which way it faces, which way it
@@ -357,7 +376,7 @@ pub fn spawn_objects(world: &mut World, spawner: Entity, action: &str, def: &Spa
     match def.aim {
         SpawnAim::Facing => {}
         SpawnAim::Target { .. } | SpawnAim::AtTarget if target_feet.is_none() => {
-            let text = format!("{owner} spawn of {action} skipped: it aims at the lock-on target and there is none (lock_on first); nothing spawned");
+            let text = format!("{owner} spawn of {action} skipped: it aims at a target and there is none (provide a target or lock_on first); nothing spawned");
             journal::emit(world, JournalKind::Event, text);
             return Vec::new();
         }

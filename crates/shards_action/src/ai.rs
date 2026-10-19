@@ -58,8 +58,8 @@ pub(crate) fn register(app: &mut App) {
         .journal_event::<PairStarted>(|e, w| Some(format!("{} takes {} with {}", label(w, e.attacker), label(w, e.victim), e.action)))
         .journal_event::<PairEnded>(|e, w| {
             Some(match e.victim {
-                Some(v) => format!("{} lets go of {} ({})", label(w, e.attacker), label(w, v), e.end.describe()),
-                None => format!("{} lets go ({})", label(w, e.attacker), e.end.describe()),
+                Some(v) => format!("{} lets go of {} ({})", label(w, e.attacker), label(w, v), e.describe()),
+                None => format!("{} lets go ({})", label(w, e.attacker), e.describe()),
             })
         })
         .register_ai_describer("body", describe_body)

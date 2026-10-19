@@ -159,12 +159,12 @@ pub use body::{
 };
 pub use context::{
     cut_action, forget, hold_break, pair_victim, release_pair, remember, resume_stagger, Bound, ContextCondition, ContextConditions, ContextInputs,
-    GuardArm, Memory, PairEnd, PairEnded, PairStarted, Paired, Pairing, Remembered, RunHalted,
+    GuardArm, Memory, PairEnd, PairEnded, PairKilled, PairStarted, Paired, Pairing, Remembered, RunHalted,
 };
 pub use cue::{ActionSound, SoundCue};
 pub use def::{
     ActionDef, AssistDef, BindingDef, BufferMode, CancelDef, ChargeDef, CombatTuning, Cost, Effect, Forget, GuardDef, GuardPress, HitDef, HitFlag,
-    HitShape, HoldDef, LeapDef, LeapSearch, Local, MemoryDef, MotionBake, PairDef, PairSelect, PairState, PairTeam, ReactionDef, Recall, StaminaMode, When,
+    HitShape, HoldDef, LeapDef, LeapSearch, Local, MemoryDef, MotionBake, PairAngle, PairDef, PairSelect, PairState, PairTeam, ReactionDef, Recall, StaminaMode, When,
     Face, MovesetDef, Phase, Span, Steer, TelegraphDef, TimedEffect, Transition,
 };
 pub use fighter::{
@@ -183,11 +183,11 @@ pub use predict::{shown_queue, shown_state, ActionPredictor, PredictedAction, CO
 pub use stance::{actions_to_modifiers, hold_regen_during_actions};
 pub use status::{
     statuses_to_modifiers, NoStatusSlow,
-    add_status_buildup, StatusApplied, StatusDef, StatusEffects, StatusExpired, StatusHook, StatusHooks, StatusResist,
+    add_status_buildup, add_status_buildup_from, StatusApplied, StatusSource, StatusDef, StatusEffects, StatusExpired, StatusHook, StatusHooks, StatusResist,
     Statuses,
 };
 pub use objects::{
-    despawn_objects_of, live_tags_at, objects_of, spawn_objects, CombatObject, ObjectsSpawned, Projectile, ProjectileFlight, RepeatMark,
+    despawn_objects_of, live_tags_at, objects_of, spawn_objects, AimTarget, CombatObject, ObjectsSpawned, Projectile, ProjectileFlight, RepeatMark,
     Repeats, SpawnAim, SpawnDef, SpawnPattern,
 };
 pub use zone::{action_zones, hit_zones, threat_indicators, HitZone, Indicator, WorldShape};
@@ -351,6 +351,8 @@ impl Plugin for ActionPlugin {
             .register_type::<Pairing>()
             .register_type::<Paired>()
             .register_type::<RunHalted>()
+            .register_type::<PairKilled>()
+            .replay_ignore::<PairKilled>()
             .register_type::<PairStarted>()
             .register_type::<PairEnded>()
             .register_type::<LeapRun>()
@@ -396,6 +398,7 @@ impl Plugin for ActionPlugin {
             .init_resource::<DamageHooks>()
             .init_resource::<LethalHooks>()
             .init_resource::<StatusEffects>()
+            .init_resource::<StatusSource>()
             .init_resource::<ActionEffects>()
             .init_resource::<machine::PendingEffects>()
             .init_resource::<context::PendingPairs>()
@@ -472,7 +475,10 @@ impl Plugin for ActionPlugin {
             .add_observer(fighter::hurtbox_on_collider)
             .add_observer(fighter::protect_after_reaction)
             // Cosmetic: a game may add it in a window only, and replays must not care.
+            .register_type::<AimTarget>()
             .replay_ignore::<Animated>()
+            // Derived each tick from an NPC's brain (`shards_npc`), so a replay has it through the brain.
+            .replay_ignore::<AimTarget>()
             .replay_ignore::<PropSwaps>()
             .net_ignore::<PropSwaps>();
         context::plugin(app);

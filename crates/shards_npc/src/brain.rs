@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 use ai_core::journal::{self, JournalKind};
 use ai_core::{AiId, AiVisible, DetRng, SimSeed};
 use bevy::prelude::*;
-use shards_action::{ActionState, Dead, Downed, Health};
+use shards_action::{ActionState, AimTarget, Dead, Downed, Health};
 use shards_content::ContentDb;
 use shards_core::flat;
 use shards_world::Dormant;
@@ -64,7 +64,7 @@ pub(crate) mod salt {
 /// ```
 #[derive(Component, Reflect, Clone, Debug, PartialEq, Default)]
 #[reflect(Component, Default)]
-#[require(AiVisible, NpcBrain, NpcDrive, Perceived, NavAgent, AttackToken, NpcPlan)]
+#[require(AiVisible, NpcBrain, NpcDrive, Perceived, NavAgent, AttackToken, NpcPlan, AimTarget)]
 pub struct Npc {
     /// `behavior` content id: its state machine.
     pub behavior: String,

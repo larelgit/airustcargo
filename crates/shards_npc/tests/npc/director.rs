@@ -456,3 +456,88 @@ fn a_downed_player_counts_as_gone() {
     step(&mut app, 300);
     assert_eq!(lines(&app, "takes an attack token").len(), before, "{:#?}", journal(&app));
 }
+
+/// A brain-driven NPC's spawn with `aim: AtTarget` finds its target through `AimTarget` (the brain's own
+/// target, mirrored by the drive) with no `lock_on`: the zone lands at the target's feet.
+#[test]
+fn a_cast_with_an_at_target_spawn_lays_its_object_at_the_npcs_target() {
+    use shards_action::{AimTarget, CombatObject};
+    let mut app = app();
+    let hero = player(app.world_mut(), 0, Vec3::new(1.5, 0.0, 0.0));
+    let at = Vec3::new(-5.0, 0.0, 1.0);
+    let layer = Npc::new("grunt", "grunt").with_plan("layer").with_director("single");
+    let npc = crate::common::npc(app.world_mut(), "layer", layer, at, (Vec3::new(1.5, 0.0, 0.0) - at).normalize());
+    let (hero_id, npc_id) = (aid(&app, hero), aid(&app, npc));
+    let mut laid = None;
+    for _ in 0..1200 {
+        step(&mut app, 1);
+        let world = app.world_mut();
+        let mut objects = world.query::<(&CombatObject, &Transform)>();
+        if let Some((o, t)) = objects.iter(world).next() {
+            laid = Some((o.owner, t.translation));
+            break;
+        }
+    }
+    let (owner, point) = laid.expect("the cast laid its zone");
+    assert_eq!(owner, npc_id);
+    let hero_at = app.world().get::<Transform>(hero).unwrap().translation;
+    assert!((point - hero_at).with_y(0.0).length() < 0.05, "at its target's feet: {point} vs {hero_at}");
+    assert_eq!(app.world().get::<AimTarget>(npc).unwrap().0, Some(hero_id), "the brain's target, mirrored");
+    assert!(app.world().get::<shards_core::Intent>(npc).unwrap().target.is_none(), "no lock-on was written");
+    let story = journal(&app);
+    assert!(!story.iter().any(|l| l.contains("spawn of") && l.contains("skipped")), "{story:#?}");
+}
+
+/// A body restored without the mirror (a snapshot from before it existed) is still driven, and gets it back.
+#[test]
+fn an_npc_without_the_aim_target_component_is_still_driven_and_gets_it() {
+    use shards_action::AimTarget;
+    let mut app = app();
+    let hero = player(app.world_mut(), 0, Vec3::new(1.5, 0.0, 0.0));
+    let layer = Npc::new("grunt", "grunt").with_plan("layer").with_director("single");
+    let npc = crate::common::npc(app.world_mut(), "layer", layer, Vec3::new(-5.0, 0.0, 1.0), E);
+    app.world_mut().entity_mut(npc).remove::<AimTarget>();
+    let start = app.world().get::<Transform>(npc).unwrap().translation;
+    step(&mut app, 120);
+    assert!(app.world().get::<Transform>(npc).unwrap().translation.distance(start) > 0.5, "it walked: it is driven");
+    assert_eq!(app.world().get::<AimTarget>(npc).map(|a| a.0), Some(Some(aid(&app, hero))));
+}
+
+/// B5 with FU4: the NPC's target goes down while it casts. A spawn aims only at a body that stands, so one made before the
+/// drive runs again passes over the downed hero; on the next tick the brain has forgotten it and the mirror is empty, and the
+/// cast's own `AtTarget` spawn is skipped: nothing is laid at a downed body's feet.
+#[test]
+fn an_npc_whose_target_goes_down_lays_nothing_at_it() {
+    use shards_action::{go_down, spawn_objects, AimTarget, CombatObject, SpawnDef};
+    let mut app = app();
+    record_starts(&mut app);
+    let hero = player(app.world_mut(), 0, Vec3::new(1.5, 0.0, 0.0));
+    let at = Vec3::new(-5.0, 0.0, 1.0);
+    let layer = Npc::new("grunt", "grunt").with_plan("layer").with_director("single");
+    let npc = crate::common::npc(app.world_mut(), "layer", layer, at, (Vec3::new(1.5, 0.0, 0.0) - at).normalize());
+    let hero_id = aid(&app, hero);
+    let casting = |app: &App| app.world().resource::<Started>().0.iter().any(|s| s.1 == npc && s.2 == "lay");
+    for _ in 0..1200 {
+        step(&mut app, 1);
+        if casting(&app) {
+            break;
+        }
+    }
+    assert!(casting(&app), "the cast started: {:#?}", journal(&app));
+    assert_eq!(app.world().get::<AimTarget>(npc).unwrap().0, Some(hero_id));
+    // The hero goes down between ticks: the mirror still names it, but a spawn passes over it.
+    assert!(go_down(app.world_mut(), hero, None, None));
+    let def: SpawnDef = ron::from_str(r#"(prefab: ["zone"], action: ["lay_zone"], aim: AtTarget)"#).unwrap();
+    assert!(spawn_objects(app.world_mut(), npc, "probe", &def, None).is_empty(), "nothing at a downed body's feet");
+    assert!(!lines(&app, "spawn of probe skipped").is_empty(), "{:#?}", journal(&app));
+    // The next tick the brain forgets it and the mirror follows.
+    step(&mut app, 1);
+    assert_eq!(app.world().get::<NpcBrain>(npc).unwrap().target, None);
+    assert_eq!(app.world().get::<AimTarget>(npc).unwrap().0, None, "the mirror names no downed body");
+    step(&mut app, 60);
+    let world = app.world_mut();
+    assert_eq!(world.query::<&CombatObject>().iter(world).count(), 0);
+    let skipped = lines(&app, "spawn of lay skipped");
+    assert!(!skipped.is_empty(), "{:#?}", journal(&app));
+    assert_eq!(app.world().get::<AimTarget>(npc).unwrap().0, None);
+}

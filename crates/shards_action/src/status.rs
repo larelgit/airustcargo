@@ -407,7 +407,18 @@ pub struct StatusApplied {
     pub entity: Entity,
     pub status: String,
     pub stacks: u32,
+    /// Who built the status up: the attacker of a hit (a combat object's credited owner), else
+    /// the `source` of [`add_status_buildup_from`]. `None`: no one (an unsourced call, or a status
+    /// that took a free slot while waiting at full buildup). The `on_apply` hook reads the same
+    /// value from [`StatusSource`].
+    pub source: Option<AiId>,
 }
+
+/// The source of the status whose `on_apply` hook is running (set for that call only; `None`
+/// at any other time). The hook has no event to read, so this is where it finds
+/// [`StatusApplied::source`].
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StatusSource(pub Option<AiId>);
 
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct StatusExpired {
@@ -421,6 +432,13 @@ pub struct StatusExpired {
 /// ([`Statuses::add_with`]): the fighter's [`ProcGates`] gate it, its moveset's `max_statuses`
 /// (else the tuning's) caps it, and a proc of a status with `min_proc_interval` closes its gate.
 pub fn add_status_buildup(world: &mut World, entity: Entity, status: &str, amount: f32) {
+    add_status_buildup_from(world, entity, status, amount, None);
+}
+
+/// [`add_status_buildup`] with the one that built it up: [`StatusApplied::source`] and
+/// [`StatusSource`] (during `on_apply`) carry `source`. A hit passes its attacker (the credited
+/// owner for a combat object); a call with no one to credit uses [`add_status_buildup`].
+pub fn add_status_buildup_from(world: &mut World, entity: Entity, status: &str, amount: f32, source: Option<AiId>) {
     let Some(def) = world.resource::<ContentDb>().get::<StatusDef>(status).cloned() else {
         let text = format!("status `{status}` is not in content; buildup ignored (content_list kind=status)");
         report_once(world, format!("status {status}"), text);
@@ -442,7 +460,7 @@ pub fn add_status_buildup(world: &mut World, entity: Entity, status: &str, amoun
     if let Some(change) = statuses.add_with(status, &def, amount * resist, limit, gated, capped) {
         let changes = vec![change];
         close_gates(world, entity, &changes);
-        run_changes(world, entity, changes);
+        run_changes(world, entity, changes, source);
     }
 }
 
@@ -476,7 +494,7 @@ fn close_gates(world: &mut World, entity: Entity, changes: &[StatusChange]) {
 }
 
 /// Events and game hooks for `changes`, in order.
-fn run_changes(world: &mut World, entity: Entity, changes: Vec<StatusChange>) {
+fn run_changes(world: &mut World, entity: Entity, changes: Vec<StatusChange>, source: Option<AiId>) {
     for change in changes {
         let id = match &change {
             StatusChange::Applied(id) | StatusChange::Ticked(id) | StatusChange::Expired(id) => id.clone(),
@@ -497,9 +515,13 @@ fn run_changes(world: &mut World, entity: Entity, changes: Vec<StatusChange>) {
         match change {
             StatusChange::Applied(status) => {
                 let stacks = world.get::<Statuses>(entity).and_then(|s| s.get(&status)).map_or(1, |e| e.stacks);
-                world.trigger(StatusApplied { entity, status, stacks });
+                world.trigger(StatusApplied { entity, status, stacks, source });
                 if let Some(h) = hooks {
+                    // Restore the outer value: a hook may build up another status whose hook runs inside.
+                    let outer = world.get_resource::<StatusSource>().copied().unwrap_or_default();
+                    world.insert_resource(StatusSource(source));
                     (h.on_apply)(world, entity);
+                    world.insert_resource(outer);
                 }
             }
             StatusChange::Ticked(_) => {
@@ -532,7 +554,8 @@ pub(crate) fn clear_statuses(world: &mut World, entity: Entity) {
     if let Some(mut statuses) = world.get_mut::<Statuses>(entity) {
         statuses.0.clear();
     }
-    run_changes(world, entity, expired);
+    // Expiries only: no `StatusApplied`, so no source to carry.
+    run_changes(world, entity, expired, None);
 }
 
 /// `SimSet::Resolve`, after hits: every living entity's statuses tick, in `AiId` order.
@@ -561,7 +584,7 @@ pub fn update_statuses(world: &mut World) {
         let Some(mut statuses) = world.get_mut::<Statuses>(entity) else { continue };
         let changes = statuses.tick_with(def, dt, limit, |id| gates.gated(id));
         close_gates(world, entity, &changes);
-        run_changes(world, entity, changes);
+        run_changes(world, entity, changes, None);
     }
 }
 
