@@ -153,6 +153,8 @@ fn unloaded(dir: &Path, watch: bool, setup: impl FnOnce(&mut App)) -> App {
         port: None,
         paused: true,
         crash_replays: false,
+        // Tick timing is wall-clock: a journal compared between two runs must not hold it.
+        report_perf: false,
         testing: true,
         asset_dir: asset_dir.clone(),
         ..default()
