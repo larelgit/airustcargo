@@ -18,6 +18,7 @@ mod parity;
 mod reactions;
 mod timeline;
 mod replay;
+mod rules_damage;
 #[cfg(feature = "render")]
 mod render;
 mod visuals;

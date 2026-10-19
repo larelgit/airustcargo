@@ -27,4 +27,11 @@
         hold: (input: "block", span: Phase("hold")),
         guard: (span: Phases("raise", "hold"), stamina_per_damage: 0.8, damage_mult: 0.5),
     ),
+    // The same guard with a poise share: a block costs poise (rules_damage.rs).
+    "b_guard_poise": (
+        net_id: 107,
+        phases: [("raise", 0.18), ("hold", 0.3), ("lower", 0.1)],
+        hold: (input: "block", span: Phase("hold")),
+        guard: (span: Phases("raise", "hold"), stamina_per_damage: 0.8, damage_mult: 0.5, poise_mult: 0.5),
+    ),
 }

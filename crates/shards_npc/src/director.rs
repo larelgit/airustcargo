@@ -17,6 +17,10 @@
 //!   get a slot around their target in the order they start waiting; slot `n` takes role `n
 //!   % roles` ([`DirectorDef::waiting`]): circle, strafe or hold at a distance. The engine sets
 //!   the steering target; how it looks is the game's business.
+//! - **Tokenless NPCs.** An NPC whose plan is `tokenless` holds a grant that is outside all of this: not
+//!   counted, limited, lowered or timed out, no token events, and its own choice and press skip the
+//!   target's budget and combinations ([`AttackPlanDef::tokenless`]). A plan with its own `wait` role takes no
+//!   slot and waits in that role, with or without a grant ([`AttackPlanDef::wait`]).
 //!
 //! Everything runs in `AiId` order on components of the NPCs themselves, so the director has
 //! no state of its own: a replay or a snapshot carries it whole.
@@ -220,6 +224,11 @@ pub(crate) fn order(npcs: &Query<Fighting>) -> Vec<(AiId, Entity)> {
     all
 }
 
+/// Whether `npc` fights without the director's tokens: its plan is `tokenless`.
+pub(crate) fn tokenless(db: &ContentDb, npc: &Npc) -> bool {
+    npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p)).is_some_and(|p| p.tokenless)
+}
+
 /// Whether the attack this grant pressed is running: an action started by an input (not one
 /// the engine forced: a stagger, a flinch, a death) at the press or after it. Until it is
 /// seen to start, only the pressed input's action counts; once started, what follows it by
@@ -272,6 +281,8 @@ pub(crate) fn direct(
             }
         }
         let patience = DirectorDef::of(&db, &f.npc.director).patience;
+        // A tokenless grant is outside the director's books: nobody waits for it, so patience is pointless.
+        let tokenless = plan_def.is_some_and(|p| p.tokenless);
         // An attack in flight keeps its token to its end, whatever else happens: the count of
         // attackers never runs ahead of the tokens.
         let reason = if f.dead {
@@ -287,7 +298,7 @@ pub(crate) fn direct(
             Some("under orders")
         } else if !f.drive.strike && !f.drive.request_token {
             Some("left the fight")
-        } else if grant.age > patience + 1e-4 {
+        } else if !tokenless && grant.age > patience + 1e-4 {
             Some("unused")
         } else {
             None
@@ -309,7 +320,7 @@ pub(crate) fn direct(
                     // Back of the queue, after a short breath.
                     f.plan.rest = f.plan.rest.max(rest.0);
                 }
-                returned.push((entity, grant, reason));
+                returned.push((entity, grant, reason, !tokenless));
             }
             None => f.token.held = Some(grant),
         }
@@ -323,6 +334,7 @@ pub(crate) fn direct(
     for &(id, entity) in &order {
         if let Ok(f) = npcs.get(entity)
             && let Some(grant) = &f.token.held
+            && !tokenless(&db, f.npc)
         {
             out.add(&grant.director);
             if !grant.in_flight() {
@@ -341,19 +353,23 @@ pub(crate) fn direct(
         let rest = f.npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p)).map_or(0.0, |p| p.rest.0);
         f.plan.rest = f.plan.rest.max(rest);
         out.remove(&director);
-        returned.push((entity, grant, "limit lowered"));
+        returned.push((entity, grant, "limit lowered", true));
     }
 
-    // 2. Tokens held per director.
+    // 2. Tokens held per director (a tokenless grant is not one).
     let mut held = Pools::default();
     for &(_, entity) in &order {
         if let Ok(f) = npcs.get(entity)
             && f.token.held.is_some()
+            && !tokenless(&db, f.npc)
         {
             held.add(&pool(&f.npc.director));
         }
     }
-    for (entity, grant, reason) in returned {
+    for (entity, grant, reason, counted) in returned {
+        if !counted {
+            continue;
+        }
         let d = pool(&grant.director);
         let (held, limit) = (held.get(&d), limit_of(&d));
         let used = grant.started;
@@ -404,11 +420,13 @@ pub(crate) fn direct(
         // Judged on the NPC's read-only view, by the rules the planner chooses by: some option
         // must pass, distance aside (no token for a strike that would come too soon after
         // another NPC's, among the rest).
-        let (target, d, limit) = {
+        // A tokenless NPC is not held to the director's limit and takes none of its tokens.
+        let (target, d, limit, free) = {
             let Ok(f) = npcs.get(entity) else { continue };
             let d = pool(&f.npc.director);
             let limit = limit_of(&d);
-            if held.get(&d) >= limit {
+            let free = tokenless(&db, f.npc);
+            if !free && held.get(&d) >= limit {
                 continue;
             }
             let Some(target) = f.brain.target else { continue };
@@ -418,29 +436,54 @@ pub(crate) fn direct(
             if !options.iter().any(|o| feasible(o, &inputs)) {
                 continue;
             }
-            (target, d, limit)
+            (target, d, limit, free)
         };
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
         f.token.held = Some(Grant::new(target, &d, tick.0));
         f.token.asking_since = None;
-        held.add(&d);
-        commands.trigger(TokenGranted { entity, target, held: held.get(&d), limit });
+        if !free {
+            held.add(&d);
+            commands.trigger(TokenGranted { entity, target, held: held.get(&d), limit });
+        }
     }
 
-    // 4. Waiting roles: slots around each target in the order NPCs start waiting.
+    // 4. Waiting roles: slots around each target in the order NPCs start waiting. An NPC whose plan
+    // names its own `wait` role takes no slot and reserves none: it waits in that role, and keeps the
+    // role and its orbit while it holds a grant with nothing chosen (the planner steers it then).
     let mut taken: Vec<(AiId, u32)> = Vec::new();
     let mut waiters: Vec<(AiId, Entity)> = Vec::new();
     for &(id, entity) in &order {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
-        let waiting = f.drive.waiting && f.token.held.is_none() && f.brain.active && !f.dead && !f.under_orders();
+        let own = plan_wait(&db, f.npc).is_some();
+        let live = f.brain.active && !f.dead && !f.under_orders();
+        let waiting = f.drive.waiting && f.token.held.is_none() && live;
         let target = f.brain.target.filter(|t| waiting && target_of(&index, &targets, f.perceived, *t).is_some());
         let Some(target) = target else {
-            if f.brain.slot.is_some() || f.brain.role.is_some() {
+            if own {
+                // Waiting or holding a grant with a target it knows: the role and the orbit stay, so the
+                // next wait advances the orbit instead of seeding it again.
+                let engaged = live
+                    && (f.drive.waiting || f.token.held.is_some())
+                    && f.brain.target.is_some_and(|t| target_of(&index, &targets, f.perceived, t).is_some());
+                if f.brain.slot.is_some() {
+                    f.brain.slot = None;
+                }
+                if !engaged && f.brain.role.is_some() {
+                    f.brain.role = None;
+                }
+            } else if f.brain.slot.is_some() || f.brain.role.is_some() {
                 f.brain.slot = None;
                 f.brain.role = None;
             }
             continue;
         };
+        if own {
+            if f.brain.slot.is_some() {
+                f.brain.slot = None;
+            }
+            waiters.push((id, entity));
+            continue;
+        }
         match f.brain.slot {
             Some(slot) if !taken.contains(&(target, slot)) => taken.push((target, slot)),
             _ => {
@@ -454,21 +497,32 @@ pub(crate) fn direct(
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
         let Some(target) = f.brain.target else { continue };
         let Some((center, _)) = target_of(&index, &targets, f.perceived, target) else { continue };
-        let slot = match f.brain.slot {
-            Some(slot) => slot,
+        let role = match plan_wait(&db, f.npc) {
+            Some(role) => role,
             None => {
-                let free = (0..).find(|s| !taken.contains(&(target, *s))).unwrap_or(0);
-                taken.push((target, free));
-                f.brain.slot = Some(free);
-                free
+                let slot = match f.brain.slot {
+                    Some(slot) => slot,
+                    None => {
+                        let free = (0..).find(|s| !taken.contains(&(target, *s))).unwrap_or(0);
+                        taken.push((target, free));
+                        f.brain.slot = Some(free);
+                        free
+                    }
+                };
+                let director = DirectorDef::of(&db, &f.npc.director);
+                director.waiting.get(slot as usize % director.waiting.len().max(1)).cloned().unwrap_or_default()
             }
         };
-        let director = DirectorDef::of(&db, &f.npc.director);
-        let role = director.waiting.get(slot as usize % director.waiting.len().max(1)).cloned().unwrap_or_default();
         let home = f.home.map(|h| (h.pos.unwrap_or(f.transform.translation), h.leash));
         wait_in_role(&mut f, &role, center, home, dt);
     }
 }
+
+/// The waiting role an NPC's plan names for itself (`AttackPlanDef::wait`), if it does.
+fn plan_wait(db: &ContentDb, npc: &Npc) -> Option<WaitRole> {
+    npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p)).and_then(|p| p.wait.clone())
+}
+
 
 /// Tokens held per director, in the order directors first come up.
 #[derive(Default)]
@@ -494,7 +548,7 @@ impl Pools {
 }
 
 /// Steers a waiter by its role around a target at `center`.
-fn wait_in_role(f: &mut FightingItem, role: &WaitRole, center: Vec3, home: Option<(Vec3, f32)>, dt: f32) {
+pub(crate) fn wait_in_role(f: &mut FightingItem, role: &WaitRole, center: Vec3, home: Option<(Vec3, f32)>, dt: f32) {
     let here = f.transform.translation;
     let bearing = flat(here - center);
     let distance = role.distance.max(0.5);

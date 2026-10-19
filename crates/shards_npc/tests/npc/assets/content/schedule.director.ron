@@ -1,0 +1,11 @@
+// Directors of the tokenless tests (N8b).
+{
+    // Two tokens for one player, strikes 0.7 s (42 ticks) apart; those without one hold at 1.2 m.
+    "sched_arena": (tokens: {1: 2}, waiting: [(role: Hold, distance: 1.2)], patience: 3.0, min_spacing: 0.7),
+    // Three tokens, but a target takes 1.0 of danger at once, and a jab costs 1.0.
+    "sched_budget": (tokens: {1: 3}, budget: Some(1.0), waiting: [(role: Hold, distance: 1.2)], patience: 3.0),
+    // Three tokens and two slots to wait in.
+    "sched_slots": (tokens: {1: 3}, waiting: [(role: Hold, distance: 1.2), (role: Hold, distance: 1.6)], patience: 3.0),
+    // One token for one player, two for two.
+    "sched_lowering": (tokens: {1: 1, 2: 2}, waiting: [(role: Hold, distance: 1.2)], patience: 3.0),
+}

@@ -15,6 +15,12 @@ Read this when you touch enemy brains, behaviour, perception, the director, atta
   disagree. A rule that can refuse existing content must not stop the action machine from being asked where it is asked now (after the
   weight, the cooldown and the bans, of a closed option too): what the machine reads is part of the replay's `content` check, so a
   recording made before would diverge; `refusal_passes_exactly_what_the_old_rules_passed` compares the reads. Count the players the director counts with `schedule::living_players`.
+- **Tokenless and a plan's own waiting role** (`AttackPlanDef::tokenless`, `wait`; the boss scheduler, N8b). Both are read from the NPC's plan definition each
+  time: there is no flag on `Grant`, `AttackToken` or `NpcBrain` (hashed), so a hot reload flips them at once. Every place that counts tokens
+  (`direct` steps 1, 1b, 2 and 3, `audit_tokens`, the `chooses` text of `npc_schedule`) leaves a tokenless grant out through `director::tokenless`;
+  a new place that counts grants must do the same. `Budget` and `Overlap` are skipped inside `over_budget`/`overlap`, so the grant, the choice and
+  the press all skip them. A `wait` NPC takes no slot: `direct` step 4 keeps its role and orbit while it holds a grant, and the planner presses by
+  clearing the role; do not seed `brain.orbit` anywhere else.
 - **Gates on an option** (`angle`, `players`, `max_repeats`, `forbid_after`; the boss scheduler, N8). They are fields with a neutral default
   and `skip_serializing_if` it, so content that does not use them serializes, replays and hashes as before. History and cooldowns live on the
   NPC (`NpcPlan`), keyed by option name, and a game's phase machine swaps `Npc::plan` and keeps them; add no state to `NpcPlan`, `PastAttack`,
