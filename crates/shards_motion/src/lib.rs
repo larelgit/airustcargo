@@ -54,6 +54,7 @@ mod intent;
 mod interp;
 mod invariants;
 mod modifiers;
+mod orders;
 #[cfg(feature = "render")]
 mod overlay;
 pub mod perception;
@@ -77,6 +78,7 @@ pub use input::{BindMode, Binding, ControlState, ControlSystems, InputContext, I
 pub use intent::{intent_to_locomotion, GlideUntilLanded, MotionSystems};
 pub use interp::{adopt_visuals, shown_translation, InterpSystems, Interpolated, NotInterpolated, Pose, visual_offset};
 pub use modifiers::{ModifierSystems, MoveModifiers, StanceSpeed};
+pub use orders::{end_stalled_orders, OrderEnd, OrderEnded, OrderProgress, STALL_PROGRESS, STALL_SECONDS};
 pub use physics::{
     current_at, edge_distance, Body, Collider, ColliderId, ColliderIds, ColliderInfo, CollisionLayers, Current, LayerMask, Penetration, PhysicsPlugin,
     PhysicsSystems, PhysicsWorld, QueryFilter, RayHit, Shape, ShapeHit, SpatialQuery, Volume, VolumeEntered,
@@ -123,6 +125,7 @@ impl Plugin for MotionPlugin {
         ai::plugin(app);
         coverage::plugin(app);
         intent::plugin(app);
+        orders::plugin(app);
         tools::plugin(app);
         perception::plugin(app);
         input::plugin(app);
