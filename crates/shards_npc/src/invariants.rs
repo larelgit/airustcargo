@@ -66,6 +66,10 @@ pub(crate) fn audit_tokens(
         if f.dead {
             bad.note(*f.id, || format!("AttackToken is held by a dead body (director `{}`)", grant.director));
         }
+        // A tokenless grant is outside the director's books (peeked: this audit is not simulation).
+        if f.npc.plan.as_deref().and_then(|p| db.peek::<AttackPlanDef>(p)).is_some_and(|p| p.tokenless) {
+            continue;
+        }
         match held.iter_mut().find(|(d, _)| *d == grant.director) {
             Some((_, n)) => *n += 1,
             None => held.push((&grant.director, 1)),
@@ -79,7 +83,8 @@ pub(crate) fn audit_tokens(
         // Over the limit is allowed only while every holder is in flight: an attack under way
         // keeps its token to its end.
         for f in npcs.iter() {
-            if let Some(grant) = f.token.held.as_ref().filter(|g: &&Grant| g.director == director && !g.in_flight()) {
+            let counted = !f.npc.plan.as_deref().and_then(|p| db.peek::<AttackPlanDef>(p)).is_some_and(|p| p.tokenless);
+            if let Some(grant) = f.token.held.as_ref().filter(|g: &&Grant| counted && g.director == director && !g.in_flight()) {
                 bad.note(*f.id, || {
                     format!(
                         "AttackToken: director `{}` holds {count} tokens, over its limit {limit} for {players} players, \
@@ -98,7 +103,8 @@ pub(crate) fn audit_tokens(
 
 /// The engine rule `npc.tokens_within_limit`: after the director ran, no token is held by a dead
 /// body, and every director holds no more tokens than its limit for the living players, unless
-/// each holder beyond it has its attack in flight.
+/// each holder beyond it has its attack in flight. A tokenless grant (its plan's
+/// `tokenless`) is outside the books and not counted.
 ///
 /// It reports what [`audit_tokens`] found right after `direct`, not the state at the end of the
 /// tick, because the end of the tick is not where the books are closed. A holder that dies in
@@ -282,6 +288,36 @@ mod tests {
         assert!(text.contains("held by a dead body"), "{text}");
         // The rule reports what the audit found.
         assert_eq!(tokens_within_limit(&w), Some(text));
+    }
+
+    /// The control test for the tokenless mode: grants of a tokenless plan are outside the director's books
+    /// (five of them under a limit of two are fine), but a dead body holding one is still found.
+    #[test]
+    fn a_tokenless_grant_is_not_counted_but_a_dead_holder_of_one_is_still_found() {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<AttackPlanDef>();
+        let plans = shards_content::db::Source {
+            path: "content/p.attack_plan.ron".into(),
+            text: r#"{ "boss": (options: [(input: "light")], tokenless: true) }"#.into(),
+        };
+        let mut w = world();
+        w.insert_resource(ContentDb::build(&kinds, &[plans]));
+        let bosses: Vec<Entity> = (0..5)
+            .map(|_| {
+                let e = holder(&mut w, false);
+                w.get_mut::<Npc>(e).unwrap().plan = Some("boss".into());
+                e
+            })
+            .collect();
+        assert_eq!(audit(&mut w), None, "five tokenless grants, limit 2");
+        holder(&mut w, false);
+        holder(&mut w, false);
+        assert_eq!(audit(&mut w), None, "and two counted ones beside them");
+        holder(&mut w, false);
+        assert!(audit(&mut w).is_some(), "a third counted one is over the limit");
+        w.entity_mut(bosses[0]).insert(Dead);
+        let text = audit(&mut w).unwrap();
+        assert!(text.contains("held by a dead body"), "{text}");
     }
 
     /// A world whose plan `p` limits `light` to once in a row and keeps `heavy` out right after a `zone`.

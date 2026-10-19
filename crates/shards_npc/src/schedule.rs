@@ -43,7 +43,7 @@ use shards_motion::PhysicsWorld;
 
 use crate::brain::{salt, Npc};
 use crate::def::{AttackPlanDef, DirectorDef};
-use crate::director::{npc_site, npc_view, target_of, FightingReadOnly, FightingReadOnlyItem, Grant, Targets};
+use crate::director::{npc_site, npc_view, target_of, tokenless, FightingReadOnly, FightingReadOnlyItem, Grant, Targets};
 use crate::planner::{choice_pool, in_window, pick_weighted, refusal, resolve, InFlight, NpcOptions, NpcPlan, Resolved};
 use crate::strike::{chain_note, note_list, pool, spacing_ticks, strike_pressed, waiting, Note};
 
@@ -290,6 +290,9 @@ pub struct ScheduleReport {
     pub distance: f32,
     pub angle: f32,
     pub players: u32,
+    /// Its plan is `tokenless`: it holds no counted token (a boss among its adds).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub tokenless: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub what_if: bool,
     pub history: Vec<String>,
@@ -420,12 +423,19 @@ pub fn schedule_report(p: &ScheduleParams, entity: Entity, what_if: &WhatIf, dev
         Some(_) if decides => "the next tick decides".to_owned(),
         Some(g) => match &g.attack {
             Some(name) => format!("between decisions: keeps {name}"),
+            None if plan_def.wait.is_some() => "between decisions: waits in its role".to_owned(),
             None => "between decisions: no choice yet".to_owned(),
         },
         None if f.plan.rest > 1e-4 => format!("resting {:.2} s", f.plan.rest),
+        None if plan_def.tokenless => "no grant yet: tokenless, it takes one when it asks and an option may be chosen".to_owned(),
         None => {
             let d = pool(&f.npc.director);
-            let held = p.npcs.iter().filter(|o| o.token.held.as_ref().is_some_and(|g| pool(&g.director) == d)).count() as u32;
+            // The tokens in use are the counted ones: a tokenless grant is outside the director's books.
+            let held = p
+                .npcs
+                .iter()
+                .filter(|o| o.token.held.as_ref().is_some_and(|g| pool(&g.director) == d) && !tokenless(&p.db, o.npc))
+                .count() as u32;
             let limit = inputs.director.limit(counted);
             if held >= limit {
                 format!("no grant: tokens {held}/{limit} in use")
@@ -445,6 +455,7 @@ pub fn schedule_report(p: &ScheduleParams, entity: Entity, what_if: &WhatIf, dev
         distance: round2(distance),
         angle: round2(angle),
         players,
+        tokenless: plan_def.tokenless,
         what_if: what_if.any(),
         history: f.plan.history.iter().map(|h| h.name.clone()).collect(),
         rest: round2(f.plan.rest),
