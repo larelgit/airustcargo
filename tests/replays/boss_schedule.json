@@ -5,8 +5,8 @@
   "check_every": 60,
   "check_detail": "components",
   "end": {
-    "tick": 1654,
-    "hash": "7ca1523ed7914577",
+    "tick": 1730,
+    "hash": "c95556c0f2a0cd78",
     "parts": {
       "entities": {
         "e1": {
@@ -61,7 +61,7 @@
           "LocalPlayer": "9649be778570e9b6",
           "LocomotionInput": "39e4de9fd83ac7a7",
           "Look": "e44906346a412547",
-          "MotionState": "6c2f8bafac4b2a8a",
+          "MotionState": "29c923ce6015b5f3",
           "Name": "34a01a235b960c38",
           "Player": "d4e87c7e9cc60712",
           "PlayerId": "881ccf3ad5b62384",
@@ -69,12 +69,12 @@
           "Stamina": "0d0eee3f04a65ab4",
           "Statuses": "3fb30d18ef67d4e2",
           "Team": "165e6b65a6b6cead",
-          "Transform": "2bb20361fb98c4e3"
+          "Transform": "ea39707cc430f8eb"
         },
         "e6": {
-          "ActionState": "9120b78963c6621e",
+          "ActionState": "581ae6a362c1ce30",
           "AiImportance": "743dc2453c5f77e0",
-          "AttackToken": "8f2bb701d008eac8",
+          "AttackToken": "5917ccfb9e06e029",
           "Body": "c5fb29ebf3188250",
           "Boss": "be5ecd999df96d58",
           "CharacterController": "3abd911557824fe8",
@@ -87,23 +87,23 @@
           "InputBuffer": "ef38bf400db90191",
           "Intent": "38dab3b75de55ab8",
           "LockOnTarget": "8e7e24c8d091cff2",
-          "LocomotionInput": "b732dd878a33b13c",
+          "LocomotionInput": "e80c864bfd23d0b2",
           "Look": "69d0ee91f082244b",
-          "MotionState": "08b233b50fb907d5",
+          "MotionState": "e07ca766951505bc",
           "Name": "c60481842b5403a4",
-          "NavAgent": "95dc2458f9e438d1",
+          "NavAgent": "c585cbeaba614133",
           "Npc": "ab29948735442598",
-          "NpcBrain": "388889abbb93a774",
+          "NpcBrain": "aedc0273d6df5806",
           "NpcDrive": "86e42107c9ecae6a",
           "NpcPlan": "5d8399d499c0b02a",
-          "Perceived": "6c9b6f0e73467a94",
+          "Perceived": "e054b1a9613781f4",
           "Poise": "fd9e11bfbe548f9d",
           "Statuses": "3fb30d18ef67d4e2",
           "Team": "e1125bce710d6b86",
-          "Transform": "671ce47aa0bd04e1"
+          "Transform": "c857efb407d32d02"
         },
         "e7": {
-          "ActionState": "a414b3792e392e19",
+          "ActionState": "388523a50f37aa0d",
           "AiImportance": "89520b33e189ae73",
           "AttackToken": "6a2088a8dc7c3f7c",
           "Body": "c5fb29ebf3188250",
@@ -121,21 +121,21 @@
           "Look": "f94c630656387237",
           "MotionState": "91f63f498b27a5ee",
           "Name": "69a7067b825ad410",
-          "NavAgent": "95dc2458f9e438d1",
+          "NavAgent": "f289ef3e7619c7bd",
           "Npc": "5261f0cbfc256463",
-          "NpcBrain": "4cad77c64e8fa10f",
+          "NpcBrain": "dd4278edc4b50eae",
           "NpcDrive": "86e42107c9ecae6a",
-          "NpcPlan": "a2740f05b7e737bb",
-          "Perceived": "2d6a1dff6618ef36",
+          "NpcPlan": "9b42834a0dfa7e49",
+          "Perceived": "cf19b349aa87ea0a",
           "Poise": "2b6a1a3a1ec4b2ff",
           "Remains": "c4e7959a2bd6b475",
           "Skeleton": "fa92b4aa8d957e72",
           "Statuses": "3fb30d18ef67d4e2",
           "Team": "e1125bce710d6b86",
-          "Transform": "adb6093ffdc9b910"
+          "Transform": "0282e8980dd34b04"
         },
         "e8": {
-          "ActionState": "a414b3792e392e19",
+          "ActionState": "388523a50f37aa0d",
           "AiImportance": "89520b33e189ae73",
           "AttackToken": "6a2088a8dc7c3f7c",
           "Body": "c5fb29ebf3188250",
@@ -153,18 +153,18 @@
           "Look": "f94c630656387237",
           "MotionState": "0bea1b89f721cf25",
           "Name": "69a7067b825ad410",
-          "NavAgent": "95dc2458f9e438d1",
+          "NavAgent": "f289ef3e7619c7bd",
           "Npc": "5261f0cbfc256463",
-          "NpcBrain": "4cad77c64e8fa10f",
+          "NpcBrain": "fb5addc459620035",
           "NpcDrive": "86e42107c9ecae6a",
-          "NpcPlan": "a2740f05b7e737bb",
-          "Perceived": "2d6a1dff6618ef36",
+          "NpcPlan": "7a42155152adfd50",
+          "Perceived": "b558b32f1ee4c839",
           "Poise": "2b6a1a3a1ec4b2ff",
           "Remains": "c4e7959a2bd6b475",
           "Skeleton": "fa92b4aa8d957e72",
           "Statuses": "3fb30d18ef67d4e2",
           "Team": "e1125bce710d6b86",
-          "Transform": "5cf830794f758f55"
+          "Transform": "cee66835ca1e5457"
         },
         "e9": {
           "LayoutPiece": "83e361eaafe2d570",
@@ -216,7 +216,7 @@
           "Name": "69a7067b825ad410",
           "NavAgent": "95dc2458f9e438d1",
           "Npc": "5261f0cbfc256463",
-          "NpcBrain": "4cad77c64e8fa10f",
+          "NpcBrain": "2b36e9adb3a15a8b",
           "NpcDrive": "86e42107c9ecae6a",
           "NpcPlan": "a2740f05b7e737bb",
           "Perceived": "2d6a1dff6618ef36",
@@ -229,7 +229,7 @@
         }
       },
       "game": {
-        "content": "1b3b9e1aacd8841f"
+        "content": "6935466d53b62c97"
       }
     }
   },
@@ -496,6 +496,72 @@
           "changes": [
             {
               "def": {
+                "min_spacing": 0.7,
+                "patience": 3.0,
+                "tokens": {
+                  "1": 2
+                },
+                "waiting": [
+                  {
+                    "distance": 4.0,
+                    "role": "Hold"
+                  }
+                ]
+              },
+              "id": "sched_arena",
+              "kind": "director"
+            },
+            {
+              "def": {
+                "initial": "idle",
+                "states": {
+                  "fight": {
+                    "kind": "attack",
+                    "transitions": [
+                      {
+                        "to": "idle",
+                        "when": [
+                          "target_lost"
+                        ]
+                      }
+                    ]
+                  },
+                  "idle": {
+                    "transitions": [
+                      {
+                        "to": "fight",
+                        "when": [
+                          "target_known"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "id": "sched_fight",
+              "kind": "behavior"
+            },
+            {
+              "def": {
+                "options": [
+                  {
+                    "input": "light",
+                    "tags": [
+                      "light"
+                    ]
+                  }
+                ],
+                "rest": [
+                  0.6,
+                  1.0
+                ]
+              },
+              "id": "sched_add",
+              "kind": "attack_plan"
+            },
+            {
+              "def": {
+                "ignores_spacing": true,
                 "in_range_only": true,
                 "options": [
                   {
@@ -539,17 +605,26 @@
                     "weight": 1.0
                   }
                 ],
-                "press_on_decision": false,
+                "press_on_decision": true,
                 "rest": [
                   0.6,
                   1.0
-                ]
+                ],
+                "tokenless": true,
+                "wait": {
+                  "distance": 2.2,
+                  "orbit": 1.6,
+                  "period": 1.875,
+                  "role": "Strafe",
+                  "speed": 1.0
+                }
               },
               "id": "sched_boss",
               "kind": "attack_plan"
             },
             {
               "def": {
+                "ignores_spacing": true,
                 "in_range_only": true,
                 "options": [
                   {
@@ -593,10 +668,19 @@
                     "weight": 1.0
                   }
                 ],
+                "press_on_decision": true,
                 "rest": [
                   0.3,
                   0.6
-                ]
+                ],
+                "tokenless": true,
+                "wait": {
+                  "distance": 2.2,
+                  "orbit": 1.6,
+                  "period": 1.875,
+                  "role": "Strafe",
+                  "speed": 1.0
+                }
               },
               "id": "sched_boss_enraged",
               "kind": "attack_plan"
@@ -620,6 +704,111 @@
             "sched_boss",
             "sched_boss_enraged"
           ]
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 120,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "Npc",
+          "id": "e6",
+          "path": "director",
+          "value": "sched_arena"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 120,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "Npc",
+          "id": "e7",
+          "path": "behavior",
+          "value": "sched_fight"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 120,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "Npc",
+          "id": "e7",
+          "path": "director",
+          "value": "sched_arena"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 120,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "Npc",
+          "id": "e7",
+          "path": "plan",
+          "value": "sched_add"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 120,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "Npc",
+          "id": "e8",
+          "path": "behavior",
+          "value": "sched_fight"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 120,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "Npc",
+          "id": "e8",
+          "path": "director",
+          "value": "sched_arena"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 120,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "Npc",
+          "id": "e8",
+          "path": "plan",
+          "value": "sched_add"
         }
       }
     },
@@ -662,9 +851,9 @@
         "tool": "teleport",
         "args": {
           "id": "e7",
-          "x": -18,
+          "x": -4,
           "y": 0,
-          "z": 18
+          "z": -1
         }
       }
     },
@@ -677,9 +866,9 @@
         "tool": "teleport",
         "args": {
           "id": "e8",
-          "x": 18,
+          "x": 4,
           "y": 0,
-          "z": 18
+          "z": -1
         }
       }
     },
@@ -742,7 +931,33 @@
     },
     {
       "call": {
-        "at": 1050,
+        "at": 150,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "npc_set_state",
+        "args": {
+          "id": "e7",
+          "state": "idle"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 150,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "npc_set_state",
+        "args": {
+          "id": "e8",
+          "state": "idle"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1126,
         "agent": "scenario",
         "scope": "dev",
         "subject": 5,
@@ -762,7 +977,7 @@
     },
     {
       "call": {
-        "at": 1050,
+        "at": 1126,
         "agent": "scenario",
         "scope": "dev",
         "subject": 5,
@@ -777,7 +992,7 @@
     },
     {
       "call": {
-        "at": 1652,
+        "at": 1728,
         "agent": "scenario",
         "scope": "dev",
         "subject": 5,
@@ -789,7 +1004,7 @@
     },
     {
       "call": {
-        "at": 1652,
+        "at": 1728,
         "agent": "scenario",
         "scope": "dev",
         "subject": 5,
@@ -807,7 +1022,7 @@
     },
     {
       "call": {
-        "at": 1652,
+        "at": 1728,
         "agent": "scenario",
         "scope": "dev",
         "subject": 5,
@@ -822,7 +1037,112 @@
     },
     {
       "call": {
-        "at": 1652,
+        "at": 1728,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "Npc",
+          "id": "e6",
+          "path": "director",
+          "value": "boss"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1728,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "Npc",
+          "id": "e7",
+          "path": "behavior",
+          "value": "skeleton"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1728,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "Npc",
+          "id": "e7",
+          "path": "director",
+          "value": ""
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1728,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "Npc",
+          "id": "e7",
+          "path": "plan",
+          "value": "skeleton"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1728,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "Npc",
+          "id": "e8",
+          "path": "behavior",
+          "value": "skeleton"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1728,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "Npc",
+          "id": "e8",
+          "path": "director",
+          "value": ""
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1728,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "Npc",
+          "id": "e8",
+          "path": "plan",
+          "value": "skeleton"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1728,
         "agent": "scenario",
         "scope": "dev",
         "subject": 5,
@@ -834,7 +1154,7 @@
     },
     {
       "call": {
-        "at": 1652,
+        "at": 1728,
         "agent": "scenario",
         "scope": "dev",
         "subject": 5,
@@ -846,7 +1166,7 @@
     },
     {
       "call": {
-        "at": 1652,
+        "at": 1728,
         "agent": "scenario",
         "scope": "dev",
         "subject": 5,
@@ -865,7 +1185,7 @@
     },
     {
       "call": {
-        "at": 1652,
+        "at": 1728,
         "agent": "scenario",
         "scope": "dev",
         "subject": 5,
@@ -878,7 +1198,63 @@
     },
     {
       "call": {
-        "at": 1654,
+        "at": 1728,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "npc_set_state",
+        "args": {
+          "id": "e7",
+          "state": "calm"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1728,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "npc_set_state",
+        "args": {
+          "id": "e8",
+          "state": "calm"
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1728,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "teleport",
+        "args": {
+          "id": "e7",
+          "x": -18,
+          "y": 0,
+          "z": 18
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1728,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "teleport",
+        "args": {
+          "id": "e8",
+          "x": 18,
+          "y": 0,
+          "z": 18
+        }
+      }
+    },
+    {
+      "call": {
+        "at": 1730,
         "agent": "scenario",
         "scope": "dev",
         "subject": 5,
@@ -887,6 +1263,72 @@
           "changes": [
             {
               "before": {
+                "min_spacing": 0.7,
+                "patience": 3.0,
+                "tokens": {
+                  "1": 2
+                },
+                "waiting": [
+                  {
+                    "distance": 4.0,
+                    "role": "Hold"
+                  }
+                ]
+              },
+              "id": "sched_arena",
+              "kind": "director"
+            },
+            {
+              "before": {
+                "initial": "idle",
+                "states": {
+                  "fight": {
+                    "kind": "attack",
+                    "transitions": [
+                      {
+                        "to": "idle",
+                        "when": [
+                          "target_lost"
+                        ]
+                      }
+                    ]
+                  },
+                  "idle": {
+                    "transitions": [
+                      {
+                        "to": "fight",
+                        "when": [
+                          "target_known"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+              "id": "sched_fight",
+              "kind": "behavior"
+            },
+            {
+              "before": {
+                "options": [
+                  {
+                    "input": "light",
+                    "tags": [
+                      "light"
+                    ]
+                  }
+                ],
+                "rest": [
+                  0.6,
+                  1.0
+                ]
+              },
+              "id": "sched_add",
+              "kind": "attack_plan"
+            },
+            {
+              "before": {
+                "ignores_spacing": true,
                 "in_range_only": true,
                 "options": [
                   {
@@ -930,17 +1372,26 @@
                     "weight": 1.0
                   }
                 ],
-                "press_on_decision": false,
+                "press_on_decision": true,
                 "rest": [
                   0.6,
                   1.0
-                ]
+                ],
+                "tokenless": true,
+                "wait": {
+                  "distance": 2.2,
+                  "orbit": 1.6,
+                  "period": 1.875,
+                  "role": "Strafe",
+                  "speed": 1.0
+                }
               },
               "id": "sched_boss",
               "kind": "attack_plan"
             },
             {
               "before": {
+                "ignores_spacing": true,
                 "in_range_only": true,
                 "options": [
                   {
@@ -984,10 +1435,19 @@
                     "weight": 1.0
                   }
                 ],
+                "press_on_decision": true,
                 "rest": [
                   0.3,
                   0.6
-                ]
+                ],
+                "tokenless": true,
+                "wait": {
+                  "distance": 2.2,
+                  "orbit": 1.6,
+                  "period": 1.875,
+                  "role": "Strafe",
+                  "speed": 1.0
+                }
               },
               "id": "sched_boss_enraged",
               "kind": "attack_plan"
@@ -1458,7 +1918,7 @@
     },
     {
       "tick": 180,
-      "hash": "a5716b66ce8acd4e",
+      "hash": "6e0a1fedb60e00d6",
       "parts": {
         "entities": {
           "e1": {
@@ -1525,9 +1985,9 @@
             "Transform": "ea39707cc430f8eb"
           },
           "e6": {
-            "ActionState": "f81eda91082942f1",
+            "ActionState": "83e2361087a8496b",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "630a21ee46a66934",
+            "AttackToken": "091d3e3ddf73ba91",
             "Body": "c5fb29ebf3188250",
             "Boss": "87e78dabaabbf7ec",
             "CharacterController": "3abd911557824fe8",
@@ -1540,25 +2000,26 @@
             "InputBuffer": "ef38bf400db90191",
             "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "af81f54055355999",
+            "LocomotionInput": "5ad4b6d4b37d256b",
             "Look": "69d0ee91f082244b",
-            "MotionState": "1b0f39eab5831839",
+            "MotionState": "7338c9c7189f6bd5",
             "Name": "c60481842b5403a4",
-            "NavAgent": "f7267499a4d059c8",
-            "Npc": "d89d663dee8e29f0",
-            "NpcBrain": "12a62ccfcd929477",
+            "NavAgent": "2028e4e9ae773e92",
+            "Npc": "d695529e98d0fe8d",
+            "NpcBrain": "8ec62d7d0c801502",
             "NpcDrive": "79ce91c6366ab245",
             "NpcPlan": "59bef5067e50d9a6",
+            "NpcStrike": "3c8ef6c3547797fd",
             "Perceived": "2bf95b97d3b5fc1c",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "2dc2e23c7b44514e"
+            "Transform": "38f4e99a949c0c74"
           },
           "e7": {
             "ActionState": "a414b3792e392e19",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "1e78fec2a8d0f848",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -1568,29 +2029,29 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "0d4ee217261e7a2e",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "ab4cb80598af4d07",
-            "NpcDrive": "86e42107c9ecae6a",
+            "NavAgent": "2028e4e9ae773e92",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "ef0bde9423276f34",
+            "NpcDrive": "79ce91c6366ab245",
             "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "Perceived": "2bf95b97d3b5fc1c",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
             "ActionState": "a414b3792e392e19",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "1e78fec2a8d0f848",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -1600,24 +2061,24 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "cd3be5b4239ba8a4",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "ab4cb80598af4d07",
-            "NpcDrive": "86e42107c9ecae6a",
+            "NavAgent": "2028e4e9ae773e92",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "ef0bde9423276f34",
+            "NpcDrive": "79ce91c6366ab245",
             "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "Perceived": "2bf95b97d3b5fc1c",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -1682,13 +2143,13 @@
           }
         },
         "game": {
-          "content": "e5b1df1d96844dbc"
+          "content": "83002770860eef39"
         }
       }
     },
     {
       "tick": 240,
-      "hash": "b108731561f7390d",
+      "hash": "c26924b02a7684c7",
       "parts": {
         "entities": {
           "e1": {
@@ -1755,9 +2216,9 @@
             "Transform": "ea39707cc430f8eb"
           },
           "e6": {
-            "ActionState": "81524c653f22463e",
+            "ActionState": "022b42c9db74ee76",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "0df9585174eba0f6",
+            "AttackToken": "51f8ea27b174eba3",
             "Body": "c5fb29ebf3188250",
             "Boss": "87e78dabaabbf7ec",
             "CharacterController": "3abd911557824fe8",
@@ -1770,25 +2231,26 @@
             "InputBuffer": "ef38bf400db90191",
             "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "af81f54055355999",
+            "LocomotionInput": "5ad4b6d4b37d256b",
             "Look": "69d0ee91f082244b",
-            "MotionState": "b08f711f9377108f",
+            "MotionState": "bc741f34fcd9d762",
             "Name": "c60481842b5403a4",
-            "NavAgent": "f7267499a4d059c8",
-            "Npc": "d89d663dee8e29f0",
-            "NpcBrain": "2ac3e22aa5535c43",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "d695529e98d0fe8d",
+            "NpcBrain": "95967dd7a30fe1b2",
             "NpcDrive": "79ce91c6366ab245",
             "NpcPlan": "59bef5067e50d9a6",
-            "Perceived": "2bf95b97d3b5fc1c",
+            "NpcStrike": "3c8ef6c3547797fd",
+            "Perceived": "2804d1bd15bf1356",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "2a11d7fdf56fe5df"
+            "Transform": "476297eaa45ae083"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "9db0975ba5b20bcd",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "92f411330381562d",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -1798,29 +2260,30 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "311e1a0a60db795a",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "32a1e946f4a13db6",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "8c59e0d7be867fbf",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "e1618bfb76a72447",
+            "NpcStrike": "3bfacad800e2b8cb",
+            "Perceived": "1111172e713912fc",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "635d2cec992abee6",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "a163fc04973444e0",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -1830,24 +2293,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "11b9fd4b7eb79748",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "32a1e946f4a13db6",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "8c59e0d7be867fbf",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "e1618bfb76a72447",
+            "NpcStrike": "c43fa212d88d3c20",
+            "Perceived": "2804d1bd15bf1356",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -1912,13 +2376,13 @@
           }
         },
         "game": {
-          "content": "e5b1df1d96844dbc"
+          "content": "83002770860eef39"
         }
       }
     },
     {
       "tick": 300,
-      "hash": "7db7f1e77c4b3a9e",
+      "hash": "8df6f3afb120504e",
       "parts": {
         "entities": {
           "e1": {
@@ -1985,9 +2449,9 @@
             "Transform": "ea39707cc430f8eb"
           },
           "e6": {
-            "ActionState": "4b8796e0bc01942c",
+            "ActionState": "f9b3a3cf64e8f80d",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "3d8f3a7566d998ab",
+            "AttackToken": "2c92c0a54766e2c6",
             "Body": "c5fb29ebf3188250",
             "Boss": "87e78dabaabbf7ec",
             "CharacterController": "3abd911557824fe8",
@@ -2000,23 +2464,24 @@
             "InputBuffer": "ef38bf400db90191",
             "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "9c5ec292fcfe9b4d",
+            "LocomotionInput": "95b181053e898cd8",
             "Look": "69d0ee91f082244b",
-            "MotionState": "b08f711f9377108f",
+            "MotionState": "6dec0cab38266af2",
             "Name": "c60481842b5403a4",
-            "NavAgent": "f7267499a4d059c8",
-            "Npc": "d89d663dee8e29f0",
-            "NpcBrain": "74691ade1ff99bfa",
+            "NavAgent": "2f989dfe5ca65048",
+            "Npc": "d695529e98d0fe8d",
+            "NpcBrain": "b0805952001a9a8e",
             "NpcDrive": "79ce91c6366ab245",
             "NpcPlan": "10c008529bf7cbfa",
-            "Perceived": "2bf95b97d3b5fc1c",
+            "NpcStrike": "14d0aac737563ee0",
+            "Perceived": "9ea663d0976fb48f",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "2a11d7fdf56fe5df"
+            "Transform": "1e4ae70f7d381f7e"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "35853078bde68c6c",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
@@ -2028,29 +2493,30 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "0d4ee217261e7a2e",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "fc0bca36a81ee054",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "8ca2bbd54ea00a80",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "4faabda6d510709c",
+            "NpcStrike": "3bfacad800e2b8cb",
+            "Perceived": "9ea663d0976fb48f",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "84e114413ecd9246",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "8137e1a13ca0bdb1",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -2060,24 +2526,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "11b9fd4b7eb79748",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "fc0bca36a81ee054",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "a782a3b979595364",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "e1618bfb76a72447",
+            "NpcStrike": "c43fa212d88d3c20",
+            "Perceived": "5f9bf53557689cd7",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -2142,13 +2609,13 @@
           }
         },
         "game": {
-          "content": "e5b1df1d96844dbc"
+          "content": "83002770860eef39"
         }
       }
     },
     {
       "tick": 360,
-      "hash": "51a3ee4a5d50879d",
+      "hash": "3b82b636d68e2c01",
       "parts": {
         "entities": {
           "e1": {
@@ -2215,9 +2682,9 @@
             "Transform": "ea39707cc430f8eb"
           },
           "e6": {
-            "ActionState": "e281eb14d1e80f48",
+            "ActionState": "8cd72fb9a20fa851",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "c699cd86de331856",
+            "AttackToken": "33a23dff1dca81c5",
             "Body": "c5fb29ebf3188250",
             "Boss": "87e78dabaabbf7ec",
             "CharacterController": "3abd911557824fe8",
@@ -2230,25 +2697,26 @@
             "InputBuffer": "ef38bf400db90191",
             "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "9c5ec292fcfe9b4d",
+            "LocomotionInput": "95b181053e898cd8",
             "Look": "69d0ee91f082244b",
-            "MotionState": "b08f711f9377108f",
+            "MotionState": "6dec0cab38266af2",
             "Name": "c60481842b5403a4",
-            "NavAgent": "f7267499a4d059c8",
-            "Npc": "d89d663dee8e29f0",
-            "NpcBrain": "b6eca083e010fedc",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "d695529e98d0fe8d",
+            "NpcBrain": "e8f4e12fbc2cc5e8",
             "NpcDrive": "79ce91c6366ab245",
             "NpcPlan": "57ebb4faa637ae51",
-            "Perceived": "2bf95b97d3b5fc1c",
+            "NpcStrike": "14d0aac737563ee0",
+            "Perceived": "99d34dfc57b6ea75",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "2a11d7fdf56fe5df"
+            "Transform": "1e4ae70f7d381f7e"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "9740b98fb2bd8ab1",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "30c4dfbb93dc2ae4",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -2258,29 +2726,30 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "311e1a0a60db795a",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "36281b89ede3c799",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "4fc04900fe6bbb8c",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "49615a59a739fddc",
+            "NpcStrike": "e74d86c4462bece4",
+            "Perceived": "76817496b0edb444",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "35853078bde68c6c",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "e214f59fbfd78518",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -2290,24 +2759,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "cd3be5b4239ba8a4",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "36281b89ede3c799",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "6bba5b98b8bd01b0",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "e1618bfb76a72447",
+            "NpcStrike": "c43fa212d88d3c20",
+            "Perceived": "99d34dfc57b6ea75",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -2372,13 +2842,13 @@
           }
         },
         "game": {
-          "content": "e5b1df1d96844dbc"
+          "content": "83002770860eef39"
         }
       }
     },
     {
       "tick": 420,
-      "hash": "e1396a2f0530a3ad",
+      "hash": "26ae07f7ac794e8d",
       "parts": {
         "entities": {
           "e1": {
@@ -2445,9 +2915,9 @@
             "Transform": "ea39707cc430f8eb"
           },
           "e6": {
-            "ActionState": "2d8ab07bd2e0d88d",
+            "ActionState": "d315e5668c67a6ce",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "e34bc6c57bef8dbf",
+            "AttackToken": "2e5beed939ec9dca",
             "Body": "c5fb29ebf3188250",
             "Boss": "87e78dabaabbf7ec",
             "CharacterController": "3abd911557824fe8",
@@ -2460,23 +2930,24 @@
             "InputBuffer": "ef38bf400db90191",
             "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "9c5ec292fcfe9b4d",
+            "LocomotionInput": "95b181053e898cd8",
             "Look": "69d0ee91f082244b",
-            "MotionState": "b08f711f9377108f",
+            "MotionState": "6dec0cab38266af2",
             "Name": "c60481842b5403a4",
-            "NavAgent": "f7267499a4d059c8",
-            "Npc": "d89d663dee8e29f0",
-            "NpcBrain": "e810c89a874682aa",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "d695529e98d0fe8d",
+            "NpcBrain": "6a62f2f86fa8b21e",
             "NpcDrive": "79ce91c6366ab245",
             "NpcPlan": "22fb89df408152fd",
-            "Perceived": "2bf95b97d3b5fc1c",
+            "NpcStrike": "14d0aac737563ee0",
+            "Perceived": "e06e38ed70562c7b",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "2a11d7fdf56fe5df"
+            "Transform": "1e4ae70f7d381f7e"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "a606ea45e92ed757",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
@@ -2488,29 +2959,30 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "0d4ee217261e7a2e",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "8293b40e43ed51f1",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "8b16e41884c3f691",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "31c589ae4a041746",
+            "NpcStrike": "e74d86c4462bece4",
+            "Perceived": "e06e38ed70562c7b",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "9de8fbb7685bc036",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "66a7943dcc2a4949",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -2520,24 +2992,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "11b9fd4b7eb79748",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "8293b40e43ed51f1",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "3d1890d5af42e49d",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "49615a59a739fddc",
+            "NpcStrike": "9e021096131f91aa",
+            "Perceived": "1fa47245fbfba9c2",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -2602,13 +3075,13 @@
           }
         },
         "game": {
-          "content": "e5b1df1d96844dbc"
+          "content": "83002770860eef39"
         }
       }
     },
     {
       "tick": 480,
-      "hash": "9a7db89d9790076f",
+      "hash": "9f95dd7bf6ff1ffb",
       "parts": {
         "entities": {
           "e1": {
@@ -2675,9 +3148,9 @@
             "Transform": "ea39707cc430f8eb"
           },
           "e6": {
-            "ActionState": "a37b97ad1e52631f",
+            "ActionState": "517701c5461d0c11",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "9d4bb649d2384ad1",
+            "AttackToken": "4d9c65b696821d3c",
             "Body": "c5fb29ebf3188250",
             "Boss": "87e78dabaabbf7ec",
             "CharacterController": "3abd911557824fe8",
@@ -2690,25 +3163,26 @@
             "InputBuffer": "ef38bf400db90191",
             "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "9c5ec292fcfe9b4d",
+            "LocomotionInput": "0651625750cc87dd",
             "Look": "69d0ee91f082244b",
-            "MotionState": "b08f711f9377108f",
+            "MotionState": "e58a11e56cf06896",
             "Name": "c60481842b5403a4",
-            "NavAgent": "f7267499a4d059c8",
-            "Npc": "d89d663dee8e29f0",
-            "NpcBrain": "222911db506e9baa",
+            "NavAgent": "bc1a647d03ca8767",
+            "Npc": "d695529e98d0fe8d",
+            "NpcBrain": "9d53766c508ac6c3",
             "NpcDrive": "79ce91c6366ab245",
             "NpcPlan": "adcd9e1c7104351b",
-            "Perceived": "2bf95b97d3b5fc1c",
+            "NpcStrike": "9691c8883a9f1dcb",
+            "Perceived": "49c22bcc01301f2d",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "2a11d7fdf56fe5df"
+            "Transform": "2fd8253f07db1b23"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "a292c93717b3c342",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "860d380f961201cf",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -2718,27 +3192,28 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "311e1a0a60db795a",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "16aa33fba1d8a74f",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "87c82bb0973b4ef2",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "bec5974602db3b61",
+            "NpcStrike": "887bf0b4fc574a90",
+            "Perceived": "49c22bcc01301f2d",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "a606ea45e92ed757",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
@@ -2750,24 +3225,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "cd3be5b4239ba8a4",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "16aa33fba1d8a74f",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "b47ac9c2986c2fae",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "8928e1e8081dd01b",
+            "NpcStrike": "9e021096131f91aa",
+            "Perceived": "7a2aba0cbe084e60",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -2832,13 +3308,13 @@
           }
         },
         "game": {
-          "content": "e5b1df1d96844dbc"
+          "content": "83002770860eef39"
         }
       }
     },
     {
       "tick": 540,
-      "hash": "23ba8e8eb7a6f17a",
+      "hash": "2e51660d6c22a823",
       "parts": {
         "entities": {
           "e1": {
@@ -2905,9 +3381,9 @@
             "Transform": "ea39707cc430f8eb"
           },
           "e6": {
-            "ActionState": "3f168e9823c391b9",
+            "ActionState": "43bc17b273b529eb",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "8887141e018cc895",
+            "AttackToken": "36f23da9a8f03f26",
             "Body": "c5fb29ebf3188250",
             "Boss": "87e78dabaabbf7ec",
             "CharacterController": "3abd911557824fe8",
@@ -2920,23 +3396,24 @@
             "InputBuffer": "ef38bf400db90191",
             "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "9c5ec292fcfe9b4d",
+            "LocomotionInput": "0651625750cc87dd",
             "Look": "69d0ee91f082244b",
-            "MotionState": "639db04108ee0f80",
+            "MotionState": "a7a14b8aef964081",
             "Name": "c60481842b5403a4",
-            "NavAgent": "f7267499a4d059c8",
-            "Npc": "d89d663dee8e29f0",
-            "NpcBrain": "477e9e69350cb92a",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "d695529e98d0fe8d",
+            "NpcBrain": "e91575d7787295f7",
             "NpcDrive": "79ce91c6366ab245",
             "NpcPlan": "ad0159e232aab504",
-            "Perceived": "2bf95b97d3b5fc1c",
+            "NpcStrike": "9691c8883a9f1dcb",
+            "Perceived": "04af9db21feb3573",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "3932a0d3504b002f"
+            "Transform": "1b88653745e27517"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "5821252e31b27552",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
@@ -2948,29 +3425,30 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "0d4ee217261e7a2e",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "85d15126c990bb7f",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "228411caf022ed5f",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "f849d1d180461182",
+            "NpcStrike": "887bf0b4fc574a90",
+            "Perceived": "13d90925ff36baaa",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "6e955f76f8ee77ba",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "cf9e0ec17c255c78",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -2980,24 +3458,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "11b9fd4b7eb79748",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "85d15126c990bb7f",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "bc10e3bd4857f9e5",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "bec5974602db3b61",
+            "NpcStrike": "c7dd3eca9e85683e",
+            "Perceived": "13d90925ff36baaa",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -3062,13 +3541,13 @@
           }
         },
         "game": {
-          "content": "e5b1df1d96844dbc"
+          "content": "83002770860eef39"
         }
       }
     },
     {
       "tick": 600,
-      "hash": "cd8b4cdec51bd49f",
+      "hash": "fe379203003f620a",
       "parts": {
         "entities": {
           "e1": {
@@ -3150,25 +3629,26 @@
             "InputBuffer": "ef38bf400db90191",
             "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "8a84d19d9e174156",
+            "LocomotionInput": "4bddfc2cb4410a0d",
             "Look": "69d0ee91f082244b",
-            "MotionState": "639db04108ee0f80",
+            "MotionState": "94f7bb491508bd12",
             "Name": "c60481842b5403a4",
-            "NavAgent": "c5056662001a71e6",
-            "Npc": "d89d663dee8e29f0",
-            "NpcBrain": "1e0b35a479fcf767",
-            "NpcDrive": "1c9de200ece4fe03",
+            "NavAgent": "3c5f5513daa735fb",
+            "Npc": "d695529e98d0fe8d",
+            "NpcBrain": "dd5097956a904c1b",
+            "NpcDrive": "fed31bb9553d3456",
             "NpcPlan": "42a1dd8d91e34483",
-            "Perceived": "2bf95b97d3b5fc1c",
+            "NpcStrike": "9691c8883a9f1dcb",
+            "Perceived": "6b269b9ef6ce937e",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "3932a0d3504b002f"
+            "Transform": "06b12ab6924ca324"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "9d4a759291bf3e99",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "71aff136ece317ed",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -3178,27 +3658,28 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "311e1a0a60db795a",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "9486e528a00a8833",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "0972dad45087f57a",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "a13819671343557e",
+            "NpcStrike": "e5bab248e3b64d54",
+            "Perceived": "6b269b9ef6ce937e",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "5821252e31b27552",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
@@ -3210,24 +3691,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "cd3be5b4239ba8a4",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "9486e528a00a8833",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "e22cf80c5a6f21a7",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "897500d5157d56bb",
+            "NpcStrike": "c7dd3eca9e85683e",
+            "Perceived": "4c1957f7b291d305",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -3292,13 +3774,13 @@
           }
         },
         "game": {
-          "content": "e5b1df1d96844dbc"
+          "content": "83002770860eef39"
         }
       }
     },
     {
       "tick": 660,
-      "hash": "741dceba6c8fb320",
+      "hash": "a5d376bf6aba5f6d",
       "parts": {
         "entities": {
           "e1": {
@@ -3365,9 +3847,9 @@
             "Transform": "ea39707cc430f8eb"
           },
           "e6": {
-            "ActionState": "e372840bb53f7389",
+            "ActionState": "f98eb3a8be0259fa",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "9adbadf12bb6f998",
+            "AttackToken": "afc693b2c782b01f",
             "Body": "c5fb29ebf3188250",
             "Boss": "87e78dabaabbf7ec",
             "CharacterController": "3abd911557824fe8",
@@ -3380,23 +3862,24 @@
             "InputBuffer": "ef38bf400db90191",
             "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "f2d5654ca0cb6bdf",
+            "LocomotionInput": "f2683968eccec5e4",
             "Look": "69d0ee91f082244b",
-            "MotionState": "0724a3c9d5607ea1",
+            "MotionState": "41a09943e3a8e410",
             "Name": "c60481842b5403a4",
-            "NavAgent": "f7267499a4d059c8",
-            "Npc": "d89d663dee8e29f0",
-            "NpcBrain": "0d063571e9204d6b",
+            "NavAgent": "36688fd2afa66893",
+            "Npc": "d695529e98d0fe8d",
+            "NpcBrain": "5c306f5babdc0f69",
             "NpcDrive": "79ce91c6366ab245",
             "NpcPlan": "fcf13111dcc1ac98",
-            "Perceived": "2bf95b97d3b5fc1c",
+            "NpcStrike": "921f05acd0b2bbc2",
+            "Perceived": "9869059998fbf361",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "a533afe4fd06605f"
+            "Transform": "829cd3d45ccaf01a"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "d0cca6b305806f35",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
@@ -3408,29 +3891,30 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "0d4ee217261e7a2e",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "7892b082f2d343e8",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "3d38c7713baace47",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "532591f9d1ecac26",
+            "NpcStrike": "e5bab248e3b64d54",
+            "Perceived": "83d32f63caad51f6",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "5821252e31b27552",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "23bb67fada836394",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -3440,24 +3924,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "cd3be5b4239ba8a4",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "7892b082f2d343e8",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "50a5fd7621e97270",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "bec5974602db3b61",
+            "NpcStrike": "c7dd3eca9e85683e",
+            "Perceived": "83d32f63caad51f6",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -3522,13 +4007,13 @@
           }
         },
         "game": {
-          "content": "e5b1df1d96844dbc"
+          "content": "83002770860eef39"
         }
       }
     },
     {
       "tick": 720,
-      "hash": "a6a9de3c281ca9d2",
+      "hash": "63bf3f74c7504060",
       "parts": {
         "entities": {
           "e1": {
@@ -3584,7 +4069,7 @@
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
             "Look": "e44906346a412547",
-            "MotionState": "e8669e303998f647",
+            "MotionState": "29c923ce6015b5f3",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
             "PlayerId": "881ccf3ad5b62384",
@@ -3592,7 +4077,7 @@
             "Stamina": "0d0eee3f04a65ab4",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "183019309d020aaf"
+            "Transform": "ea39707cc430f8eb"
           },
           "e6": {
             "ActionState": "d0cca6b305806f35",
@@ -3608,27 +4093,28 @@
             "Health": "d63e299505ded448",
             "Home": "aee8d489b01e0d6d",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "7c95265a5a5949ec",
+            "Intent": "eb7d584028e43268",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "4d336966264b9336",
+            "LocomotionInput": "975d2095c1f4ebb8",
             "Look": "69d0ee91f082244b",
-            "MotionState": "1bded47735e2cb56",
+            "MotionState": "7c0c3aabc8f4da5c",
             "Name": "c60481842b5403a4",
-            "NavAgent": "c5056662001a71e6",
-            "Npc": "d89d663dee8e29f0",
-            "NpcBrain": "f43da8418f28d5f5",
-            "NpcDrive": "9a57e8c8355a1d41",
+            "NavAgent": "7a72e73e063aa733",
+            "Npc": "d695529e98d0fe8d",
+            "NpcBrain": "f960ce4853fe0efb",
+            "NpcDrive": "e200e56cf1abccd6",
             "NpcPlan": "67266bf9bfbdb8b8",
-            "Perceived": "2aeb4f241526d8a0",
+            "NpcStrike": "921f05acd0b2bbc2",
+            "Perceived": "59918f2c7afbbca8",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "44b8cb9bf9012488"
+            "Transform": "ad926fd81bcb0c5b"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "cd2e1130b2bf4030",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "06d75f3cdbd130e0",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -3638,29 +4124,30 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "311e1a0a60db795a",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "a6ed45b53b352e2b",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "6546d986271e6ff7",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "0eab66e6e94a983b",
+            "NpcStrike": "7e9b3cb103a6d68d",
+            "Perceived": "59918f2c7afbbca8",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "c144bb2750c687dc",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "f60e09527561380f",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -3670,24 +4157,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "11b9fd4b7eb79748",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "a6ed45b53b352e2b",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "cb1804559daa439f",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "a13819671343557e",
+            "NpcStrike": "3d911a009a41e714",
+            "Perceived": "fc86829e5a4c0747",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -3752,13 +4240,13 @@
           }
         },
         "game": {
-          "content": "e5b1df1d96844dbc"
+          "content": "83002770860eef39"
         }
       }
     },
     {
       "tick": 780,
-      "hash": "e9aeef080fd1e906",
+      "hash": "81ea50f15adc1ed8",
       "parts": {
         "entities": {
           "e1": {
@@ -3814,7 +4302,7 @@
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
             "Look": "e44906346a412547",
-            "MotionState": "e8669e303998f647",
+            "MotionState": "29c923ce6015b5f3",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
             "PlayerId": "881ccf3ad5b62384",
@@ -3822,12 +4310,12 @@
             "Stamina": "0d0eee3f04a65ab4",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "183019309d020aaf"
+            "Transform": "ea39707cc430f8eb"
           },
           "e6": {
-            "ActionState": "d49cb1554eefc97e",
+            "ActionState": "d919d7b83e1eea65",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "3fc9a37ae32ed0a5",
+            "AttackToken": "4a61ab569c3fad18",
             "Body": "c5fb29ebf3188250",
             "Boss": "87e78dabaabbf7ec",
             "CharacterController": "3abd911557824fe8",
@@ -3838,25 +4326,26 @@
             "Health": "d63e299505ded448",
             "Home": "aee8d489b01e0d6d",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "7c95265a5a5949ec",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "9cbc6023a9b9dd03",
+            "LocomotionInput": "ae13a9e801d233ce",
             "Look": "69d0ee91f082244b",
-            "MotionState": "1bded47735e2cb56",
+            "MotionState": "4ea2d49f6358c3bd",
             "Name": "c60481842b5403a4",
-            "NavAgent": "f7267499a4d059c8",
-            "Npc": "d89d663dee8e29f0",
-            "NpcBrain": "32c71aa6e5559512",
-            "NpcDrive": "dd8f5b478e2ac8eb",
+            "NavAgent": "379663ae8581d0ec",
+            "Npc": "d695529e98d0fe8d",
+            "NpcBrain": "a5cae3d2216256ea",
+            "NpcDrive": "79ce91c6366ab245",
             "NpcPlan": "e1ef64409adde7f5",
-            "Perceived": "2aeb4f241526d8a0",
+            "NpcStrike": "a3dd1b6553e6be73",
+            "Perceived": "c0354c9fc78a415e",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "44b8cb9bf9012488"
+            "Transform": "c61e47ad4ecf3936"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "f7e7c61dfa37ba88",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
@@ -3868,29 +4357,30 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "0d4ee217261e7a2e",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "c7c099cc099803e1",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "ffc9ed23594e9bfe",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "b7f94e70cc54c9d8",
+            "NpcStrike": "7e9b3cb103a6d68d",
+            "Perceived": "c7f59856c53f5c6e",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "d0cca6b305806f35",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "fde41ece04f85255",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -3900,24 +4390,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "cd3be5b4239ba8a4",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "c7c099cc099803e1",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "d67d1b83b8933abb",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "a13819671343557e",
+            "NpcStrike": "3d911a009a41e714",
+            "Perceived": "c0354c9fc78a415e",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -3982,13 +4473,13 @@
           }
         },
         "game": {
-          "content": "e5b1df1d96844dbc"
+          "content": "83002770860eef39"
         }
       }
     },
     {
       "tick": 840,
-      "hash": "74aa99789f18ef06",
+      "hash": "9d358b700eae1eed",
       "parts": {
         "entities": {
           "e1": {
@@ -4044,7 +4535,7 @@
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
             "Look": "e44906346a412547",
-            "MotionState": "e8669e303998f647",
+            "MotionState": "29c923ce6015b5f3",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
             "PlayerId": "881ccf3ad5b62384",
@@ -4052,12 +4543,12 @@
             "Stamina": "0d0eee3f04a65ab4",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "183019309d020aaf"
+            "Transform": "ea39707cc430f8eb"
           },
           "e6": {
-            "ActionState": "a6b9631bdf217279",
+            "ActionState": "d4b367955023f350",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "f9c6651fb75f86ad",
+            "AttackToken": "b7f81d244c068b80",
             "Body": "c5fb29ebf3188250",
             "Boss": "87e78dabaabbf7ec",
             "CharacterController": "3abd911557824fe8",
@@ -4068,27 +4559,28 @@
             "Health": "d63e299505ded448",
             "Home": "aee8d489b01e0d6d",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "7c95265a5a5949ec",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "9cbc6023a9b9dd03",
+            "LocomotionInput": "ae13a9e801d233ce",
             "Look": "69d0ee91f082244b",
-            "MotionState": "1bded47735e2cb56",
+            "MotionState": "4ea2d49f6358c3bd",
             "Name": "c60481842b5403a4",
-            "NavAgent": "f7267499a4d059c8",
-            "Npc": "d89d663dee8e29f0",
-            "NpcBrain": "767fc27c98890df5",
-            "NpcDrive": "dd8f5b478e2ac8eb",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "d695529e98d0fe8d",
+            "NpcBrain": "1ad6771bb25b40b1",
+            "NpcDrive": "79ce91c6366ab245",
             "NpcPlan": "c8ed8d0614e63bd5",
-            "Perceived": "2aeb4f241526d8a0",
+            "NpcStrike": "a3dd1b6553e6be73",
+            "Perceived": "fde76e6ca4aca636",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "44b8cb9bf9012488"
+            "Transform": "c61e47ad4ecf3936"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "f7e7c61dfa37ba88",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "aa15b573bfaa2504",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -4098,29 +4590,30 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "0d4ee217261e7a2e",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "eef3fa765c06501b",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "389703a7c87eb94a",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "0eab66e6e94a983b",
+            "NpcStrike": "7e9b3cb103a6d68d",
+            "Perceived": "458c91808bc50abe",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "4aca780d77159be3",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "748ac45b8ad30058",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -4130,24 +4623,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "11b9fd4b7eb79748",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "eef3fa765c06501b",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "28881f0cb2ac48a1",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "0eab66e6e94a983b",
+            "NpcStrike": "e40c4ed39d042f1c",
+            "Perceived": "458c91808bc50abe",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -4212,13 +4706,13 @@
           }
         },
         "game": {
-          "content": "e5b1df1d96844dbc"
+          "content": "83002770860eef39"
         }
       }
     },
     {
       "tick": 900,
-      "hash": "c3e653d14758dade",
+      "hash": "1e33e1b9e49e4e80",
       "parts": {
         "entities": {
           "e1": {
@@ -4274,7 +4768,7 @@
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
             "Look": "e44906346a412547",
-            "MotionState": "e8669e303998f647",
+            "MotionState": "29c923ce6015b5f3",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
             "PlayerId": "881ccf3ad5b62384",
@@ -4282,12 +4776,12 @@
             "Stamina": "0d0eee3f04a65ab4",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "183019309d020aaf"
+            "Transform": "ea39707cc430f8eb"
           },
           "e6": {
-            "ActionState": "bde2ed7949287814",
+            "ActionState": "48e05b2e0ebb24eb",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "03477f4105ea6649",
+            "AttackToken": "c448d829535902ac",
             "Body": "c5fb29ebf3188250",
             "Boss": "87e78dabaabbf7ec",
             "CharacterController": "3abd911557824fe8",
@@ -4298,27 +4792,28 @@
             "Health": "d63e299505ded448",
             "Home": "aee8d489b01e0d6d",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "7c95265a5a5949ec",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "9cbc6023a9b9dd03",
+            "LocomotionInput": "ae13a9e801d233ce",
             "Look": "69d0ee91f082244b",
-            "MotionState": "1bded47735e2cb56",
+            "MotionState": "4ea2d49f6358c3bd",
             "Name": "c60481842b5403a4",
-            "NavAgent": "f7267499a4d059c8",
-            "Npc": "d89d663dee8e29f0",
-            "NpcBrain": "ef20f8c2041328ff",
-            "NpcDrive": "dd8f5b478e2ac8eb",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "d695529e98d0fe8d",
+            "NpcBrain": "6efea6d5cf7c12a3",
+            "NpcDrive": "79ce91c6366ab245",
             "NpcPlan": "812565525ddbf569",
-            "Perceived": "2aeb4f241526d8a0",
+            "NpcStrike": "a3dd1b6553e6be73",
+            "Perceived": "e7e62d25074a2bad",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "44b8cb9bf9012488"
+            "Transform": "c61e47ad4ecf3936"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "b834133ed7f3b829",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "16e324a0b4fe3386",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -4328,27 +4823,28 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "311e1a0a60db795a",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "a80c3b213f674cd4",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "b5f7645a9f93b6a5",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "af997209a9590a30",
+            "NpcStrike": "0428866cf7a8035a",
+            "Perceived": "359fff50d59c8144",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "f7e7c61dfa37ba88",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
@@ -4360,24 +4856,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "cd3be5b4239ba8a4",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "a80c3b213f674cd4",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "bf912fa776aa640e",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "19acf88810d4da7a",
+            "NpcStrike": "e40c4ed39d042f1c",
+            "Perceived": "e7e62d25074a2bad",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -4442,13 +4939,13 @@
           }
         },
         "game": {
-          "content": "e5b1df1d96844dbc"
+          "content": "83002770860eef39"
         }
       }
     },
     {
       "tick": 960,
-      "hash": "96903888dc4031c3",
+      "hash": "155c18523f16916d",
       "parts": {
         "entities": {
           "e1": {
@@ -4504,7 +5001,7 @@
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
             "Look": "e44906346a412547",
-            "MotionState": "e8669e303998f647",
+            "MotionState": "29c923ce6015b5f3",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
             "PlayerId": "881ccf3ad5b62384",
@@ -4512,7 +5009,7 @@
             "Stamina": "0d0eee3f04a65ab4",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "183019309d020aaf"
+            "Transform": "ea39707cc430f8eb"
           },
           "e6": {
             "ActionState": "f7e7c61dfa37ba88",
@@ -4528,25 +5025,26 @@
             "Health": "d63e299505ded448",
             "Home": "aee8d489b01e0d6d",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "7c95265a5a5949ec",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "4d336966264b9336",
+            "LocomotionInput": "875f4c613161841b",
             "Look": "69d0ee91f082244b",
-            "MotionState": "1bded47735e2cb56",
+            "MotionState": "3c9d56cababb2af3",
             "Name": "c60481842b5403a4",
-            "NavAgent": "c5056662001a71e6",
-            "Npc": "d89d663dee8e29f0",
-            "NpcBrain": "ca2f6ba68d6d3902",
-            "NpcDrive": "9a57e8c8355a1d41",
+            "NavAgent": "8af4255f5b7fa5e0",
+            "Npc": "d695529e98d0fe8d",
+            "NpcBrain": "22bf220a46458c74",
+            "NpcDrive": "0cb9269d2ee388cf",
             "NpcPlan": "460487edb58fbe00",
-            "Perceived": "2aeb4f241526d8a0",
+            "NpcStrike": "a3dd1b6553e6be73",
+            "Perceived": "d28395f6faa681ec",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "44b8cb9bf9012488"
+            "Transform": "77c52a158dc1ceb5"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "68697feb25800573",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
@@ -4558,29 +5056,30 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "0d4ee217261e7a2e",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "3b2b794960da0897",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "8717eca676fcdd1e",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "e3c1aa45e94ef136",
+            "NpcStrike": "0428866cf7a8035a",
+            "Perceived": "d28395f6faa681ec",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "8057e57ee4564b71",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "6bbd9e6d8b4d5304",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -4590,24 +5089,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "11b9fd4b7eb79748",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "3b2b794960da0897",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "25ee04439f6ca247",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "af997209a9590a30",
+            "NpcStrike": "b704dae2e4374e83",
+            "Perceived": "595d97b8ac7ce211",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -4672,13 +5172,13 @@
           }
         },
         "game": {
-          "content": "e5b1df1d96844dbc"
+          "content": "83002770860eef39"
         }
       }
     },
     {
       "tick": 1020,
-      "hash": "7cd8906a9b6f464c",
+      "hash": "382a553595941dbc",
       "parts": {
         "entities": {
           "e1": {
@@ -4734,7 +5234,7 @@
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
             "Look": "e44906346a412547",
-            "MotionState": "7a7cabc4add88079",
+            "MotionState": "29c923ce6015b5f3",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
             "PlayerId": "881ccf3ad5b62384",
@@ -4742,12 +5242,12 @@
             "Stamina": "0d0eee3f04a65ab4",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "9a33cd2406cd406b"
+            "Transform": "ea39707cc430f8eb"
           },
           "e6": {
-            "ActionState": "d38d876c78b1a996",
+            "ActionState": "8bd8248f41cbc957",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "3289fb7ad1f3329f",
+            "AttackToken": "20c52ae3085fd428",
             "Body": "c5fb29ebf3188250",
             "Boss": "87e78dabaabbf7ec",
             "CharacterController": "3abd911557824fe8",
@@ -4758,27 +5258,28 @@
             "Health": "d63e299505ded448",
             "Home": "aee8d489b01e0d6d",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "388214060ef8c468",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "9cbc6023a9b9dd03",
+            "LocomotionInput": "810839e217a0ea72",
             "Look": "69d0ee91f082244b",
-            "MotionState": "671bbf8e10c215a7",
+            "MotionState": "92325cff3709039b",
             "Name": "c60481842b5403a4",
-            "NavAgent": "f7267499a4d059c8",
-            "Npc": "d89d663dee8e29f0",
-            "NpcBrain": "c96a5e1cf9439ed5",
-            "NpcDrive": "9357553c99cd81af",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "d695529e98d0fe8d",
+            "NpcBrain": "458451b0a8649f8d",
+            "NpcDrive": "79ce91c6366ab245",
             "NpcPlan": "e3bbb22474a112dd",
-            "Perceived": "cc3a17098a6bb878",
+            "NpcStrike": "725a02b42c33f7c9",
+            "Perceived": "2e9ac46e501bfa36",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "7237643b54d105bf"
+            "Transform": "1384700f46ab0d53"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "1202a560a5869c8f",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "4c1e5a6af2289b10",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -4788,27 +5289,28 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "311e1a0a60db795a",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "8034d5e8e393a488",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "3d742c64a0d9cc18",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "7eff7d1b4ee4fcc5",
+            "NpcStrike": "ea0ef010c58c8e66",
+            "Perceived": "2e209cf233f3df5d",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "68697feb25800573",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
@@ -4820,24 +5322,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "cd3be5b4239ba8a4",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "8034d5e8e393a488",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "18b727e230bc738d",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "9c0b2dc802b42d2c",
+            "NpcStrike": "b704dae2e4374e83",
+            "Perceived": "2e209cf233f3df5d",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -4902,13 +5405,13 @@
           }
         },
         "game": {
-          "content": "e5b1df1d96844dbc"
+          "content": "83002770860eef39"
         }
       }
     },
     {
       "tick": 1080,
-      "hash": "0737b7b7d00146d7",
+      "hash": "df4d4333894cecdc",
       "parts": {
         "entities": {
           "e1": {
@@ -4964,7 +5467,7 @@
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
             "Look": "e44906346a412547",
-            "MotionState": "7a7cabc4add88079",
+            "MotionState": "29c923ce6015b5f3",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
             "PlayerId": "881ccf3ad5b62384",
@@ -4972,41 +5475,42 @@
             "Stamina": "0d0eee3f04a65ab4",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "9a33cd2406cd406b"
+            "Transform": "ea39707cc430f8eb"
           },
           "e6": {
-            "ActionState": "c75aade0e586d2a0",
+            "ActionState": "68697feb25800573",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "fe5c3093b35348f5",
+            "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
-            "Boss": "d5b7f05fcd4ecbf9",
+            "Boss": "87e78dabaabbf7ec",
             "CharacterController": "3abd911557824fe8",
             "Collider": "21cdcb0bebf5ce74",
             "ColliderId": "807f127e06b21b03",
             "Cooldowns": "e590eaa870b29409",
-            "Fighter": "befea3ad5a852159",
-            "Health": "c3e43764bcafdeeb",
+            "Fighter": "7002c1b322ce3d58",
+            "Health": "d63e299505ded448",
             "Home": "aee8d489b01e0d6d",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "388214060ef8c468",
+            "Intent": "916f0b28c201b3d4",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "08b314df401340c1",
+            "LocomotionInput": "5fdff29731fc1788",
             "Look": "69d0ee91f082244b",
-            "MotionState": "671bbf8e10c215a7",
+            "MotionState": "470c5a5a1fae8d82",
             "Name": "c60481842b5403a4",
-            "NavAgent": "f7267499a4d059c8",
-            "Npc": "1bd5f18bb6c9363d",
-            "NpcBrain": "fe58a8a86077426d",
-            "NpcDrive": "9357553c99cd81af",
-            "NpcPlan": "65e80b4fa74d7570",
-            "Perceived": "cc3a17098a6bb878",
+            "NavAgent": "983f22ead5cf0bed",
+            "Npc": "d695529e98d0fe8d",
+            "NpcBrain": "185fd55acd148ba8",
+            "NpcDrive": "80bde4cb65b8e502",
+            "NpcPlan": "7b948faf1fdecd09",
+            "NpcStrike": "725a02b42c33f7c9",
+            "Perceived": "21fdf7547bc18500",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "7237643b54d105bf"
+            "Transform": "f95d580902d33f9b"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "1a83bad36e03a36e",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
@@ -5018,29 +5522,30 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "0d4ee217261e7a2e",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "01a939fcebdc79a9",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "996e0f2f048b31ed",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "1d0dc470e65e7ced",
+            "NpcStrike": "ea0ef010c58c8e66",
+            "Perceived": "ba40961477ae9b23",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "5dee882748bbb2b4",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "bd255013d65f86c7",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -5050,24 +5555,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "11b9fd4b7eb79748",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "01a939fcebdc79a9",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "9ce0242c95bc03c3",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "7eff7d1b4ee4fcc5",
+            "NpcStrike": "243d09c810b8e383",
+            "Perceived": "21fdf7547bc18500",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -5132,13 +5638,13 @@
           }
         },
         "game": {
-          "content": "61635e8f88010b96"
+          "content": "83002770860eef39"
         }
       }
     },
     {
       "tick": 1140,
-      "hash": "b4ab5044f0a898b7",
+      "hash": "349ca730da61e13e",
       "parts": {
         "entities": {
           "e1": {
@@ -5194,7 +5700,7 @@
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
             "Look": "e44906346a412547",
-            "MotionState": "6c2f8bafac4b2a8a",
+            "MotionState": "29c923ce6015b5f3",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
             "PlayerId": "881ccf3ad5b62384",
@@ -5202,12 +5708,12 @@
             "Stamina": "0d0eee3f04a65ab4",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "2bb20361fb98c4e3"
+            "Transform": "ea39707cc430f8eb"
           },
           "e6": {
-            "ActionState": "6361677063aac364",
+            "ActionState": "c3dbccc50a63a627",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "3d4d85fd9a1009c1",
+            "AttackToken": "58c5123add094adf",
             "Body": "c5fb29ebf3188250",
             "Boss": "d5b7f05fcd4ecbf9",
             "CharacterController": "3abd911557824fe8",
@@ -5218,27 +5724,28 @@
             "Health": "c3e43764bcafdeeb",
             "Home": "aee8d489b01e0d6d",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "aff01b51fa8c9cf6",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "08b314df401340c1",
+            "LocomotionInput": "88d414790b02c806",
             "Look": "69d0ee91f082244b",
-            "MotionState": "08b233b50fb907d5",
+            "MotionState": "2523abca503cc04b",
             "Name": "c60481842b5403a4",
-            "NavAgent": "f7267499a4d059c8",
-            "Npc": "1bd5f18bb6c9363d",
-            "NpcBrain": "d22b518c96943fe9",
-            "NpcDrive": "6e2609f6e259e651",
-            "NpcPlan": "74d884021df2d562",
-            "Perceived": "6c9b6f0e73467a94",
+            "NavAgent": "15191595162f5eb2",
+            "Npc": "c9a1e343d30b98ce",
+            "NpcBrain": "14449ce7dcf7f5fa",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "d78e2d1b13230a40",
+            "NpcStrike": "4e6a60816f10bf13",
+            "Perceived": "591fb44fef58db30",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "671ce47aa0bd04e1"
+            "Transform": "44dc08c20e8ea754"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "15ddeb3e224dc4cd",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "9d3293f421fc34b7",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -5248,27 +5755,28 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "311e1a0a60db795a",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "d5c83eb95f87edcc",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "f3e54d2e49a8cff7",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "6308c75ab43850c2",
+            "NpcStrike": "e577b12e0d965ca2",
+            "Perceived": "a5aa1dc7cf195a48",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "1a83bad36e03a36e",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
@@ -5280,24 +5788,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "cd3be5b4239ba8a4",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "d5c83eb95f87edcc",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "920257e20efed2bd",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "1ad79fca9b2dac06",
+            "NpcStrike": "243d09c810b8e383",
+            "Perceived": "a5aa1dc7cf195a48",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -5362,13 +5871,13 @@
           }
         },
         "game": {
-          "content": "61635e8f88010b96"
+          "content": "29ab6450b4b4b0c5"
         }
       }
     },
     {
       "tick": 1200,
-      "hash": "4a2b9b49dcef7275",
+      "hash": "61702252bc07d3ff",
       "parts": {
         "entities": {
           "e1": {
@@ -5424,7 +5933,7 @@
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
             "Look": "e44906346a412547",
-            "MotionState": "6c2f8bafac4b2a8a",
+            "MotionState": "29c923ce6015b5f3",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
             "PlayerId": "881ccf3ad5b62384",
@@ -5432,12 +5941,12 @@
             "Stamina": "0d0eee3f04a65ab4",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "2bb20361fb98c4e3"
+            "Transform": "ea39707cc430f8eb"
           },
           "e6": {
             "ActionState": "1a83bad36e03a36e",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "1ab5d91096da2b7d",
+            "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
             "Boss": "d5b7f05fcd4ecbf9",
             "CharacterController": "3abd911557824fe8",
@@ -5448,27 +5957,28 @@
             "Health": "c3e43764bcafdeeb",
             "Home": "aee8d489b01e0d6d",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "aff01b51fa8c9cf6",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "6d774827de73df5e",
+            "LocomotionInput": "1a78976ef6e19b8f",
             "Look": "69d0ee91f082244b",
-            "MotionState": "08b233b50fb907d5",
+            "MotionState": "c5a7264816767133",
             "Name": "c60481842b5403a4",
-            "NavAgent": "c5056662001a71e6",
-            "Npc": "1bd5f18bb6c9363d",
-            "NpcBrain": "ed6f4d8c43d12873",
-            "NpcDrive": "cf25691437b26093",
-            "NpcPlan": "005fb26250202bc8",
-            "Perceived": "6c9b6f0e73467a94",
+            "NavAgent": "4cc8b61845ede668",
+            "Npc": "c9a1e343d30b98ce",
+            "NpcBrain": "e21bf807a2de9d5f",
+            "NpcDrive": "76390d1ec175d3e8",
+            "NpcPlan": "b097a8526db93d9c",
+            "NpcStrike": "4e6a60816f10bf13",
+            "Perceived": "2585457c166abad0",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "671ce47aa0bd04e1"
+            "Transform": "a0f026f1ee635f5d"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "c2f623d98e5f05dd",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "2fbf89c7ad35aa8b",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -5478,29 +5988,30 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "311e1a0a60db795a",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "f1e69cbb3671cb3f",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "a0f423d9a6680c3d",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "6308c75ab43850c2",
+            "NpcStrike": "e577b12e0d965ca2",
+            "Perceived": "2611e2b4314f7cff",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "d4e294aed9759aa5",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "4bd5cba5875c3ef3",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -5510,24 +6021,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "11b9fd4b7eb79748",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "f1e69cbb3671cb3f",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "1756b39c9dd6554a",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "6308c75ab43850c2",
+            "NpcStrike": "2b7f8262e68221c1",
+            "Perceived": "2585457c166abad0",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -5592,13 +6104,13 @@
           }
         },
         "game": {
-          "content": "61635e8f88010b96"
+          "content": "29ab6450b4b4b0c5"
         }
       }
     },
     {
       "tick": 1260,
-      "hash": "c82751295dffd4e4",
+      "hash": "48723c43f645acbb",
       "parts": {
         "entities": {
           "e1": {
@@ -5654,7 +6166,7 @@
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
             "Look": "e44906346a412547",
-            "MotionState": "6c2f8bafac4b2a8a",
+            "MotionState": "29c923ce6015b5f3",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
             "PlayerId": "881ccf3ad5b62384",
@@ -5662,12 +6174,12 @@
             "Stamina": "0d0eee3f04a65ab4",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "2bb20361fb98c4e3"
+            "Transform": "ea39707cc430f8eb"
           },
           "e6": {
             "ActionState": "1a83bad36e03a36e",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "1ab5d91096da2b7d",
+            "AttackToken": "5ff1c9e9351fe811",
             "Body": "c5fb29ebf3188250",
             "Boss": "d5b7f05fcd4ecbf9",
             "CharacterController": "3abd911557824fe8",
@@ -5678,27 +6190,28 @@
             "Health": "c3e43764bcafdeeb",
             "Home": "aee8d489b01e0d6d",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "aff01b51fa8c9cf6",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "6d774827de73df5e",
+            "LocomotionInput": "c6833bd32672c6c6",
             "Look": "69d0ee91f082244b",
-            "MotionState": "08b233b50fb907d5",
+            "MotionState": "e01e3c6c02fa5324",
             "Name": "c60481842b5403a4",
-            "NavAgent": "c5056662001a71e6",
-            "Npc": "1bd5f18bb6c9363d",
-            "NpcBrain": "6180ef1272c1308e",
-            "NpcDrive": "cf25691437b26093",
-            "NpcPlan": "9c8cbdabc569bc92",
-            "Perceived": "6c9b6f0e73467a94",
+            "NavAgent": "e5ad653a7dd7f78f",
+            "Npc": "c9a1e343d30b98ce",
+            "NpcBrain": "43aee901845145ba",
+            "NpcDrive": "de1f942b471e66cc",
+            "NpcPlan": "e02ca627bf75b8f7",
+            "NpcStrike": "4e6a60816f10bf13",
+            "Perceived": "ae6edd1aff9ad154",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "671ce47aa0bd04e1"
+            "Transform": "3246675f3c839f4e"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "e0828c17ec3693ee",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "32b5e473be7d1df1",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -5708,27 +6221,28 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "311e1a0a60db795a",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "b9999df5bfcc21bd",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "929e747e3af0ae97",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "42c500e5c18f250f",
+            "NpcStrike": "1bdf3286202a5d1c",
+            "Perceived": "ae6edd1aff9ad154",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "932f3c5841d19d51",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
@@ -5740,24 +6254,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "cd3be5b4239ba8a4",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "b9999df5bfcc21bd",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "5fcd427c11074144",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "99f7e85b336403fb",
+            "NpcStrike": "2b7f8262e68221c1",
+            "Perceived": "fba77127b5f99cdd",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -5822,13 +6337,13 @@
           }
         },
         "game": {
-          "content": "61635e8f88010b96"
+          "content": "e9fbb6764c835697"
         }
       }
     },
     {
       "tick": 1320,
-      "hash": "ec5144d946251906",
+      "hash": "c01d741723067ba2",
       "parts": {
         "entities": {
           "e1": {
@@ -5884,7 +6399,7 @@
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
             "Look": "e44906346a412547",
-            "MotionState": "6c2f8bafac4b2a8a",
+            "MotionState": "29c923ce6015b5f3",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
             "PlayerId": "881ccf3ad5b62384",
@@ -5892,12 +6407,12 @@
             "Stamina": "0d0eee3f04a65ab4",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "2bb20361fb98c4e3"
+            "Transform": "ea39707cc430f8eb"
           },
           "e6": {
             "ActionState": "1a83bad36e03a36e",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "1ab5d91096da2b7d",
+            "AttackToken": "5ff1c9e9351fe811",
             "Body": "c5fb29ebf3188250",
             "Boss": "d5b7f05fcd4ecbf9",
             "CharacterController": "3abd911557824fe8",
@@ -5908,25 +6423,26 @@
             "Health": "c3e43764bcafdeeb",
             "Home": "aee8d489b01e0d6d",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "aff01b51fa8c9cf6",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "6d774827de73df5e",
+            "LocomotionInput": "48a71f1f140428fb",
             "Look": "69d0ee91f082244b",
-            "MotionState": "08b233b50fb907d5",
+            "MotionState": "e7b22ddac31affd1",
             "Name": "c60481842b5403a4",
-            "NavAgent": "c5056662001a71e6",
-            "Npc": "1bd5f18bb6c9363d",
-            "NpcBrain": "0e969597f90439bd",
-            "NpcDrive": "cf25691437b26093",
-            "NpcPlan": "ba438b6c60ac4c8c",
-            "Perceived": "6c9b6f0e73467a94",
+            "NavAgent": "166f3daf46fc5f7c",
+            "Npc": "c9a1e343d30b98ce",
+            "NpcBrain": "0bf17f15ed1adb43",
+            "NpcDrive": "fd3e115d0f8f6d87",
+            "NpcPlan": "d68f23fad467f7ef",
+            "NpcStrike": "4e6a60816f10bf13",
+            "Perceived": "63cf594714d7abfc",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "671ce47aa0bd04e1"
+            "Transform": "effc2f99ccaf1c36"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "249fb957d17efba4",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
@@ -5938,29 +6454,30 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "0d4ee217261e7a2e",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "3d393e9647755bb7",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "a63c21c0ca58af0a",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "bf1b5ba45a619d97",
+            "NpcStrike": "1bdf3286202a5d1c",
+            "Perceived": "9cf0aef1c2fca619",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "1bf5c6380d458226",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "49f7b52bced62c9e",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -5970,24 +6487,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "11b9fd4b7eb79748",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "3d393e9647755bb7",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "20638ed46d49486a",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "42c500e5c18f250f",
+            "NpcStrike": "2365094236a5e2b3",
+            "Perceived": "63cf594714d7abfc",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -6052,13 +6570,13 @@
           }
         },
         "game": {
-          "content": "61635e8f88010b96"
+          "content": "e9fbb6764c835697"
         }
       }
     },
     {
       "tick": 1380,
-      "hash": "29604e014d84aae8",
+      "hash": "5baf0e4ca25a0584",
       "parts": {
         "entities": {
           "e1": {
@@ -6114,7 +6632,7 @@
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
             "Look": "e44906346a412547",
-            "MotionState": "6c2f8bafac4b2a8a",
+            "MotionState": "29c923ce6015b5f3",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
             "PlayerId": "881ccf3ad5b62384",
@@ -6122,12 +6640,12 @@
             "Stamina": "0d0eee3f04a65ab4",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "2bb20361fb98c4e3"
+            "Transform": "ea39707cc430f8eb"
           },
           "e6": {
             "ActionState": "1a83bad36e03a36e",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "1ab5d91096da2b7d",
+            "AttackToken": "5ff1c9e9351fe811",
             "Body": "c5fb29ebf3188250",
             "Boss": "d5b7f05fcd4ecbf9",
             "CharacterController": "3abd911557824fe8",
@@ -6138,27 +6656,28 @@
             "Health": "c3e43764bcafdeeb",
             "Home": "aee8d489b01e0d6d",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "aff01b51fa8c9cf6",
+            "Intent": "f1041804f4c9468f",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "6d774827de73df5e",
+            "LocomotionInput": "4ff74bda4699cb11",
             "Look": "69d0ee91f082244b",
-            "MotionState": "08b233b50fb907d5",
+            "MotionState": "96dbc556e2e95456",
             "Name": "c60481842b5403a4",
-            "NavAgent": "c5056662001a71e6",
-            "Npc": "1bd5f18bb6c9363d",
-            "NpcBrain": "aaafa9ff4f684455",
-            "NpcDrive": "cf25691437b26093",
-            "NpcPlan": "9246e68c200e55b1",
-            "Perceived": "6c9b6f0e73467a94",
+            "NavAgent": "ba7ef8b831f0bd58",
+            "Npc": "c9a1e343d30b98ce",
+            "NpcBrain": "d89f45e18cbef257",
+            "NpcDrive": "031f32138fffe02f",
+            "NpcPlan": "212c8aa6a1d9fa76",
+            "NpcStrike": "4e6a60816f10bf13",
+            "Perceived": "6b269b9ef6ce937e",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "671ce47aa0bd04e1"
+            "Transform": "f81cff7fb9ad7fb8"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "c3245cf4a0d53c1f",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "d3be1f92f5e22f81",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -6168,27 +6687,28 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "311e1a0a60db795a",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "44a555bfaa558c06",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "9529707ef9e9d232",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "8974cf2d7aa76072",
+            "NpcStrike": "ba90879d2eeba729",
+            "Perceived": "6b269b9ef6ce937e",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "249fb957d17efba4",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
@@ -6200,24 +6720,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "cd3be5b4239ba8a4",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "44a555bfaa558c06",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "2812880398d4e7ce",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "5cc046150c32148f",
+            "NpcStrike": "2365094236a5e2b3",
+            "Perceived": "3f4fadc91e7b931f",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -6282,13 +6803,13 @@
           }
         },
         "game": {
-          "content": "61635e8f88010b96"
+          "content": "e9fbb6764c835697"
         }
       }
     },
     {
       "tick": 1440,
-      "hash": "a1792a8444303ae5",
+      "hash": "3009f30b6f0bf364",
       "parts": {
         "entities": {
           "e1": {
@@ -6344,7 +6865,7 @@
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
             "Look": "e44906346a412547",
-            "MotionState": "6c2f8bafac4b2a8a",
+            "MotionState": "29c923ce6015b5f3",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
             "PlayerId": "881ccf3ad5b62384",
@@ -6352,12 +6873,12 @@
             "Stamina": "0d0eee3f04a65ab4",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "2bb20361fb98c4e3"
+            "Transform": "ea39707cc430f8eb"
           },
           "e6": {
             "ActionState": "1a83bad36e03a36e",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "1ab5d91096da2b7d",
+            "AttackToken": "5ff1c9e9351fe811",
             "Body": "c5fb29ebf3188250",
             "Boss": "d5b7f05fcd4ecbf9",
             "CharacterController": "3abd911557824fe8",
@@ -6368,27 +6889,28 @@
             "Health": "c3e43764bcafdeeb",
             "Home": "aee8d489b01e0d6d",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "aff01b51fa8c9cf6",
+            "Intent": "2572c0f5e0d3c2dd",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "6d774827de73df5e",
+            "LocomotionInput": "5fb948e5dd6d0d73",
             "Look": "69d0ee91f082244b",
-            "MotionState": "08b233b50fb907d5",
+            "MotionState": "5e9733bd5d766fe3",
             "Name": "c60481842b5403a4",
-            "NavAgent": "c5056662001a71e6",
-            "Npc": "1bd5f18bb6c9363d",
-            "NpcBrain": "bf1d435fe4b9d8b1",
-            "NpcDrive": "cf25691437b26093",
-            "NpcPlan": "464c92819a50a42b",
-            "Perceived": "6c9b6f0e73467a94",
+            "NavAgent": "1d8c8347e4d0220c",
+            "Npc": "c9a1e343d30b98ce",
+            "NpcBrain": "2d0d42bbaf3d26d4",
+            "NpcDrive": "a252cc8888efc583",
+            "NpcPlan": "38afda0c2c18142c",
+            "NpcStrike": "4e6a60816f10bf13",
+            "Perceived": "f7d4799e447645f5",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "671ce47aa0bd04e1"
+            "Transform": "1622cb05526c2552"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "f50f0fb8c751e3d4",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "376f3fab42a431cc",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -6398,29 +6920,30 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "311e1a0a60db795a",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "93bc38b3b4b4a30b",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "d7594f79f2289712",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "8974cf2d7aa76072",
+            "NpcStrike": "ba90879d2eeba729",
+            "Perceived": "727e0ad45584c81d",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "63bafaa176b1d62c",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "82b671e8d03beb22",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -6430,24 +6953,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "11b9fd4b7eb79748",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "93bc38b3b4b4a30b",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "32a2b79fe35a2869",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "8974cf2d7aa76072",
+            "NpcStrike": "23549795e63eb0b2",
+            "Perceived": "f7d4799e447645f5",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -6512,13 +7036,13 @@
           }
         },
         "game": {
-          "content": "61635e8f88010b96"
+          "content": "e9fbb6764c835697"
         }
       }
     },
     {
       "tick": 1500,
-      "hash": "c323a1cf0e89b238",
+      "hash": "c817fa584cf2d598",
       "parts": {
         "entities": {
           "e1": {
@@ -6574,7 +7098,7 @@
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
             "Look": "e44906346a412547",
-            "MotionState": "6c2f8bafac4b2a8a",
+            "MotionState": "29c923ce6015b5f3",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
             "PlayerId": "881ccf3ad5b62384",
@@ -6582,12 +7106,12 @@
             "Stamina": "0d0eee3f04a65ab4",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "2bb20361fb98c4e3"
+            "Transform": "ea39707cc430f8eb"
           },
           "e6": {
             "ActionState": "1a83bad36e03a36e",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "1ab5d91096da2b7d",
+            "AttackToken": "5ff1c9e9351fe811",
             "Body": "c5fb29ebf3188250",
             "Boss": "d5b7f05fcd4ecbf9",
             "CharacterController": "3abd911557824fe8",
@@ -6598,27 +7122,28 @@
             "Health": "c3e43764bcafdeeb",
             "Home": "aee8d489b01e0d6d",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "aff01b51fa8c9cf6",
+            "Intent": "3dcfa06e2932a33f",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "6d774827de73df5e",
+            "LocomotionInput": "d6af89ed87676afa",
             "Look": "69d0ee91f082244b",
-            "MotionState": "08b233b50fb907d5",
+            "MotionState": "dbb6ad01e9df3546",
             "Name": "c60481842b5403a4",
-            "NavAgent": "c5056662001a71e6",
-            "Npc": "1bd5f18bb6c9363d",
-            "NpcBrain": "1f24d95f1ffd1635",
-            "NpcDrive": "cf25691437b26093",
-            "NpcPlan": "98841c4f5c181a7b",
-            "Perceived": "6c9b6f0e73467a94",
+            "NavAgent": "1053c90e250cc896",
+            "Npc": "c9a1e343d30b98ce",
+            "NpcBrain": "9de949edefb72bc1",
+            "NpcDrive": "9e4d8c3567c827b1",
+            "NpcPlan": "1e95e0588c1a8bcb",
+            "NpcStrike": "4e6a60816f10bf13",
+            "Perceived": "04af9db21feb3573",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "671ce47aa0bd04e1"
+            "Transform": "5513bfb8311fc10c"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "05f1867a98f6adec",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "d376ddd5de7bb8b4",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -6628,27 +7153,28 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "311e1a0a60db795a",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "3fa4b67e9ada9fde",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "bcb8fb43f8c9a324",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "93545e1079122eef",
+            "NpcStrike": "3bc461b9414785a5",
+            "Perceived": "04af9db21feb3573",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "5b21185a830392f3",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
@@ -6660,24 +7186,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "cd3be5b4239ba8a4",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "3fa4b67e9ada9fde",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "33461fe17f912530",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "f705de6de8e02ebb",
+            "NpcStrike": "23549795e63eb0b2",
+            "Perceived": "e17a1ffc4ab9c0b6",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -6742,13 +7269,13 @@
           }
         },
         "game": {
-          "content": "61635e8f88010b96"
+          "content": "e9fbb6764c835697"
         }
       }
     },
     {
       "tick": 1560,
-      "hash": "68165f77195808df",
+      "hash": "f13575974527c390",
       "parts": {
         "entities": {
           "e1": {
@@ -6804,7 +7331,7 @@
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
             "Look": "e44906346a412547",
-            "MotionState": "6c2f8bafac4b2a8a",
+            "MotionState": "29c923ce6015b5f3",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
             "PlayerId": "881ccf3ad5b62384",
@@ -6812,12 +7339,12 @@
             "Stamina": "0d0eee3f04a65ab4",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "2bb20361fb98c4e3"
+            "Transform": "ea39707cc430f8eb"
           },
           "e6": {
             "ActionState": "1a83bad36e03a36e",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "1ab5d91096da2b7d",
+            "AttackToken": "5ff1c9e9351fe811",
             "Body": "c5fb29ebf3188250",
             "Boss": "d5b7f05fcd4ecbf9",
             "CharacterController": "3abd911557824fe8",
@@ -6828,25 +7355,26 @@
             "Health": "c3e43764bcafdeeb",
             "Home": "aee8d489b01e0d6d",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "aff01b51fa8c9cf6",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "6d774827de73df5e",
+            "LocomotionInput": "fdbb8467a046a75c",
             "Look": "69d0ee91f082244b",
-            "MotionState": "08b233b50fb907d5",
+            "MotionState": "a2910f6ca5d0a03c",
             "Name": "c60481842b5403a4",
-            "NavAgent": "c5056662001a71e6",
-            "Npc": "1bd5f18bb6c9363d",
-            "NpcBrain": "3b153a395f04d395",
-            "NpcDrive": "cf25691437b26093",
-            "NpcPlan": "307f34a59f7638f2",
-            "Perceived": "6c9b6f0e73467a94",
+            "NavAgent": "b539fe79e8d81d22",
+            "Npc": "c9a1e343d30b98ce",
+            "NpcBrain": "cdb63e1a1ec74925",
+            "NpcDrive": "f1230176c634b3fc",
+            "NpcPlan": "f4586fa6a5be63b1",
+            "NpcStrike": "4e6a60816f10bf13",
+            "Perceived": "83d32f63caad51f6",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "671ce47aa0bd04e1"
+            "Transform": "fede769855fbd2ff"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "6b114f6024a160b6",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
@@ -6858,29 +7386,30 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "0d4ee217261e7a2e",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "50d5fe4f551acbef",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "890c1501064d8811",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "e99a993a0e190577",
+            "NpcStrike": "3bc461b9414785a5",
+            "Perceived": "83d32f63caad51f6",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "a2b48e33dd26375a",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "aaf9649dc0c43685",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -6890,24 +7419,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "11b9fd4b7eb79748",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "50d5fe4f551acbef",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "215995c11585bab7",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "93545e1079122eef",
+            "NpcStrike": "3e37f3ce3dc8c361",
+            "Perceived": "e054b1a9613781f4",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -6972,13 +7502,13 @@
           }
         },
         "game": {
-          "content": "61635e8f88010b96"
+          "content": "e9fbb6764c835697"
         }
       }
     },
     {
       "tick": 1620,
-      "hash": "ce84f78cafe1d81b",
+      "hash": "7aa5ca73c132b842",
       "parts": {
         "entities": {
           "e1": {
@@ -7034,7 +7564,7 @@
             "LocalPlayer": "9649be778570e9b6",
             "LocomotionInput": "39e4de9fd83ac7a7",
             "Look": "e44906346a412547",
-            "MotionState": "6c2f8bafac4b2a8a",
+            "MotionState": "29c923ce6015b5f3",
             "Name": "34a01a235b960c38",
             "Player": "d4e87c7e9cc60712",
             "PlayerId": "881ccf3ad5b62384",
@@ -7042,12 +7572,12 @@
             "Stamina": "0d0eee3f04a65ab4",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "165e6b65a6b6cead",
-            "Transform": "2bb20361fb98c4e3"
+            "Transform": "ea39707cc430f8eb"
           },
           "e6": {
             "ActionState": "1a83bad36e03a36e",
             "AiImportance": "743dc2453c5f77e0",
-            "AttackToken": "1ab5d91096da2b7d",
+            "AttackToken": "5ff1c9e9351fe811",
             "Body": "c5fb29ebf3188250",
             "Boss": "d5b7f05fcd4ecbf9",
             "CharacterController": "3abd911557824fe8",
@@ -7058,27 +7588,28 @@
             "Health": "c3e43764bcafdeeb",
             "Home": "aee8d489b01e0d6d",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "aff01b51fa8c9cf6",
+            "Intent": "d552251518222812",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "6d774827de73df5e",
+            "LocomotionInput": "0e33b3a4d6f1b6fd",
             "Look": "69d0ee91f082244b",
-            "MotionState": "08b233b50fb907d5",
+            "MotionState": "6dcfddd015cd86e4",
             "Name": "c60481842b5403a4",
-            "NavAgent": "c5056662001a71e6",
-            "Npc": "1bd5f18bb6c9363d",
-            "NpcBrain": "53fa36594aa92c42",
-            "NpcDrive": "cf25691437b26093",
-            "NpcPlan": "f09979abd528c58f",
-            "Perceived": "6c9b6f0e73467a94",
+            "NavAgent": "668da713933c0749",
+            "Npc": "c9a1e343d30b98ce",
+            "NpcBrain": "ec4c739bc4477546",
+            "NpcDrive": "fd3e115d0f8f6d87",
+            "NpcPlan": "e74172b75bf3528e",
+            "NpcStrike": "4e6a60816f10bf13",
+            "Perceived": "fc86829e5a4c0747",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "671ce47aa0bd04e1"
+            "Transform": "c2259b27c9fccf2f"
           },
           "e7": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "73c175d2253e36fb",
             "AiImportance": "89520b33e189ae73",
-            "AttackToken": "6a2088a8dc7c3f7c",
+            "AttackToken": "53b22557cd09bebb",
             "Body": "c5fb29ebf3188250",
             "CharacterController": "13d5771d1d4867a8",
             "Collider": "24c98f83e815c6ca",
@@ -7088,27 +7619,28 @@
             "Health": "912481d4b2622c56",
             "Home": "54cb820fd1f7c854",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "311e1a0a60db795a",
             "Look": "f94c630656387237",
-            "MotionState": "91f63f498b27a5ee",
+            "MotionState": "1b722aef70723e89",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "a138be52d4bc0501",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "9116d27012100abf",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "17de89d8d5514454",
+            "NpcStrike": "66c67250563ac372",
+            "Perceived": "fc86829e5a4c0747",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "adb6093ffdc9b910"
+            "Transform": "860d4793ce546bdf"
           },
           "e8": {
-            "ActionState": "a414b3792e392e19",
+            "ActionState": "6b114f6024a160b6",
             "AiImportance": "89520b33e189ae73",
             "AttackToken": "6a2088a8dc7c3f7c",
             "Body": "c5fb29ebf3188250",
@@ -7120,24 +7652,25 @@
             "Health": "912481d4b2622c56",
             "Home": "bdbfb97f2809c9b0",
             "InputBuffer": "ef38bf400db90191",
-            "Intent": "38dab3b75de55ab8",
+            "Intent": "d825c9780293bc26",
             "LockOnTarget": "8e7e24c8d091cff2",
-            "LocomotionInput": "39e4de9fd83ac7a7",
+            "LocomotionInput": "cd3be5b4239ba8a4",
             "Look": "f94c630656387237",
-            "MotionState": "0bea1b89f721cf25",
+            "MotionState": "df310da40663a425",
             "Name": "69a7067b825ad410",
-            "NavAgent": "95dc2458f9e438d1",
-            "Npc": "5261f0cbfc256463",
-            "NpcBrain": "a138be52d4bc0501",
-            "NpcDrive": "86e42107c9ecae6a",
-            "NpcPlan": "a2740f05b7e737bb",
-            "Perceived": "2d6a1dff6618ef36",
+            "NavAgent": "80db9e7a4038b8a4",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "46a192b802f51355",
+            "NpcDrive": "1c9de200ece4fe03",
+            "NpcPlan": "4898372202ce4321",
+            "NpcStrike": "3e37f3ce3dc8c361",
+            "Perceived": "591c11f4d37a1626",
             "Poise": "2b6a1a3a1ec4b2ff",
             "Remains": "c4e7959a2bd6b475",
             "Skeleton": "fa92b4aa8d957e72",
             "Statuses": "3fb30d18ef67d4e2",
             "Team": "e1125bce710d6b86",
-            "Transform": "5cf830794f758f55"
+            "Transform": "4e5332608ba87fbd"
           },
           "e9": {
             "LayoutPiece": "83e361eaafe2d570",
@@ -7202,7 +7735,240 @@
           }
         },
         "game": {
-          "content": "61635e8f88010b96"
+          "content": "e9fbb6764c835697"
+        }
+      }
+    },
+    {
+      "tick": 1680,
+      "hash": "67e865ef4e8f7253",
+      "parts": {
+        "entities": {
+          "e1": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "fe3aec64863beaa5",
+            "ColliderId": "bed2f67298c5d4b8",
+            "Look": "d739ebcc02ffd834",
+            "Name": "061aaa57a4d625c3",
+            "Pillar": "aaf80ef159585437",
+            "Transform": "041e2e43567b55d9"
+          },
+          "e2": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "fe3aec64863beaa5",
+            "ColliderId": "ce2867f4591df34f",
+            "Look": "d739ebcc02ffd834",
+            "Name": "061aaa57a4d625c3",
+            "Pillar": "aaf80ef159585437",
+            "Transform": "280926ac8df55015"
+          },
+          "e3": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "fe3aec64863beaa5",
+            "ColliderId": "13e967db9b4d1116",
+            "Look": "d739ebcc02ffd834",
+            "Name": "061aaa57a4d625c3",
+            "Pillar": "aaf80ef159585437",
+            "Transform": "d80cde9f049c660f"
+          },
+          "e4": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "fe3aec64863beaa5",
+            "ColliderId": "2b68a115042adea5",
+            "Look": "d739ebcc02ffd834",
+            "Name": "061aaa57a4d625c3",
+            "Pillar": "aaf80ef159585437",
+            "Transform": "ea2d4533c2f7918b"
+          },
+          "e5": {
+            "ActionState": "a414b3792e392e19",
+            "AiPlayer": "5bbc70d05f43552a",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "a0adb7ba123afddc",
+            "Charges": "ec4c2b7b5888c51f",
+            "Collider": "24c98f83e815c6ca",
+            "ColliderId": "7129a0fc4659fc6c",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "1f359b69a7b75764",
+            "Health": "7a4bdd5c767454d8",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "38dab3b75de55ab8",
+            "Invulnerable": "376c006ddda2a695",
+            "LocalPlayer": "9649be778570e9b6",
+            "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "e44906346a412547",
+            "MotionState": "29c923ce6015b5f3",
+            "Name": "34a01a235b960c38",
+            "Player": "d4e87c7e9cc60712",
+            "PlayerId": "881ccf3ad5b62384",
+            "Poise": "09bce6fa03f41f3c",
+            "Stamina": "0d0eee3f04a65ab4",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "165e6b65a6b6cead",
+            "Transform": "ea39707cc430f8eb"
+          },
+          "e6": {
+            "ActionState": "1a83bad36e03a36e",
+            "AiImportance": "743dc2453c5f77e0",
+            "AttackToken": "5ff1c9e9351fe811",
+            "Body": "c5fb29ebf3188250",
+            "Boss": "d5b7f05fcd4ecbf9",
+            "CharacterController": "3abd911557824fe8",
+            "Collider": "21cdcb0bebf5ce74",
+            "ColliderId": "807f127e06b21b03",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "befea3ad5a852159",
+            "Health": "c3e43764bcafdeeb",
+            "Home": "aee8d489b01e0d6d",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "cc4b4e0d4d72c9b0",
+            "LockOnTarget": "8e7e24c8d091cff2",
+            "LocomotionInput": "321f418161714736",
+            "Look": "69d0ee91f082244b",
+            "MotionState": "56a99496b39a1970",
+            "Name": "c60481842b5403a4",
+            "NavAgent": "854e3345b39a6a96",
+            "Npc": "c9a1e343d30b98ce",
+            "NpcBrain": "c9e339c5889cb9fe",
+            "NpcDrive": "de1f942b471e66cc",
+            "NpcPlan": "a41fcbdf52871ed4",
+            "NpcStrike": "4e6a60816f10bf13",
+            "Perceived": "f7d4799e447645f5",
+            "Poise": "fd9e11bfbe548f9d",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "e1125bce710d6b86",
+            "Transform": "cc49fba9416f05d2"
+          },
+          "e7": {
+            "ActionState": "b873dda98ae33e34",
+            "AiImportance": "89520b33e189ae73",
+            "AttackToken": "b14d5a069093cb5e",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "13d5771d1d4867a8",
+            "Collider": "24c98f83e815c6ca",
+            "ColliderId": "c640126548e138ca",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "6c1fbdc91a3bb378",
+            "Health": "912481d4b2622c56",
+            "Home": "54cb820fd1f7c854",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "d825c9780293bc26",
+            "LockOnTarget": "8e7e24c8d091cff2",
+            "LocomotionInput": "311e1a0a60db795a",
+            "Look": "f94c630656387237",
+            "MotionState": "1b722aef70723e89",
+            "Name": "69a7067b825ad410",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "3b80c57f4b8ed96d",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "17de89d8d5514454",
+            "NpcStrike": "66c67250563ac372",
+            "Perceived": "7218db36021ba6aa",
+            "Poise": "2b6a1a3a1ec4b2ff",
+            "Remains": "c4e7959a2bd6b475",
+            "Skeleton": "fa92b4aa8d957e72",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "e1125bce710d6b86",
+            "Transform": "860d4793ce546bdf"
+          },
+          "e8": {
+            "ActionState": "5972131c6931306c",
+            "AiImportance": "89520b33e189ae73",
+            "AttackToken": "f13c3ed4252f9a32",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "13d5771d1d4867a8",
+            "Collider": "24c98f83e815c6ca",
+            "ColliderId": "ddbf4b9eb1bf0659",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "6c1fbdc91a3bb378",
+            "Health": "912481d4b2622c56",
+            "Home": "bdbfb97f2809c9b0",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "d825c9780293bc26",
+            "LockOnTarget": "8e7e24c8d091cff2",
+            "LocomotionInput": "11b9fd4b7eb79748",
+            "Look": "f94c630656387237",
+            "MotionState": "df310da40663a425",
+            "Name": "69a7067b825ad410",
+            "NavAgent": "88abf554a211d492",
+            "Npc": "dc5bbf0cd4d69eca",
+            "NpcBrain": "e7eebd3366691966",
+            "NpcDrive": "79ce91c6366ab245",
+            "NpcPlan": "17de89d8d5514454",
+            "NpcStrike": "413929111b448b28",
+            "Perceived": "f7d4799e447645f5",
+            "Poise": "2b6a1a3a1ec4b2ff",
+            "Remains": "c4e7959a2bd6b475",
+            "Skeleton": "fa92b4aa8d957e72",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "e1125bce710d6b86",
+            "Transform": "4e5332608ba87fbd"
+          },
+          "e9": {
+            "LayoutPiece": "83e361eaafe2d570",
+            "Name": "7c72e023996963a1",
+            "Transform": "54e02980584bd414"
+          },
+          "e10": {
+            "LayoutPiece": "3f15f9843a9832db",
+            "Name": "c76ff53fa859a245",
+            "Transform": "729dccc6e32686bb"
+          },
+          "e11": {
+            "LayoutPiece": "b33b738cc2183d6e",
+            "Name": "175a9febf881758f",
+            "Transform": "6f824aaa5a94d839"
+          },
+          "e12": {
+            "LayoutPiece": "4c7b6acf20627431",
+            "Name": "38cebf147e036920",
+            "Transform": "fbbc3e4aa50bc8e2"
+          },
+          "e13": {
+            "Body": "e406ed6e99cc6b9a",
+            "Collider": "14df4dd013eeb97f",
+            "ColliderId": "dccc62637e4994cf",
+            "LayoutPiece": "894eac084b442204",
+            "Name": "b67d4006a7d0ebac",
+            "Transform": "3c6472d71cb8c6a1",
+            "Volume": "1900d0d04c3b9162"
+          },
+          "e14": {
+            "ActionState": "a414b3792e392e19",
+            "AiImportance": "89520b33e189ae73",
+            "AttackToken": "6a2088a8dc7c3f7c",
+            "Body": "c5fb29ebf3188250",
+            "CharacterController": "13d5771d1d4867a8",
+            "Collider": "24c98f83e815c6ca",
+            "ColliderId": "cd76f0e1bdf17638",
+            "Cooldowns": "e590eaa870b29409",
+            "Fighter": "6c1fbdc91a3bb378",
+            "Health": "912481d4b2622c56",
+            "Home": "50d3bcafcee8f61c",
+            "InputBuffer": "ef38bf400db90191",
+            "Intent": "38dab3b75de55ab8",
+            "LockOnTarget": "8e7e24c8d091cff2",
+            "LocomotionInput": "39e4de9fd83ac7a7",
+            "Look": "f94c630656387237",
+            "MotionState": "048625dda6f5c17a",
+            "Name": "69a7067b825ad410",
+            "NavAgent": "95dc2458f9e438d1",
+            "Npc": "5261f0cbfc256463",
+            "NpcBrain": "64f5d2bfedd54795",
+            "NpcDrive": "86e42107c9ecae6a",
+            "NpcPlan": "a2740f05b7e737bb",
+            "Perceived": "2d6a1dff6618ef36",
+            "Poise": "2b6a1a3a1ec4b2ff",
+            "Remains": "c4e7959a2bd6b475",
+            "Skeleton": "fa92b4aa8d957e72",
+            "Statuses": "3fb30d18ef67d4e2",
+            "Team": "e1125bce710d6b86",
+            "Transform": "01b67fafb206c9cc"
+          }
+        },
+        "game": {
+          "content": "e9fbb6764c835697"
         }
       }
     }
@@ -7240,29 +8006,44 @@
       {
         "tick": 180,
         "set": {
+          "action/claw": "f17bf3ca11424293",
           "action/shockwave": "a752ace7fac8178f",
           "action/slam": "b7ba1557a42c6a62",
           "action/slash": "34235562bb8b018a",
           "action/sweep": "38048a1c4328e5e6",
-          "attack_plan/sched_boss": "0de6de0bb152f2c2"
+          "attack_plan/sched_add": "5fb663dd21d28349",
+          "attack_plan/sched_boss": "2b65d6212ce744dc",
+          "behavior/sched_fight": "e7ef0046b38620d1",
+          "director/sched_arena": "973e15ccdd8d451f"
         }
       },
       {
-        "tick": 1080,
+        "tick": 1140,
         "set": {
-          "action/shockwave_enraged": "8dc29f9f33684ec8",
-          "action/slam_enraged": "f63459510633ff4f",
-          "action/slash_enraged": "6d651ad5b85204d9",
-          "action/sweep_enraged": "b6d531de3734959f",
-          "attack_plan/sched_boss_enraged": "2adbec07c8495315",
+          "attack_plan/sched_boss_enraged": "3ca61ed6792af59f",
           "moveset/warden_enraged": "a7c87007d75df40a"
         }
       },
       {
-        "tick": 1654,
+        "tick": 1260,
+        "set": {
+          "action/shockwave_enraged": "8dc29f9f33684ec8",
+          "action/slam_enraged": "f63459510633ff4f",
+          "action/slash_enraged": "6d651ad5b85204d9",
+          "action/sweep_enraged": "b6d531de3734959f"
+        }
+      },
+      {
+        "tick": 1730,
+        "set": {
+          "director/default": "b8cfc2b91873d742"
+        },
         "gone": [
+          "attack_plan/sched_add",
           "attack_plan/sched_boss",
-          "attack_plan/sched_boss_enraged"
+          "attack_plan/sched_boss_enraged",
+          "behavior/sched_fight",
+          "director/sched_arena"
         ]
       }
     ]

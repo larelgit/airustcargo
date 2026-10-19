@@ -83,7 +83,9 @@ pub fn app_in_with(dir: &str, seed: u64, before: impl FnOnce(&mut App), setup: i
         .add_plugins(CorePlugin { config })
         .add_plugins(ContentPlugin)
         .add_plugins(NpcPlugin)
-        .add_plugins(WorldPlugin);
+        .add_plugins(WorldPlugin)
+        // The umbrella's ordering line: the rules count the session before the world's zones.
+        .configure_sets(FixedUpdate, shards_rules::RulesSystems::Apply.before(shards_world::WorldSystems::Zones));
     setup(&mut app);
     app.finish();
     app.cleanup();

@@ -138,6 +138,7 @@ use bevy::prelude::*;
 use shards_content::ContentAppExt;
 use shards_core::{CoreSystems, EngineAppExt, NetSet, Predicted};
 use shards_motion::{ControllerSystems, ModifierSystems, MotionPlugin, MotionSystems};
+use shards_rules::RulesPlugin;
 
 pub use anim::{
     crossed_cues, cut_holds, equip_open, euler_degrees, locomotion_state, locomotion_state_at, mount_places, select_clip,
@@ -147,7 +148,7 @@ pub use anim::{
     mode_name, parse_mode, DropDef, ModeLeft, LEFT_KEY, MODES, MODE_KEY,
 };
 pub use combat::{
-    deal_damage, end_break, kill, kill_with, poise_damage, react, reset_poise, revive, stagger, Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died,
+    deal_damage, deal_ruled_damage, end_break, kill, kill_with, poise_damage, react, reset_poise, revive, stagger, Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died,
     Evaded, GuardBroken, HitWeight, IgnoreReason, Outcome, Parried, PerfectEvaded, Reacted, Reaction,
     StaggerCause, Staggered,
 };
@@ -292,14 +293,21 @@ impl ActionAppExt for App {
     }
 }
 
-/// Actions, combat, fighter resources and statuses (adds [`MotionPlugin`] if it is
+/// Actions, combat, fighter resources and statuses (adds [`MotionPlugin`] and [`RulesPlugin`] if they are
 /// missing). Needs `CorePlugin` and `ContentPlugin` (`shards::EnginePlugins` adds all).
+///
+/// A game that builds its app by hand and also adds the world's zones must order `RulesSystems::Apply`
+/// before `WorldSystems::Zones` itself, as the umbrella does (`shards::EnginePlugins`); without it the two
+/// systems have no order and a replay can diverge.
 pub struct ActionPlugin;
 
 impl Plugin for ActionPlugin {
     fn build(&self, app: &mut App) {
         if !app.is_plugin_added::<MotionPlugin>() {
             app.add_plugins(MotionPlugin);
+        }
+        if !app.is_plugin_added::<RulesPlugin>() {
+            app.add_plugins(RulesPlugin);
         }
         // Explicitly, for apps built without `reflect_auto_register`: replay checks,
         // prefabs and `inspect` read components through the type registry.
