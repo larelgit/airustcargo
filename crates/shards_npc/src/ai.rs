@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use shards_content::db::closest;
 use shards_core::flat;
 use shards_motion::perception::{Leg, PathPlan, StepKind};
+use shards_rules::RulesAppExt;
 use shards_motion::{physics::sync_physics, CharacterController, CharacterParams, LayerMask, PhysicsWorld, QueryFilter, TargetArg};
 
 use crate::brain::{force_state, Home, Npc, NpcBrain, NpcDrive, NpcStateChanged, NpcThink};
@@ -24,7 +25,8 @@ use crate::schedule::{schedule_report, ScheduleParams, WhatIf};
 use crate::strike::{wait_of, NpcStrike};
 
 pub(crate) fn register(app: &mut App) {
-    app.register_ai_describer("npc", describe_npc)
+    app.add_rules_guard("npc_engaged", rules_guard)
+        .register_ai_describer("npc", describe_npc)
         .journal_event::<NpcStateChanged>(|e, w| {
             let target = e.target.map(|t| format!(" {t}")).unwrap_or_default();
             let forced = if e.forced { " (npc_set_state)" } else { "" };
@@ -99,15 +101,34 @@ pub const LEASH_SLACK: f32 = 1.0;
 /// The engine's states an NPC fights in, by kind: `npc_engaged` holds while one is in them.
 pub const FIGHTING_STATES: [&str; 3] = ["chase", "attack", "wait_token"];
 
+/// The first active NPC with a target that is in a state of a [`FIGHTING_STATES`] kind, in `AiId` order: its
+/// id, its behaviour, its state and its target. What the condition `npc_engaged` and the rules guard of the
+/// same name ask.
+pub fn engaged_npc(w: &World) -> Option<(AiId, String, String, Option<AiId>)> {
+    let mut npcs = w.try_query::<(&AiId, &Npc, &NpcBrain)>()?;
+    let db = w.get_resource::<shards_content::ContentDb>();
+    npcs.iter(w)
+        .filter(|(_, _, b)| b.active && b.target.is_some())
+        .filter(|(_, npc, brain)| {
+            let behavior = db.and_then(|db| db.get::<crate::def::BehaviorDef>(&npc.behavior));
+            let kind = behavior.map_or(brain.state.as_str(), |b| b.kind_of(&brain.state));
+            FIGHTING_STATES.contains(&kind)
+        })
+        .min_by_key(|(id, _, _)| **id)
+        .map(|(id, npc, brain)| (*id, npc.behavior.clone(), brain.state.clone(), brain.target))
+}
+
 /// `npc_engaged`: an active NPC with a target is in a state of a [`FIGHTING_STATES`] kind.
 fn npc_engaged(w: &World) -> bool {
-    let Some(mut npcs) = w.try_query::<(&Npc, &NpcBrain)>() else { return false };
-    let db = w.get_resource::<shards_content::ContentDb>();
-    npcs.iter(w).filter(|(_, b)| b.active && b.target.is_some()).any(|(npc, brain)| {
-        let behavior = db.and_then(|db| db.get::<crate::def::BehaviorDef>(&npc.behavior));
-        let kind = behavior.map_or(brain.state.as_str(), |b| b.kind_of(&brain.state));
-        FIGHTING_STATES.contains(&kind)
-    })
+    engaged_npc(w).is_some()
+}
+
+/// The rules guard `npc_engaged`: the rules change only out of combat, and an NPC that fights (a partner's
+/// fight too) is combat. The reason names the first such NPC: ``e6 `skeleton` is fighting (`chase`, target e5)``.
+fn rules_guard(w: &World) -> Option<String> {
+    let (id, behavior, state, target) = engaged_npc(w)?;
+    let target = target.map(|t| format!(", target {t}")).unwrap_or_default();
+    Some(format!("{id} `{behavior}` is fighting (`{state}`{target})"))
 }
 
 /// How far past its sight range an NPC counts as near for `npc_near` (× the range).

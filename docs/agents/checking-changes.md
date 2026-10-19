@@ -9,6 +9,7 @@ Read this when you choose how to verify a change: tests, CI and nextest, scenari
   (nextest does not run doctests); the template: `cargo nextest run --manifest-path template/Cargo.toml --locked --profile ci`. nextest runs each test in
   its own process, so an in-test `static Mutex` serialises nothing there: a test that writes a fixed file name belongs in a test group of
   `.config/nextest.toml` (`snapshot-file`, `shards-snapshots`), with the lock kept for `cargo test`. Without the profile (`cargo nextest run`) there are no retries.
+  Under plain `cargo test` the tests of a binary are threads of one process, so every app they build shares the process: a system failure must reach only its own app (`ai_core::failures`: one error-handler slot per live app, 256 of them, failures of an app without one are logged and collected by nobody). A test that plants a panic is safe in-process; if another test reports its panic, that is this bug again.
 - A scenario a fuzz run shrank is a regression test: `crates/sandbox/scenarios/regress/<YYYYMMDD>-<stop>-seed<S>.scenario`, which fails while its
   bug exists and is committed with the fix (`scenario_files.rs` runs each on a fresh game of its seed, forward only; see "Fuzzing" in `docs/manual.md`).
 - Put behaviour that you can describe with `shards` commands into a scenario file in `<crate>/scenarios/`
