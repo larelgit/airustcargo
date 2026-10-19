@@ -1,0 +1,257 @@
+# regress: heavy check, seed 20261022
+# stop: heavy check failed at tick 2022
+# inputs: 128 before shrinking, 126 after (rounds: 127 before, 125 after)
+# fails while the bug exists: the stop halts the game inside a step, and a step cut short fails a scenario
+# heavy: every=300 span=300 offset=222
+seed 20261022
+act? ui_open '{"screen":"E"}'
+step 16
+act? ui_open '{"screen":"voxel_arena"}'
+step 16
+act? ui_open '{"screen":"S"}'
+step 25
+act? attack '{"target":"e1"}'
+step 28
+act? sprint '{"on":null}'
+step 12
+act? sprint
+step 8
+act? ui_click '{"id":"E"}'
+step 14
+act? ui_open '{"screen":"x1"}'
+step 22
+act? move_to '{"path":true,"target":"e2","within":-1.0}'
+step 2
+act? ui_open '{"screen":"../x"}'
+step 16
+act? glide '{"on":true}'
+step 16
+act? regen '{"region":"yard","seed":417463}'
+step 28
+act? ui_open '{"screen":"bodystate"}'
+step 27
+act? light_attack '{"hold":true}'
+step 15
+act? use_technique '{"slot":"snapshots/fuzz.json"}'
+step 1
+act? new_game
+step 21
+act? stop
+step 21
+act? ui_open '{"screen":"NE"}'
+step 30
+act? use_technique '{"slot":1}'
+step 30
+act? glide
+step 19
+act? use_technique '{"slot":"../x"}'
+step 24
+act? block '{"on":null}'
+step 18
+act? sprint '{"on":true}'
+step 11
+act? ui_open '{"screen":"ünï"}'
+step 29
+act? save_game '{"slot":"fuzz","what":"all"}'
+act? load_game '{"slot":"fuzz","what":"all"}'
+step 4
+act? use_technique '{"slot":0}'
+step 3
+act? move '{"dir":"where","meters":1.0}'
+step 8
+act? heavy_attack
+step 1
+act? sprint
+step 5
+act? ui_click '{"id":"E"}'
+step 22
+act? glide
+step 17
+act? ui_open '{"screen":"humanoid"}'
+step 13
+act? ui_open '{"screen":"hello world"}'
+step 24
+act? attack '{"input":"world","target":"e15"}'
+step 20
+act? sprint '{"on":false}'
+step 27
+act? ui_open '{"screen":"shockwave"}'
+step 21
+act? heal
+step 15
+act? new_game
+step 13
+act? ui_open '{"screen":"x1"}'
+step 17
+act? attack '{"input":"x1","target":"e15"}'
+step 15
+act? sprint
+step 17
+act? sprint
+step 3
+act? sprint
+step 26
+act? ui_set '{"id":"hello world","value":"has"}'
+step 4
+act? ui_open '{"screen":"use_item"}'
+step 19
+act? move_to '{"queue":false,"target":{"x":0.5,"z":0.0},"within":0.5}'
+step 12
+act? stop
+step 21
+act? heavy_attack '{"hold":true}'
+step 9
+act? glide '{"on":false}'
+step 3
+act? move_to '{"path":true,"target":{"x":0.0,"z":1000000.0},"within":-0.5}'
+step 29
+act? sprint '{"on":true}'
+step 10
+act? block '{"on":false}'
+step 6
+act? ui_close '{"screen":12345}'
+step 22
+act? ui_open '{"screen":"NE"}'
+step 1
+act? attack '"not an object"'
+step 3
+act? use_item '{"item":"W"}'
+step 28
+act? dodge '{"away_from":"e999999"}'
+step 27
+act? block '{"on":false}'
+step 1
+act? ui_open '{"screen":"longer"}'
+step 14
+act? glide
+step 14
+act? block
+step 10
+act? block '"not an object"'
+step 25
+act? ui_open '{"screen":"watch"}'
+step 3
+act? jump
+step 20
+act? block
+step 13
+act? ui_open '{"screen":"ruin"}'
+step 26
+act? ui_close
+step 1
+act? ui_open '{"screen":"ids"}'
+step 26
+act? ui_click '{"id":"N"}'
+step 19
+act? block '{"on":false}'
+step 6
+act? stop
+step 8
+act? ui_open '{"screen":""}'
+step 12
+act? attack '{"target":"e15"}'
+step 17
+act? move '{"dir":"a","meters":0.5}'
+step 19
+act? ui_open '{"screen":"its"}'
+step 1
+act? use_technique '{"slot":0}'
+step 26
+act? ui_open '{"screen":"NE"}'
+step 25
+act? ui_open '{"screen":"NE"}'
+step 25
+act? move '{"dir":"","meters":1.0}'
+step 2
+act? new_game
+step 18
+act? move_to '{"path":false,"target":{"x":1000000.0,"z":0.5}}'
+step 28
+act? ui_open '{"screen":"ünï"}'
+step 30
+act? jump
+step 21
+act? jump
+step 28
+act? glide
+step 16
+act? jump
+step 9
+act? ui_open '{"screen":"a"}'
+step 10
+act? light_attack '{"hold":true}'
+step 22
+act? parry
+step 26
+act? light_attack '{"hold":false}'
+step 29
+act? continue_game
+step 15
+act? light_attack '{"hold":"not a flag"}'
+step 29
+act? ui_close '{"screen":"hello world"}'
+step 6
+act? ui_open '"not an object"'
+step 9
+act? ui_open '{"screen":"a"}'
+step 19
+act? ui_click '{"id":"NE"}'
+step 6
+act? jump
+step 1
+act? move '{"meters":0.0}'
+step 5
+act? ui_open '{"screen":"warden_death"}'
+step 29
+act? jump
+step 3
+act? ui_navigate '{"dir":"../x"}'
+step 8
+act? jump
+step 16
+act? sprint
+step 18
+act? light_attack
+step 23
+act? glide
+step 23
+act? ui_close
+step 21
+act? ui_open '{"screen":"stopped"}'
+step 19
+act? lock_on '{"off":false}'
+step 14
+act? glide
+step 3
+act? light_attack '{"hold":true}'
+step 7
+act? ui_open '{"screen":"den"}'
+step 20
+act? ui_close
+step 19
+act? ui_open '{"screen":"E"}'
+step 29
+act? block
+step 20
+act? ui_open '{"screen":"den"}'
+step 21
+act? move_to '{"target":{"x":0.0,"z":0.0}}'
+step 25
+act? sprint
+step 5
+act? ui_navigate '{"dir":"SW"}'
+step 10
+act? parry
+step 30
+act? light_attack
+step 19
+act? continue_game
+step 14
+act? parry
+step 29
+act? ui_click '{"id":"E"}'
+step 11
+act? light_attack
+step 4
+act? ui_open '{"screen":"at"}'
+step 29
