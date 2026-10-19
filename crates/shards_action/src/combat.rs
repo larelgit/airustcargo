@@ -1434,8 +1434,9 @@ pub(crate) fn check_deaths(world: &mut World) {
 }
 
 /// `SimSet::Resolve`, deaths, before [`check_deaths`]: every downed body's bleed-out, in `AiId`
-/// order. Check, then count down: one whose time is out ([`Downed::bleed`] at most `EPS`) bleeds
-/// out ([`bleed_out`]), so a body down for `s` seconds on tick `N` dies on tick `N + s * rate`.
+/// order. Check, then count down (never below 0): one whose time is out ([`Downed::bleed`] within
+/// half a tick of 0, so the drift of a long count does not move it a tick) bleeds out
+/// ([`bleed_out`]), so a body down for `s` seconds on tick `N` dies on tick `N + s * rate`.
 pub(crate) fn tick_downed(world: &mut World) {
     let dt = world.resource::<Time>().delta_secs();
     if dt <= 0.0 {
@@ -1453,16 +1454,17 @@ pub(crate) fn tick_downed(world: &mut World) {
     downed.sort();
     for (_, entity) in downed {
         let Some(left) = world.get::<Downed>(entity).and_then(|d| d.bleed) else { continue };
-        if left <= EPS {
+        if left <= EPS.max(dt * 0.5) {
             bleed_out(world, entity);
         } else if let Some(mut d) = world.get_mut::<Downed>(entity) {
-            d.bleed = Some(left - dt);
+            d.bleed = Some((left - dt).max(0.0));
         }
     }
 }
 
 /// `ActionSystems::Fighters`, after the body state: every [`Grace`] runs down, and goes when it
-/// is out. The hits of the tick read it before (`left > EPS`).
+/// is out (within half a tick of 0, as a bleed-out: `s` seconds granted on tick `N` cover the hits of
+/// `s * rate` ticks, `N ..= N + s * rate - 1`, however long `s`). The hits of the tick read it before (`left > EPS`).
 pub(crate) fn tick_grace(time: Res<Time>, mut commands: Commands, mut graces: Query<(Entity, &mut Grace)>) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
@@ -1471,7 +1473,7 @@ pub(crate) fn tick_grace(time: Res<Time>, mut commands: Commands, mut graces: Qu
     for (entity, mut g) in &mut graces {
         // A NaN stays one, for the invariant to name.
         let next = if g.left.is_nan() { g.left } else { (g.left - dt).max(0.0) };
-        if next <= EPS {
+        if next <= EPS.max(dt * 0.5) {
             commands.entity(entity).remove::<Grace>();
         } else {
             g.left = next;

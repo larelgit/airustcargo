@@ -414,3 +414,45 @@ fn a_leap_with_no_landing_takes_no_token() {
     }
     assert!(leaps(&app) >= 1, "{:#?}", journal(&app));
 }
+
+/// One of two players goes down (B5): the director counts only standing players, so the limit
+/// falls to two tokens; the tokens on the downed one come back ("target gone").
+#[test]
+fn a_downed_player_counts_as_gone() {
+    let mut app = app();
+    record_starts(&mut app);
+    let hero = player(app.world_mut(), 0, Vec3::ZERO);
+    let other = player(app.world_mut(), 1, Vec3::new(50.0, 0.0, 50.0));
+    let grunts = ring(&mut app, 5, Vec3::ZERO, "grunt", "jabber", "default");
+    let grants = |app: &App| -> Vec<shards_npc::Grant> {
+        grunts.iter().filter_map(|e| app.world().get::<AttackToken>(*e).unwrap().held.clone()).collect()
+    };
+    let mut ready = false;
+    for _ in 0..2400 {
+        step(&mut app, 1);
+        let held = grants(&app);
+        if held.len() == 3 && held.iter().any(|g| !g.in_flight()) {
+            ready = true;
+            break;
+        }
+    }
+    assert!(ready, "three tokens out, one of them not pressed yet");
+    assert!(shards_action::go_down(app.world_mut(), other, None, None));
+    step(&mut app, 1);
+    let held = grants(&app);
+    assert!(held.len() <= 2 || held.iter().all(|g| g.in_flight()), "the limit is two now: {held:#?}");
+    for t in 0..600 {
+        step(&mut app, 1);
+        if t > 60 {
+            assert!(grants(&app).len() <= 2, "tick {t} after: more than two tokens with one standing player");
+        }
+    }
+    // The last standing player goes down too: every token comes back and none is taken.
+    assert!(shards_action::go_down(app.world_mut(), hero, None, None));
+    step(&mut app, 120);
+    assert!(grants(&app).is_empty(), "no token on a downed body: {:#?}", grants(&app));
+    assert!(!lines(&app, "target gone").is_empty(), "{:#?}", journal(&app));
+    let before = lines(&app, "takes an attack token").len();
+    step(&mut app, 300);
+    assert_eq!(lines(&app, "takes an attack token").len(), before, "{:#?}", journal(&app));
+}

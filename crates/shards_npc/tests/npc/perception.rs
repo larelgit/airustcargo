@@ -297,3 +297,19 @@ fn a_kept_target_is_still_hidden_by_a_wall() {
     assert!(!sees(&app, watcher, hero), "the ray is blocked: not kept");
     assert!(knows(&app, watcher, hero).is_some(), "but remembered");
 }
+
+/// A downed body (B5) is no target: not perceived (only remembered), and an NPC's focus leaves it.
+#[test]
+fn a_downed_body_is_not_perceived() {
+    let mut app = app();
+    let (watcher, hero) = watcher_and_hero(&mut app, Vec3::new(0.0, 0.0, -6.0));
+    step(&mut app, 1);
+    assert!(sees(&app, watcher, hero));
+    assert!(shards_action::go_down(app.world_mut(), hero, None, None));
+    step(&mut app, 2);
+    assert!(!sees(&app, watcher, hero), "a downed body in plain view is not seen");
+    // Stood up again: seen at once.
+    assert!(shards_action::revive_downed(app.world_mut(), hero, 1.0, 0.0, None));
+    step(&mut app, 1);
+    assert!(sees(&app, watcher, hero));
+}

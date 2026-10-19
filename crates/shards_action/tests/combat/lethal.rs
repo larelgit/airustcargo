@@ -196,6 +196,23 @@ fn bleed_out_on_the_tick() {
 }
 
 #[test]
+fn long_timers_end_on_their_tick() {
+    // 20 s of bleed-out and 20 s of grace: 1200 ticks each, whatever the drift of the count.
+    let (mut app, hero, foe) = arena(Some(&[Fate::Down { bleed: Some(20.0) }]));
+    smash(&mut app, foe);
+    let h = id(&app, hero);
+    let down = tick_of(&app, &format!("{h} is down (bleeds out in 20.0s)"));
+    step(&mut app, 1200);
+    assert_eq!(tick_of(&app, &format!("{h} died")), down + 1200, "{:#?}", journal(&app));
+    // Granted between ticks: the next 1200 ticks.
+    shards_action::grant_grace(app.world_mut(), foe, 20.0);
+    step(&mut app, 1199);
+    assert!(app.world().get::<Grace>(foe).is_some(), "still there on its last tick");
+    step(&mut app, 1);
+    assert!(app.world().get::<Grace>(foe).is_none());
+}
+
+#[test]
 fn kill_from_tools_skips_the_hook() {
     let (mut app, hero, foe) = arena(Some(&[Fate::Down { bleed: None }]));
     kill(app.world_mut(), foe, None, None);

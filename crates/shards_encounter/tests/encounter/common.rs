@@ -232,12 +232,13 @@ use shards::encounter::{
 #[derive(Resource, Default)]
 pub struct Seen(pub Vec<String>);
 
-/// A way for a participant to be out besides dead (what a downed state does for a game).
+/// A game's own way for a participant to be out besides dead or down (the engine's `downed`
+/// rule counts a downed body out by itself).
 #[derive(Component, Reflect, Default, Clone, Copy)]
 #[reflect(Component, Default)]
-pub struct Downed;
+pub struct Benched;
 
-/// A test app with the events recorded in [`Seen`], the `Downed` out rule registered, and the
+/// A test app with the events recorded in [`Seen`], the `Benched` out rule registered, and the
 /// hits counted.
 pub fn watched(seed: u64) -> App {
     app_with(seed, watch)
@@ -246,8 +247,8 @@ pub fn watched(seed: u64) -> App {
 pub fn watch(app: &mut App) {
     use shards::encounter::EncounterAppExt;
     app.init_resource::<Seen>()
-        .register_type::<Downed>()
-        .add_encounter_out_rule("downed", |world, entity| world.get::<Downed>(entity).is_some())
+        .register_type::<Benched>()
+        .add_encounter_out_rule("benched", |world, entity| world.get::<Benched>(entity).is_some())
         .add_observer(|e: On<EncounterStarted>, mut s: ResMut<Seen>| s.0.push(format!("encounter-started {}/{}", e.participants, e.of)))
         .add_observer(|e: On<WaveWarned>, mut s: ResMut<Seen>| s.0.push(format!("warned {} cue={}", e.wave, e.cue.is_some())))
         .add_observer(|e: On<WaveStarted>, mut s: ResMut<Seen>| s.0.push(format!("started {} members={}", e.wave, e.members.len())))
