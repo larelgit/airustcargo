@@ -19,6 +19,10 @@ pub enum MotionSystems {
     /// `SimSet::Act`: [`intent_to_locomotion`] fills [`LocomotionInput`] from `Intent`
     /// (`move_dir`, held `sprint` and `glide`, the `jump` press, facing).
     Intent,
+    /// `SimSet::Input`, after `CoreSystems::FollowOrders`: [`end_stalled_orders`](crate::end_stalled_orders)
+    /// ends a `move_to` order that makes no progress. The action module steers its `Order::Attack`
+    /// after it.
+    StallOrders,
     /// `NetSet::Predict`, first: `follow_orders` for a client's own body ([`Predicted`]).
     /// The action module steers its `Order::Attack` after it.
     PredictOrders,

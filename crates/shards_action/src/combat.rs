@@ -750,6 +750,13 @@ fn plan(world: &World, ctx: &DamageCtx, strike: Option<&Strike>) -> Plan {
 }
 
 /// The weight an event reports: the context's floor, raised by a heavy reaction and by a break.
+/// `breaks` is whether the poise really breaks. A blow that kills does not break it (a corpse takes
+/// no poise: `apply` returns before `take_poise`), so the caller passes `false` for it and the
+/// weight is the one it would have without the break. The kill is judged after `hurt` by the lethal
+/// hooks' answer, asked before the event ([`decide_fate`], [`fells`]): a blow they let the body
+/// survive keeps its break (the rest of the blow, its poise too, goes on), one that lays it down is
+/// weighed as a kill. An observer of the event that changes health afterwards (a heal) does not
+/// change the weight already reported.
 fn weight_of(ctx: &DamageCtx, breaks: bool) -> HitWeight {
     let mut weight = ctx.weight;
     if ctx.reaction >= Some(2) {
@@ -818,6 +825,8 @@ fn apply(world: &mut World, mut ctx: DamageCtx) {
                 s.spend(stamina);
             }
             let (hp_left, absorbed) = hurt(world, target, ctx.damage);
+            let fate = decide_fate(world, target, credit, &action, source);
+            let weight = weight_of(&ctx, plan.breaks && !fells(fate));
             world.trigger(Blocked {
                 attacker: credit,
                 defender: target,
@@ -829,7 +838,7 @@ fn apply(world: &mut World, mut ctx: DamageCtx) {
                 absorbed,
                 source,
             });
-            if !finish_if_dead(world, target, credit, &action, source) {
+            if !finish_if_dead(world, target, credit, &action, source, fate) {
                 apply_statuses(world, target, &ctx.status);
                 take_poise(world, target, ctx.poise);
             }
@@ -840,6 +849,7 @@ fn apply(world: &mut World, mut ctx: DamageCtx) {
                 s.spend(all);
             }
             let (hp_left, absorbed) = hurt(world, target, ctx.damage);
+            let fate = decide_fate(world, target, credit, &action, source);
             world.trigger(GuardBroken {
                 attacker: credit,
                 defender: target,
@@ -850,13 +860,15 @@ fn apply(world: &mut World, mut ctx: DamageCtx) {
                 absorbed,
                 source,
             });
-            if !finish_if_dead(world, target, credit, &action, source) {
+            if !finish_if_dead(world, target, credit, &action, source, fate) {
                 apply_statuses(world, target, &ctx.status);
                 guard_break(world, target);
             }
         }
         Outcome::Hit => {
             let (hp_left, absorbed) = hurt(world, target, ctx.damage);
+            let fate = decide_fate(world, target, credit, &action, source);
+            let weight = weight_of(&ctx, plan.breaks && !fells(fate));
             world.trigger(Damaged {
                 attacker: credit,
                 target,
@@ -871,7 +883,7 @@ fn apply(world: &mut World, mut ctx: DamageCtx) {
                 absorbed,
                 source,
             });
-            if finish_if_dead(world, target, credit, &action, source) {
+            if finish_if_dead(world, target, credit, &action, source, fate) {
                 return;
             }
             if let Some(s) = strike {
@@ -970,15 +982,51 @@ pub fn deal_damage(world: &mut World, target: Entity, amount: f32, credit: Optio
     hp_left
 }
 
-/// The blow ran `target`'s health out: the lethal hooks decide ([`lethal`]). `true` if nothing
-/// more of the blow applies (it died or went down); `false` if it survived, or its health did not
-/// run out.
-fn finish_if_dead(world: &mut World, target: Entity, killer: Entity, action: &str, source: Option<Entity>) -> bool {
-    if world.get::<Health>(target).is_some_and(|h| h.current <= EPS) {
-        let fate = lethal(world, target, Some(killer), source, Some(action.to_owned()), LethalCause::Hit);
-        return !matches!(fate, Fate::Survive { .. }) || world.get_entity(target).is_err();
+/// Whether `target`'s health has run out: what [`finish_if_dead`] asks the lethal hooks about.
+fn out_of_health(world: &World, target: Entity) -> bool {
+    world.get::<Health>(target).is_some_and(|h| h.current <= EPS)
+}
+
+/// Whether a blow's decided fate fells the body (it dies or goes down): such a blow breaks no
+/// poise, so its weight has no break. A survive keeps the rest of the blow, its break too.
+fn fells(fate: Option<Fate>) -> bool {
+    matches!(fate, Some(Fate::Die | Fate::Down { .. }))
+}
+
+/// A blow that ran `target`'s health out: the lethal hooks are asked now, before the blow's event,
+/// so the event's weight follows their answer ([`weight_of`]: a kill is weighed without its break,
+/// a blow they spare as it would be without the kill). `None` if its health did not run out.
+fn decide_fate(world: &mut World, target: Entity, killer: Entity, action: &str, source: Option<Entity>) -> Option<Fate> {
+    out_of_health(world, target)
+        .then(|| ask_lethal(world, target, Some(killer), source, Some(action.to_owned()), LethalCause::Hit))
+}
+
+/// The blow ran `target`'s health out: the fate the lethal hooks chose before the blow's event
+/// (`decided`, [`decide_fate`]) is carried out, or, with none decided (an observer of the event ran
+/// the health out), they are asked now ([`lethal`]). `true` if nothing more of the blow applies (it
+/// died, went down or is gone, also by an observer of the event); `false` if it survived, or its
+/// health did not run out (an observer of the event healed it: a fate decided before the event is
+/// then not carried out).
+fn finish_if_dead(
+    world: &mut World,
+    target: Entity,
+    killer: Entity,
+    action: &str,
+    source: Option<Entity>,
+    decided: Option<Fate>,
+) -> bool {
+    if world.get_entity(target).is_err() || world.get::<Dead>(target).is_some() || world.get::<Downed>(target).is_some() {
+        return true;
     }
-    false
+    if !out_of_health(world, target) {
+        return false;
+    }
+    let action = Some(action.to_owned());
+    let fate = match decided {
+        Some(fate) => carry_out(world, target, fate, Some(killer), source, action),
+        None => lethal(world, target, Some(killer), source, action, LethalCause::Hit),
+    };
+    !matches!(fate, Fate::Survive { .. }) || world.get_entity(target).is_err()
 }
 
 /// A gameplay death of `entity` (its health ran out): the game's lethal hooks are asked in
@@ -993,21 +1041,49 @@ pub fn lethal(
     action: Option<String>,
     cause: LethalCause,
 ) -> Fate {
+    let fate = ask_lethal(world, entity, killer, source, action.clone(), cause);
+    if world.get_entity(entity).is_err() {
+        return Fate::Die;
+    }
+    carry_out(world, entity, fate, killer, source, action)
+}
+
+/// The asking half of [`lethal`]: the first answer of the hooks that is not [`Fate::Die`], else
+/// `Die`. Nothing is carried out. A hook that despawns the entity ends the asking (`Die`).
+fn ask_lethal(
+    world: &mut World,
+    entity: Entity,
+    killer: Option<Entity>,
+    source: Option<Entity>,
+    action: Option<String>,
+    cause: LethalCause,
+) -> Fate {
     let hooks = world.get_resource::<LethalHooks>().map(|h| h.0.clone()).unwrap_or_default();
-    let mut fate = Fate::Die;
-    if !hooks.is_empty() {
-        let ask = Lethal { entity, killer, source, action: action.clone(), cause };
-        for hook in hooks {
-            let answer = hook(world, &ask);
-            if world.get_entity(entity).is_err() {
-                return Fate::Die;
-            }
-            if answer != Fate::Die {
-                fate = answer;
-                break;
-            }
+    if hooks.is_empty() {
+        return Fate::Die;
+    }
+    let ask = Lethal { entity, killer, source, action, cause };
+    for hook in hooks {
+        let answer = hook(world, &ask);
+        if world.get_entity(entity).is_err() {
+            return Fate::Die;
+        }
+        if answer != Fate::Die {
+            return answer;
         }
     }
+    Fate::Die
+}
+
+/// The carrying-out half of [`lethal`]: `fate` happens to `entity`. Returns it as carried out.
+fn carry_out(
+    world: &mut World,
+    entity: Entity,
+    fate: Fate,
+    killer: Option<Entity>,
+    source: Option<Entity>,
+    action: Option<String>,
+) -> Fate {
     match fate {
         Fate::Die => {
             kill_with(world, entity, killer, action, source);
@@ -1041,8 +1117,8 @@ fn clean_bleed(bleed: Option<f32>) -> Option<f32> {
 
 /// `entity` goes down: [`Downed`] (bleeding out in `bleed` seconds, `None`: until revived), health
 /// 0, its statuses cleared (`StatusExpired` and their `on_expire` hooks for the active ones), its
-/// buffer emptied, no push, [`WentDown`], then its moveset's `downed` action (else its action is
-/// cut). `false`, and nothing happens, for a body that is gone, dead, already down or has no
+/// buffer emptied and its orders dropped (as a death drops them), no push, [`WentDown`], then its
+/// moveset's `downed` action (else its action is cut). `false`, and nothing happens, for a body that is gone, dead, already down or has no
 /// health. The lethal hooks call it through [`Fate::Down`]; a game may call it directly.
 pub fn go_down(world: &mut World, entity: Entity, bleed: Option<f32>, killer: Option<Entity>) -> bool {
     if world.get_entity(entity).is_err()
@@ -1062,6 +1138,7 @@ pub fn go_down(world: &mut World, entity: Entity, bleed: Option<f32>, killer: Op
     if let Some(mut b) = world.get_mut::<InputBuffer>(entity) {
         b.queued.clear();
     }
+    drop_orders(world, entity);
     clear_statuses(world, entity);
     if world.get_entity(entity).is_err() {
         return true;
@@ -1077,6 +1154,19 @@ pub fn go_down(world: &mut World, entity: Entity, bleed: Option<f32>, killer: Op
         }
     }
     true
+}
+
+/// What a fallen body (dead or down) was ordered to do ends with it: nothing runs after a `heal` or
+/// a revive. The steering goes with the orders (an order is what keeps `move_dir` set between
+/// ticks); a body with none keeps its `Intent` as it is, which whoever writes it (the keyboard, a
+/// brain) rewrites every tick.
+fn drop_orders(world: &mut World, entity: Entity) {
+    if let Some(mut intent) = world.get_mut::<shards_core::Intent>(entity)
+        && !intent.orders.is_empty()
+    {
+        intent.orders.clear();
+        intent.move_dir = Vec3::ZERO;
+    }
 }
 
 /// Stands a downed fighter up: [`Downed`] goes, its health is `health_share` of its max (clamped
@@ -1463,6 +1553,7 @@ pub fn kill_with(
     if world.get::<Downed>(entity).is_some() || world.get::<Grace>(entity).is_some() {
         world.entity_mut(entity).remove::<(Downed, Grace)>();
     }
+    drop_orders(world, entity);
     if let Some(mut h) = world.get_mut::<Health>(entity) {
         h.current = 0.0;
     }

@@ -368,6 +368,38 @@ fn heal_stands_a_downed_body_up_and_bleed_out_kills_it() {
     assert!(!bleed_out(app.world_mut(), hero), "not down: nothing happens");
 }
 
+#[test]
+fn a_downed_body_is_refused_the_movement_tools_and_loses_its_orders() {
+    // As a dead body is (FU2): the order it had ends when it goes down, and the movement tools,
+    // which the motion module owns, refuse it the way its action tools do.
+    let (mut app, hero, _foe) = arena(None);
+    ok(&mut app, "move_to", json!({"target": {"x": 5.0, "z": 0.0}}));
+    assert_eq!(app.world().get::<shards_core::Intent>(hero).unwrap().orders.len(), 1);
+    assert!(go_down(app.world_mut(), hero, None, None));
+    let intent = app.world().get::<shards_core::Intent>(hero).unwrap();
+    assert!(intent.orders.is_empty() && intent.move_dir == Vec3::ZERO, "going down drops the orders: {intent:?}");
+    let tools = [
+        ("move_to", json!({"target": {"x": 5.0, "z": 0.0}})),
+        ("move", json!({"dir": "E", "meters": 3})),
+        ("stop", json!({})),
+        ("jump", json!({})),
+        ("sprint", json!({})),
+        ("glide", json!({})),
+    ];
+    for (tool, args) in tools {
+        let refused = fails(&mut app, tool, args);
+        assert!(refused.starts_with("you are down"), "{tool}: {refused}");
+    }
+    assert!(app.world().get::<shards_core::Intent>(hero).unwrap().orders.is_empty());
+    // Stood up, nothing runs on its own and the tools work again.
+    let h = id(&app, hero);
+    ok(&mut app, "heal", json!({"id": h}));
+    step(&mut app, 10);
+    assert!(app.world().get::<Transform>(hero).unwrap().translation.x.abs() < 1e-3, "nothing ran after the heal");
+    ok(&mut app, "move", json!({"dir": "E", "meters": 3}));
+    assert_eq!(app.world().get::<shards_core::Intent>(hero).unwrap().orders.len(), 1);
+}
+
 // --- a fallen attacker and its pair's victim (13a, B3 as built) -------------------------------------
 
 /// The `c_hero` finisher has taken the broken `c_foe` (its poise broken, held in `c_held`), a few ticks

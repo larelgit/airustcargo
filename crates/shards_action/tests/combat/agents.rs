@@ -311,3 +311,28 @@ fn every_tool_documents_itself() {
     assert_eq!(tools.get("god").unwrap().spec.scope, ai_core::Scope::Dev);
     assert_eq!(tools.get("block").unwrap().spec.scope, ai_core::Scope::Player);
 }
+
+#[test]
+fn a_held_block_says_how_long_it_has_been_held_not_the_loops_remaining_time() {
+    let mut app = app();
+    let world = app.world_mut();
+    hero(world, "hero", Vec3::ZERO, N);
+    ok(&mut app, "block", json!({}));
+    // Raise 0.1 s, then the hold loop: after 0.6 s of the action the guard has been held for 0.5 s.
+    step(&mut app, 36);
+    let held = ok(&mut app, "observe", json!({}));
+    assert!(held.contains("hold block held 0.5"), "{held}");
+    assert!(!held.contains("hold block 0.0"), "the loop phase's remaining time is gone: {held}");
+    // The guard window still shows beside it, and a longer hold shows the longer time.
+    step(&mut app, 60);
+    let later = ok(&mut app, "observe", json!({}));
+    assert!(later.contains("hold block held 1.5") && later.contains("guard"), "{later}");
+    // Let go: the lowering is an ordinary phase again.
+    ok(&mut app, "block", json!({"on": false}));
+    step(&mut app, 2);
+    let released = ok(&mut app, "observe", json!({}));
+    assert!(released.contains("hold block 0.") && !released.contains("held"), "the loop ends, so the phase counts down again: {released}");
+    step(&mut app, 16);
+    let lowered = ok(&mut app, "observe", json!({}));
+    assert!(lowered.contains("lower block") && !lowered.contains("held"), "{lowered}");
+}
