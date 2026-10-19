@@ -3,6 +3,10 @@
     // A bolt's flight: the hit window is open the whole flight; where it stops it bursts.
     "t_fly": (net_id: 300, phases: [("fly", 2.0)], impact: "t_burst",
               hits: [(span: Phase("fly"), shape: Sphere(radius: 0.3), damage: 10, poise: 5)]),
+    // A flight with two hit windows side by side: it still meets one target.
+    "t_fly_twin": (net_id: 317, phases: [("fly", 2.0)],
+                   hits: [(span: Phase("fly"), shape: Sphere(radius: 0.3), at: (right: -0.5), damage: 10),
+                          (span: Phase("fly"), shape: Sphere(radius: 0.3), at: (right: 0.5), damage: 10)]),
     // The same flight with nothing where it stops.
     "t_fly_plain": (net_id: 301, phases: [("fly", 2.0)],
                     hits: [(span: Phase("fly"), shape: Sphere(radius: 0.3), damage: 10)]),

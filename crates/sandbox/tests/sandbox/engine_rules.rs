@@ -519,12 +519,24 @@ fn combat_objects_that_do_not_add_up_stop_the_game() {
     // More objects than the cap, spawned around `spawn_objects`.
     let mut app = sandbox::test_app(42);
     plant(&mut app, 2, |world| {
+        let spawned = ai_core::sim::tick(world);
         for _ in 0..257 {
-            world.spawn((AiKind::new("zone"), CombatObject { owner: AiId(6), stay: true, ..default() }, Transform::default()));
+            world.spawn((AiKind::new("zone"), CombatObject { owner: AiId(6), spawned, stay: true, ..default() }, Transform::default()));
         }
     });
     let line = stops_on(&mut app, "action.objects_capped", 2);
     assert!(line.contains("257 combat objects alive, over max_objects 256"), "{line}");
+
+    // The same count from an earlier tick is a cap lowered under the objects alive (a reload):
+    // they stay, and the game goes on.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        for _ in 0..257 {
+            world.spawn((AiKind::new("zone"), CombatObject { owner: AiId(6), spawned: 1, stay: true, ..default() }, Transform::default()));
+        }
+    });
+    let out = called(&mut app, "step", json!({"ticks": 20}));
+    assert!(out.halted.is_none(), "{}", text(&out));
 }
 
 #[test]

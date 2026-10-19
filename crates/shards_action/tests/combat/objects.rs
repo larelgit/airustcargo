@@ -373,7 +373,7 @@ fn impact_runs_its_action_on_the_ground() {
 }
 
 #[test]
-fn impact_tick_does_no_hit_test() {
+fn the_impact_action_hits_from_the_next_tick() {
     // The blast hits a brute by the wall that the flight passes by: from the tick after the impact.
     let mut app = arena();
     let hero = hero(app.world_mut(), "hero", Vec3::ZERO, N);
@@ -623,13 +623,17 @@ fn at_zero_effects_fire_on_a_then_start() {
 // --- content and caps --------------------------------------------------------------------------
 
 fn errors_of(actions: &str) -> Vec<String> {
+    errors_with(actions, r#"{"p": (components: {})}"#)
+}
+
+fn errors_with(actions: &str, prefabs: &str) -> Vec<String> {
     let mut kinds = ContentKinds::default();
     kinds.register::<ActionDef>();
     kinds.register::<PrefabDef>();
     kinds.register::<shards_action::StatusDef>();
     let sources = [
         shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
-        shards_content::db::Source { path: "content/p.prefab.ron".into(), text: r#"{"p": (components: {})}"#.into() },
+        shards_content::db::Source { path: "content/p.prefab.ron".into(), text: prefabs.into() },
     ];
     ContentDb::build(&kinds, &sources).errors().map(|e| e.to_string()).collect()
 }
@@ -763,4 +767,134 @@ fn a_volley_homes_its_middle_shot_at_the_target() {
     step(&mut app, 40);
     assert!(!hit_ticks(&app, hero).is_empty(), "the volley found the hero");
     assert_eq!(seen(&app).damaged.iter().filter(|d| d.2 == hero).count(), 1, "the middle shot; the others fly wide");
+}
+
+// --- review fixes ------------------------------------------------------------------------------
+
+#[test]
+fn a_prefab_with_bad_flight_numbers_is_refused_by_name() {
+    let mut app = arena();
+    let hero = hero(app.world_mut(), "hero", Vec3::ZERO, N);
+    let spawned = spawn(&mut app, hero, r#"(prefab: ["t_bolt_bad"], action: ["t_fly"], at: (forward: 0.5, up: 1))"#);
+    assert!(spawned.is_empty());
+    assert!(all_objects(&mut app).is_empty(), "no half-built object is left");
+    let errors: Vec<String> = app
+        .world()
+        .resource::<ai_core::AiJournal>()
+        .after(0)
+        .0
+        .filter(|e| e.kind == ai_core::JournalKind::Error)
+        .map(|e| e.text.clone())
+        .collect();
+    assert!(errors.iter().any(|e| e.contains("prefab `t_bolt_bad` has a Projectile with speed = -5 (a number >= 0)")), "{errors:?}");
+    step(&mut app, 3);
+}
+
+#[test]
+fn spawn_content_that_cannot_work_is_caught_by_the_check() {
+    let prefabs = r#"{"p": (components: {}), "proj": (components: {"Projectile": (speed: 1.0, lifetime: 1.0)}), "proj2": (extends: "proj", components: {})}"#;
+    let actions = r#"{
+        "fly_capsule": (net_id: 1, phases: [("x", 0.1)], hits: [(span: Phase("x"), shape: Capsule(radius: 0.3, length: 1.0), damage: 1)]),
+        "fly_ball": (net_id: 2, phases: [("x", 0.1)], hits: [(span: Phase("x"), shape: Sphere(radius: 0.3), damage: 1)]),
+        "zone_box": (net_id: 3, phases: [("x", 0.1)], hits: [(span: Phase("x"), shape: Box(width: 1, height: 1, depth: 1), damage: 1)]),
+        "shoots": (net_id: 4, phases: [("x", 0.1)], effects: [
+            (at: 0.0, effect: Spawn((prefab: ["proj2"], action: ["fly_capsule"]))),
+            (at: 0.0, effect: Spawn((prefab: ["proj2"], action: ["fly_ball"]))),
+            (at: 0.0, effect: Spawn((prefab: ["p"], action: ["zone_box"]))),
+        ]),
+        "flood": (net_id: 5, phases: [("x", 0.1)], effects: [
+            (at: 0.0, effect: Spawn((prefab: ["p"], action: ["zone_box"], count: 255, pattern: Radial(lines: 255, start: 1, step: 1)))),
+        ]),
+    }"#;
+    let errors = errors_with(actions, prefabs);
+    let expected = [
+        "content/a.action.ron: action `shoots`: effects[0] Spawn: `fly_capsule` is the flight of the projectile `proj2`, and its hits[0] is not a Sphere; only spheres sweep the segment a projectile flies (use a Sphere, or an `impact` action for a burst)",
+        "content/a.action.ron: action `flood`: effects[0] Spawn spawns 65025 objects at once, over the caps of the combat tuning (96 = the smaller of max_objects and max_objects_per_owner); lower count or lines",
+    ];
+    for line in expected {
+        assert!(errors.iter().any(|e| e == line), "missing `{line}` in {errors:#?}");
+    }
+    assert_eq!(errors.len(), expected.len(), "a ball flight and a box zone pass: {errors:#?}");
+    // The cap does not make the spawn allocate or place 65025 objects.
+    let mut app = arena();
+    let hero = hero(app.world_mut(), "hero", Vec3::ZERO, N);
+    let spawned = spawn(
+        &mut app,
+        hero,
+        r#"(prefab: ["t_mark"], action: ["t_wait"], count: 255, stay: true, pattern: Radial(lines: 255, start: 1, step: 0.1))"#,
+    );
+    assert_eq!(spawned.len(), 96, "the per-owner cap");
+}
+
+#[test]
+fn a_flight_with_two_hit_windows_meets_one_target() {
+    let mut app = arena();
+    let hero = hero(app.world_mut(), "hero", Vec3::ZERO, N);
+    let left = brute(app.world_mut(), Vec3::new(-0.5, 0.0, -4.0), S);
+    let right = brute(app.world_mut(), Vec3::new(0.5, 0.0, -4.0), S);
+    spawn(&mut app, hero, r#"(prefab: ["t_bolt"], action: ["t_fly_twin"], at: (forward: 0.5, up: 1))"#);
+    step(&mut app, 40);
+    let hit: Vec<Entity> = seen(&app).damaged.iter().map(|d| d.2).collect();
+    assert_eq!(hit.len(), 1, "one target in all, not one per window: {hit:?} ({left:?}, {right:?})");
+}
+
+#[test]
+fn two_turned_spawns_in_one_tick_turn_differently() {
+    let mut app = arena();
+    let hero = hero(app.world_mut(), "hero", Vec3::ZERO, N);
+    let line = r#"(prefab: ["t_mark"], action: ["t_wait"], count: 1, random_turn: true, pattern: Radial(lines: 1, start: 2, step: 0))"#;
+    let first = spawn(&mut app, hero, line);
+    let second = spawn(&mut app, hero, line);
+    let (a, b) = (bearing(feet(&app, first[0])), bearing(feet(&app, second[0])));
+    assert!((a - b).abs() > 1e-3, "two casts of one tick, one angle: {a} {b}");
+}
+
+#[test]
+fn a_delayed_projectile_flies_from_the_tick_after_it_starts() {
+    let mut app = arena();
+    let hero = hero(app.world_mut(), "hero", Vec3::ZERO, N);
+    let bolts = spawn(&mut app, hero, r#"(prefab: ["t_bolt"], action: ["t_fly_plain"], count: 2, delay: 0.1, at: (up: 1), pattern: Line(start: 1, step: 0))"#);
+    let late = bolts[1];
+    let start = feet(&app, late);
+    let mut started = None;
+    for _ in 0..20 {
+        step(&mut app, 1);
+        if action(&app, late) != "idle" {
+            started = Some(tick(&app));
+            break;
+        }
+    }
+    started.expect("the delayed bolt started");
+    assert_eq!(feet(&app, late), start, "it has not flown on the tick it starts");
+    step(&mut app, 1);
+    assert!((feet(&app, late).z - (start.z - 0.25)).abs() < 1e-4, "{} from {}", feet(&app, late), start);
+}
+
+#[test]
+fn a_bolt_spawned_behind_a_wall_stops_at_it() {
+    let mut app = arena();
+    let hero = hero(app.world_mut(), "hero", Vec3::ZERO, N);
+    wall(app.world_mut(), Vec3::new(-3.0, 0.0, -0.7), Vec3::new(3.0, 3.0, -0.5));
+    let brute = brute(app.world_mut(), Vec3::new(0.0, 0.0, -3.0), S);
+    step(&mut app, 1);
+    let bolt = spawn(&mut app, hero, r#"(prefab: ["t_bolt"], action: ["t_fly"], at: (forward: 0.8, up: 1))"#)[0];
+    assert_eq!(flight(&app, bolt).dir, Vec3::ZERO, "stopped where it was made");
+    assert!(feet(&app, bolt).z > -0.5, "in front of the wall: {}", feet(&app, bolt));
+    step(&mut app, 2);
+    assert_eq!(action(&app, bolt), "t_burst", "it burst at the wall");
+    step(&mut app, 30);
+    assert!(hit_ticks(&app, brute).is_empty(), "nothing went through the wall");
+}
+
+#[test]
+fn an_aimed_spawn_with_no_target_says_so() {
+    let mut app = arena();
+    let hero = hero(app.world_mut(), "hero", Vec3::ZERO, N);
+    let spawned = spawn(&mut app, hero, r#"(prefab: ["t_bolt"], action: ["t_fly"], aim: Target(height: 0.9))"#);
+    assert!(spawned.is_empty());
+    let lines: Vec<String> = app.world().resource::<ai_core::AiJournal>().after(0).0.map(|e| e.text.clone()).collect();
+    assert!(
+        lines.iter().any(|l| l.contains("spawn of test skipped: it aims at the lock-on target and there is none (lock_on first)")),
+        "{lines:?}"
+    );
 }

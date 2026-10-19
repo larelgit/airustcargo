@@ -1920,7 +1920,7 @@
     },
     {
       "tick": 300,
-      "hash": "b18e7510782e1e12",
+      "hash": "eb9233738db4442a",
       "parts": {
         "entities": {
           "e1": {
@@ -2144,6 +2144,7 @@
           "e15": {
             "ActionState": "558731f9ab7b1308",
             "CombatObject": "4302c7cab4c840c2",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Projectile": "eaba5f3f14dae18d",
             "ProjectileFlight": "7e34487d215d97cc",
             "Team": "e1125bce710d6b86",
@@ -2152,6 +2153,7 @@
           "e16": {
             "ActionState": "1850867c0b8ac56a",
             "CombatObject": "4302c7cab4c840c2",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Projectile": "a94ef4716634f0fc",
             "ProjectileFlight": "77e7bc43845df0ab",
             "Team": "e1125bce710d6b86",
@@ -2160,12 +2162,14 @@
           "e18": {
             "ActionState": "6b9126b1dc6723d5",
             "CombatObject": "847dfc887447097c",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "736df43d1a4016b6"
           },
           "e19": {
             "ActionState": "33ecbe8491cd9ebe",
             "CombatObject": "81f8dbde381534fc",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Repeats": "5ca0df74f728a817",
             "Team": "e1125bce710d6b86",
             "Transform": "7aeb7767e1f20f98"
@@ -2178,7 +2182,7 @@
     },
     {
       "tick": 360,
-      "hash": "c63109a657105b93",
+      "hash": "03b3d2a3c0097e9a",
       "parts": {
         "entities": {
           "e1": {
@@ -2402,6 +2406,7 @@
           "e15": {
             "ActionState": "1bfda399ac077365",
             "CombatObject": "4302c7cab4c840c2",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Projectile": "eaba5f3f14dae18d",
             "ProjectileFlight": "a7d60ccbbb35761b",
             "Team": "e1125bce710d6b86",
@@ -2410,12 +2415,14 @@
           "e18": {
             "ActionState": "c83d2a4789023bb8",
             "CombatObject": "847dfc887447097c",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "736df43d1a4016b6"
           },
           "e19": {
             "ActionState": "359fba3cad46e19a",
             "CombatObject": "81f8dbde381534fc",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Repeats": "450286c63f23f9d5",
             "Team": "e1125bce710d6b86",
             "Transform": "7aeb7767e1f20f98"
@@ -2428,7 +2435,7 @@
     },
     {
       "tick": 420,
-      "hash": "7606fde3bf91bb61",
+      "hash": "64b1ee5dd620cc0c",
       "parts": {
         "entities": {
           "e1": {
@@ -2652,12 +2659,14 @@
           "e18": {
             "ActionState": "1a6426896f1c2911",
             "CombatObject": "847dfc887447097c",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "736df43d1a4016b6"
           },
           "e19": {
             "ActionState": "b5fc931a7932c283",
             "CombatObject": "81f8dbde381534fc",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Repeats": "a024591f1644f787",
             "Team": "e1125bce710d6b86",
             "Transform": "7aeb7767e1f20f98"
@@ -2665,6 +2674,7 @@
           "e20": {
             "ActionState": "295d4105b70b7757",
             "CombatObject": "71ad9588f58f09ad",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "dcd82030dab86728"
           }
@@ -2676,7 +2686,7 @@
     },
     {
       "tick": 480,
-      "hash": "f2d6b3fc1c60fdd3",
+      "hash": "d37d8725ac5b04cb",
       "parts": {
         "entities": {
           "e1": {
@@ -2900,6 +2910,7 @@
           "e19": {
             "ActionState": "d56bb77b95a49eb3",
             "CombatObject": "81f8dbde381534fc",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Repeats": "4cb866efd1cc9fad",
             "Team": "e1125bce710d6b86",
             "Transform": "7aeb7767e1f20f98"
@@ -2907,6 +2918,7 @@
           "e20": {
             "ActionState": "f1c000aafd58c61c",
             "CombatObject": "71ad9588f58f09ad",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "dcd82030dab86728"
           }
@@ -2918,7 +2930,7 @@
     },
     {
       "tick": 540,
-      "hash": "d8db09613adff349",
+      "hash": "55899f838505bf00",
       "parts": {
         "entities": {
           "e1": {
@@ -3142,6 +3154,7 @@
           "e20": {
             "ActionState": "f540785b62084488",
             "CombatObject": "71ad9588f58f09ad",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "dcd82030dab86728"
           }
@@ -3611,7 +3624,7 @@
     },
     {
       "tick": 720,
-      "hash": "0b916aaae6098c4e",
+      "hash": "bf9291209e00dca3",
       "parts": {
         "entities": {
           "e1": {
@@ -3835,6 +3848,7 @@
           "e21": {
             "ActionState": "b400e2008f7be4c8",
             "CombatObject": "99040a03387ae61b",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Projectile": "eaba5f3f14dae18d",
             "ProjectileFlight": "54b505e97d471edb",
             "Team": "e1125bce710d6b86",
@@ -3843,6 +3857,7 @@
           "e22": {
             "ActionState": "c25b52c0a8898093",
             "CombatObject": "99040a03387ae61b",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Projectile": "a94ef4716634f0fc",
             "ProjectileFlight": "097e1bda34e61b56",
             "Team": "e1125bce710d6b86",
@@ -3851,6 +3866,7 @@
           "e24": {
             "ActionState": "693ec9fa3df3f2fb",
             "CombatObject": "92b26dd7c991d50e",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "736df43d1a4016b6"
           }
@@ -3862,7 +3878,7 @@
     },
     {
       "tick": 780,
-      "hash": "3d03e794315f23cf",
+      "hash": "383f0b7ec3f3d436",
       "parts": {
         "entities": {
           "e1": {
@@ -4086,6 +4102,7 @@
           "e21": {
             "ActionState": "50dff5c6eb06883a",
             "CombatObject": "99040a03387ae61b",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Projectile": "eaba5f3f14dae18d",
             "ProjectileFlight": "deb5cf6b9a7b7bfa",
             "Team": "e1125bce710d6b86",
@@ -4094,12 +4111,14 @@
           "e24": {
             "ActionState": "dc4abf19719d5c75",
             "CombatObject": "92b26dd7c991d50e",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "736df43d1a4016b6"
           },
           "e25": {
             "ActionState": "bf319c40b4cfe606",
             "CombatObject": "6bd07bd17c3dd880",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Repeats": "5ca0df74f728a817",
             "Team": "e1125bce710d6b86",
             "Transform": "a0e60acf753e6021"
@@ -4112,7 +4131,7 @@
     },
     {
       "tick": 840,
-      "hash": "f0bffd361824e1fc",
+      "hash": "7bfc01d7c2b909d3",
       "parts": {
         "entities": {
           "e1": {
@@ -4336,12 +4355,14 @@
           "e24": {
             "ActionState": "b9d55544749c601a",
             "CombatObject": "92b26dd7c991d50e",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "736df43d1a4016b6"
           },
           "e25": {
             "ActionState": "ccffa03dbb87b6cb",
             "CombatObject": "6bd07bd17c3dd880",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Repeats": "5ca0df74f728a817",
             "Team": "e1125bce710d6b86",
             "Transform": "a0e60acf753e6021"
@@ -4349,6 +4370,7 @@
           "e26": {
             "ActionState": "a4d293e884d53b5a",
             "CombatObject": "8d7e78fb6ceeed29",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "dcd82030dab86728"
           }
@@ -4360,7 +4382,7 @@
     },
     {
       "tick": 900,
-      "hash": "8f377a874ae0be72",
+      "hash": "a3a9bdaefaf6525d",
       "parts": {
         "entities": {
           "e1": {
@@ -4584,12 +4606,14 @@
           "e24": {
             "ActionState": "fd17d166710b4fe6",
             "CombatObject": "92b26dd7c991d50e",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "736df43d1a4016b6"
           },
           "e25": {
             "ActionState": "359b9dfd332c6c00",
             "CombatObject": "6bd07bd17c3dd880",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Repeats": "5ca0df74f728a817",
             "Team": "e1125bce710d6b86",
             "Transform": "a0e60acf753e6021"
@@ -4597,6 +4621,7 @@
           "e26": {
             "ActionState": "1d8073203ae2cdeb",
             "CombatObject": "8d7e78fb6ceeed29",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "dcd82030dab86728"
           }
@@ -4608,7 +4633,7 @@
     },
     {
       "tick": 960,
-      "hash": "a0802ee955f0b959",
+      "hash": "f71ea225c31b1e1e",
       "parts": {
         "entities": {
           "e1": {
@@ -4832,6 +4857,7 @@
           "e26": {
             "ActionState": "d03e05862d2e1112",
             "CombatObject": "8d7e78fb6ceeed29",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "dcd82030dab86728"
           }
@@ -4843,7 +4869,7 @@
     },
     {
       "tick": 1020,
-      "hash": "7c7c41549932072d",
+      "hash": "98af5d3937891938",
       "parts": {
         "entities": {
           "e1": {
@@ -5067,6 +5093,7 @@
           "e26": {
             "ActionState": "fd9c16413ea52efb",
             "CombatObject": "8d7e78fb6ceeed29",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "dcd82030dab86728"
           }
@@ -5078,7 +5105,7 @@
     },
     {
       "tick": 1080,
-      "hash": "247b1981aefb7d45",
+      "hash": "2d794bc26a7d6a23",
       "parts": {
         "entities": {
           "e1": {
@@ -5302,36 +5329,42 @@
           "e27": {
             "ActionState": "3a678fa04b7ce153",
             "CombatObject": "04c8614480f216ad",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "c1c59173b19c51dc"
           },
           "e28": {
             "ActionState": "0a8b7f3576c79494",
             "CombatObject": "88901bfefc31e4c4",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "e96d9330252e9cc1"
           },
           "e29": {
             "ActionState": "f873b699e329b0d4",
             "CombatObject": "f5c2bf818784d5af",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "7c646d8b48566418"
           },
           "e30": {
             "ActionState": "8f1f8867967f68c9",
             "CombatObject": "1469036a3af655f6",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "daf1f55a70efb83b"
           },
           "e31": {
             "ActionState": "8adbc7cb71d1fa41",
             "CombatObject": "73f63cdc0ac33681",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "46529aa7fcc7ab77"
           },
           "e32": {
             "ActionState": "4b407db26f3f7f79",
             "CombatObject": "f36f964e6cc3ed98",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "c66f382ba8f2bbe2"
           }
@@ -5343,7 +5376,7 @@
     },
     {
       "tick": 1140,
-      "hash": "bd3a7a918fa69c5f",
+      "hash": "2dd0c750ede1bc30",
       "parts": {
         "entities": {
           "e1": {
@@ -5567,6 +5600,7 @@
           "e32": {
             "ActionState": "8527746ae6b34587",
             "CombatObject": "f36f964e6cc3ed98",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
             "Transform": "c66f382ba8f2bbe2"
           }
@@ -5807,7 +5841,7 @@
     },
     {
       "tick": 1260,
-      "hash": "2ecf3edbacd18980",
+      "hash": "ee1caabb8079d8ea",
       "parts": {
         "entities": {
           "e1": {
@@ -6029,148 +6063,172 @@
             "Transform": "01b67fafb206c9cc"
           },
           "e34": {
-            "ActionState": "111eb859f39e6cce",
+            "ActionState": "f395582df6cebef5",
             "CombatObject": "2d1468a8c2429fe9",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "63a02f32016ed4ee"
+            "Transform": "97b1400025826151"
           },
           "e35": {
-            "ActionState": "4fd2a1dd5817f9d1",
+            "ActionState": "e34535fa545b142c",
             "CombatObject": "2fe8c27e8a2fb372",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "46e9f22cca26f993"
+            "Transform": "6b7484b7c8b916b0"
           },
           "e36": {
-            "ActionState": "418d4680c9d039f3",
+            "ActionState": "bf4146bc3b3b8916",
             "CombatObject": "54e457db3760ebbb",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "08b05fcd9c9ed92a"
+            "Transform": "20e031366d746e60"
           },
           "e38": {
-            "ActionState": "04b71d9dff79e601",
+            "ActionState": "f6049e06489f1e39",
             "CombatObject": "2d1468a8c2429fe9",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "97f0bf4583c4c381"
+            "Transform": "bdf76ec3f76deaca"
           },
           "e39": {
-            "ActionState": "5430352c17c628f0",
+            "ActionState": "5968ee8fc0e1fb34",
             "CombatObject": "2fe8c27e8a2fb372",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "8b61cf133cad32ca"
+            "Transform": "e3fdd8eeecc4c85f"
           },
           "e40": {
-            "ActionState": "1c96575c9648c646",
+            "ActionState": "e7b4c9ec80d6b25a",
             "CombatObject": "54e457db3760ebbb",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "39d4fe4c96257636"
+            "Transform": "a31c2d9195e11cde"
           },
           "e42": {
-            "ActionState": "f052df2fd5c8eb44",
+            "ActionState": "4a9c3878118bd982",
             "CombatObject": "2d1468a8c2429fe9",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "dd9f94491580b7ea"
+            "Transform": "3fa1b649f21cae17"
           },
           "e43": {
-            "ActionState": "b0679005314d31db",
+            "ActionState": "a497e8e1bab5ab25",
             "CombatObject": "2fe8c27e8a2fb372",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "ec1aa6b0f2f17dd7"
+            "Transform": "2faa47b78345d2bf"
           },
           "e44": {
-            "ActionState": "d2049ed16c8c314d",
+            "ActionState": "f0ee1eb05aed7db3",
             "CombatObject": "54e457db3760ebbb",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "2cbb26f656a07a0c"
+            "Transform": "39a9ac96dde7bcca"
           },
           "e46": {
-            "ActionState": "5fc4eb72b4005b90",
+            "ActionState": "478d7bfab4b9afc0",
             "CombatObject": "2d1468a8c2429fe9",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "f891bb9842fb6a5d"
+            "Transform": "f5f1d4c6a01fa750"
           },
           "e47": {
-            "ActionState": "002cb6ca0b3c0877",
+            "ActionState": "0c3743c8b7924507",
             "CombatObject": "2fe8c27e8a2fb372",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "00e7462caaad596c"
+            "Transform": "538009934f1986e0"
           },
           "e48": {
-            "ActionState": "be321caf6fe96899",
+            "ActionState": "2adbe78255fb7309",
             "CombatObject": "54e457db3760ebbb",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "6413edfb8bd849f8"
+            "Transform": "e6578110108b31f5"
           },
           "e50": {
-            "ActionState": "ad65d26902a598b2",
+            "ActionState": "798778378236b1f0",
             "CombatObject": "2d1468a8c2429fe9",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "eac63f136705fb21"
+            "Transform": "8f29b3a524a3f67e"
           },
           "e51": {
-            "ActionState": "05020fb7d14d698d",
+            "ActionState": "f7378341756bb137",
             "CombatObject": "2fe8c27e8a2fb372",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "494cdcdb2b4d0ebd"
+            "Transform": "9d9b7f39e2f46569"
           },
           "e52": {
-            "ActionState": "27013a781488e623",
+            "ActionState": "e6ba6a09a057da99",
             "CombatObject": "54e457db3760ebbb",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "2d4cdd88bfccbc9e"
+            "Transform": "fc2a423166e8def0"
           },
           "e54": {
-            "ActionState": "80698fe1f9ba38ae",
+            "ActionState": "b3ddf36cfa6e0ead",
             "CombatObject": "2d1468a8c2429fe9",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "d4e8f7a689d64b75"
+            "Transform": "bca576d0e1d8486f"
           },
           "e55": {
-            "ActionState": "2f67b885588d6ccd",
+            "ActionState": "5f4fe4d67dcd0f48",
             "CombatObject": "2fe8c27e8a2fb372",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "8468f8355ad26d0d"
+            "Transform": "439b6332f04bb4d8"
           },
           "e56": {
-            "ActionState": "3a87e8a8e22f17bf",
+            "ActionState": "bcab31dcf6fafd32",
             "CombatObject": "54e457db3760ebbb",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "3f1459ff79b5b020"
+            "Transform": "b2a32cb6605846b0"
           },
           "e58": {
-            "ActionState": "da87d62c7103d8ee",
+            "ActionState": "9829b9c15c012609",
             "CombatObject": "2d1468a8c2429fe9",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "cd69c083614cbb51"
+            "Transform": "4d293574a9461bf4"
           },
           "e59": {
-            "ActionState": "e4648b8bab357211",
+            "ActionState": "6482c5dd57061194",
             "CombatObject": "2fe8c27e8a2fb372",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "921ffe940c8ec93e"
+            "Transform": "fe263556e229a0cd"
           },
           "e60": {
-            "ActionState": "1fcfffbeb8d67dff",
+            "ActionState": "44a78fa628da468e",
             "CombatObject": "54e457db3760ebbb",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "0fe10f00ee3e0958"
+            "Transform": "0db4e90aba0ed975"
           },
           "e62": {
-            "ActionState": "de16471f8ed590e0",
+            "ActionState": "83334a90606db820",
             "CombatObject": "2d1468a8c2429fe9",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "6fad6635070a30a6"
+            "Transform": "2de7fb5add6cc909"
           },
           "e63": {
-            "ActionState": "ae0c4fa58a13b57b",
+            "ActionState": "6b4fe46629cc7e77",
             "CombatObject": "2fe8c27e8a2fb372",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "2d9cd800cbbbc72f"
+            "Transform": "f18c96f68994274a"
           },
           "e64": {
-            "ActionState": "17fc7ec317b37db1",
+            "ActionState": "529bc405b38f0cf1",
             "CombatObject": "54e457db3760ebbb",
+            "NoTombstone": "71ef4bbb04dbade6",
             "Team": "e1125bce710d6b86",
-            "Transform": "bed6153500532bc6"
+            "Transform": "3198e29c7895d1c9"
           }
         },
         "game": {

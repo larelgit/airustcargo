@@ -1358,6 +1358,23 @@ fn spawn_circle(id: &str, refs: &Refs) -> Option<String> {
     None
 }
 
+/// Whether prefab `id` (or one it extends) has a component named `name` (`Projectile` or a path
+/// ending in `::Projectile`).
+fn prefab_has(refs: &Refs, id: &str, name: &str) -> bool {
+    let mut at = id.to_owned();
+    for _ in 0..16 {
+        let Some(prefab) = refs.get::<shards_content::PrefabDef>(&at) else { return false };
+        if prefab.components.keys().any(|k| k == name || k.ends_with(&format!("::{name}"))) {
+            return true;
+        }
+        match &prefab.extends {
+            Some(next) => at = next.clone(),
+            None => return false,
+        }
+    }
+    false
+}
+
 impl Check<'_, '_, '_> {
     /// A [`Spawn`](Effect::Spawn) effect's fields.
     fn spawn(&mut self, at: &str, def: &crate::objects::SpawnDef) {
@@ -1400,6 +1417,39 @@ impl Check<'_, '_, '_> {
         for (name, v) in finite {
             if !v.is_finite() {
                 self.refs.error(format!("{at}.{name} must be a number (is {v})"));
+            }
+        }
+        self.spawn_counts(at, def);
+        self.flight_shapes(at, def);
+    }
+
+    /// One spawn must fit under the caps in `CombatTuning`: more than `max_objects_per_owner` (or
+    /// `max_objects`) in one `Spawn` is always cut short, so it is a content mistake.
+    fn spawn_counts(&mut self, at: &str, def: &crate::objects::SpawnDef) {
+        let tuning = self.refs.get::<CombatTuning>(CombatTuning::ID).cloned().unwrap_or_default();
+        let cap = tuning.max_objects.min(tuning.max_objects_per_owner) as usize;
+        if def.total() > cap {
+            self.refs.error(format!(
+                "{at} spawns {} objects at once, over the caps of the combat tuning ({cap} = the smaller of max_objects and max_objects_per_owner); lower count or lines",
+                def.total()
+            ));
+        }
+    }
+
+    /// A projectile's hit windows sweep the segment it flew only when they are spheres; any other
+    /// shape of its flight action would be tested where it stands and let it through at speed.
+    fn flight_shapes(&mut self, at: &str, def: &crate::objects::SpawnDef) {
+        let pairs = def.prefab.len().max(def.action.len());
+        for i in 0..pairs {
+            let (Some(prefab), Some(action)) = (def.prefab.get(i).or(def.prefab.last()), def.action.get(i).or(def.action.last())) else { continue };
+            if !prefab_has(self.refs, prefab, "Projectile") {
+                continue;
+            }
+            let Some(flight) = self.refs.get::<ActionDef>(action) else { continue };
+            if let Some((n, _)) = flight.hits.iter().enumerate().find(|(_, h)| !matches!(h.shape, HitShape::Sphere { .. })) {
+                self.refs.error(format!(
+                    "{at}: `{action}` is the flight of the projectile `{prefab}`, and its hits[{n}] is not a Sphere; only spheres sweep the segment a projectile flies (use a Sphere, or an `impact` action for a burst)"
+                ));
             }
         }
     }

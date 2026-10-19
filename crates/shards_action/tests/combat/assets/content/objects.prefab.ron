@@ -5,6 +5,7 @@
     "t_bolt_pierce": (components: {"AiKind": ("projectile"), "Projectile": (speed: 15.0, lifetime: 2.0, aim_height: 0.9, pierce: true)}),
     "t_bolt_fast": (components: {"AiKind": ("projectile"), "Projectile": (speed: 120.0, lifetime: 1.0, aim_height: 0.9)}),
     "t_bolt_short": (components: {"AiKind": ("projectile"), "Projectile": (speed: 6.0, lifetime: 0.5, aim_height: 0.9)}),
+    "t_bolt_bad": (components: {"AiKind": ("projectile"), "Projectile": (speed: -5.0, lifetime: 2.0)}),
     "t_zone": (components: {"AiKind": ("zone")}),
     "t_mark": (components: {"AiKind": ("mark")}),
     "t_unseen": (components: {"Name": "unseen"}),

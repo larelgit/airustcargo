@@ -702,6 +702,9 @@ fn objects_hit_the_same_on_host_and_client() {
     stand.run(80);
     let flying = objects(&stand, HOST);
     assert_eq!(flying.len(), 3, "three bolts on the host: {flying:?}");
+    for member in [C1, C2] {
+        assert_eq!(objects(&stand, member), flying, "member {member} has the host's bolts in the air, by id");
+    }
     stand.run(180);
     let puddles = objects(&stand, HOST);
     assert_eq!(puddles.len(), 3, "three puddles on the host: {puddles:?}");
@@ -717,12 +720,18 @@ fn objects_hit_the_same_on_host_and_client() {
     assert!(puddle >= 2, "the puddle hits every 0.8 s: {:?}", host.0);
     assert!(host.0.iter().all(|h| h.0 == "e8" && h.1 == target), "every hit is the caster's, on c1's player: {:?}", host.0);
     assert!(host.1.iter().all(Option::is_some), "each names its object: {:?}", host.1);
+    // Let the puddles run out (3 s) and the last events cross the link: then every member has seen
+    // every hit the host dealt, and no object is left anywhere.
+    stand.run(360);
+    let host = &stand.world(HOST).resource::<Hits>();
     for member in [C1, C2] {
         let seen = &stand.world(member).resource::<Hits>().0;
         assert!(!seen.is_empty(), "member {member} saw no hit");
-        assert_eq!(&host.0[..seen.len()], &seen[..], "member {member}: the host's hits, in its order, modulo source");
+        assert_eq!(&host.0, seen, "member {member}: the host's hits, all of them, in its order, modulo source");
+        assert!(objects(&stand, member).is_empty(), "member {member}: {:?}", objects(&stand, member));
         assert_eq!(desyncs(&stand, member), 0);
     }
+    assert!(objects(&stand, HOST).is_empty());
 }
 
 /// The `ActionSound`s a member heard: `(actor, action, sound)`.

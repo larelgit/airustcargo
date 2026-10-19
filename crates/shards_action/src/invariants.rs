@@ -360,17 +360,25 @@ pub fn objects_sane(world: &World) -> Option<String> {
 }
 
 /// The engine rule `action.objects_capped`: no more combat objects are alive than
-/// `CombatTuning::max_objects`.
+/// `CombatTuning::max_objects`, in a tick that spawned some.
 ///
 /// `spawn_objects` lays down only the indices that fit under the caps, and says so in the journal;
-/// a violation names a spawn that went around it (a prefab spawned with a `CombatObject` by hand),
-/// or a cap lowered under the objects alive (they stay, and the next spawn waits for room).
+/// a violation names a spawn that went around it (a prefab spawned with a `CombatObject` by hand).
+/// A cap lowered under the objects alive (a hot reload of the tuning) is no violation: they stay,
+/// and the next spawn waits for room, so the rule looks only at ticks that spawned.
 pub fn objects_capped(world: &World) -> Option<String> {
     let db = world.get_resource::<ContentDb>()?;
     let cap = crate::def::CombatTuning::of(db).max_objects as usize;
+    let now = world.get_resource::<SimTick>().map_or(0, |t| t.0);
     let mut live: Vec<AiId> = Vec::new();
-    with_query::<&AiId, With<CombatObject>, _>(world, |query| live.extend(query.iter(world).copied()));
-    if live.len() <= cap {
+    let mut spawned_now = false;
+    with_query::<(&AiId, &CombatObject), (), _>(world, |query| {
+        for (id, o) in query.iter(world) {
+            live.push(*id);
+            spawned_now |= o.spawned == now;
+        }
+    });
+    if live.len() <= cap || !spawned_now {
         return None;
     }
     live.sort();

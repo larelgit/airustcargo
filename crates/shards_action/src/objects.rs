@@ -199,6 +199,25 @@ pub struct Projectile {
     pub pierce: bool,
 }
 
+impl Projectile {
+    /// What is wrong with a prefab's flight numbers, if anything: the speed, lifetime, homing and
+    /// aim height must be finite and not below 0.
+    pub fn problem(&self) -> Option<String> {
+        let numbers = [("speed", self.speed), ("lifetime", self.lifetime), ("homing", self.homing), ("aim_height", self.aim_height)];
+        numbers.iter().find(|(_, v)| !(v.is_finite() && *v >= 0.0)).map(|(name, v)| format!("{name} = {v} (a number >= 0)"))
+    }
+}
+
+/// Where the world is between the spawner's body (`base`, at the object's height) and `to`: the
+/// point just off the wall, or `None` when the way is clear.
+fn wall_between(world: &World, base: Vec3, to: Vec3) -> Option<Vec3> {
+    let from = Vec3::new(base.x, to.y, base.z);
+    let (dir, len) = (Dir3::new(to - from).ok()?, from.distance(to));
+    let filter = QueryFilter::new(LayerMask::WORLD);
+    let hit = world.get_resource::<PhysicsWorld>()?.raycast(from, dir, len, &filter)?;
+    Some(hit.point + hit.normal * 0.02)
+}
+
 /// The flight of one projectile (inserted by [`spawn_objects`], not by a prefab: a prefab must not
 /// set where it flies).
 #[derive(Component, Reflect, Clone, Debug, Default, PartialEq)]
@@ -329,11 +348,15 @@ pub fn spawn_objects(world: &mut World, spawner: Entity, action: &str, def: &Spa
     let mut facing = flat(facing).try_normalize().unwrap_or(Vec3::NEG_Z);
     let target = target_of(world, spawner);
     let target_feet = target.and_then(|id| world.resource::<AiIndex>().get(id)).and_then(|e| world.get::<Transform>(e)).map(|t| t.translation);
+    let tuning = CombatTuning::of(world.resource::<ContentDb>());
+    let (live, mine) = count_objects(world, owner);
+    let fit = (tuning.max_objects as usize).saturating_sub(live).min((tuning.max_objects_per_owner as usize).saturating_sub(mine));
     let mut center = base;
     match def.aim {
         SpawnAim::Facing => {}
         SpawnAim::Target { .. } | SpawnAim::AtTarget if target_feet.is_none() => {
-            debug!("{owner} spawn of {action}: no target to aim at; nothing spawned");
+            let text = format!("{owner} spawn of {action} skipped: it aims at the lock-on target and there is none (lock_on first); nothing spawned");
+            journal::emit(world, JournalKind::Event, text);
             return Vec::new();
         }
         SpawnAim::Target { .. } => {
@@ -346,7 +369,8 @@ pub fn spawn_objects(world: &mut World, spawner: Entity, action: &str, def: &Spa
     if def.random_turn {
         let (seed, tick) = (world.resource::<SimSeed>().0, world.resource::<SimTick>().0);
         let id = world.get::<AiId>(spawner).map_or(owner.0, |i| i.0);
-        let angle = DetRng::from_keys(&[seed, tick, id as u64, TURN_SALT]).range(0.0, 360.0);
+        // Two turned spawns of one spawner in one tick differ by the objects the first laid down.
+        let angle = DetRng::from_keys(&[seed, tick, id as u64, TURN_SALT, mine as u64]).range(0.0, 360.0);
         facing = turn(facing, angle);
     }
     let center = center + yaw(facing) * def.at.to_vec3();
@@ -355,7 +379,9 @@ pub fn spawn_objects(world: &mut World, spawner: Entity, action: &str, def: &Spa
         (SpawnAim::Target { height }, Some(feet)) => (feet + Vec3::Y * height - point).try_normalize().unwrap_or(axis),
         _ => axis,
     };
-    let mut placed: Vec<Placed> = Vec::with_capacity(def.total());
+    // No more than fit are kept (content can ask for 255 x 255): the rest is the cap's to journal.
+    let total = def.total();
+    let mut placed: Vec<Placed> = Vec::with_capacity(total.min(fit));
     match def.pattern {
         SpawnPattern::Fan { spread } => {
             let mid = (def.count as f32 - 1.0) * 0.5;
@@ -381,6 +407,17 @@ pub fn spawn_objects(world: &mut World, spawner: Entity, action: &str, def: &Spa
             }
         }
     }
+    // The caps: the indices that fit, in index order.
+    if fit < total {
+        let text = format!(
+            "{owner} spawn capped: {fit} of {total} {} (max_objects {}, max_objects_per_owner {})",
+            by_index(&def.action, 0).unwrap_or(action),
+            tuning.max_objects,
+            tuning.max_objects_per_owner
+        );
+        journal::emit(world, JournalKind::Warn, text);
+    }
+    placed.truncate(fit);
     if let Some(depth) = def.ground {
         let physics = world.resource::<PhysicsWorld>();
         let filter = QueryFilter::new(LayerMask::WORLD);
@@ -389,21 +426,6 @@ pub fn spawn_objects(world: &mut World, spawner: Entity, action: &str, def: &Spa
                 p.point = hit.point;
             }
         }
-    }
-    // The caps, before the first index: the indices that fit, in index order.
-    let tuning = CombatTuning::of(world.resource::<ContentDb>());
-    let (live, mine) = count_objects(world, owner);
-    let fit = (tuning.max_objects as usize).saturating_sub(live).min((tuning.max_objects_per_owner as usize).saturating_sub(mine));
-    if fit < placed.len() {
-        let text = format!(
-            "{owner} spawn capped: {fit} of {} {} (max_objects {}, max_objects_per_owner {})",
-            placed.len(),
-            by_index(&def.action, 0).unwrap_or(action),
-            tuning.max_objects,
-            tuning.max_objects_per_owner
-        );
-        journal::emit(world, JournalKind::Warn, text);
-        placed.truncate(fit);
     }
     let tick = world.resource::<SimTick>().0;
     let team = owner_entity.and_then(|o| world.get::<Team>(o)).cloned();
@@ -424,7 +446,18 @@ pub fn spawn_objects(world: &mut World, spawner: Entity, action: &str, def: &Spa
             report_once(world, format!("spawn kind {prefab}"), text);
             continue;
         }
+        // A prefab's flight numbers are not checked with the content: a bad one is refused here,
+        // where the prefab is named, instead of tripping `action.objects_sane` on the first spawn.
+        if let Some(why) = world.get::<Projectile>(entity).and_then(Projectile::problem) {
+            world.despawn(entity);
+            report_once(world, format!("spawn projectile {prefab}"), format!("action `{action}`: prefab `{prefab}` has a Projectile with {why}; nothing spawned for it"));
+            continue;
+        }
         let start_in = def.delay * p.index as f32;
+        // A projectile spawned behind a wall (a caster flush against it) stops at the wall.
+        let blocked = (world.entity(entity).contains::<Projectile>() && def.aim != SpawnAim::AtTarget)
+            .then(|| wall_between(world, base, p.point))
+            .flatten();
         let mut e = world.entity_mut(entity);
         e.insert(CombatObject { owner, spawned: tick, start_in, action: run.to_owned(), stay: def.stay });
         if let Some(team) = &team {
@@ -435,7 +468,18 @@ pub fn spawn_objects(world: &mut World, spawner: Entity, action: &str, def: &Spa
         }
         if e.contains::<Projectile>() {
             let dir = p.dir.try_normalize().unwrap_or(p.facing);
-            e.insert(ProjectileFlight { dir, age: 0.0, target, from: p.point });
+            match blocked {
+                // Stopped at the wall: it impacts there (its run starts, `consume_projectiles` ends it).
+                Some(at) => {
+                    if let Some(mut tf) = e.get_mut::<Transform>() {
+                        tf.translation = at;
+                    }
+                    e.insert(ProjectileFlight { dir: Vec3::ZERO, age: 0.0, target, from: at });
+                }
+                None => {
+                    e.insert(ProjectileFlight { dir, age: 0.0, target, from: p.point });
+                }
+            }
         }
         spawned.push(entity);
     }
@@ -618,7 +662,8 @@ pub(crate) fn move_projectiles(
         if flight.from != pos {
             flight.from = pos;
         }
-        if object.spawned == tick.0 || object.start_in > EPS || flight.dir == Vec3::ZERO || state.current.is_none() {
+        // A run that has not stepped yet (t = 0: a delayed start this tick) flies from the next tick.
+        if object.spawned == tick.0 || object.start_in > EPS || flight.dir == Vec3::ZERO || state.current.as_ref().is_none_or(|r| r.t <= EPS) {
             continue;
         }
         flight.age += dt;

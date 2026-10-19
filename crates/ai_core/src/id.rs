@@ -67,9 +67,10 @@ pub struct AiVisible;
 
 /// This entity leaves no tombstone when it goes: short-lived, many at a time (a spell's bolts and
 /// zones), whose ids would push the ones worth remembering out of the graveyard ("e57 died at tick
-/// 1530"). An unknown id of one is reported as never seen. Not reflected: it follows from the
-/// component that requires it, never from a snapshot or the network.
-#[derive(Component, Default, Clone, Copy, Debug)]
+/// 1530"). An unknown id of one is reported as never seen. It follows from the component that
+/// requires it; it is reflected so a snapshot or the network carries it like any marker.
+#[derive(Component, Reflect, Default, Clone, Copy, Debug)]
+#[reflect(Component, Default)]
 pub struct NoTombstone;
 
 /// Extra weight for sorting observations ("by threat"): bosses high, props low.

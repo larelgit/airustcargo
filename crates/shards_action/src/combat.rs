@@ -347,6 +347,8 @@ fn detect(world: &mut World) -> Vec<Detected> {
             .and_then(|_| world.get::<Projectile>(attacker).zip(world.get::<ProjectileFlight>(attacker)));
         let team = world.get::<Team>(attacker);
         let ledger = world.get::<Repeats>(attacker);
+        // Targets a non-piercing flight has taken over all its hit windows: it meets one in all.
+        let mut flown = 0usize;
         let mut seen: Vec<(u8, Entity)> = Vec::new();
         for (i, hit) in def.hits.iter().enumerate() {
             if !def.span(&hit.span).is_some_and(|w| touches(w, run.prev, run.t)) {
@@ -382,7 +384,7 @@ fn detect(world: &mut World) -> Vec<Detected> {
                     let from = start.unwrap_or(f.from);
                     let along = |t: Entity| world.get::<Transform>(t).map_or(0.0, |tf| (tf.translation - from).dot(shape.origin - from));
                     targets.sort_by(|a, b| along(a.1).total_cmp(&along(b.1)).then(a.0.cmp(&b.0)));
-                    1
+                    1usize.saturating_sub(flown)
                 }
                 // A sweep's cap: the first ones in `AiId` order that pass the ledger, this tick.
                 _ if hit.max_targets > 0 => hit.max_targets as usize,
@@ -419,6 +421,7 @@ fn detect(world: &mut World) -> Vec<Detected> {
                     None => seen.push(key),
                 }
                 taken += 1;
+                flown += 1;
                 found.push(Detected { attacker, target, action: run.action.clone(), instance: run.instance, hit: i });
             }
         }

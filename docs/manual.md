@@ -1923,24 +1923,24 @@ The owner is the spawner, or the spawner's owner when the spawner is an object. 
 spawned, start_in, action, stay }`, the owner's `Team` and an `ActionState`; a prefab with `Projectile` also gets its
 `ProjectileFlight` (a prefab cannot set where it flies). Objects are spawned through `PrefabCache`, which builds a prefab
 from its text on its first spawn and again only when a definition of its `extends` chain changed (`spawn_prefab_cached`).
-A prefab that is not AI-visible (no `AiKind`) is refused at the spawn with an error in the journal. The objects whose
+A prefab that is not AI-visible (no `AiKind`) is refused at the spawn with an error in the journal. A prefab whose `Projectile` has a negative or non-finite number (`speed`, `lifetime`, `homing`, `aim_height`) is refused the same way, naming the prefab. The objects whose
 `start_in` is 0 start their action at once; an object acts from the tick after its spawn (an object spawned by an action's
-effect on tick N steps and hits from tick N + 1). `ObjectsSpawned` is journalled: `e8 spawns 3 x bolt_fly`.
+effect on tick N steps and hits from tick N + 1; a delayed one, from the tick after its delay ends, and a projectile flies from the tick after its run has stepped). An aim that needs a lock-on target (`Target`, `AtTarget`) with none spawns nothing and says so: `[event] e8 spawn of caster_volley skipped: it aims at the lock-on target and there is none (lock_on first); nothing spawned`. `ObjectsSpawned` is journalled: `e8 spawns 3 x bolt_fly`.
 
 **Caps.** `CombatTuning::max_objects` (256) and `max_objects_per_owner` (96) are content. A spawn checks them before its
-first index and lays down the indices that fit, in index order, and the journal says so:
+first index and lays down the indices that fit, in index order (only those are placed), and the journal says so:
 `[warn] e8 spawn capped: 2 of 3 bolt_fly (max_objects 256, max_objects_per_owner 96)`. Together with the content check (a
-circle of `Spawn` and `impact` edges is an error, below) and the cache, a typo cannot become a runaway spawner.
+circle of `Spawn` and `impact` edges is an error, a single `Spawn` of more objects than the caps allow is one too, below) and the cache, a typo cannot become a runaway spawner.
 
 **Projectiles.** `Projectile { speed, lifetime, homing, aim_height, pierce }` is the authored part, `ProjectileFlight { dir,
 age, target, from }` the flight. Each tick (`SimSet::Move`, after the controller, in `AiId` order) the age grows; at
 `lifetime` its action is cut (no impact) and it goes. Homing turns `dir` toward the living target's feet plus `aim_height` by
 `clamp(homing * dt, 0, 1)` of the angle (a spherical blend written with `ops`). It flies `speed * dt`; a `LayerMask::WORLD`
-collider on the way stops it 2 cm off the surface (`dir` zero). Its flight action's sphere hit windows sweep the segment
+collider on the way stops it 2 cm off the surface (`dir` zero). A projectile spawned behind a wall (a caster flush against it) stops at the wall at once and bursts there. Its flight action's sphere hit windows sweep the segment
 it flew in the tick (a fast bolt hits what it passed between two ticks); a projectile that does not pierce meets the first
-target along that segment, whatever the ids, and that ends its flight whatever the outcome (a hit, a block, a dodge, an
+target along that segment (over all its hit windows), whatever the ids, and that ends its flight whatever the outcome (a hit, a block, a dodge, an
 ignored hit). Where it stops (a wall, a target) it runs its flight action's `impact`, if any, else it goes; the impact
-action hit-tests from the next tick. Nothing targets a projectile: it has no hurtbox.
+action hit-tests from the next tick. Nothing targets a projectile: it has no hurtbox. Only spheres sweep, so the content check refuses another hit shape in the flight action of a projectile prefab (an `impact` action may use any shape). Two `random_turn` spawns of one spawner in one tick turn differently.
 
 **Zones.** A zone is an object whose action has a hit window (the sandbox writes `telegraph`, `active` and `fade` phases).
 `HitDef::repeat: s` hits each target again every `s` seconds of the run, each from its own first hit, instead of once per
@@ -1974,13 +1974,13 @@ not `stay`, running nothing) go in `ActionSystems::Deaths`, before the deaths. A
 loaded belongs to it (`RegionPart`): a region change takes it.
 
 **Co-op.** Nothing is predicted: objects are host entities that come over to a client with their `AiId`s, and the events of
-their hits come over like a fighter's (a `source` the client no longer has arrives as `Entity::PLACEHOLDER`).
+their hits come over like a fighter's (a `source` the client no longer has arrives as `Entity::PLACEHOLDER`). A fighter's `then` is not predicted: a client that plays such an action shows idle once the shown run ends until the host's chained run arrives.
 
 **For agents.** The describer lines `projectile of e8 15.0m/s -> e5 0.40s` (the time is the distance to the target over the
 speed; `stopped` once it has), `of e8 (chill_puddle)` and `starts in 0.22s`; the conditions `objects_live` and
 `projectile_flying`; the read-only query `combat_objects` (optionally `owner=eN`): each object's id, owner, kind, action,
 phase and the seconds left of it (or `starts_in`), and where it is. Engine rules: `action.objects_sane`,
-`action.objects_capped`; `action.running_sane` covers the objects' runs.
+`action.objects_capped` (checked in a tick that spawned objects: a cap lowered by a content reload under the objects alive halts nothing); `action.running_sane` covers the objects' runs.
 
 ### Content formats
 
@@ -3768,7 +3768,7 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `action.leap_follows_run` | every `LeapRun` (what a leap keeps, B2c) belongs to the run its fighter is running (the same `instance`) of an action that leaps, with a finite `scale >= 0` |
 | `action.ghost_follows_run` | a fighter carries `Ghost` only while its running action has `ghost` and an `intangible` span open in the tick. On a fighter the ghost is the machine's |
 | `action.objects_sane` | every combat object (`CombatObject`, B4) belongs to an owner in the world, or to one that went in this tick (its objects go on the next), and every projectile holds a finite `speed`, `lifetime` and `age` `>= 0` and a direction of length 1 (0 once it stopped). `spawn_objects` sets the owner and the flight, the owner's death and the objects' own pass take them away |
-| `action.objects_capped` | no more combat objects are alive than `CombatTuning::max_objects`: `spawn_objects` lays down only the indices that fit (and warns in the journal), so more names a spawn that went around it |
+| `action.objects_capped` | no more combat objects are alive than `CombatTuning::max_objects`: `spawn_objects` lays down only the indices that fit (and warns in the journal), so more, in a tick that spawned objects, names a spawn that went around it (a cap lowered by a reload under the objects alive is no violation) |
 | `action.lock_on_valid` | with a `lock_on` definition, no body's `Intent.target` names an entity that no longer exists or is dead: the lock-on check (`LockSystems::Check`, after `CoreSystems::ClearPresses`) lets go of such a lock at the end of every tick, after the deaths and the engine's despawns of that tick, so a violation names a lock set later in the tick or a body taken away after the check (a game system in `SimSet::Cleanup` after the check: it belongs before it). Without a definition locks are not checked and the rule passes (C6) |
 | `action.pairs_match` | a `Pairing` (a paired action's hold, B3) belongs to the run its fighter is running (the same action and `instance`), its victim (when it still exists) carries `Paired` by that fighter, and every `Paired` whose holder still exists is named by the holder's `Pairing`. The two marks are put in and taken out together (`release_pair`), so one alone is a pair a system broke behind the engine's back |
 | `action.memory_sane` | every `Memory` (what a fighter remembers for a while, B3) is not empty, holds finite times above 0 and keys sorted and unique, and every `GuardArm`'s press is not after the current tick |
