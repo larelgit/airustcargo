@@ -69,7 +69,7 @@ fn the_sandbox_content_is_clean() {
     assert_eq!(light["def"]["hits"][0]["damage"], json!(20.0));
     assert_eq!(light["file"], "content/combat/player.action.ron");
     let kinds = text(&ok(&mut app, "content_list", json!({}))).to_owned();
-    for kind in ["action", "moveset", "prefab", "locomotion", "layout", "combat_tuning", "behavior", "perception", "director", "attack_plan", "tile", "region", "poi", "nav", "level", "sound", "music", "audio", "perf", "look", "scatter", "effect", "fx", "encounter", "encounter_rules", "hitstop"] {
+    for kind in ["action", "moveset", "prefab", "locomotion", "layout", "combat_tuning", "behavior", "perception", "director", "attack_plan", "tile", "region", "poi", "nav", "level", "sound", "music", "audio", "perf", "look", "scatter", "effect", "fx", "encounter", "encounter_rules", "hitstop", "rule_set", "rules"] {
         assert!(kinds.contains(kind), "{kind} missing: {kinds}");
     }
     assert!(events(&app).contains(&"0 content loaded: 186 definitions in 55 files".to_owned()), "{:?}", events(&app));
