@@ -360,3 +360,28 @@ fn a_hit_is_not_ignored_and_an_own_hit_has_no_source() {
     let hit = seen(&app).damaged.last().unwrap();
     assert_eq!((hit.ignore_reason, hit.source), (None, None));
 }
+
+#[derive(Resource, Default)]
+struct BlockedWeights(Vec<(HitWeight, f32)>);
+
+#[test]
+fn a_guarded_blow_that_kills_is_weighed_without_the_break_too() {
+    // The same blow (`r_hit_poise`: 1 damage, 100 poise) into a raised guard that lets all of it
+    // through: a victim with a sliver of health dies of it, and its poise is never taken.
+    let watch = |app: &mut App| {
+        app.init_resource::<BlockedWeights>();
+        app.add_observer(|e: On<shards_action::Blocked>, mut w: ResMut<BlockedWeights>| w.0.push((e.event().weight, e.event().hp_left)));
+    };
+    for (hp, weight, dead) in [(100.0, HitWeight::Break, false), (0.01, HitWeight::Heavy, true)] {
+        let (mut app, attacker, victim) = bout_with("r_leaky", watch);
+        app.world_mut().get_mut::<Health>(victim).unwrap().current = hp;
+        hold(&mut app, victim, "block", true);
+        step(&mut app, 30);
+        press(&mut app, attacker, "technique.2");
+        step(&mut app, 8);
+        let w = app.world().resource::<BlockedWeights>().0.clone();
+        assert_eq!(w.len(), 1, "{:#?}", journal(&app));
+        assert_eq!(w[0].0, weight, "hp {hp}: {w:?}");
+        assert_eq!(app.world().get::<shards_action::Dead>(victim).is_some(), dead, "hp {hp}: {w:?}");
+    }
+}

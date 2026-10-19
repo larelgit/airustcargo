@@ -154,6 +154,7 @@ fn hitstop_play(In(call): In<Call<HitstopPlayArgs>>, world: &mut World) -> ToolR
     let weight = weight.as_deref().map(parse_weight).transpose()?;
     let cause = cause.as_deref().map(parse_cause).transpose()?;
     let bodies = [attacker, target].iter().flatten().map(|id| id.entity(world)).collect::<Result<Vec<Entity>, _>>()?;
+    let info = HitInfo { event, weight, reaction, cause, action, ignored: false, local: false, solo: false };
     let stopped = match seconds {
         Some(s) if !s.is_finite() || s <= 0.0 => return Err(format!("seconds {s}: a duration above 0, at most {} s", crate::MAX_HOLD)),
         Some(s) => {
@@ -162,7 +163,6 @@ fn hitstop_play(In(call): In<Call<HitstopPlayArgs>>, world: &mut World) -> ToolR
             crate::stop(world, event, 0, "manual".to_owned(), s.min(ceiling), &bodies)
         }
         None => {
-            let info = HitInfo { event, weight, reaction, cause, action, ignored: false, local: false, solo: false };
             trigger(world, &info, &bodies)
         }
     };
@@ -170,6 +170,12 @@ fn hitstop_play(In(call): In<Call<HitstopPlayArgs>>, world: &mut World) -> ToolR
     let Some(stopped) = stopped else {
         let why = match table(world) {
             None => "the game has no hit stop table (`*.hitstop.ron`)".to_owned(),
+            // A rule held to solo play (`solo: true`) is passed over in co-op: say so, or a debugger
+            // goes looking for a rule that is missing.
+            Some(def) if def.select(&HitInfo { solo: true, ..info.clone() }).is_some() && !crate::is_solo(world) => format!(
+                "a rule gives a hold for {}, but only in solo play, and this machine is in co-op (`solo: true` on its `when`)",
+                event.name()
+            ),
             Some(_) => format!("no rule of the table gives a hold for {}", event.name()),
         };
         return Ok(format!("no hold: {why}"));

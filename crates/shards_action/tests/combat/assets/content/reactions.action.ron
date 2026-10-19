@@ -94,6 +94,13 @@
         guard: (span: Phases("raise", "hold"), perfect: Phase("raise"), break_damage_mult: 0.5, break_status_mult: 0.5),
         move_speed: 1.0,
     ),
+    // A guard that lets the whole blow through, poise included: a blocked hit that can break or kill.
+    "r_guard_leaky": (
+        net_id: 400,
+        phases: [("raise", 0.18), ("hold", 0.3), ("lower", 0.1)],
+        hold: (input: "block", span: Phase("hold")),
+        guard: (span: Phases("raise", "hold"), stamina_per_damage: 0.0, damage_mult: 1.0, poise_mult: 1.0),
+    ),
     "r_hyper": (
         net_id: 59,
         phases: [("windup", 0.5), ("recover", 0.2)],

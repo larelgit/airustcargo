@@ -123,3 +123,27 @@ fn a_solo_rule_matches_alone_and_a_machine_in_co_op_falls_through_to_the_next() 
         assert!(coop.starts_with("dodge 0.04 s (perfect_evaded): pictures held"), "{role:?}: {coop}");
     }
 }
+
+#[test]
+fn the_play_tool_says_when_the_only_rule_is_held_to_solo_play() {
+    let assets = Folder::new("solo_only");
+    assets.put(
+        "content/feel/test.hitstop.ron",
+        r#"{ "t": (max_seconds: 0.12, rules: [(name: "slow dodge", when: (event: PerfectEvaded, solo: true), seconds: 0.10)]) }"#,
+    );
+    let mut app = drawn(&assets);
+    app.insert_resource(TimeUpdateStrategy::FixedTimesteps(1));
+    app.update();
+    sim::resume(app.world_mut());
+    for _ in 0..10 {
+        app.update();
+    }
+    let play = json!({"event": "perfect_evaded"});
+    assert!(ok(&mut app, "hitstop_play", play.clone()).starts_with("slow dodge 0.10 s"));
+    app.insert_resource(NetRole::Host);
+    let coop = ok(&mut app, "hitstop_play", play.clone());
+    assert!(coop.contains("only in solo play") && coop.contains("in co-op"), "{coop}");
+    // An event no rule names is still just missing.
+    let other = ok(&mut app, "hitstop_play", json!({"event": "parried"}));
+    assert!(other.contains("no rule of the table gives a hold for parried"), "{other}");
+}

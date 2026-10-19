@@ -548,7 +548,9 @@ fn plan(world: &World, ctx: &DamageCtx, strike: Option<&Strike>) -> Plan {
 /// The weight an event reports: the context's floor, raised by a heavy reaction and by a break.
 /// `breaks` is whether the poise really breaks. A blow that kills does not break it (a corpse takes
 /// no poise: `apply` returns before `take_poise`), so the caller passes `false` for it and the
-/// weight is the one it would have without the break.
+/// weight is the one it would have without the break. The kill is judged where the weight is, after
+/// `hurt`: a damage hook (a game's lethal veto) has run by then, so it counts; an observer of the
+/// event that changes health afterwards (a heal) does not change the weight already reported.
 fn weight_of(ctx: &DamageCtx, breaks: bool) -> HitWeight {
     let mut weight = ctx.weight;
     if ctx.reaction >= Some(2) {

@@ -214,11 +214,16 @@ fn blow(mut commands: Commands, info: HitInfo, bodies: Vec<Entity>) {
     });
 }
 
+/// Whether this machine is outside a co-op session (`NetRole::Single`): what a `solo` rule needs.
+pub fn is_solo(world: &World) -> bool {
+    world.get_resource::<NetRole>().copied().unwrap_or_default() == NetRole::Single
+}
+
 /// Looks `info` up in the table; if a rule gives a hold, triggers [`HitStopped`] and returns it.
 pub fn trigger(world: &mut World, info: &HitInfo, bodies: &[Entity]) -> Option<HitStopped> {
     let mut info = info.clone();
     info.local = info.local || bodies.iter().any(|b| world.get::<LocalPlayer>(*b).is_some());
-    info.solo = world.get_resource::<NetRole>().copied().unwrap_or_default() == NetRole::Single;
+    info.solo = is_solo(world);
     let def = table(world)?;
     let (index, rule) = def.select(&info)?;
     let seconds = def.hold(rule);

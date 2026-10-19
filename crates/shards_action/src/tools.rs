@@ -39,6 +39,10 @@ pub(crate) fn register(app: &mut App) {
         // The movement tools belong to the motion module, which does not know death.
         .add_ai_tool_guard("move", dead_refusal)
         .add_ai_tool_guard("move_to", dead_refusal)
+        .add_ai_tool_guard("stop", dead_refusal)
+        .add_ai_tool_guard("jump", dead_refusal)
+        .add_ai_tool_guard("sprint", dead_refusal)
+        .add_ai_tool_guard("glide", dead_refusal)
         .add_ai_tool("god", Scope::Dev, god)
         .add_ai_tool("heal", Scope::Dev, heal)
         .add_ai_tool("barrier", Scope::Dev, barrier)

@@ -4,6 +4,7 @@ use ai_core::AiJournal;
 use bevy::prelude::*;
 use serde_json::json;
 use shards_core::input_names::SPRINT;
+use shards_core::Intent;
 use shards_motion::*;
 
 use crate::common::*;
@@ -106,3 +107,103 @@ fn a_replaced_order_starts_its_stretch_again() {
     assert_eq!(intent(&app, e).orders.len(), 1, "a new order has its whole stretch");
 }
 
+/// Runs one tick at a time until the body has no order left; the tick it ended on.
+fn ticks_until_no_order(app: &mut App, e: Entity, limit: u64) -> u64 {
+    for _ in 0..limit {
+        if intent(app, e).orders.is_empty() {
+            break;
+        }
+        step(app, 1);
+    }
+    assert!(intent(app, e).orders.is_empty(), "the order never ended: {:?}", intent(app, e).orders);
+    app.world().resource::<ai_core::SimTick>().0
+}
+
+#[test]
+fn the_count_waits_while_an_action_holds_the_body() {
+    // `locked` is what the action machine sets for an attack, a dodge or a stagger. A held body is
+    // not walking, so a hold of several stretches ends nothing; the count starts when it is free.
+    let mut app = bare_engine("order_held");
+    floor(app.world_mut());
+    block(app.world_mut(), Vec3::new(5.0, 0.0, -3.0), Vec3::new(6.0, 4.0, 3.0));
+    let e = player(app.world_mut(), Vec3::ZERO);
+    step(&mut app, 3);
+    ok(&mut app, "move", json!({"dir": "E", "meters": 20}));
+    // 100 ticks of walking: 4.5 m to the wall, nothing ended.
+    step(&mut app, 60);
+    drive(&mut app, STALL_TICKS * 3, |w| {
+        w.get_mut::<LocomotionInput>(e).unwrap().locked = true;
+        true
+    });
+    assert_eq!(intent(&app, e).orders.len(), 1, "held for three stretches: {:?}", journal(&app));
+    // Free again: the order ends after its own stretch, not at once.
+    step(&mut app, STALL_TICKS - 30);
+    assert_eq!(intent(&app, e).orders.len(), 1, "the count starts again when the body is free");
+    step(&mut app, 30);
+    assert!(intent(&app, e).orders.is_empty(), "{:?}", journal(&app));
+    assert!(journal(&app).iter().any(|l| l.contains("ended: blocked")), "{:?}", journal(&app));
+}
+
+#[test]
+fn a_chase_of_a_runner_is_not_blocked_but_a_body_stuck_against_a_wall_is() {
+    let mut app = bare_engine("order_chase");
+    floor(app.world_mut());
+    let e = player(app.world_mut(), Vec3::ZERO);
+    // A crawl after a target that walks away at the same pace: the distance never drops.
+    app.world_mut().entity_mut(e).insert(CharacterParams { run_speed: 0.5, walk_speed: 0.5, ..default() });
+    let runner = app.world_mut().spawn((ai_core::AiKind::new("Runner"), Transform::from_xyz(3.0, 0.0, 0.0))).id();
+    step(&mut app, 3);
+    let id = *app.world().get::<ai_core::AiId>(runner).unwrap();
+    ok(&mut app, "move_to", json!({"target": id.to_string(), "within": 0.5}));
+    drive(&mut app, STALL_TICKS * 5, |w| {
+        w.get_mut::<Transform>(runner).unwrap().translation.x += 0.5 / 60.0;
+        true
+    });
+    assert_eq!(intent(&app, e).orders.len(), 1, "a chase goes on: {:?} at {}", journal(&app), feet(&app, e));
+    assert!(feet(&app, e).x > 2.0, "it did walk: {}", feet(&app, e));
+
+    // The same target behind a wall the body cannot pass: it moves away, the body does not, and the order ends.
+    block(app.world_mut(), Vec3::new(10.0, 0.0, -20.0), Vec3::new(11.0, 4.0, 20.0));
+    app.world_mut().entity_mut(e).insert(CharacterParams::default());
+    app.world_mut().get_mut::<Transform>(runner).unwrap().translation = Vec3::new(14.0, 0.0, 0.0);
+    ok(&mut app, "move_to", json!({"target": id.to_string(), "within": 0.5}));
+    drive(&mut app, STALL_TICKS * 5, |w| {
+        let mut t = w.get_mut::<Transform>(runner).unwrap();
+        t.translation.x += 0.5 / 60.0;
+        true
+    });
+    assert!(intent(&app, e).orders.is_empty(), "stuck at the wall: {} {:?}", feet(&app, e), intent(&app, e).orders);
+    assert!(journal(&app).iter().any(|l| l.contains("ended: blocked")), "{:?}", journal(&app));
+}
+
+#[test]
+fn a_restored_snapshot_ends_the_order_on_the_same_tick() {
+    // The stall count (`OrderProgress`) is a lazy component the snapshot keeps: a game saved
+    // 1.5 s into a stall and restored ends the order when the one that went on would have.
+    let mut app = bare_engine("order_snapshot");
+    floor(app.world_mut());
+    block(app.world_mut(), Vec3::new(5.0, 0.0, -3.0), Vec3::new(6.0, 4.0, 3.0));
+    let e = player(app.world_mut(), Vec3::ZERO);
+    step(&mut app, 3);
+    ok(&mut app, "move", json!({"dir": "E", "meters": 20}));
+    // The wall at 4.5 m is reached after ~1 s; 90 more ticks of standing there.
+    step(&mut app, 160);
+    assert_eq!(intent(&app, e).orders.len(), 1);
+    let saved = ai_core::snapshot::capture(app.world_mut()).expect("capture");
+    let first = ticks_until_no_order(&mut app, e, 300);
+    ai_core::snapshot::restore(app.world_mut(), &saved, true).expect("restore");
+    let e = app.world_mut().query_filtered::<Entity, With<Intent>>().single(app.world()).expect("the body");
+    assert_eq!(intent(&app, e).orders.len(), 1, "the order is back");
+    let second = ticks_until_no_order(&mut app, e, 300);
+    assert_eq!(first, second, "the restored game ends the order on the same tick");
+}
+
+#[test]
+fn the_tool_descriptions_state_the_stretch_and_the_distance_the_constants_name() {
+    let app = bare_engine("order_docs");
+    let specs = app.world().resource::<ai_core::tools::AiTools>().specs(ai_core::Scope::Dev);
+    let text = |name: &str| specs.iter().find(|s| s.name == name).map(|s| s.description.clone()).unwrap_or_default();
+    let (seconds, metres) = (format!("{STALL_SECONDS} s"), format!("{STALL_PROGRESS} m"));
+    assert!(text("move_to").contains(&format!("{seconds} ({metres})")), "{}", text("move_to"));
+    assert!(text("move").contains(&seconds), "{}", text("move"));
+}
