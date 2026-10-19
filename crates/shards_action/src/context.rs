@@ -25,7 +25,7 @@ use shards_core::{flat, Intent, NetRole, PlayerId};
 use shards_motion::{MotionState, PhysicsWorld};
 
 use crate::combat::{clear_line, Blocked, Damaged, Evaded, GuardBroken, Parried, PerfectEvaded, Reacted, Staggered};
-use crate::def::{ActionDef, CombatTuning, Forget, GuardPress, MovesetDef, PairDef, PairSelect, PairState, PairTeam, Recall, When, EPS};
+use crate::def::{ActionDef, CombatTuning, Forget, GuardPress, MovesetDef, PairAngle, PairDef, PairSelect, PairState, PairTeam, Recall, When, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Poise, Stamina, Team};
 use crate::machine::{interrupted, ActionEnd, ActionEnded, ActionStarted, ActionState};
 use crate::zone::body_radius;
@@ -287,12 +287,24 @@ pub fn resolve(world: &World, entity: Entity) -> Option<ContextInputs> {
     Some(out)
 }
 
-/// Where `entity` faces for the angle test of a pair's `select`: its body's facing, as design 6.4
-/// and the original game's finisher candidate have it (not the lock-on direction and not the
-/// stick: a player running away from a broken enemy has no finisher on it, and a locked player
-/// whose body looks elsewhere is judged by the body).
-fn meant_facing(world: &World, entity: Entity) -> Vec3 {
-    world.get::<Transform>(entity).and_then(|t| flat(*t.forward()).try_normalize()).unwrap_or(Vec3::NEG_Z)
+/// Where `entity` faces for the angle test of a pair's `select`. [`PairAngle::Facing`] (the default): its body's facing, as
+/// design 6.4 and the original game's finisher candidate have it (not the lock-on direction and not the stick: a player running
+/// away from a broken enemy has no finisher on it, and a locked player whose body looks elsewhere is judged by the body).
+/// [`PairAngle::Intent`]: the direction to its lock-on target, else its movement input's direction, else the facing.
+fn meant_facing(world: &World, entity: Entity, from: PairAngle) -> Vec3 {
+    let facing = world.get::<Transform>(entity).and_then(|t| flat(*t.forward()).try_normalize()).unwrap_or(Vec3::NEG_Z);
+    if from == PairAngle::Facing {
+        return facing;
+    }
+    let here = world.get::<Transform>(entity).map(|t| t.translation);
+    let intent = world.get::<Intent>(entity);
+    let locked = intent
+        .and_then(|i| i.target)
+        .and_then(|id| world.resource::<AiIndex>().get(id))
+        .and_then(|e| world.get::<Transform>(e))
+        .zip(here)
+        .and_then(|(there, here)| flat(there.translation - here).try_normalize());
+    locked.or_else(|| intent.and_then(|i| flat(i.move_dir).try_normalize())).unwrap_or(facing)
 }
 
 /// Whether `candidate` is a victim `entity`'s pair `select` may take now (every rule but the
@@ -360,7 +372,7 @@ fn qualifies(world: &World, entity: Entity, candidate: Entity, select: &PairSele
 /// qualifies, else the nearest that qualifies (3D distance, strictly nearer; ties: the lower `AiId`).
 pub fn pair_victim(world: &World, entity: Entity, select: &PairSelect) -> Option<Entity> {
     let here = world.get::<Transform>(entity)?.translation;
-    let face = meant_facing(world, entity);
+    let face = meant_facing(world, entity, select.angle_from);
     if select.prefer_target
         && let Some(locked) = world.get::<Intent>(entity).and_then(|i| i.target).and_then(|id| world.resource::<AiIndex>().get(id))
         && qualifies(world, entity, locked, select, face)

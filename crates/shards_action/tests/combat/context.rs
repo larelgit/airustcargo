@@ -818,3 +818,37 @@ fn a_paired_run_aims_at_its_victim_not_at_the_lock() {
     let facing = app.world().get::<Transform>(hero).unwrap().forward();
     assert!(facing.dot(Vec3::X) > 0.9, "a plain swing turns to the lock: {facing:?}");
 }
+
+#[test]
+fn a_pairs_angle_can_be_measured_from_what_the_fighter_means() {
+    let (mut app, hero, foe) = arena();
+    let other = foe_at(&mut app, Vec3::new(0.0, 0.0, 5.0));
+    broken(&mut app, foe);
+    step(&mut app, 1);
+    let facing = select(&app);
+    let intent = app.world().resource::<ContentDb>().get::<ActionDef>("c_finisher_intent").unwrap().pair.clone().unwrap().select;
+    assert_eq!(facing.angle_from, shards_action::PairAngle::Facing, "the default");
+    assert_eq!(intent.angle_from, shards_action::PairAngle::Intent);
+    let foe_id = *app.world().get::<AiId>(foe).unwrap();
+    let other_id = *app.world().get::<AiId>(other).unwrap();
+    let victim = |app: &App, s: &shards_action::PairSelect| pair_victim(app.world(), hero, s);
+    // The body looks south, away from the broken foe in the north.
+    app.world_mut().get_mut::<Transform>(hero).unwrap().look_to(S, Vec3::Y);
+    assert_eq!(victim(&app, &facing), None, "from the facing: behind");
+    assert_eq!(victim(&app, &intent), None, "no lock, no stick: the facing");
+    // The stick toward it: the direction meant.
+    app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = N;
+    assert_eq!(victim(&app, &intent), Some(foe));
+    assert_eq!(victim(&app, &facing), None, "the default ignores the stick");
+    // The stick away from it.
+    app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = S;
+    assert_eq!(victim(&app, &intent), None);
+    // The lock first: locked on the broken foe, with the stick away from it, it is the foe that counts...
+    app.world_mut().get_mut::<Intent>(hero).unwrap().target = Some(foe_id);
+    assert_eq!(victim(&app, &intent), Some(foe), "the lock direction beats the stick");
+    assert_eq!(victim(&app, &facing), None, "the default ignores the lock");
+    // ...and locked on a foe in the other direction, the stick toward the broken one does not count.
+    app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = N;
+    app.world_mut().get_mut::<Intent>(hero).unwrap().target = Some(other_id);
+    assert_eq!(victim(&app, &intent), None, "the lock points south");
+}

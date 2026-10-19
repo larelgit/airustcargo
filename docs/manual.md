@@ -1472,7 +1472,7 @@ Godot's quirk of stamping the press when the guard starts, not when the button g
 
 **Paired actions** (`ActionDef::pair`; a paired action has no `charge`, a content error, since the charge would turn the run into another action that the pair does not name). When a paired action starts, the machine notes it, and `start_pairs` (in
 `ActionSystems::Effects`, before the effects) takes the victim: the binding's victim if it is still free, else what `select`
-finds now. `select: (team, state, range, height, angle, line_of_sight, prefer_target, slack)` asks for a fighter with
+finds now. `select: (team, state, range, height, angle, angle_from, line_of_sight, prefer_target, slack)` asks for a fighter with
 `Health` that is alive and not held by another, and that:
 
 - is of another team (`Hostile`, the default) or of the fighter's own (`Ally`);
@@ -1480,7 +1480,8 @@ finds now. `select: (team, state, range, height, angle, line_of_sight, prefer_ta
 - is within `range` plus its body radius on the ground plane, and within `height` up or down;
 - is within `angle` degrees (a half-angle) of the body's facing. Not the lock-on direction and not the stick, as in the
   original game's finisher candidate: a player running away from a broken enemy has no finisher on it, and a locked player
-  whose body looks elsewhere is judged by the body (a test pins it);
+  whose body looks elsewhere is judged by the body (a test pins it).
+  `angle_from: Facing` is the default and is the rule above. `angle_from: Intent` (FU4, a content choice on the pair) measures from what the fighter means instead: the direction to its lock-on target first, else its movement input's direction, else the facing. So a locked fighter whose body looks away (a roll away from the foe) can still take the locked, broken foe, and one running away from the foe still cannot. It is unserialized at the default, so no content hash changes;
 - has no world collider between the two chests, when `line_of_sight` is set;
 - with `slack`, has no other living player of the fighter's team nearer to it by more than `slack` metres (two players next to
   one broken enemy: only the nearer gets the finisher).

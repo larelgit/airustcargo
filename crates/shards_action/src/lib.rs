@@ -158,7 +158,7 @@ pub use context::{
 pub use cue::{ActionSound, SoundCue};
 pub use def::{
     ActionDef, AssistDef, BindingDef, BufferMode, CancelDef, ChargeDef, CombatTuning, Cost, Effect, Forget, GuardDef, GuardPress, HitDef, HitFlag,
-    HitShape, HoldDef, LeapDef, LeapSearch, Local, MemoryDef, MotionBake, PairDef, PairSelect, PairState, PairTeam, ReactionDef, Recall, StaminaMode, When,
+    HitShape, HoldDef, LeapDef, LeapSearch, Local, MemoryDef, MotionBake, PairAngle, PairDef, PairSelect, PairState, PairTeam, ReactionDef, Recall, StaminaMode, When,
     Face, MovesetDef, Phase, Span, Steer, TelegraphDef, TimedEffect, Transition,
 };
 pub use fighter::{
