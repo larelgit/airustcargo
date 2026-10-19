@@ -1328,12 +1328,12 @@ impl AnimSet {
     }
 }
 
-/// `field -> unknown clip `x` (did you mean `y`?); clips: a, b`.
 /// ` (did you mean `water`?)` for a misspelt motion mode, or nothing.
 fn mode_hint(mode: &str) -> String {
     shards_content::db::closest(mode, MODES.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default()
 }
 
+/// `field -> unknown clip `x` (did you mean `y`?); clips: a, b`.
 fn unknown_clip(refs: &mut Refs, names: &[&str], field: &str, clip: &str) {
     let hint = shards_content::db::closest(clip, names.iter().copied())
         .map(|c| format!(" (did you mean `{c}`?)"))

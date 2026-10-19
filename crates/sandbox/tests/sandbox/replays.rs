@@ -854,7 +854,7 @@ fn played_swimming(file: &str) -> Swim {
             let water = b.mode() == Some(shards::motion::MotionMode::Water);
             swim.swam |= water;
             swim.sword_on_back |= water && b.place("sword") == Some(&shards::action::Place::Socket("back".into()));
-            swim.sword_in_hand_afloat |= water && b.place("sword") == Some(&shards::action::Place::Socket("hand_r".into()));
+            swim.sword_in_hand_afloat |= water && b.drop_depth() > 0.0 && b.place("sword") == Some(&shards::action::Place::Socket("hand_r".into()));
             swim.dropped |= b.drop_depth() > 0.0;
         }
     }

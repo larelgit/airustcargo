@@ -946,7 +946,7 @@ fn drive_layers(
 #[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
 pub fn hold_root_motion(
     db: Option<Res<ContentDb>>,
-    graphs: Res<AnimGraphs>,
+    mut graphs: ResMut<AnimGraphs>,
     gltfs: Res<Assets<Gltf>>,
     gltf_nodes: Option<Res<Assets<GltfNode>>>,
     mut animated: Query<(&Animated, &mut AnimationBound)>,
@@ -962,8 +962,10 @@ pub fn hold_root_motion(
         };
         let (set, bone) = bone;
         if bound.root.is_none_or(|(e, _)| !transforms.contains(e)) {
-            let found = skeleton(bound.player, &children, &props)
-                .into_iter()
+            let bones = skeleton(bound.player, &children, &props);
+            let found = bones
+                .iter()
+                .copied()
                 .find(|e| names.get(*e).is_ok_and(|n| n.as_str() == bone));
             let rest = graphs
                 .libraries
@@ -973,6 +975,13 @@ pub fn hold_root_motion(
                 .and_then(|node| gltf_nodes.as_ref()?.get(node))
                 .map_or(Vec3::ZERO, |node| node.transform.translation);
             bound.root = found.map(|e| (e, rest));
+            // Only once the model has bones: until then the scene is still spawning.
+            if found.is_none() && !bones.is_empty() {
+                graphs.warn_once(
+                    format!("root_motion {} {bone}", set_ref.animset),
+                    format!("animset `{}`: the model has no bone `{bone}` (root_motion); the drop is not drawn", set_ref.animset),
+                );
+            }
         }
         let Some((entity, rest)) = bound.root else { continue };
         if let Ok(mut transform) = transforms.get_mut(entity) {

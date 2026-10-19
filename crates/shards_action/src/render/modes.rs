@@ -95,13 +95,13 @@ pub(crate) struct ModeState {
     rate: f32,
     /// What [`apply_model`] wrote on the bone at the last frame, and the part of it that was the
     /// offset: lets it tell a bone the clips wrote again from one they left alone.
-    written: Option<(Vec3, Vec3)>,
+    written: Option<(Entity, Vec3, Vec3)>,
 }
 
 impl ModeState {
-    /// A new binding of the same body keeps the clocks; the bone it wrote on is another one now.
+    /// A new binding keeps the clocks and what was written: the bone is the same after a rebuild of the graph, and another entity (so nothing is taken off it) after a new scene.
     pub(crate) fn taken_over(&self) -> Self {
-        Self { written: None, ..self.clone() }
+        self.clone()
     }
 
     /// The picture was held for `secs` of the simulation's clock: the clocks resume where they
@@ -271,7 +271,7 @@ pub(crate) fn apply_model(
         }
         let Ok(mut transform) = transforms.get_mut(bone) else { continue };
         let mut base = transform.translation;
-        if let Some((written, offset)) = bound.modes.written {
+        if let Some((_, written, offset)) = bound.modes.written.filter(|(on, ..)| *on == bone) {
             for axis in 0..3 {
                 if base[axis] == written[axis] {
                     base[axis] -= offset[axis];
@@ -283,8 +283,10 @@ pub(crate) fn apply_model(
             .ok()
             .and_then(|parent| globals.get(parent.parent()).ok())
             .map_or(Vec3::NEG_Y * depth, |parent| local_drop(parent, depth));
+        // A parent squashed to nothing has no inverse: the drop is then in the bone's own units.
+        let offset = if offset.is_finite() { offset } else { Vec3::NEG_Y * depth };
         transform.translation = base + offset;
-        bound.modes.written = (depth > 0.0).then_some((transform.translation, offset));
+        bound.modes.written = (depth > 0.0).then_some((bone, transform.translation, offset));
     }
 }
 
@@ -502,6 +504,34 @@ mod tests {
         assert!(app.world().get::<AnimationBound>(body).unwrap().modes.written.is_none());
     }
 
+
+    #[test]
+    fn a_rebinding_keeps_what_was_written_on_the_same_bone_and_a_degenerate_parent_does_not_poison_it() {
+        let mut app = App::new();
+        app.add_systems(Update, apply_model);
+        let parent = app.world_mut().spawn((Transform::default(), GlobalTransform::default())).id();
+        let bone = app.world_mut().spawn((Transform::from_xyz(0.0, 0.9, 0.0), ChildOf(parent))).id();
+        let mut bound = AnimationBound::new(Entity::PLACEHOLDER, AssetId::default());
+        bound.root = Some((bone, Vec3::ZERO));
+        bound.modes.depth = 0.15;
+        let body = app.world_mut().spawn((Animated::new("h"), bound)).id();
+        app.update();
+        // A rebuilt graph: a new binding of the same bones, the clips write nothing.
+        let next = app.world().get::<AnimationBound>(body).unwrap().modes.taken_over();
+        let mut rebound = AnimationBound::new(Entity::PLACEHOLDER, AssetId::default());
+        rebound.root = Some((bone, Vec3::ZERO));
+        rebound.modes = next;
+        rebound.modes.depth = 0.0;
+        app.world_mut().entity_mut(body).insert(rebound);
+        app.update();
+        let y = app.world().get::<Transform>(bone).unwrap().translation.y;
+        assert!((y - 0.9).abs() < 1e-6, "the drop stayed: {y}");
+        // A parent squashed to nothing: the drop is in the bone's own units, never NaN.
+        app.world_mut().get_mut::<GlobalTransform>(parent).map(|mut g| *g = GlobalTransform::from(Transform::from_scale(Vec3::ZERO))).unwrap();
+        app.world_mut().get_mut::<AnimationBound>(body).unwrap().modes.depth = 0.15;
+        app.update();
+        assert!(app.world().get::<Transform>(bone).unwrap().translation.is_finite());
+    }
     #[test]
     fn the_drop_is_in_metres_whatever_the_models_scale() {
         let at = |scale: f32| GlobalTransform::from(Transform::from_xyz(3.0, 1.0, 2.0).with_scale(Vec3::splat(scale)));

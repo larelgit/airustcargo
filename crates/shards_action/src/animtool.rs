@@ -243,7 +243,8 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
                 let wait = set.left_rules(left).map_or(0.0, |r| r.wait);
                 parts.push(format!("left {} {} (wait {wait} s)", mode_name(left), if waiting { "waiting" } else { "drawing" }));
             }
-            drop_text = drop.map(|d| format!("drop {:.2}/{:.2} m", b.drop_depth(), d.down));
+            let down = drop.map_or_else(|| set.drops.values().map(|d| d.down).fold(0.0, f32::max), |d| d.down);
+            drop_text = (drop.is_some() || b.drop_depth() > 0.0).then(|| format!("drop {:.2}/{:.2} m", b.drop_depth(), down));
         }
         parts.push(rules_text);
         if left_rules.is_some() && !parts.iter().any(|p| p.starts_with("left ")) {
