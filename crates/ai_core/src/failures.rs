@@ -205,13 +205,17 @@ pub fn handler_for(world: &mut World) -> ErrorHandler {
     if let Some(slot) = world.get_resource::<HandlerSlot>() {
         return slot_handler_at(slot.0);
     }
-    for (i, slot) in SLOT_TOKENS.iter().enumerate() {
-        if slot.compare_exchange(0, token, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
-            world.insert_resource(HandlerSlot(i));
-            return slot_handler_at(i);
-        }
+    if let Some(i) = claim_slot(&SLOT_TOKENS, token) {
+        world.insert_resource(HandlerSlot(i));
+        return slot_handler_at(i);
     }
+    error!(target: LOG_TARGET, "all {SLOTS} handler slots are taken: failures of this app are logged but will not halt it");
     orphan_handler
+}
+
+/// The first free slot of `table`, now held by `token`.
+fn claim_slot(table: &[AtomicU64], token: u64) -> Option<usize> {
+    table.iter().position(|slot| slot.compare_exchange(0, token, Ordering::Relaxed, Ordering::Relaxed).is_ok())
 }
 
 /// Failures collected but not reported by a `step` yet, and crash replay settings.
@@ -398,36 +402,53 @@ mod tests {
         .unwrap();
     }
 
+    /// The live apps this test holds stay far below `SLOTS`: it runs beside tests that build apps
+    /// of their own, and a test that used up the slots would give those the orphan handler.
     #[test]
-    fn a_failure_reaches_only_its_own_app_however_many_apps_live_and_whichever_thread_raised_it() {
-        // More live apps than slots, several threads working beside the failing one.
-        let mut apps: Vec<App> = (0..SLOTS + 8).map(|_| game()).collect();
-        let busy: Vec<_> = (0..4)
-            .map(|_| std::thread::spawn(|| (0..6).map(|_| game()).collect::<Vec<_>>().len()))
-            .collect();
-
-        // The first app holds a slot, the last has none (the old code tagged it with the active app).
-        let (first, last) = (0, apps.len() - 1);
-        for victim in [first, last] {
+    fn a_failure_reaches_only_its_own_app_whichever_thread_raised_it_and_whichever_app_is_active() {
+        // More live apps than the old 32 slots, several threads building beside the failing one.
+        let mut apps: Vec<App> = (0..40).map(|_| game()).collect();
+        let busy: Vec<_> = (0..4).map(|_| std::thread::spawn(|| (0..4).map(|_| game()).collect::<Vec<_>>().len())).collect();
+        let last = apps.len() - 1;
+        for victim in [0, last] {
             // A bystander is the active app of the process.
             let bystander = 1 + victim % 2 * 10;
             crate::process::activate(apps[bystander].world());
             fail_on_another_thread(&apps[victim]);
             for (i, app) in apps.iter_mut().enumerate() {
-                let mine = i == victim && victim == first;
-                assert_eq!(!collect(app.world_mut()).is_empty(), mine, "app {i}, victim {victim}");
+                assert_eq!(!collect(app.world_mut()).is_empty(), i == victim, "app {i}, victim {victim}");
             }
-            // Nothing is left over for an app built later either.
-            let late = &mut game();
-            assert!(collect(late.world_mut()).is_empty(), "victim {victim}");
         }
         for thread in busy {
             thread.join().unwrap();
         }
         // A freed slot is used again, with the new app's token.
-        drop(apps.swap_remove(first));
+        drop(apps.swap_remove(0));
         let mut again = game();
         fail_on_another_thread(&again);
         assert_eq!(collect(again.world_mut()).len(), 1);
+    }
+
+    /// An app past the last slot: its failure is nobody's, whichever app is active. The slot table
+    /// here is a small local one, so no other test is starved of real slots.
+    #[test]
+    fn an_app_without_a_slot_gets_the_orphan_handler_and_its_failure_halts_no_other_app() {
+        let table = [const { AtomicU64::new(0) }; 2];
+        assert_eq!(claim_slot(&table, 7), Some(0));
+        assert_eq!(claim_slot(&table, 8), Some(1));
+        assert_eq!(claim_slot(&table, 9), None, "a full table gives no slot");
+        table[0].store(0, Ordering::Relaxed);
+        assert_eq!(claim_slot(&table, 9), Some(0), "a freed slot is reused");
+
+        let mut bystander = game();
+        crate::process::activate(bystander.world());
+        std::thread::spawn(|| {
+            let ctx = ErrorContext::System { name: DebugName::borrowed("planted::boom"), last_run: bevy::ecs::change_detection::Tick::new(0) };
+            orphan_handler(BevyError::new(Severity::Panic, "boom"), ctx);
+        })
+        .join()
+        .unwrap();
+        assert!(collect(bystander.world_mut()).is_empty());
+        assert!(QUEUE.lock().unwrap().iter().all(|q| q.token != ORPHAN));
     }
 }
