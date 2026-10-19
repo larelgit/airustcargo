@@ -1,0 +1,11 @@
+// Which wave compositions the sandbox's encounters allow (CDD-style rules, with neutral tags): at most 2 ranged members, at most
+// 1 controller unless the encounter is a `special_arena`, and a support member needs 2 others.
+{
+    "default": (
+        limits: [
+            (tag: "ranged", max: 2),
+            (tag: "controller", max: 1, unless: Some("special_arena")),
+        ],
+        needs: [(tag: "support", others: 2)],
+    ),
+}

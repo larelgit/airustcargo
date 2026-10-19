@@ -1,0 +1,30 @@
+// The player's kit for `context.scenario` and `stand/finisher.scenario` (B3): the light attack
+// is a finisher next to a broken enemy, a counter within 0.5 s of a parry, a cut within 0.3 s of a
+// roll's end, a jab otherwise (in that order); the guard opens its perfect window only on a fresh
+// press. Actions in `context.action.ron` and `sparring.action.ron`.
+{
+    "contextual": (
+        inputs: {"light": "spar_jab", "heavy": "spar_slam", "dodge": "spar_dodge", "block": "spar_parry_guard", "technique.1": "spar_crusher"},
+        stagger: "player_stagger",
+        death: "player_death",
+        reactions: [
+            (action: "spar_react_light", push: 2.0, decel: 12.0),
+            (action: "spar_react_heavy", push: 4.0, decel: 12.0),
+            (action: "spar_react_down", push: 4.0, decel: 12.0),
+        ],
+        reaction_immunity: 0.2,
+        reaction_protection: 1.0,
+        guard_broken: "spar_guard_broken",
+        guard_broken_push: (0.2, 10.0),
+        remember: [
+            // A parry opens the counter; a reaction, a stagger, a guard break or a roll closes it.
+            (key: "parried", on: Parried, seconds: 0.5, forget: [Reacted, Started("dodge"), Used]),
+            (key: "dodged", on: Ended("dodge"), seconds: 0.3, forget: [Hurt, Used]),
+        ],
+        context: [
+            (input: "light", action: "spar_finisher", when: [Pair]),
+            (input: "light", action: "spar_counter", when: [Remembers("parried"), StaminaAbove(0.0)]),
+            (input: "light", action: "spar_dodge_cut", when: [Remembers("dodged")]),
+        ],
+    ),
+}

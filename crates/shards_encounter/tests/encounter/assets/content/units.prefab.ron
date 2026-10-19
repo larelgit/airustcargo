@@ -1,0 +1,49 @@
+// The units of the encounter tests: neutral names, the least a member needs. `AiKind` gives an
+// `AiId`, so a run can count the unit; `Health` lets a test kill it the way a game does.
+{
+    "grunt": (
+        components: {
+            "Name": "Grunt",
+            "AiKind": ("Grunt"),
+            "Team": ("monsters"),
+            "Health": (current: 20.0, max: 20.0),
+            "Home": (pos: None, leash: 15.0),
+            "EncounterRole": (cost: 1, tags: ["weak", "melee"]),
+        },
+    ),
+    "archer": (
+        extends: "grunt",
+        components: { "Name": "Archer", "EncounterRole": (cost: 2, tags: ["ranged"]) },
+    ),
+    "brute": (
+        extends: "grunt",
+        components: { "Name": "Brute", "Health": (current: 60.0, max: 60.0), "EncounterRole": (cost: 3, tags: ["heavy", "melee"]) },
+    ),
+    "binder": (
+        extends: "grunt",
+        components: { "Name": "Binder", "EncounterRole": (cost: 3, tags: ["controller"]) },
+    ),
+    "priest": (
+        extends: "grunt",
+        components: { "Name": "Priest", "EncounterRole": (cost: 3, tags: ["support"]) },
+    ),
+    // No role: budget, tags and rules cannot read it.
+    "plain": (
+        components: { "Name": "Plain", "AiKind": ("Plain"), "Team": ("monsters"), "Health": (current: 5.0, max: 5.0) },
+    ),
+    // No AiKind: no AiId, so a run cannot count it.
+    "ghost": (
+        components: { "Name": "Ghost", "Health": (current: 5.0, max: 5.0) },
+    ),
+    // The lock: something that stands while the fight is on.
+    "barrier": (
+        components: { "Name": "Barrier", "AiKind": ("Barrier") },
+    ),
+    // An anchor placed by a prefab, as a point of interest or a level node would.
+    "ring_anchor": (
+        components: { "Name": "Ring", "EncounterAnchor": (encounter: "ring_waves", key: Some("ring")) },
+    ),
+    "pack_anchor": (
+        components: { "Name": "Pack", "EncounterAnchor": (encounter: "marker_pack") },
+    ),
+}

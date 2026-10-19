@@ -9,3 +9,7 @@ Read this when you touch enemy brains, behaviour, perception, the director, atta
   `NpcSystems::Drive`, before `drive_intents`, it edits the route input `NavAgent::desired` (which `drive_intents` writes to
   `Intent`), and its own state `NavAgent::avoiding` and `side`; neighbours are taken in `AiId` order, with no randomness; its numbers are `avoidance` in
   `npc_tuning` or in the behaviour, not constants in code.
+- **Encounters** (`shards_encounter`, "Encounters (G9)" in the manual) spawn NPCs in waves and pull the survivors of a placed wave back home
+  on a wipe or a reset: they `force_state` the behaviour state the encounter's `pull_back.state` names (so a behaviour needs that state,
+  `return_home` kind, which the content check enforces: a state of any other kind is refused), and set `EncounterMember.returning` until the member is home; the NPC condition
+  `encounter_returning` reads it, so a behaviour can ignore targets on the way. A dormant survivor is placed at home at once.

@@ -6,6 +6,7 @@
 //! | section | kind | holds |
 //! |---|---|---|
 //! | `region` | world | the region in the world: its id, seed, generator version, manifest hash and (v2) the manifest itself. Applying it builds the region from that manifest, without the generator, and changes to it through the world module's region change (when it differs from the one there): a game update that changes the generator leaves a saved world as it was. Refused, changing nothing, when content no longer has what the manifest names; a manifest that does not match its hash is damage (the save's backups are tried). A save of v1 kept no manifest: it is migrated to v2 without one, generated again, and refused if it no longer comes out the same; its next save is a v2 one |
+//! | `encounters` | world | the keys of the `once` encounters the world has won. Applying it despawns the runs of the encounters standing and remembers the keys; the next tick makes fresh runs (a won key comes back won, silently, with no events; the rest start over). A fight in progress is not saved |
 //! | `position` | character | the body's feet, its rotation (characters turn about Y: that is their facing) and the region it stood in. Applied onto a body in the same region only; in another one the body stays where it is and the journal says why |
 //! | `vitals` | character | health, stamina and charges. Applied to the components the body already has (a fresh body has what its prefab gives it); a charge the body lacks is added. A body that died since the save is revived (`shards_action::revive`, as the dev `heal` does, and `Healed` follows); a save made at zero health leaves it dead |
 //!
@@ -32,6 +33,8 @@ impl Plugin for EngineSavePlugin {
         // World first, then the character: the position is applied onto the region just built.
         app.add_save_section::<RegionSave>()
             .add_save_migration(RegionSave::NAME, 1, region_from_v1)
+            // The world has won what it has won; the fights in progress start fresh.
+            .add_save_section::<EncountersSave>()
             .add_save_section::<PositionSave>()
             .add_save_section::<VitalsSave>();
     }
@@ -621,5 +624,33 @@ mod tests {
             let why = bad.check("stamina").unwrap_err();
             assert!(why.starts_with("stamina ") && why.contains("is not a pool"), "{why}");
         }
+    }
+}
+
+// --- encounters --------------------------------------------------------------------------
+
+/// The `encounters` section: the keys of the `once` encounters the world has won. A fight in
+/// progress is not saved (TDD 41.3: the phase of an ordinary fight is not), so a load starts every
+/// other encounter fresh.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+struct EncountersSave {
+    /// Sorted.
+    completed: Vec<String>,
+}
+
+impl SaveSection for EncountersSave {
+    const NAME: &'static str = "encounters";
+    const VERSION: u32 = 1;
+    const KIND: SaveKind = SaveKind::World;
+
+    fn capture(world: &World, _: Option<Entity>) -> Result<Self, String> {
+        Ok(EncountersSave { completed: shards_encounter::completed(world) })
+    }
+
+    fn apply(self, world: &mut World, _: Option<Entity>) -> Result<(), String> {
+        if let Some(note) = shards_encounter::restore_completed(world, self.completed) {
+            journal::emit(world, JournalKind::Event, note);
+        }
+        Ok(())
     }
 }

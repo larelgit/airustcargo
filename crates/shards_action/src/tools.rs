@@ -11,11 +11,12 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use shards_content::ContentDb;
 use shards_core::input_names::{BLOCK, DODGE, HEAVY, LIGHT, PARRY, TECHNIQUE, USE_ITEM};
-use shards_core::{flat, Intent, Order, Predicted};
+use shards_core::{flat, Intent, NetRole, Order, Predicted};
 use shards_motion::camera::{LockOnDef, Side};
 
 use crate::body::{clear_barrier, clear_damage_taken, describe_damage_taken, extend_damage_taken, grant_barrier, set_damage_taken, Barrier, DamageTaken};
 use crate::combat::{react, revive, stagger, Reaction, StaggerCause};
+use crate::context::{forget, remember, resolve as resolve_context};
 use crate::def::{ActionDef, BufferMode, CombatTuning, MovesetDef, Steer, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team};
 use crate::lock::{may_lock_on, pick_for_body, release_lock, switch_lock_of, switch_rules, take_lock};
@@ -41,6 +42,7 @@ pub(crate) fn register(app: &mut App) {
         .add_ai_tool("damage_taken", Scope::Dev, damage_taken)
         .add_ai_tool("stagger", Scope::Dev, stagger_tool)
         .add_ai_tool("react", Scope::Dev, react_tool)
+        .add_ai_tool("remember", Scope::Dev, remember_tool)
         .add_ai_condition("reacting", reacting)
         .add_dev_entry("combat", "god", "Immortality on / off", DevCommand::Live(god_line))
         .add_dev_entry("combat", "heal", "Heal / revive", DevCommand::Run("heal".into()));
@@ -82,9 +84,14 @@ fn when(world: &World, me: Entity, input: &str) -> Result<When, String> {
     let dt = world.resource::<Time<Fixed>>().timestep().as_secs_f32();
     let ttl = CombatTuning::of(world.resource::<ContentDb>()).input_buffer;
     let shown = shown_state(world, me);
+    // The context the next tick resolves (a client predicts with its host's, replicated).
+    let fresh = world.get_resource::<NetRole>().is_none_or(|r| r.simulates()).then(|| resolve_context(world, me)).flatten();
     let mut view = FighterView::of(world, me).ok_or("your body is not a complete fighter")?;
     if let Some(state) = &shown {
         view.state = state;
+    }
+    if let Some(context) = &fresh {
+        view.context = Some(context);
     }
     let run = view.state.current.as_ref();
     let def = run.and_then(|r| view.db.get::<ActionDef>(&r.action));
@@ -137,7 +144,14 @@ fn press_held(world: &mut World, caller: &Caller, input: &str, dir: Option<Vec3>
         return Ok(format!("ok: {input} released"));
     }
     let when = when(world, me, input)?;
-    let note = predicted_note(world, me);
+    let mut note = predicted_note(world, me);
+    // A paired action is not predicted: the host starts it and the client takes it over.
+    if let When::Now(action) = &when
+        && !note.is_empty()
+        && world.resource::<ContentDb>().get::<ActionDef>(action).is_some_and(|d| d.pair.is_some())
+    {
+        note = " · the host starts it (a paired action is not predicted)";
+    }
     let (displaced, tap) = {
         let view = FighterView::of(world, me).ok_or("your body is not a complete fighter")?;
         let shown = shown_state(world, me);
@@ -649,10 +663,14 @@ fn damage_taken(In(call): In<Call<DamageTakenArgs>>, world: &mut World) -> ToolR
     Ok(format!("{who} {}: {now}", if changed { "now" } else { "unchanged, the timed window runs on" }))
 }
 
-/// Stagger a fighter now (its moveset's `stagger` action), as a poise break would.
+/// Stagger a fighter now (its moveset's `stagger` action). `poise=true` breaks its poise too, as
+/// a poise break does (the poise is 0 and broken for the stagger's length): a broken fighter is
+/// one a finisher can take.
 #[derive(Deserialize, JsonSchema)]
 pub struct StaggerArgs {
     pub id: Id,
+    /// Break the poise as well. Default false (the stagger action only).
+    pub poise: Option<bool>,
 }
 
 fn stagger_tool(In(call): In<Call<StaggerArgs>>, world: &mut World) -> ToolResult {
@@ -664,8 +682,24 @@ fn stagger_tool(In(call): In<Call<StaggerArgs>>, world: &mut World) -> ToolResul
     if world.get::<Dead>(e).is_some() {
         return Err(format!("{} is dead", call.args.id));
     }
+    let length = world
+        .resource::<ContentDb>()
+        .get::<MovesetDef>(&moveset)
+        .and_then(|m| m.stagger.as_ref())
+        .and_then(|a| world.resource::<ContentDb>().get::<ActionDef>(a))
+        .map(ActionDef::length);
+    let breaks = call.args.poise == Some(true);
+    if breaks && world.get::<Poise>(e).is_none() {
+        return Err(format!("{} has no Poise to break", call.args.id));
+    }
     if !stagger(world, e, StaggerCause::Dev) {
         return Err(format!("{} cannot stagger: its moveset `{moveset}` has no `stagger` action", call.args.id));
+    }
+    if breaks
+        && let (Some(len), Some(mut poise)) = (length, world.get_mut::<Poise>(e))
+    {
+        (poise.current, poise.broken, poise.since_hit) = (0.0, len.max(EPS), 0.0);
+        return Ok(format!("{} staggered, poise broken {len:.1}s", call.args.id));
     }
     Ok(format!("{} staggered", call.args.id))
 }
@@ -701,6 +735,41 @@ fn react_tool(In(call): In<Call<ReactArgs>>, world: &mut World) -> ToolResult {
     }
     let word = ["light", "heavy", "knockdown"][usize::from(tier) - 1];
     Ok(format!("ok: {} reacts {word}", call.args.id))
+}
+
+/// Make a fighter remember something now, as its moveset's `remember` would (`parried`,
+/// `dodged`): a context binding that needs it then holds. `seconds=0` forgets it.
+#[derive(Deserialize, JsonSchema)]
+pub struct RememberArgs {
+    pub id: Id,
+    pub key: String,
+    /// How long (s). Default: the moveset's own time for the key.
+    pub seconds: Option<f32>,
+}
+
+/// The longest a developer can make a fighter remember (s): a memory is a few seconds, and one that
+/// outlasts any session is a typo.
+const MAX_REMEMBER_SECONDS: f32 = 600.0;
+
+fn remember_tool(In(call): In<Call<RememberArgs>>, world: &mut World) -> ToolResult {
+    let e = call.args.id.entity(world)?;
+    let RememberArgs { id, key, seconds } = call.args;
+    let moveset = world.get::<Fighter>(e).map(|f| f.moveset.clone()).ok_or_else(|| format!("{id} is not a fighter"))?;
+    let def = world.resource::<ContentDb>().get::<MovesetDef>(&moveset).and_then(|m| m.remember.iter().find(|r| r.key == key)).cloned();
+    let seconds = match (seconds, &def) {
+        (Some(s), _) if s.is_finite() && (0.0..=MAX_REMEMBER_SECONDS).contains(&s) => s,
+        (Some(s), _) => {
+            return Err(format!("seconds={s} is not a time; give a number from 0 to {MAX_REMEMBER_SECONDS} (0 forgets)"));
+        }
+        (None, Some(d)) => d.seconds,
+        (None, None) => return Err(format!("the moveset `{moveset}` of {id} remembers no `{key}`, so it has no time for it; give seconds=")),
+    };
+    if seconds <= EPS {
+        return Ok(if forget(world, e, &key) { format!("{id} forgot {key}") } else { format!("{id} did not remember {key}") });
+    }
+    remember(world, e, &key, seconds);
+    let note = if def.is_none() { " (its moveset does not remember it: no binding reads it)" } else { "" };
+    Ok(format!("{id} remembers {key} {seconds:.2}s{note}"))
 }
 
 /// `step --until named:reacting`: some fighter runs one of its moveset's reaction actions.

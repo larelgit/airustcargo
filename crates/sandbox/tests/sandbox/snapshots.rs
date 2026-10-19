@@ -1112,6 +1112,74 @@ fn a_break_and_the_protection_after_it_come_back() {
     });
 }
 
+/// The entity of `id`.
+fn entity(app: &App, id: &str) -> Entity {
+    app.world().resource::<shards::ai_core::AiIndex>().get(AiId::parse(id).unwrap()).unwrap()
+}
+
+/// The player with the `contextual` moveset (B3) 1.8 m south of the skeleton e7, locked on to it;
+/// e7 with the `sparring` moveset, calm, its poise broken.
+fn next_to_a_broken_skeleton() -> App {
+    let mut app = sandbox::test_app(42);
+    calm_skeletons(&mut app);
+    calm_warden(&mut app);
+    ok(&mut app, "set", json!({"id": PLAYER, "component": "Fighter", "path": "moveset", "value": "contextual"}));
+    ok(&mut app, "set", json!({"id": "e7", "component": "Fighter", "path": "moveset", "value": "sparring"}));
+    ok(&mut app, "teleport", json!({"id": PLAYER, "x": 0, "z": 0, "y": 0}));
+    ok(&mut app, "teleport", json!({"id": "e7", "x": 0, "z": -1.8, "y": 0}));
+    step(&mut app, 2);
+    ok(&mut app, "lock_on", json!({"target": "e7"}));
+    ok(&mut app, "stagger", json!({"id": "e7", "poise": true}));
+    step(&mut app, 1);
+    app
+}
+
+/// Context and paired actions (B3): taken mid-pair (the finisher holds the skeleton, its victim
+/// action runs, the context and the memories are live), and with a guard's press armed.
+#[test]
+fn mid_pair_and_with_a_guard_press_armed() {
+    use shards::action::{ContextInputs, GuardArm, Paired, Pairing};
+    let mut app = next_to_a_broken_skeleton();
+    assert!(app.world().get::<ContextInputs>(entity(&app, PLAYER)).is_some(), "the finisher is bound");
+    ok(&mut app, "light_attack", json!({}));
+    step(&mut app, 4);
+    assert_eq!(action(&app, PLAYER), "spar_finisher");
+    assert!(app.world().get::<Pairing>(entity(&app, PLAYER)).is_some());
+    assert!(app.world().get::<Paired>(entity(&app, "e7")).is_some());
+    assert_eq!(action(&app, "e7"), "spar_finished");
+    assert_continues_alike("mid-pair", app, |app| {
+        step(app, 90);
+    });
+
+    // A live memory, and a run halted by its victim's death.
+    use shards::action::{Memory, RunHalted};
+    let mut app = next_to_a_broken_skeleton();
+    ok(&mut app, "remember", json!({"id": PLAYER, "key": "parried", "seconds": 5}));
+    ok(&mut app, "light_attack", json!({}));
+    step(&mut app, 4);
+    assert_eq!(action(&app, PLAYER), "spar_finisher");
+    let victim = entity(&app, "e7");
+    shards::action::kill(app.world_mut(), victim, None, None);
+    step(&mut app, 2);
+    assert!(app.world().get::<RunHalted>(entity(&app, PLAYER)).is_some(), "the run is halted");
+    assert!(app.world().get::<Memory>(entity(&app, PLAYER)).is_some(), "the memory is live");
+    assert_continues_alike("a halted run and a memory", app, |app| {
+        step(app, 90);
+    });
+
+    let mut app = next_to_a_broken_skeleton();
+    ok(&mut app, "heal", json!({"id": "e7"}));
+    ok(&mut app, "block", json!({}));
+    step(&mut app, 3);
+    assert!(app.world().get::<GuardArm>(entity(&app, PLAYER)).is_some_and(|a| a.run.is_some()), "the guard took a fresh press");
+    assert_continues_alike("guard armed", app, |app| {
+        ok(app, "block", json!({"on": false}));
+        step(app, 6);
+        ok(app, "block", json!({}));
+        step(app, 40);
+    });
+}
+
 #[test]
 fn a_barrier_a_timed_multiplier_and_a_proc_gate_come_back() {
     use shards::action::{Barrier, DamageTaken, ProcGates};

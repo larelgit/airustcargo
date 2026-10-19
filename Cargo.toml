@@ -21,6 +21,7 @@ members = [
     "crates/shards_hitstop",
     "crates/shards_rules",
     "crates/shards_npc",
+    "crates/shards_encounter",
     "crates/shards_world",
     "crates/shards_net",
     "crates/shards_steam",
@@ -126,6 +127,7 @@ shards_motion = { path = "crates/shards_motion" }
 shards_action = { path = "crates/shards_action" }
 shards_level = { path = "crates/shards_level" }
 shards_npc = { path = "crates/shards_npc" }
+shards_encounter = { path = "crates/shards_encounter" }
 shards_save = { path = "crates/shards_save" }
 shards_settings = { path = "crates/shards_settings" }
 shards_locale = { path = "crates/shards_locale" }

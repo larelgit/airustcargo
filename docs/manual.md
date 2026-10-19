@@ -36,6 +36,7 @@ Instructions for agents are in [AGENTS.md](../AGENTS.md) (the short core and an 
 8. [Levels from Blender (E4.2)](#levels-from-blender-e42)
 9. [World and generation (E5)](#world-and-generation-e5)
 10. [Navigation and NPCs (E6)](#navigation-and-npcs-e6)
+    - [Encounters (G9)](#encounters-g9)
 11. [The AI layer](#the-ai-layer): [what the AI sees](#what-the-ai-sees) · [tools](#tools) · [time and determinism](#time-and-determinism) · [groundwork for networking](#groundwork-for-networking-phase-c) · [transports and the CLI](#transports-and-the-cli) · [screenshots](#screenshots) · [agents](#agents)
 12. [Scenarios (E11)](#scenarios-e11)
 13. [Invariants (E11)](#invariants-e11)
@@ -81,7 +82,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 168 definitions in 48 files
+cargo shards content check                 # ok: 186 definitions in 55 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -104,7 +105,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 168 definitions in 48 files
+# ok: 186 definitions in 55 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -318,6 +319,7 @@ and it calls their tools by name. `shards_look` (how meshes are drawn) knows onl
 | `crates/shards_net` | networking and co-op (E7). The channel layer (E7.2), without Bevy: `Transport` transports (in memory: `MemoryHub`, deterministic; UDP for LAN), simulated delay and loss (`LinkConditions`, `--net-sim`), `Link` for reliable and unreliable messages, blobs, compression, acknowledgements, RTT and statistics. On top of it, on Bevy: a co-op session (`NetPlugin`: host, client, replication, `net_*` tools) and the stand, a host plus its clients in one process (`Stand`) |
 | `crates/shards_save` | saves (E8.1–5): sections and their registry, slots, the `shards-save/1` envelope, migrations, atomic writes with three copies and recovery, `save_now` and autosave, the `save_*` tools, `load_game` and `continue_game` ("Continue" in the main menu); the umbrella crate registers the engine sections (`region`, `position`, `vitals`) |
 | `crates/shards_npc` | enemies (E6): the behaviour state machine, perception, the combat director (tokens), the attack planner, the navmesh per tile (`nav`: baking, stitching, routes), agents and leash |
+| `crates/shards_encounter` | encounters (G9): waves of enemies at an anchor, started by a volume or a distance, counted level by level, rewound on a wipe and reset when the players leave; the `encounter` and `encounter_rules` content kinds, `EncounterAnchor`, `EncounterRole`, `EncounterRuns`, the events, the `encounter*` tools and the `encounter.*` invariants (see "Encounters (G9)") |
 | `crates/shards_settings` | player settings (E8.6): groups for graphics, audio, controls and accessibility, built on Bevy's settings (`bevy_settings`), `settings.toml`, the `settings`/`settings_set` tools, a window for the graphics settings |
 | `crates/shards_ui` | UI (E9): screens and themes in the content (`screen`, `theme`), the screen stack, focus and navigation, value sources and button actions, the `ui_*` tools, the `UI` section in `observe`, the main menu (`main_menu`); with the `render` feature, drawing on Bevy UI with AccessKit labels and the loading image |
 | `crates/shards_locale` | localization (E9.4): languages in the content (`locale`), texts in Fluent (`assets/locale/<language>/*.ftl`) with parameters and plural forms, a fallback language, the `locale.language` setting and switching the language on the fly, the `locale` and `text` tools, hot reload of the files |
@@ -518,7 +520,7 @@ The game's numbers and definitions live in files, not in code: attacks, prefabs,
 - The engine registers its own content kinds: `prefab`, `locomotion`, `action`, `moveset`, `status`, `combat_tuning`, `animset`,
   `input_map`, the camera `camera` and `lock_on`, levels `level`, world `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`,
   voxels `voxel_palette` and `voxel_region`, enemies `behavior`, `perception`, `director`, `attack_plan`, `npc_tuning` and `nav`,
-  sound `audio`, `sound` and `music`, screens `screen` and `theme`, `locale`, `save`, `net`, `perf`, `devmenu`, mesh looks `look` (see "Stylised materials (E10.1)"),
+  encounters `encounter` and `encounter_rules` (see "Encounters (G9)"), sound `audio`, `sound` and `music`, screens `screen` and `theme`, `locale`, `save`, `net`, `perf`, `devmenu`, mesh looks `look` (see "Stylised materials (E10.1)"),
   foliage `scatter` (see "Foliage and small objects (E10.2)"), effects `effect` and `fx` (see "Effects and decals
   (E10.3)"), hit stop `hitstop` (see "Hit stop (C2)"), rules `rule_set` and `rules` (see "Rules (C3)"), with the `steam` feature, achievements `achievement` (see "Steam (E10.5)"). The game adds its own: the sandbox has `layout` and `bounds`, the template has
   `arena`.
@@ -593,8 +595,8 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 168 definitions in 48 files
-  action  46
+content: 186 definitions in 55 files
+  action  52
   animset  1
   attack_plan  3
   audio  1
@@ -606,6 +608,8 @@ content: 168 definitions in 48 files
   director  2
   dungeon  0
   effect  6
+  encounter  2
+  encounter_rules  1
   fx  1
   hitstop  1
   input_map  0
@@ -615,7 +619,7 @@ content: 168 definitions in 48 files
   lock_on  1
   locomotion  3
   look  15
-  moveset  10
+  moveset  11
   music  1
   nav  1
   net  0
@@ -623,9 +627,11 @@ content: 168 definitions in 48 files
   perception  3
   perf  2
   poi  4
-  prefab  7
-  region  2
+  prefab  11
+  region  3
   room  0
+  rule_set  0
+  rules  0
   save  0
   scatter  6
   screen  3
@@ -633,13 +639,13 @@ content: 168 definitions in 48 files
   sound  16
   status  2
   theme  0
-  tile  13
+  tile  16
   tile_map  1
   voxel_palette  1
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 168 definitions in 48
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 186 definitions in 55
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -1212,7 +1218,7 @@ A hit can ask for more than damage: a **reaction tier** (what the target is put 
                reaction_armor: 0, reaction_immunity: 0.2, reaction_protection: 1.0, break_protection: 3.0) }
 ```
 
-**The pipeline after B1.** `detect` (a hit with `LineOfSight` skips a target when a ray from the attacker's chest to the target's meets a `LayerMask::WORLD` collider; the two bodies' own colliders never count; a skipped target is not marked, so it can still be hit later in the same window; the chest is `CombatTuning::sight_height`, 0.6, of the body's height) → `resolve` fills a `DamageCtx` (`credit`, `dir`, `reaction`, `reaction_armor`, `knockback`, `taken`, `guard_mult`, `weight`, `ignore_reason`) → `modifiers` (god mode, i-frames and perfect evades, guards with per-hit costs and shares, `Armor`) → the game's hooks → `apply`. `apply` works out a **plan** first (does the poise break, does the target react), so `Damaged` can carry its `weight` and `reaction` while still being triggered before death, statuses and poise, as it always was. Events name the credited entity (`DamageCtx::credit`) as `attacker` or `killer`; `source` is the combat object that hit (`DamageCtx::attacker`) when it is not the credited entity: a hook that sets `credit` to an owner gets `source` set to the object on `Damaged`, `Blocked`, `GuardBroken`, `Parried`, `Evaded`, `PerfectEvaded` and `Died` (`kill_with` for a game that kills itself; `kill` leaves it `None`). A parry staggers `DamageCtx::attacker`, the object that hit. A status a hook appends to a blocked hit is applied (the block applies whatever is left in the context after the hooks, by default the `status_mult` share). `Damaged::ignore_reason` is `None` for a hit that landed; a hook that sets `Ignored` without a reason prints `ignored`. `HitWeight::Counter` and `Finisher` and `IgnoreReason::Downed` are reserved: the engine never sets them, a game hook may.
+**The pipeline after B1.** `detect` (a hit with `LineOfSight` skips a target when a ray from the attacker's chest to the target's meets a `LayerMask::WORLD` collider; the two bodies' own colliders never count; a skipped target is not marked, so it can still be hit later in the same window; the chest is `CombatTuning::sight_height`, 0.6, of the body's height) → `resolve` fills a `DamageCtx` (`credit`, `dir`, `reaction`, `reaction_armor`, `knockback`, `taken`, `guard_mult`, `weight`, `ignore_reason`) → `modifiers` (god mode, i-frames and perfect evades, guards with per-hit costs and shares, `Armor`) → the game's hooks → `apply`. `apply` works out a **plan** first (does the poise break, does the target react), so `Damaged` can carry its `weight` and `reaction` while still being triggered before death, statuses and poise, as it always was. Events name the credited entity (`DamageCtx::credit`) as `attacker` or `killer`; `source` is the combat object that hit (`DamageCtx::attacker`) when it is not the credited entity: a hook that sets `credit` to an owner gets `source` set to the object on `Damaged`, `Blocked`, `GuardBroken`, `Parried`, `Evaded`, `PerfectEvaded` and `Died` (`kill_with` for a game that kills itself; `kill` leaves it `None`). A parry staggers `DamageCtx::attacker`, the object that hit. A status a hook appends to a blocked hit is applied (the block applies whatever is left in the context after the hooks, by default the `status_mult` share). `Damaged::ignore_reason` is `None` for a hit that landed; a hook that sets `Ignored` without a reason prints `ignored`. A hit's `weight` is at least its action's `weight` (a floor, B3; none by default), and a paired action's strike is at least `Finisher`; a game hook may still set it. `IgnoreReason::Downed` is reserved: the engine never sets it, a game hook may.
 
 - **Guard.** The cost of a block is `hit.guard_damage` (else the hit's damage) times `stamina_per_damage`. A perfect guard pays `perfect_cost_mult` of it (`Parried { stamina }`, journal `, -10 stamina` only when above 0); when it cannot pay, the guard breaks, perfect or not, and spends all the stamina. `parry_staggers: false` leaves the attacker alone: the game's `Parried` observer decides (poise through `poise_damage`, a recoil through `react`). A guard break lets `break_damage_mult` (else `damage_mult`) of the damage through, a block `damage_mult`; a block lets `status_mult` of the status buildup through, a break `break_status_mult` (0, the old rule, lets none). A break forces the moveset's `guard_broken` action (then `Staggered { cause: GuardBroken }`), else its `stagger`; `guard_broken_push: (scale, decel)` starts a push at `scale` times the body's current flat velocity. **The guard is decided before the hooks**, from the damage as the hit defines it: a hook that rescales damage must also change `outcome` and `guard_mult` if it wants Blocked versus GuardBroken decided again; the engine does not redo the guard after the hooks.
 - **Perfect evade.** A hit that meets i-frames while a `perfect_iframes` span is also open is `Outcome::PerfectEvaded`: `Evaded`, then `PerfectEvaded`. Not for a hit with `NoPerfectEvade` (ground zones), nor for one that does no damage. The attacker's ledger marks the defender at the first detection, so it is once per swing. Every `perfect_iframes` span must lie inside the i-frames. **`perfect_iframes` and `armor` spans are sampled at the instant of the tick** (`start <= t <= end`), not over the tick: the roll's `Secs(0.105, 0.215)` is open in ticks 7 to 12 (6 ticks at 60 Hz), not 13. Content copied from a source that samples the same way keeps its literal numbers. (`iframes`, `hyper_armor`, guard and hit windows keep the older over-the-tick rule.)
@@ -1379,6 +1385,198 @@ run is dropped and the body goes back to the host's state.
 **What the AI sees.** Describe: `charging, turns in 0.12s` while the starting input is held (`charging, turns when the stamina is
 there` once it waits for stamina), `missed +0.60s` after a whiff. Journal: `e5 lunge missed: +0.60s recovery`, and the
 single slot's drops as `rejected` lines. `step --until named:charging` waits for any fighter holding a charge.
+
+### Context and paired actions (B3)
+
+What a press starts can depend on the moment: the light attack is a finisher next to a broken enemy, a counter just after a
+parry, a cut out of a roll, and the plain light otherwise. A guard can open its perfect window only on a fresh press. A paired
+action takes a victim and holds it for its whole run. All of it is content, off by default and unserialized at its default, so
+content hashes and the reference replays of content made before it do not change; a fighter whose moveset uses none of it
+never carries any of the new components.
+
+```ron
+// content/combat/context.action.ron (the sandbox)
+{
+    "spar_finisher": (
+        net_id: 150,
+        phases: [("lunge", 0.25), ("strike", 0.15), ("recovery", 0.45)],
+        hits: [(span: Phase("strike"), shape: Cone(range: 2.6, angle: 120), damage: 25, knockback: 4.0)],
+        iframes: [Phases("lunge", "recovery")],
+        displacement: [(0.0, 0.0), (0.25, 0.6)],
+        pair: (
+            select: (state: Broken, range: 2.0, height: 1.2, angle: 100, line_of_sight: true, prefer_target: true, slack: 0.3),
+            victim_action: "spar_finished",     // forced on the victim when the pair starts
+            only_victim: true,                  // the finisher's hits find only its victim
+            hold_break: 0.55,                   // the victim's break lasts at least this long from the start
+            ends_break: true,                   // the first landed strike ends the break (once)
+            break_range: 4.0,                   // farther apart than this: the pair is lost
+        ),
+    ),
+    "spar_finished": (net_id: 151, phases: [("held", 1.0)]),
+    "spar_counter": (net_id: 152, /* .. */ weight: Counter),      // the floor of its hits' `Damaged::weight`
+    "spar_parry_guard": (
+        net_id: 155,
+        phases: [("raise", 0.18), ("hold", 0.3), ("lower", 0.1)],
+        hold: (input: "block", span: Phase("hold")),
+        guard: (span: Phases("raise", "hold"), perfect: Phase("raise"), perfect_needs_press: (gap: 0.35, entry: 0.15)),
+    ),
+}
+// content/combat/context.moveset.ron
+{ "contextual": (
+    inputs: {"light": "spar_jab", "dodge": "spar_dodge", "block": "spar_parry_guard" /* .. */},
+    remember: [
+        (key: "parried", on: Parried, seconds: 0.5, forget: [Reacted, Started("dodge"), Used]),
+        (key: "dodged", on: Ended("dodge"), seconds: 0.3, forget: [Hurt, Used]),
+    ],
+    context: [                                   // per input, the first binding whose `when` all hold wins
+        (input: "light", action: "spar_finisher", when: [Pair]),
+        (input: "light", action: "spar_counter", when: [Remembers("parried"), StaminaAbove(0.0)]),
+        (input: "light", action: "spar_dodge_cut", when: [Remembers("dodged")]),
+    ],
+) }
+```
+
+**Memories** (`MovesetDef::remember: [(key, on, seconds, forget)]`). When `on` happens to the fighter it remembers `key` for
+`seconds` (again: the time starts over); when one of `forget` happens it forgets it. `on` is `Parried`, `PerfectEvaded`,
+`Blocked`, `Evaded`, `Landed` (a hit of its that was not ignored), `Hurt` (damage above 0), `Ended(tag)` (an action of its with
+the tag ended, by any end but a charge's turn) or `Started(tag)`; `forget` is `Hurt`, `Reacted` (a reaction, a stagger or a
+guard break started on it), `Started(tag)` or `Used` (a binding that needs the memory started its action). An event's forgets
+go first, then its remembers. The lazy component `Memory` holds the live ones, sorted by key. A memory ages in the fighter
+chain of every tick from the tick it is made, so one of 0.5 s made on tick `N` is seen by the presses of ticks `N+1` to `N+29`.
+`remember(world, entity, key, seconds)` and `forget(world, entity, key)` are for a game.
+
+**Bindings** (`MovesetDef::context: [(input, action, when)]`). `ActionSystems::Context`, the first of the tick's action
+systems, resolves every fighter's bindings in `AiId` order into the lazy component `ContextInputs { bound: [(input, action,
+binding, victim)] }`: for each input, the first binding in content order whose `when` all hold. `when` is `Remembers(key)`,
+`Pair` (the binding's action is paired and its `select` finds a victim now; the victim is kept with the binding),
+`StaminaAbove(v)` (a fighter without stamina always has enough) or `Condition(name)` (a game's `add_context_condition(name,
+fn(&World, Entity) -> bool)`). A binding never holds for the action the fighter runs now (a running finisher does not restart
+itself through a cancel window), and a dead fighter has none.
+
+**Precedence.** A bound input starts its bound action wherever the input would start anything: from idle, from a buffered
+press, from a held input, and in a cancel window, where it beats the window's own target for that input (a `Combo` link or an
+action override). There is no per-binding priority field: the order of `context` is the order, and the sandbox lists the
+finisher, then the counter, then the cut out of a roll; the moveset's plain action is the fallback. `resolve(world, entity)`
+gives the same answer at any time (the tools answer from it), and `can_start` reads it as `FighterView::context`.
+
+**The guard's press** (`GuardDef::perfect_needs_press: (gap, entry, rearm)`; 0.35 s, 0.15 s and `true` by default). A press of
+a guard's input is the button going down: a press in `Intent::pressed`, or the input becoming held. A press is **fresh**
+(armed) when the previous one is at least `gap` old, or there was none. A guard that starts within `entry` of a fresh press, and
+is the first guard to start from it, keeps its perfect window. Any other start has none and only blocks: a held guard that
+comes back after an attack, a roll or a hit; a press too soon after the last one; a guard that starts more than `entry` after
+its press. A parry makes the next press fresh whatever the gap (`rearm`). Without the field, every start of the guard has its
+perfect window, as before. The press is stamped by tick into the lazy component `GuardArm { pressed, armed, down, run }`.
+`ActionSystems::Context` keeps it and removes it once it says nothing an absent one would not. The perfect window is closed in
+one place, `gate_perfect`, after every refresh of a run's windows (the machine, `force_action`, a client's prediction).
+Godot's quirk of stamping the press when the guard starts, not when the button goes down, is not reproduced.
+
+**Paired actions** (`ActionDef::pair`; a paired action has no `charge`, a content error, since the charge would turn the run into another action that the pair does not name). When a paired action starts, the machine notes it, and `start_pairs` (in
+`ActionSystems::Effects`, before the effects) takes the victim: the binding's victim if it is still free, else what `select`
+finds now. `select: (team, state, range, height, angle, line_of_sight, prefer_target, slack)` asks for a fighter with
+`Health` that is alive and not held by another, and that:
+
+- is of another team (`Hostile`, the default) or of the fighter's own (`Ally`);
+- is in the state (`Broken`: its poise is broken; `Any`);
+- is within `range` plus its body radius on the ground plane, and within `height` up or down;
+- is within `angle` degrees (a half-angle) of the body's facing. Not the lock-on direction and not the stick, as in the
+  original game's finisher candidate: a player running away from a broken enemy has no finisher on it, and a locked player
+  whose body looks elsewhere is judged by the body (a test pins it);
+- has no world collider between the two chests, when `line_of_sight` is set;
+- with `slack`, has no other living player of the fighter's team nearer to it by more than `slack` metres (two players next to
+  one broken enemy: only the nearer gets the finisher).
+
+The lock-on target wins when it qualifies (it must pass the same tests, the angle too) and `prefer_target` is set; otherwise the nearest wins, ties by `AiId`. With no victim
+the action runs on its own.
+
+The pair puts the lazy components `Pairing { victim, action, instance, broke_once }` on the fighter and `Paired { by, exclusive
+}` on the victim. It forces `victim_action` on the victim, keeps a broken victim broken for at least `hold_break` from the
+start, and triggers `PairStarted { attacker, victim, action }`. While it lasts:
+
+- the fighter's hits find only its victim (`only_victim`), for the whole run: a finisher that kills its victim, or loses it to
+  a despawn, goes on with its lunge stopped and hits nobody else (`RunHalted` keeps `only_victim` after the `Pairing` is
+  gone). Other attackers can still hit the victim unless the pair is
+  `exclusive` (kept for revives: then nobody else's hits find it);
+- **the strike**: the pair's first hit that lands on a victim still in the pair's state ends its break (`ends_break`, once a
+  pair; the break protection starts) and forces the reaction `strike_reaction` (3, a knockdown, by default; 0: none, the
+  damage lands, `Damaged::reaction` is `None` and the victim keeps its held pose) with `Reaction::forced` and the hit's
+  knockback. It ignores the victim's armour and immunity (`ignore_armor`: confirmed against combat-actor 4.11,
+  `_receive_finisher`, which forces `hit_react` with no armour test, sets no immunity and gives no hit grace), starts no
+  immunity, and replaces the held action; no statuses and no poise damage come with it. The hit's weight is at least
+  `Finisher`, and the pair's weight and reaction hold whatever the barrier, the damage-taken multipliers and the hooks do to the
+  damage (a barrier that swallows the strike, a `DamageTaken` of 3: a test pins both). `DamageCtx::pair` tells a damage hook the
+  hit is such a strike before it runs, with `weight` already raised to `Finisher`: a finisher's formula keys on it;
+- the victim's hold and broken poise refuse every other attacker's reactions, not the holder's;
+- `tend_pairs` (fighter chain, `AiId` order) ends the pair. It is `Cut` when the fighter's run is no longer the pair's. It is
+  `Lost` when the victim is gone or dead (the run goes on with its lunge stopped: the lazy `RunHalted { instance }` zeroes the
+  run's own motion until the run ends), or when the two are farther apart than `break_range` (the run is cut). `cancel_on_hurt`
+  cuts the run on damage above 0 to the fighter.
+
+Every end goes through `release_pair(world, attacker, end)`. It takes both marks off, cuts the victim's `victim_action` unless
+the pair `Finished` with the victim alive (the strike's reaction already replaced it, or the held pose runs out), and triggers
+`PairEnded { attacker, victim, action, end }` (`Finished`, `Lost`, `Cut`; `victim` is `None` when it no longer exists). A
+finisher whose strike kills its victim ends as `Lost` (the victim is dead when `tend_pairs` looks), never `Finished`, and the
+journal says `lets go of e7 (lost)`: a game that keys on the end of a pair (a lane that rewards finishers) listens to `Damaged`
+with `weight: Finisher` or to `Died`, not to `PairEnd::Finished`. When the attacker dies mid-pair the pair is `Cut` and the
+victim's held action is cut with it, so its broken poise ends with that action (the victim is free at once; no ruling asks for
+more).
+`cut_action(world, entity)` ends a run with `ActionEnded { end: Interrupted }`.
+
+**Prediction and co-op.** Bindings, memories, the guard's press and pairs are decided on the host: `ActionSystems::Context` and
+`start_pairs` run in the simulation, and their observers return at once on a machine that does not simulate. Their components
+replicate like any other. A client's prediction starts the bound action from its copy of `ContextInputs` (a light that is plain there is predicted
+as the plain light), and the host resolves the press on the tick it is stamped with, from its own context and with its own
+choice of victim; it never takes the client's.
+
+**A paired action is not predicted** (13a, "Context staleness"). The stand test `context_staleness_around_the_break_is_counted`
+presses light on the client from 9 ticks before to 9 ticks after the host breaks the enemy, and from 30 to 46 ticks after (the
+end of the stagger), over 150 ms and 2 % loss. With the finisher predicted, every press near the end of the stagger was
+mispredicted (the host's break had lapsed before the stamped tick: 10 of 10 from 30 ticks on), and every press in the window
+before the client's copy showed the finisher was a predicted jab the host turned into a finisher (18 of 19). So the client does
+not predict an action with `pair`: the press is let go, the host starts the finisher on its own tick and the client takes
+the run over (the answer of `light_attack` says `the host starts it`). The finisher therefore starts on a client about a round
+trip after the press. What stays: a press made before the client's copy shows the finisher is predicted as the plain light and
+replaced by the host's finisher when it comes (`net: predicted spar_jab not confirmed`, counted in `mispredicted`: 18 of 19
+trials in that window, 0 from 9 ticks on). The test with two players next to one broken enemy
+(`the_slack_handoff_between_two_players_is_counted`, 12 trials, the second player stepping in around the first one's press)
+had exactly one finisher each time, taken by whoever the host found nearer.
+
+Known co-op limitation (the stale window): for about half a round trip after the host's break, a client still shows a jab
+that the host replaces with the finisher through the predictor's reconcile (18 of 19 presses in that window, 0 outside it). It
+is accepted for now, no host-tick resolution is built, and it is an item for the M8 co-op feel check.
+
+**The guard's press, predicted.** A client runs the same press rule on its own `Intent` (`step_arm`, the function the host's
+`arm_guard` calls; its result is the predictor's own `GuardArm`), so a guard it starts shows the perfect window the host will
+give it, from the first tick, whenever the presses agree. Once the host confirms the start, the host's `GuardArm` decides what
+is shown. A test compares the shown window with the host's tick by tick (122 shared ticks, 22 with a perfect window, 0 differ).
+`PairStarted` and `PairEnded` travel to clients.
+
+**What the AI sees.** Describe: `remembers parried 0.32s`, `light -> spar_finisher on e7` (the bound inputs), `pairing e7`,
+`held by e5`, `guard press armed` and `guard armed (perfect window)`, and on a possible victim `finishable by e5`. That last
+one is derived from the players' bindings each time it is asked; it is not a component. Journal: `e5 takes e7 with
+spar_finisher`, `e5 lets go of e7 (finished)` (or `lost`, `cut`). Conditions: `step --until named:pair_ready` (some fighter's
+context binds a paired action on a victim), `named:paired` (some pair runs). Dev tools: `remember id=e5 key=parried
+seconds=0.5` (0 forgets; without `seconds`, the moveset's own time) and `stagger id=e7 poise=true` (breaks the poise for the
+stagger's length, as a poise break does). The HUD source `you.finisher` is a flag: an input of the viewer is bound to a paired
+action on a victim now. The engine rules `action.pairs_match` and `action.memory_sane` stop the game on a broken pair or
+memory.
+
+**State.** `Memory`, `ContextInputs`, `GuardArm`, `Pairing`, `Paired` and `RunHalted` are lazy components of `AiId` entities:
+snapshots, replay checks and co-op clients get them by the default rules. `ContextConditions` (registered at build time) and
+`PendingPairs` (the pairs the machine started, taken in the same tick) are not simulation state. The guard's press rule is
+read from content only for the guards that have it (the scan peeks at the others), so the replays of content made before B3
+keep their `content` parts. The scan runs for every fighter every tick (a few hash lookups per input of its moveset); it is not
+cached because a content reload could make a cache stale. A guard pressed that never starts leaves a `GuardArm` for
+`gap` seconds, and replay checks read it only through the fighters' hashed state. NPC planning (`shards_npc`) plans the
+moveset's plain action for an input: it does not see `ContextInputs`, so an NPC whose moveset has `context` is planned for the
+plain action while the machine starts the bound one; give such an NPC no bindings, or plan its bound actions as their own
+inputs.
+
+**Content checks.** `Recall::Ended`, `Recall::Started` and `Forget::Started` name a tag that some action must carry; a tag no
+`ActionDef` has is a content error (a typo would otherwise never fire). The `remember` tool takes 0 to 600 seconds.
+
+**Not in B3.** A `Downed` pair state (B5) and an "intangible" exclusion (B2c). Two parts of Godot's guard behaviour (design
+13.11) are not built and have no ruling: "a guard press cancels a queued light or heavy" and "a guard cancel from recovery only
+on a fresh press". The ledger rows C26-C28 only settle the arming rule and the press-stamp quirk. They wait for a ruling.
 
 ### Body state: barrier, damage taken, status rules (B2b)
 
@@ -2134,7 +2332,7 @@ The `rest` pause counts down only while the NPC is not busy with any action. A s
 
 Every draw comes from the NPC's own `SimRng` stream with its own salt.
 
-**Press on decision.** `press_on_decision: true` on a plan makes the planner ask the director for a token, make a new choice and press only on the NPC's decision ticks (`BehaviorDef::think`; `NpcThink.decided` is the tick of the last one, shown by `npc_state` under `think`). The reason is the design: the technical design has the brain decide at 5-10 Hz, and the attack press is part of that decision, so the grant, the choice and the press happen on one tick and no token sits idle until the next decision. Between two decisions an NPC keeps the choice it made and walks into its window (with `in_range_only` it chooses again on decision ticks only); an NPC with no choice yet stands. The token keeps its place in the queue between decisions. Off (the default), any tick; a behaviour without `think` decides every tick, so there the field changes nothing. It serializes nothing at its default.
+**Press on decision.** `press_on_decision: true` on a plan makes the planner ask the director for a token, make a new choice and press only on the NPC's decision ticks (`BehaviorDef::think`; `NpcThink.decided` is the tick of the last one, shown by `npc_state` under `think`). The reason is the design: the technical design has the brain decide at 5-10 Hz, and the attack press is part of that decision, so the grant, the choice and the press happen on one tick and no token sits idle until the next decision. Between two decisions an NPC keeps the choice it made and walks into its window (with `in_range_only` it chooses again on decision ticks only); an NPC with no choice yet (with `in_range_only`, nothing in reach) keeps closing in toward the nearest window that could fit, exactly as on a decision tick; only the choice, the token and the press wait. The token keeps its place in the queue between decisions. Off (the default), any tick; a behaviour without `think` decides every tick, so there the field changes nothing. It serializes nothing at its default.
 
 **Conditional options.** `when: ["enraged", ("health_below", {"fraction": 0.5})]` on an option (the same conditions as a behaviour's transitions, `!` negates) keeps the option out of the choice, and out of the director's reckoning of whether the NPC has anything to strike with, while the conditions do not all hold. A phase that adds a move or takes one away is a condition on the option, not a second plan. The conditions are evaluated with the NPC's other decisions (`NpcSystems::Decide`, on the world as it is) and the result is kept on the NPC as `NpcOptions { allowed }`, a component that only NPCs whose plan has gated options carry; an option that has `when` and no entry there (the NPC's first tick) is closed. An unknown condition is named once in the journal and never holds. `npc_state` lists `plan.options: {open, closed}` for such a plan.
 
@@ -2142,7 +2340,7 @@ Every draw comes from the NPC's own `SimRng` stream with its own salt.
 
 ### Leash, home and zones
 
-`Home { pos, leash }`: where the NPC's home is and how far it can go from it, in metres. The NPC's targets stay inside the leash, with a 0.5 m margin for the body. The conditions `target_in_leash`, `beyond_leash` and `at_home` let the behaviour turn the NPC back home. The arena skeletons in the sandbox have a 30 m leash, the guard 26 m, the camp skeletons in the wilds 12 m, and the lair's guard 10 m. An NPC in `Dormant` (farther than the active radius from every player, see "World and generation (E5)") does not think or move. It wakes up on the tick a player comes close.
+`Home { pos, leash }`: where the NPC's home is and how far it can go from it, in metres. The NPC's targets stay inside the leash, with a 0.5 m margin for the body. The conditions `target_in_leash`, `beyond_leash` and `at_home` let the behaviour turn the NPC back home. The arena skeletons in the sandbox have a 30 m leash, the guard 26 m, the camp skeletons in the wilds 12 m, and the lair's guard 10 m. An NPC in `Dormant` (farther than the active radius from every player, see "World and generation (E5)") does not think or move. It wakes up on the tick a player comes close. A group of enemies spawned by an encounter ("Encounters (G9)") goes back to its home the same way when the players leave or are wiped: the encounter's `pull_back` heals the survivors of a placed wave and forces the behaviour state it names, and the NPC condition `encounter_returning` is true until they are home.
 
 Conditions for `step --until`: `named:npc_attacking` (someone's attack is under way), `named:npcs_calm` (no one has a target), `named:npc_beyond_leash` (an active NPC is a metre beyond its leash; the step meant to keep the NPC in its zone must not stop on this), `named:npc_detour` (the NPC walks a route of several legs because the target is out of sight), `named:npc_avoiding` (an active NPC leaves its route to go around another body; see "Avoiding bodies"), `named:npc_engaged` (an active NPC with a target in one of the states `chase`, `attack` or `wait_token` is fighting; a calm NPC that sees someone is not), `named:npc_near` (a living player is closer than one and a half times the active NPC's sight range: the NPC is about to notice them). The last two are what the music listens for (see "Audio").
 
@@ -2369,6 +2567,235 @@ In the window, the same things are drawn as gizmos: a line above the NPC, a line
 - Changing a tile, a level file, the prefab of its geometry, the `agent` body, the body of any class or the `nav` settings needs `--bake-nav` (it bakes all classes). Without it, the content names the stale file of each class, and the game bakes it when the region loads.
 - Avoidance between NPCs is local (a fan of speeds over the `horizon`), with no coordinated planning: a pack that arrives single file lines up in a second row behind the first ones. It sees bodies, not walls or drops: a sidestep at an edge can carry the NPC down by itself (the direct line to the target is checked again after the step, the step itself is not). On a narrow ledge, set `weight: 0` on the behaviour.
 
+## Encounters (G9)
+
+`shards_encounter` runs encounters: groups of enemies that come in waves at a place, start when the players arrive, end when
+the last counted member falls, rewind when the group of players is wiped, and reset when the players leave. The engine has the
+mechanism (anchors, waves, counts, spawn points, budgets, limits, the start, wipe and reset rules, the events and the tools); a game has
+every "what" (which prefabs, how many, how many seconds, how far, which messages) in content. No engine default is a number from a
+particular game: seconds default to 0 and optional rules to none.
+
+```text
+anchor entity ──► run (EncounterRuns) ──► Idle ► Armed ► Running ◄► Between ──► Won
+ EncounterAnchor     one per key                           │           │
+ in a prefab, a      state, wave,                          ▼           ▼
+ POI, a tile piece   members, timers                     Wiped ──► (resume) ──► Running / Idle
+                                                           │
+                                                           └──► Resetting ──► Idle
+```
+
+### Anchors and keys
+
+An encounter stands wherever an entity with `EncounterAnchor { encounter, key }` stands: a point of interest's prefab
+(`PoiDef.prefab`), a tile's `Prefab` piece, a prefab node of a level file, or a game's own `place_encounter(world, encounter, key,
+transform)`. `shards_world` does not change, and tile regions, voxel regions and hand-made levels place encounters the same way.
+A run is keyed `<region>/<anchor key>`: `<region>` is the active region's id (`world` outside any region), and the anchor key is
+`EncounterAnchor.key`, or `<encounter>@<x>,<z>` in whole decimetres when it has none. A `once` encounter's anchor needs a key (a
+won encounter is remembered by it; content checks it). Two anchors with one key are a placement mistake: the first in position
+order wins and the other is said once in the journal. A run whose anchor is gone (its region unloaded) is dropped and its living
+members are despawned silently; a `once` key stays remembered.
+
+### `*.encounter.ron` and `*.encounter_rules.ron`
+
+```ron
+// encounter/yard.encounter.ron
+{
+    "ring_waves": (
+        radius: 20.0,                                   // meters around the anchor: volumes, markers, "near"
+        start: Trigger(volume: "yard_ring", all_players_in: true),
+        waves: [
+            (delay: 1.2, warn: Some((message: Some("@encounter-wave"), effect: Some("parry_flash"), sound: Some("whoosh"))),
+             members: [(prefab: "yard_skeleton", at: Offsets([(0.0, 0.0, -6.0)]))]),
+            (delay: 2.5, members: [(prefab: "yard_skeleton", count: 2, at: Offsets([(4.0, 0.0, -8.0), (-4.0, 0.0, -8.0)]))]),
+            (delay: 2.5, members: [(prefab: "yard_captain", at: Offsets([(0.0, 0.0, -12.0)]), home: Anchor, leash: Some(18.0))]),
+        ],
+        tags: ["special_arena"], budget: Some(3), rules: Some("default"),
+        resume_after: 2.0, reset_after: Some(30.0),
+        pull_back: (heal: true, state: Some("home"), deadline: 6.0),
+        once: true, net_always: true, blocks_join: true,
+    ),
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `radius` | Meters (flat) around the anchor: the volumes, markers and points of interest the encounter binds, and the zone a participant stands in to count as near. |
+| `start` | `Trigger { volume, all_players_in }` (standing participants inside the trigger volume named `volume`, the anchor's own or the nearest within `radius`), `Near { within, all_players_in }` (within `within` meters, flat), or `Manual` (only `start_encounter` and the dev tool). |
+| `waves` | In order, at least one. A wave has a `delay` (seconds from becoming due to its spawn), an optional `warn` cue (`message`: a Fluent `@id` with `$wave` and `$waves`, `effect`, `sound`) played when the wave becomes due, `members`, and `placed`. A `placed` first wave stands when the run is made (camps, room guards) and fights from the start. |
+| `members` | Groups in spawn order: `prefab`, `count` (1 to 64, with `up_to` up to 64: a number in `count..=up_to` from the simulation's randomness), `at` (`Offsets` relative to the anchor and turned with its yaw, `Marker(name)`, `Poi(type)`, or `Ring { min, max }`), `face` (`Center` toward the anchor, `Anchor`, `Yaw(degrees)`: the anchor's yaw plus that many degrees, a positive angle turns left), `home` (`Spawn` or `Anchor`), `leash`, `avoid_behind` (`within`, `angle`) and `overrides`. |
+| `overrides` | Component name to a merge patch, field by field, exactly as a level node's overrides and `spawn_prefab`'s: `"Health": (current: 10.0)` keeps the prefab's `max`. Written as a RON struct or map; checked with the same reading a spawn does. `Home` is not allowed (use `home` and `leash`). |
+| `tags`, `budget`, `allowed`, `forbidden`, `rules` | Validation only (below). |
+| `resume_after` | Seconds from a participant standing again after a wipe to the pending wave. |
+| `reset_after`, `on_reset` | Seconds with no standing participant within `radius` before the run resets; `Restart` (default) or `KeepCleared`. |
+| `pull_back` | What survivors of a placed wave do when the run pulls back (a wipe or a reset): `heal` (default on), `state` (a behaviour state forced with `force_state`; none: placed at home at once), `deadline` (seconds after which a survivor not yet home is placed there). |
+| `lock` | A prefab spawned at the anchor while the fight is on (`Running`, `Between`), removed when it ends, wipes or resets. |
+| `once` | Won once, won for good: the key is remembered in snapshots and world saves. |
+| `net_always`, `blocks_join` | Members are in every client's view while the fight is on; joiners wait while it is on. |
+
+`encounter_rules` (not simulation content: only validation reads it) holds `limits` (at most `max` members tagged `tag` in a wave,
+unless the encounter has the tag `unless`) and `needs` (a wave that can hold a member tagged `tag` holds at least `others` members
+without it). `special_arena` is an ordinary encounter tag that a limit's `unless` names.
+
+Prefabs carry `EncounterRole { cost, tags }` for the checks. Give a game's own prefabs the role in a prefab that `extends` the
+original (the sandbox's `yard_skeleton` extends `skeleton`), so that replays that read the original by id are not touched.
+
+### Validation
+
+Checked when content loads, per wave (waves never overlap), against the worst case: the highest counts against the budget and the
+limits, the lowest against the needs. Every error starts with the file, the kind and the id, names the field path and says the fix:
+
+```text
+content/region/yard.encounter.ron: encounter `ring_waves`: waves[2]: costs up to 4 (yard_skeleton x2 at 1, yard_captain at 2), over the budget of 3: lower a count, or raise budget
+content/region/yard.encounter.ron: encounter `yard_pack`: waves[0].members[0].prefab -> unknown prefab `yard_skeletn` (did you mean `yard_skeleton`?)
+```
+
+The rows: numbers finite and in range; at least one wave and one group per wave; `placed` only on wave 0; prefab ids exist; `up_to >=
+count >= 1`; an `Offsets` point per member at the highest count; no `avoid_behind` on `Offsets`; `overrides` read as a prefab
+spawn reads them, and no `Home`; `rules` exists; when `budget`, `allowed`, `forbidden` or `rules` is set every member prefab has an
+`EncounterRole` (read through `extends`); the budget, the allowed and forbidden tags, the limits and the needs; the cue's effect,
+sound and message exist; `pull_back.state` needs a `deadline > 0` and exists in each member prefab's behaviour and is a `return_home` state there (a pull-back forces it; another kind would leave survivors standing); and, on every
+prefab, an `EncounterAnchor` names an existing encounter and has a key if the encounter is `once`.
+
+### The state machine
+
+One transition per tick at most. "All out" means at least one participant exists and every one is out; "someone stands" means one
+is not out. Every timer is a count of whole ticks, set and counted down in the same tick: a timer of `s` seconds is
+`n = ceil(60 s - 60 EPS)` ticks and expires at the check of tick `N + n` when it was set in tick `N` (1.2 s: 72, 2.5 s: 150, 2.0 s:
+120, 30 s: 1800). Whole ticks, not seconds in an `f32`, because a sum of a thousand tick lengths drifts past the epsilon.
+
+| State | Each tick, in this order | Next |
+|---|---|---|
+| `Idle` | the start condition is false | `Armed` |
+| `Armed` | the start condition is true (or `start_encounter`), or a member of the placed wave is out, hurt or has a target: `EncounterStarted` | the placed wave has members: `Running`; else `Between` for the next wave, `WaveWarned`; with nothing left to spawn, `Running` (the clear path then ends it) |
+| `Running` | 1. every counted member of wave `wave` is out: `WaveCleared` | last wave: `Won` with `EncounterCompleted`; else `Between` and `WaveWarned` |
+| | 2. all out: wipe | `Wiped { None }` |
+| | 3. the absence clock is due: reset | `Resetting` |
+| `Between` | 1. all out: a wipe that rewinds nothing | `Wiped { None }` |
+| | 2. the delay has run out: spawn wave `wave + 1`, `WaveStarted` | `Running` |
+| | 3. the absence clock is due | `Resetting` |
+| `Wiped { None }` | someone stands: `EncounterResumed`, `WaveWarned` for the pending wave | `Wiped { Some }` |
+| | else the absence clock is due | `Resetting` |
+| `Wiped { Some }` | 1. all out again | `Wiped { None }` |
+| | 2. the resume has run out and the wipe pulled back the placed wave | `Idle` |
+| | 2. the resume has run out, otherwise: spawn the pending wave | `Running` |
+| | 3. the absence clock is due | `Resetting` |
+| `Resetting` | every survivor is home, or the deadline has run out (stragglers placed home) | `Idle` |
+| `Won` | nothing | `Won` |
+
+- **Counting is level based.** The step polls; nothing listens to `Died`. A member is out when it carries `Dead` or is gone, so every
+  death counts: a hit with or without a killer, a status, a fall, a kill volume, a dev `kill`, a despawned corpse. Out entries stay
+  listed until their wave clears; the clear prunes them and takes the marker off corpses that stay in the world.
+- **Clearing beats wiping.** When the last counted member and the last participant fall on the same tick, the wave is cleared first,
+  in that tick. The wipe is checked from the next tick, against the new state: in `Between` it rewinds nothing, in `Won` it does not
+  happen.
+- **The edge.** A run starts on a rising edge: `Idle` waits for the start condition to be false once, so a run made under a
+  player's feet (a load, a reset inside the volume) does not start at once.
+- **A placed pack is disturbed, once.** A placed wave goes from `Armed` to `Running` also when one of its members is out, hurt or hunts a
+  standing participant within `radius`: enemies see farther than `within`, and a pack that is being fought is not waiting. A placed pack whose members were all
+  out before the start is cleared (and won, if it is the last wave) on its first visit instead of waiting for ever. This holds only until the run has begun once: a corpse or a hurt survivor that stays through a reset or a pull-back does not begin the fight again (only a start condition, or a member hunting a standing participant, does), so a pack with a casualty waits for its start condition after a reset.
+- **Wipe.** The participants are every player body, wherever it stands (solo included). A participant is out when it is dead,
+  or when an out rule registered with `add_encounter_out_rule` says so (a downed state plugs in there). On a wipe the adds are
+  despawned; the living members of a spawned wave are despawned silently (no `Died`, no loot, no death cue), their dead entries are
+  dropped, and the wave goes back by one; the survivors of a placed wave are pulled back (healed if `pull_back.heal`, sent home) and
+  the run remembers that it pulled back (`pulled_back`), so the resume goes to `Idle` and not to a spawn. A wipe between waves
+  rewinds nothing, so no wave repeats. A wipe in a spawned wave after a placed wave rewinds to wave 1 *without* a pull-back, and its
+  pending wave comes back after the resume.
+- **Reset.** In `Running`, `Between` and `Wiped` the absence clock counts the ticks with no standing participant within `radius`
+  (a participant standing far away does not stop it). When it reaches `reset_after` the adds and the living members of spawned waves
+  go silently, placed survivors are pulled back, and `wave` is 1 if wave 0 is placed else 0 (`Restart`), or the waves cleared stay
+  cleared and the wave in progress is rewound as a wipe does (`KeepCleared`). `Resetting` lasts until everyone is home or `deadline`
+  runs out. `encounter_reset` resets the same way (`why: Dev`) from any fighting state.
+- **Adds.** `adopt(world, key, entity, counted)` puts a spawned entity under a run. An add (`counted: false`) never holds a wave
+  open, is despawned on a wipe or reset, and is released on a win. A counted adopt holds the wave in progress open.
+- **Despawn hooks.** Everything the module despawns silently (a wipe, a reset, a run whose anchor went, a world save loaded) first calls
+  the hooks registered with `add_encounter_despawn_hook(name, fn(&mut World, Entity))`, with the entity still alive: a game cleans
+  what a member owned there (projectiles, zones, summons).
+- **Content changes.** A definition that changes under a run (an editor session) is checked at the start of the run's visit: fewer waves
+  than the run was in resets it (`why: Content`, one error line); a definition that is gone drops the run.
+
+### Spawn points
+
+Groups spawn in definition order and the members of a group in index order, each with `spawn_prefab`, so the `AiId`s follow the
+definition. The count of a group, the choice of markers and the points of a ring come from a `DetRng` keyed by the seed, the tick and
+the run key, wave, group and purpose, so two runs never share numbers and a replay with or without a window draws the same ones.
+`Offsets` are turned with the anchor's yaw; `Marker(name)` takes `Marker` and level-marker entities of that name within `radius`,
+sorted by name and position; `Poi(type)` takes points of interest of that type sorted by id; `Ring` draws 8 candidates per member.
+Candidates are put on the ground (`ground_below`), kept when the navmesh can walk from the anchor to them (when the region has a
+navmesh; for a body of the default `CharacterParams`), and kept when they are not behind a standing participant:
+nearer than `avoid_behind.within` and inside the rear cone of `angle` degrees of the participant's facing. Facing is simulation state
+only: the direction to the participant's lock-on target (`Intent.target`), else the point it aims at (`Intent.aim`), else its flat
+forward; never the camera. Choices are drawn from the candidates without repeats (a shuffle); a group that wants more members than
+there are candidates shares points. With no candidate the group spawns at the anchor; when every candidate is behind a player the
+farthest is used; when no candidate is walkable the group falls back to the markers as placed (a marker) or the anchor (a ring);
+each of these is said once per run in the journal. `Home` is patched into the spawn through the type registry (`home: Anchor` or a
+`leash`), the prefab's own leash stays when `leash` is not given.
+
+### Co-op
+
+Only a simulating machine runs the step (`SimSet` runs only where `simulates()`); clients see the host's runs by replication
+(`EncounterRuns` and `EncounterMember` replicate) and get the events as `net_event`s, whose observers are presentation only. Nothing
+is predicted. The umbrella plays a warning's effect and sound at the anchor (`WaveWarned` carries the cue), keeps `NetAlways` on the
+members of a `net_always` fight while it is on, and adds a join gate: a fight with `blocks_join` keeps joiners waiting
+(`JoinDecision::Wait`, "an encounter is under way (yard/ring): you join when it ends") until it ends or resets. A player who
+already has a body (a rejoin within the grace) is not held. `NetHooks::join_gates` is a list the default policy consults; a game with
+its own `join_policy` calls `shards::net::gates_say` or `shards::encounter::join_blocked` from it.
+
+### Snapshots and saves
+
+`EncounterRuns` is a snapshot resource: a snapshot taken mid-wave resumes the fight tick for tick with the same ids. It is present
+only while there is a run or a remembered key (a co-op host keeps it, empty, once it had one: the net layer replicates a resource that appears or changes, not one that goes), and a snapshot that holds none removes the runs of the world it is loaded into (their
+members were replaced). The replay check `encounters` hashes it. The world save section `encounters` holds the keys of won `once`
+encounters; a load despawns the runs silently, remembers the keys and lets the next tick make fresh runs (a won key comes back `Won`
+with no members and no events; everything else starts over). The phase of a fight is not saved.
+
+### Tools, conditions and the journal
+
+| Name | What |
+|---|---|
+| `encounters` | One line per run: `yard/ring ring_waves Running wave 2/3 members 2 alive (e14 e15) absent 0.0 s`, and `completed: [...]`; `no encounters` without runs. |
+| `encounter key=K` | The run in full: state and timers, the start condition now (`all_players_in: 1/2 standing participants inside yard_ring`), members with their `eN`, wave, counted, out, distance from home, the definition's waves, budget and tags, the lock. |
+| `encounter_start key=K [wave=N]` | Dev: starts a run in `Idle` or `Armed` as its start condition would; `wave=N` skips to wave `N` (`wave=1` of a placed encounter is the plain start; `wave=2` skips the placed wave and warns for wave 2). |
+| `encounter_reset key=K\|all [forget=true]` | Dev: resets (`why: Dev`); `forget` also drops the run and its remembered key. |
+ `encounter_clear key=K` | Dev: kills the counted members of the wave in progress the way their health running out would (a fighter dies the engine's way, with no killer); for scenarios, which cannot name members before they spawn. |
+
+Conditions for `step --until named:...`: `encounter_active` (a run in a fighting state), `encounter_between`, `encounter_wiped`,
+`encounter_won`. The NPC condition `encounter_returning` is true while a member walks home after a pull-back (a behaviour can use it to
+ignore targets on the way). The journal reads `encounter yard/ring (ring_waves) started: 2/2 players in`, `wave 2/3 in 2.5 s`, `wave 2/3
+spawned e14 e15`, `wave 2/3 cleared`, `won`, `wiped in wave 2/3, back to 1/3`, `wiped between waves, wave 2/3 still pending`, `resumed,
+wave 2/3 in 2.0 s`, `reset (nobody near for 30.0 s)`, and the one-time notes about spawn points and content. `status` shows a
+line per fighting run, and `observe` shows `encounter yard/ring wave 2` on a member.
+
+Events (global triggers with `Reflect` and `Clone`, carrying the run's `key` and `encounter`): `EncounterStarted`, `WaveWarned`,
+`WaveStarted`, `WaveCleared`, `EncounterCompleted`, `EncounterWiped`, `EncounterResumed`, `EncounterReset`. A game reacts with an
+observer that returns at once unless `shards::core::simulates` (a boss's phase back to 1, a reward ready), exactly as for the
+combat events.
+
+Engine invariants: `encounter.members_tracked` (every entity with `EncounterMember` is listed by its run with the same wave and
+`counted`; every listed member that resolves carries it), `encounter.state_sane` (the wave within the definition, timers within what
+the definition can set, runs sorted with unique keys, a won `once` run remembered, a won run lists no living counted member) and
+`encounter.lock_matches` (the lock stands exactly in `Running` and `Between`).
+
+### In the sandbox
+
+`region=yard`: a 3 x 1 region of 32 m tiles at x 200..296, z -200..-168 (`regen region=yard seed=1`). Its ring tile holds the trigger
+volume `yard_ring` and the anchor of `ring_waves` (three waves of 1, 2 and 1 members, a special arena, `once`), and its pack tile the
+three markers `pack` and the anchor of `yard_pack` (a placed pack of 2 to 3 skeletons, never behind a player). The scenario
+`encounter.scenario` plays it end to end; `encounter.json` is its reference replay.
+
+### Limitations
+
+- The event director's caps (one large and two small events at once), summon auto-adoption (B4), the downed state as an out rule
+  (B5), the "or readied" start and the reward claim (G8), and the generator's placement of packs (M6) are follow-ups: this module
+  gives them the anchors, `adopt`, the out rule and the events.
+- The budget is per wave; a per-encounter total, the TDD's required role tags, forbidden combinations, an allow-list of
+  combinations and `min/max_threat` are not in the definition. Co-op count scaling (M8) would wrap the count of a group in
+  `spawn.rs` (`count`/`up_to` times a session factor), and the budget check would read the same factor.
+- Walkability of spawn points is judged for the default `CharacterParams`, from the anchor to the point, and only where the region
+  has a navmesh (not on a hand-made level or a voxel region).
+- The invulnerable walk home of the pull-back has no primitive to stand on (`Invulnerable` is the dev god mode); `encounter_returning` lets a
+  behaviour ignore targets on the way.
+- A fight is not saved: a world save keeps only what was won.
+
 ## The AI layer
 
 The `ai_core` crate: everything the agent uses to look at the game and act in it. It does not depend on any particular game.
@@ -2402,6 +2829,7 @@ How the game describes itself to the AI:
 ```rust
 app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.max))
    .register_ai_describer("orders", |e| /* a fragment from several components */)
+   .register_ai_world_describer("finishable", |w, e| /* a fragment that needs the world around it */)
    .journal_event::<Damaged>(|e, w| Some(format!("{} -> {} -{:.0}", label(w, e.source), label(w, e.target), e.amount)))
    .add_ai_tool("move_to", Scope::Player, move_to)   // action: journal and list of changes
    .add_ai_query("threats", Scope::Player, threats)  // read: no journal
@@ -3218,6 +3646,8 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `action.leap_follows_run` | every `LeapRun` (what a leap keeps, B2c) belongs to the run its fighter is running (the same `instance`) of an action that leaps, with a finite `scale >= 0` |
 | `action.ghost_follows_run` | a fighter carries `Ghost` only while its running action has `ghost` and an `intangible` span open in the tick. On a fighter the ghost is the machine's |
 | `action.lock_on_valid` | with a `lock_on` definition, no body's `Intent.target` names an entity that no longer exists or is dead: the lock-on check (`LockSystems::Check`, after `CoreSystems::ClearPresses`) lets go of such a lock at the end of every tick, after the deaths and the engine's despawns of that tick, so a violation names a lock set later in the tick or a body taken away after the check (a game system in `SimSet::Cleanup` after the check: it belongs before it). Without a definition locks are not checked and the rule passes (C6) |
+| `action.pairs_match` | a `Pairing` (a paired action's hold, B3) belongs to the run its fighter is running (the same action and `instance`), its victim (when it still exists) carries `Paired` by that fighter, and every `Paired` whose holder still exists is named by the holder's `Pairing`. The two marks are put in and taken out together (`release_pair`), so one alone is a pair a system broke behind the engine's back |
+| `action.memory_sane` | every `Memory` (what a fighter remembers for a while, B3) is not empty, holds finite times above 0 and keys sorted and unique, and every `GuardArm`'s press is not after the current tick |
 | `npc.state_known` | `NpcBrain.state` is a state of the NPC's behaviour. Three carve-outs, each a state the engine itself leaves behind: an empty state (before the NPC's first decided tick), an inactive NPC (dormant or dead: the brain passes it through, so a state a hot reload removed stays until it wakes), and an NPC whose behaviour is not in content (that is reported once as a content problem) |
 | `npc.strike_spacing` | two NPCs of one director whose `min_spacing` is set never began strikes less than that apart (in whole ticks), for the starts that went through the spacing rule: the planner's presses and checked combo continuations (`NpcStrike::gated`). Judged from the last strike each NPC noted. Three carve-outs: an NPC whose plan has `ignores_spacing` is not the one held to the rule (its starts still hold the others), a strike a state hook pressed itself is noted but neither held to the rule nor held against other NPCs (the hook may or may not have asked `strike_ready`, and may start between another NPC's planned press and its start), and an action with one of the director's `spacing_exempt_tags` is not noted at all. A director without a `min_spacing` is never judged |
 | `npc.tokens_within_limit` | after the director ran, no token is held by a dead body, and each director holds no more tokens than its limit for the living players, unless every holder beyond the limit has its attack in flight (an attack under way keeps its token to its end). It is judged right after the director, not at the end of the tick: a holder that dies in `Resolve` keeps its token until the next tick's director takes it back, so the end of the tick would fire on every kill. A small system next to the director writes what it found to the resource `TokenAudit`, which the rule reads; it is recomputed every tick and is not part of a snapshot or a replay |
@@ -3243,7 +3673,7 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-24 rules, checked after every tick
+29 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
@@ -3257,12 +3687,17 @@ $ shards assert list
   action.damage_taken_sane  engine rule  armed
   action.knockback_sane  engine rule  armed
   action.extras_follow_run  engine rule  armed
+  action.pairs_match  engine rule  armed
+  action.memory_sane  engine rule  armed
   action.leap_follows_run  engine rule  armed
   action.ghost_follows_run  engine rule  armed
   action.lock_on_valid  engine rule  armed
   npc.state_known  engine rule  armed
   npc.strike_spacing  engine rule  armed
   npc.tokens_within_limit  engine rule  armed
+  encounter.members_tracked  engine rule  armed
+  encounter.state_sane  engine rule  armed
+  encounter.lock_matches  engine rule  armed
   hitstop.no_ticks_inside  engine rule  armed
   health_in_range  game rule  armed
   bodies_in_world  game rule  armed
@@ -3572,7 +4007,7 @@ state (`npc_overlay on=false` while the overlay is on). An entry that needs a va
 
 ```text
 $ shards act dev_menu
-dev menu: 40 entries (F10 in a window); `dev_menu run=<id>` runs one, `console line=...` runs any line
+dev menu: 42 entries (F10 in a window); `dev_menu run=<id>` runs one, `console line=...` runs any line
 time
   pause            Pause / resume                          resume
   step             One tick (while paused)                 step ticks=1
@@ -4520,8 +4955,8 @@ language=ru` shows all the messages of a language with their text. `text id= arg
 ```text
 $ shards act locale
 playing: en
-en English: 48 messages
-ru Русский → en: 47 messages; lacks 1: settings-fov
+en English: 50 messages
+ru Русский → en: 49 messages; lacks 1: settings-fov
 # switch: settings_set group=locale key=language value=<id>; `locale language=<id>` lists one language's text
 $ shards act text id=defeated 'args={"count": 3}' language=ru
 Повержено 3 врага
@@ -5016,7 +5451,7 @@ A world plays one **rule set** at a time (a mode; the examples here are `gentle`
 | `rules` (`*.rules.ron`, `RulesDef`) | the one definition `default`: `modes` (the rule sets in the order a menu lists them and `cycle` steps through them), `start` (the rule set a new world starts with, never the previous world's), `classes` (the classes a rule set, a session row and a `RuleClass` may name; `player` is always one), `session` (factors by session size, by class and column `max_health`, `max_poise`, `outgoing_damage`: entry n − 1 is for n players, more players than entries take the last), `blocked` (what a player reads when a guard refuses a change) and `host_only` (what a co-op guest reads: the host chooses) |
 | `rule_set` (`*.rule_set.ron`, `RuleSetDef`) | one definition per mode: `name` and `summary` (Fluent ids), `classes` (by class: `incoming_damage`, `outgoing_damage`, `max_health`, `max_poise` as factors, `stamina_cost` as rules of `tags` and a `factor`, `perfect_bonus` in seconds, `charges` as the max of named charges), `attack_tokens` (`shift` added to a director's limit, at least `min`; a limit of 0 stays 0) and `attack_rest` (× the rest an NPC takes after an attack it finished). A class it does not name, and every field left out, keep the engine's numbers |
 
-**A game without `rules/default` has no rules:** nothing is inserted into the world, every read returns the engine's numbers, and its replays and snapshots keep their bytes (the sandbox has no rules content, and its twelve reference replays verify identical with the module in).
+**A game without `rules/default` has no rules:** nothing is inserted into the world, every read returns the engine's numbers, and its replays and snapshots keep their bytes (the sandbox has no rules content, and its fourteen reference replays and the template's two verify identical with the module in).
 
 **The checks** (`--check-content`, a hot edit). A rule set needs `rules/default` and a place in its `modes` (``rule set `x` is not in `rules/default` `modes`: add it there or delete it``), a name, classes the rules know (``class `brut` is not one of `rules/default` `classes` (did you mean `brute`?): player, brute``), every factor above 0 and at most 10 (`` `max_health` 0 of class `brute`: a factor is above 0 and at most 10 (1 changes nothing) ``), a bonus from 0 to 1 s, cost rules with tags, none of them empty and no tag in two rules of a class (`merge them`), charge maxima from 1 to 255 and names of 1 to 64 characters without control characters, a token shift from −8 to 8 and a `min` from 0 to 64, and no `min` without a shift (`` `attack_tokens.min` 2 without a `shift` changes nothing: give a shift or leave `min` out ``). The rules are one definition, `default` (``the rules are one definition, `default`; `x` would be a second``), with `modes` not empty, without repeats, each an existing rule set, `start` among them, `classes` of lowercase letters, digits and `_` without repeats, session rows of known classes with at most 8 entries of factors, `blocked` and `host_only` Fluent texts that exist, and every rule set setting the same charges for a class (``class `player`: charge `flask` is set by `gentle` but not by `plain`: every rule set sets the same charges``). A prefab's `RuleClass` names a class of `rules/default` (the content check `rule_class`).
 

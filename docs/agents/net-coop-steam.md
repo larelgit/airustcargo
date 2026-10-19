@@ -26,3 +26,7 @@ Read this when you run a co-op stand (`--stand`, `--net-sim`, `--peer`) or touch
   by the host (`UnlockAchievement`); a client unlocks one only on the host's event. Tests do not start the real Steam: only `FakeSteam`; the file
   `steam_appid.txt` is not created (`--steam-app N` is used instead). A Steam callback whose parsing in `steamworks` may fail on a value
   from Steam is read by hand, as numbers (`impl Callback` in `real.rs`): a panic in a callback stops all Steam callbacks until the end of the run.
+
+## Join gates
+
+`NetHooks::join_gates` is a list of gates, `fn(&World, &JoinRequest) -> Option<String>`; `default_join_policy` asks them in order and a reason makes the newcomer wait (`JoinDecision::Wait`). A request whose player already has a body (a rejoin within the grace) skips them. A game with a `join_policy` of its own calls `shards::net::gates_say` from it. Modules push their gate in their umbrella wiring (the encounter module's holds joiners while a `blocks_join` fight is on, `shards::encounter::join_blocked`). A gate reads simulation state only and changes nothing.

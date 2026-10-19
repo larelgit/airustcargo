@@ -44,6 +44,7 @@
 //! ```
 
 mod audio_wiring;
+mod encounter_wiring;
 pub mod bench;
 pub mod coop;
 #[cfg(feature = "render")]
@@ -77,6 +78,7 @@ pub use shards_audio as audio;
 pub use shards_content as content;
 pub use shards_core as core;
 pub use shards_dev as dev;
+pub use shards_encounter as encounter;
 pub use shards_fx as fx;
 pub use shards_hitstop as hitstop;
 pub use shards_level as level;
@@ -102,6 +104,7 @@ pub use run::run;
 pub use shards_core::EngineConfig;
 pub use tile_levels::TileLevelsPlugin;
 pub use audio_wiring::EngineAudioPlugin;
+pub use encounter_wiring::EngineEncounterPlugin;
 pub use ui_wiring::{EngineUiPlugin, PAUSE_SCREEN};
 
 // glam keeps its SIMD. Its `scalar-math` feature (parry3d's `enhanced-determinism` turns it on, and

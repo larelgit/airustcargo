@@ -47,6 +47,10 @@ impl Plugin for EngineUiPlugin {
                 let key = w.resource::<ContentDb>().get::<shards_action::ActionDef>(action).map_or(action, |d| d.cooldown_key(action));
                 viewer(w).map(|e| UiValue::Cooldown { left: w.get::<Cooldowns>(e).map_or(0.0, |c| c.left(key)) })
             })
+            // A finisher (a paired action) is ready: the HUD's prompt shows while it is `Flag(true)`.
+            .add_ui_source("you.finisher", |w, _| {
+                viewer(w).map(|e| UiValue::Flag(w.get::<shards_action::ContextInputs>(e).is_some_and(|c| c.victim().is_some())))
+            })
             .add_ui_source("you.heading", heading)
             .add_ui_source("allies", allies)
             .add_ui_source(BINDINGS_SOURCE, bindings)

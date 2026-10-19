@@ -43,6 +43,9 @@ pub enum JoinDecision {
     Refuse(String),
 }
 
+/// A reason a joining player has to wait, or `None`: one gate of [`NetHooks::join_gates`].
+pub type JoinGate = fn(&World, &JoinRequest) -> Option<String>;
+
 /// The game's hooks into the session, with defaults that make co-op work for a game that sets
 /// none. Co-op saves (`shards::coop`) set the character ones.
 #[derive(Resource, Clone)]
@@ -50,8 +53,15 @@ pub struct NetHooks {
     /// Spawns a joining player's body. Default: `NetDef.player_prefab` at the region's spawn
     /// point for the player, else 2 m beside player 0, with `PlayerId(n)`.
     pub spawner: fn(&mut World, &JoinRequest) -> Result<Entity, String>,
-    /// Asked on the host at every tick while a player waits to join. Default: accept.
+    /// Asked on the host at every tick while a player waits to join, and for a rejoin too.
+    /// Default: [`default_join_policy`], which consults `join_gates` and otherwise accepts.
     pub join_policy: fn(&World, &JoinRequest) -> JoinDecision,
+    /// Modules that hold joiners while something is on (an encounter) add a gate here; the default
+    /// `join_policy` waits with the first reason a gate gives, and accepts otherwise. A game that
+    /// sets its own `join_policy` calls the gates it wants (`gates_say`). A player who already has a
+    /// body (a rejoin within the grace) skips them: the gates keep newcomers out, not the players
+    /// who are in. Default: none.
+    pub join_gates: Vec<JoinGate>,
     /// Takes a leaving player's body away. Default: its `Intent` is cleared and it is despawned
     /// after `rejoin_grace_secs` (a rejoin within that time takes it back).
     pub remover: fn(&mut World, Entity, &LeaveRequest),
@@ -83,11 +93,31 @@ pub struct NetHooks {
     pub describe_world: fn(&World) -> Option<Value>,
 }
 
+/// The first reason a gate of [`NetHooks::join_gates`] gives for `request` to wait, if any. A game
+/// with a `join_policy` of its own calls this to honour the gates modules registered.
+pub fn gates_say(world: &World, request: &JoinRequest) -> Option<String> {
+    hooks(world).join_gates.iter().find_map(|gate| gate(world, request))
+}
+
+/// The default join policy: a player who already has a body (a rejoin) is accepted; a newcomer
+/// waits with the reason of the first gate that gives one ([`NetHooks::join_gates`]), else is
+/// accepted.
+pub fn default_join_policy(world: &World, request: &JoinRequest) -> JoinDecision {
+    if player_body(world, request.player).is_some() {
+        return JoinDecision::Accept;
+    }
+    match gates_say(world, request) {
+        Some(reason) => JoinDecision::Wait(reason),
+        None => JoinDecision::Accept,
+    }
+}
+
 impl Default for NetHooks {
     fn default() -> Self {
         Self {
             spawner: default_spawner,
-            join_policy: |_, _| JoinDecision::Accept,
+            join_policy: default_join_policy,
+            join_gates: Vec::new(),
             remover: default_remover,
             join_character: |_, request| request.character.clone(),
             on_join_character: |_, _, _| {},

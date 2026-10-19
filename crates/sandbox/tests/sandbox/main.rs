@@ -10,6 +10,7 @@ mod content_check;
 mod fuzz_shrink;
 mod coverage;
 mod course;
+mod encounter;
 mod fuzz;
 // `gltf` takes its math from `ops` (each includer reaches Bevy by its own path).
 use shards::bevy::math::ops;
