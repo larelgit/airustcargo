@@ -43,7 +43,7 @@ use shards_motion::PhysicsWorld;
 
 use crate::brain::{salt, Npc};
 use crate::def::{AttackPlanDef, DirectorDef};
-use crate::director::{npc_site, npc_view, target_of, tokenless, FightingReadOnly, FightingReadOnlyItem, Grant, Targets};
+use crate::director::{npc_site, npc_view, target_of, FightingReadOnly, FightingReadOnlyItem, Grant, Targets};
 use crate::planner::{choice_pool, in_window, pick_weighted, refusal, resolve, InFlight, NpcOptions, NpcPlan, Resolved};
 use crate::strike::{chain_note, note_list, pool, spacing_ticks, strike_pressed, waiting, Note};
 
@@ -427,14 +427,15 @@ pub fn schedule_report(p: &ScheduleParams, entity: Entity, what_if: &WhatIf, dev
             None => "between decisions: no choice yet".to_owned(),
         },
         None if f.plan.rest > 1e-4 => format!("resting {:.2} s", f.plan.rest),
-        None if plan_def.tokenless => "no grant yet: tokenless, it takes one when it asks and an option may be chosen".to_owned(),
+        None if plan_def.tokenless && reports.iter().any(|r| r.eligible) => "no grant yet: tokenless, it takes one when it asks and an option may be chosen".to_owned(),
+        None if plan_def.tokenless => "no grant yet: tokenless, but no option may be chosen now".to_owned(),
         None => {
             let d = pool(&f.npc.director);
             // The tokens in use are the counted ones: a tokenless grant is outside the director's books.
             let held = p
                 .npcs
                 .iter()
-                .filter(|o| o.token.held.as_ref().is_some_and(|g| pool(&g.director) == d) && !tokenless(&p.db, o.npc))
+                .filter(|o| o.token.held.as_ref().is_some_and(|g| pool(&g.director) == d) && !o.npc.plan.as_deref().and_then(|n| p.db.peek::<AttackPlanDef>(n)).is_some_and(|def| def.tokenless))
                 .count() as u32;
             let limit = inputs.director.limit(counted);
             if held >= limit {

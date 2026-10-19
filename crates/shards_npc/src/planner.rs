@@ -978,6 +978,42 @@ mod tests {
         ]
     }
 
+    /// A tokenless plan is never refused for the target's budget or the combinations in flight
+    /// (the design's 12.1); the same option in a counted plan is, and the other rules still refuse it.
+    #[test]
+    fn a_tokenless_plan_is_never_refused_the_budget_or_the_combinations() {
+        let (db, scope) = machine_db();
+        let close = |c: &mut Case| {
+            c.budget = Some(0.5);
+            c.director.allowed = vec![("light".into(), "light".into())];
+            c.overlapping = vec![(AiId(6), vec!["heavy".into()])];
+        };
+        let mut counted = Case::open();
+        close(&mut counted);
+        assert_eq!(counted.judge(&db, &scope).refusal, Some(Refusal::Budget { left: 0.5, cost: 1.0 }));
+        // Budget alone and overlap alone, each refused in a counted plan and passed in a tokenless one.
+        let mut budget_only = Case::open();
+        budget_only.budget = Some(0.5);
+        let mut overlap_only = Case::open();
+        overlap_only.director.allowed = vec![("light".into(), "light".into())];
+        overlap_only.overlapping = vec![(AiId(6), vec!["heavy".into()])];
+        for case in [&mut budget_only, &mut overlap_only] {
+            let mut judged = case.judge(&db, &scope);
+            assert!(judged.refusal.is_some() && !judged.feasible && judged.fits_agree, "counted: refused, and `fits` says no like the old rule");
+            case.plan_def.tokenless = true;
+            judged = case.judge(&db, &scope);
+            assert_eq!(judged.refusal, None);
+            assert!(judged.feasible && !judged.fits_agree, "tokenless: `fits` says yes where the old rule said no");
+        }
+        // Both closed in a tokenless plan: still passes; a rule that is not a gate of the books still refuses.
+        let mut both = Case::open();
+        close(&mut both);
+        both.plan_def.tokenless = true;
+        assert_eq!(both.judge(&db, &scope).refusal, None);
+        both.dead = true;
+        assert_eq!(both.judge(&db, &scope).refusal, Some(Refusal::Machine { reason: "dead".into() }));
+    }
+
     /// Each rule closed alone gives its own refusal, with the numbers that refused it; two closed
     /// give the earlier one; and wherever `refusal` refuses, the old conjunction did too, having
     /// read the same definitions.

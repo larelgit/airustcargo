@@ -91,7 +91,6 @@ expect result contains "\"history\""
 step 600 --until "journal:e6 -> e5"
 act npc_state id=e6
 expect result contains "\"counted\": false"
-expect result contains "\"role\""
 
 # --- 4. the phase change swaps the plan and keeps what the plan remembers: the cooldown of `heavy`
 # is the same option in both

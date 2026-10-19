@@ -169,7 +169,8 @@ pub(crate) fn npc_line(brain: &NpcBrain, token: Option<&AttackToken>, home: Opti
     if let Some(target) = brain.target {
         line.push_str(&format!(" {target}"));
     }
-    if token.is_some_and(|t| t.held.is_some()) {
+    // A role kept while a grant is held belongs to a plan with its own waiting role (tokenless or not): say the role.
+    if token.is_some_and(|t| t.held.is_some()) && brain.role.is_none() {
         line.push_str(" · token");
     } else if let Some(role) = &brain.role {
         line.push_str(&format!(" · {role}"));

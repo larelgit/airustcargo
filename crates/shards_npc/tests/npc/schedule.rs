@@ -484,7 +484,7 @@ fn says(line: &str, who: &str) -> bool {
     line.split_whitespace().nth(1) == Some(who)
 }
 
-// --- 12.2 run 3: E30, a boss among its adds ---------------------------------------------------------
+// --- 12.2 run 3: a boss among its adds ---------------------------------------------------------
 
 /// One tokenless boss with `boss` as its plan and two adds on one director that spaces strikes 0.7 s
 /// (42 ticks) and has two tokens, fighting for `ticks` ticks.
@@ -769,6 +769,36 @@ fn a_fight_with_a_tokenless_boss_loaded_at_any_tick_ends_the_same() {
     }
 }
 
+
+/// Run 5, between decisions: a boss on a plan decided by the NPC's think cadence holds a grant with
+/// nothing in reach, and on the ticks that are not decisions its role stays and its orbit moves.
+#[test]
+fn a_waiting_role_is_kept_and_moves_the_orbit_between_decision_ticks_too() {
+    let mut app = app_seeded(3, record_starts);
+    let world = app.world_mut();
+    player(world, 0, Vec3::ZERO);
+    let boss = npc(world, "sched", Npc::new("grunt_think", "grunt").with_plan("sched_stuck_decide").with_director("sched_arena"), Vec3::new(0.0, 0.0, 1.2), N);
+    step(&mut app, 100);
+    let boss_id = id(&app, boss);
+    let (mut between, mut moved) = (0, 0);
+    let mut last = app.world().get::<NpcBrain>(boss).unwrap().orbit;
+    for _ in 0..150 {
+        let says = schedule(&mut app, json!({"id": boss_id}))["chooses"].as_str().unwrap().to_owned();
+        step(&mut app, 1);
+        let brain = app.world().get::<NpcBrain>(boss).unwrap();
+        if says == "between decisions: waits in its role" {
+            between += 1;
+            assert_eq!(brain.role.as_deref(), Some("strafe"), "the role is kept between decisions");
+            assert!(brain.slot.is_none(), "and no slot is taken");
+            if turn(last, brain.orbit).abs() > 1e-5 {
+                moved += 1;
+            }
+        }
+        last = brain.orbit;
+    }
+    assert!(between >= 20, "{between} ticks between decisions");
+    assert!(moved + 2 >= between, "the orbit moved on {moved} of {between} ticks between decisions");
+}
 
 #[test]
 fn the_tools_say_when_a_grant_is_not_one_of_the_tokens() {
