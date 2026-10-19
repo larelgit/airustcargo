@@ -802,8 +802,9 @@ game despawns them. The rules:
   once. A replay runs the same code, so the ground comes and goes on the same ticks.
 - *With an `AiId`.* Give each collider `AiKind`, so it gets an `AiId`. Then a snapshot saves it and brings it back (`Collider`,
   `Body`, `ColliderId` and `Transform` are reflected), and co-op sends it to the clients, whose prediction stands on it too.
-  Without an `AiId` it counts as level geometry that nobody spawns again: a snapshot taken while it is there is refused on load by
-  the `static_colliders` check, and a client never gets it.
+  Without an `AiId` it counts as level geometry, which a snapshot does not hold: the `static_colliders` check compares the
+  colliders without an `AiId` and refuses a load into a game where they differ (one that has not laid the same collider, with
+  the same id and pose, before loading), and a client never gets it.
 - *Navigation.* The navmesh cuts out a laid collider but bakes no walkable surface on top of it (see "Navigation and NPCs (E6)").
   So a route (`move_to path=true`, an NPC's path) never leads onto laid ground. A plain move walks onto it, and a ledge up to
   `mantle_height` is climbed.
