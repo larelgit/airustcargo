@@ -2,13 +2,12 @@
 
 use ai_core::{with_query, AiId, Offenders};
 use bevy::prelude::*;
-use shards_action::Dead;
 use shards_content::ContentDb;
-use shards_core::PlayerId;
 
 use crate::brain::{Npc, NpcBrain};
 use crate::def::{BehaviorDef, DirectorDef};
 use crate::director::{FightingReadOnly, Grant};
+use crate::schedule::{living_players, Players};
 
 /// The engine rule `npc.state_known`: an NPC's `NpcBrain.state` is a state of its behaviour
 /// definition (a key of `BehaviorDef.states`; a game's own state hook appears there under the
@@ -55,10 +54,10 @@ pub struct TokenAudit(pub Option<String>);
 pub(crate) fn audit_tokens(
     mut audit: ResMut<TokenAudit>,
     db: Res<ContentDb>,
-    players: Query<(), (With<PlayerId>, Without<Dead>)>,
+    players: Players,
     npcs: Query<FightingReadOnly>,
 ) {
-    let players = players.iter().count() as u32;
+    let players = living_players(&players);
     // Tokens held per director (named by the grant, as `direct` counts them).
     let mut held: Vec<(&str, u32)> = Vec::new();
     let mut bad = Offenders::default();
@@ -166,7 +165,7 @@ pub fn strike_spacing(world: &World) -> Option<String> {
 mod tests {
     use ai_core::AiIndex;
     use bevy::ecs::system::RunSystemOnce;
-    use shards_action::Fighter;
+    use shards_action::{Dead, Fighter};
 
     use super::*;
 
