@@ -81,7 +81,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 186 definitions in 55 files
+cargo shards content check                 # ok: 206 definitions in 58 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -104,7 +104,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 186 definitions in 55 files
+# ok: 206 definitions in 58 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -592,8 +592,8 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 186 definitions in 55 files
-  action  52
+content: 206 definitions in 58 files
+  action  68
   animset  1
   attack_plan  3
   audio  1
@@ -616,7 +616,7 @@ content: 186 definitions in 55 files
   lock_on  1
   locomotion  3
   look  15
-  moveset  11
+  moveset  12
   music  1
   nav  1
   net  0
@@ -624,7 +624,7 @@ content: 186 definitions in 55 files
   perception  3
   perf  2
   poi  4
-  prefab  11
+  prefab  14
   region  3
   room  0
   save  0
@@ -640,7 +640,7 @@ content: 186 definitions in 55 files
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 186 definitions in 55
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 206 definitions in 58
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -6217,6 +6217,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 | `combat/player.action.ron` | the combo `light_1`–`light_3`, `heavy`, the roll (i-frames 0.18 s), the block with a perfect block, the flask |
 | `combat/warden.action.ron` | the guard's four attacks (`slash`, `slam`, `sweep`, `shockwave`), calm and enraged |
 | `combat/body.action.ron`, `combat/body.moveset.ron` | body and motion (B2c): `spar_leap` (a landing search toward the lock-on target, no landing in water over 1 m), `spar_spin` (walks while it spins), `burrow` (intangible, a ghost), `spar_stroke` (`afloat`), the movesets `mover` and `burrower`; net ids 126-129 |
+| `combat/objects.prefab.ron`, `combat/objects.action.ron`, `combat/caster.moveset.ron` | spawned combat objects (B4): the prefabs `bolt`, `bolt_homing` (`Projectile`) and `zone`; the `caster` moveset's volley (three bolts in a fan at the lock-on target, the middle one homing; each bursts where it stops and lays a chilling puddle that hits every 0.8 s), line (six zones ahead, landing one after another) and rings (eight lines of four zones, turned at random, landing from the inside out); net ids 170-185 |
 | `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters; for the action timeline (B2a), `spar_heavy` (charges into `spar_heavy_full` when held 0.25 s; a light or a dodge pressed in its windup waits for its recovery), `spar_lunge` and `spar_lunge_far` (one `lunge` cooldown slot; the lunge turns at 360°/s within 45°, at most 0.4 m closer for the turning and not toward a target behind a wall, recovers 0.6 s longer on a whiff and keeps 40% of its cooldown when cut in its windup), `spar_channel` (`while_held`), `spar_roll_keep` (`face: Keep`), and the moveset `timeline` (a single slot by priority), which `timeline.scenario` lends to the player; for body state (B2b), `spar_ward` (a barrier of half the caster's health for 8 s), `spar_frost` and `spar_zap` (jabs that carry a full bar of chill or jolt), the moveset `bodystate`, and in `combat/sparring.status.ron` the statuses `spar_chill` (a 2 s proc gate, no cooling and a restart while active, a refused proc empties the bar) and `spar_jolt` (an instant status outside the cap), which `body_state.scenario` lends to the player |
 | `combat/skeleton.action.ron`, `combat/fighters.moveset.ron`, `combat/tuning.combat_tuning.ron` | the skeleton's claw, the movesets, the input buffer |
 | `npc/monsters.behavior.ron`, `monsters.perception.ron`, `monsters.director.ron`, `monsters.attack_plan.ron` | how the monsters think: the `skeleton` and `warden` state machines (with a `calm` state that the scenarios do not let the monster leave), sight, the `default` director (two tokens for one player) and the `boss` director (the guard strikes on its own), the guard's attack plans |
@@ -6248,6 +6249,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
   "journal:e6 winds up"`), then a roll out of the zone, a block, a perfect block with a heavy hit, an exchange of blows under hyper-armour, the flask, the combo. The test runs it after six different pauses (other attacks in another order): a win every time;
 - `timeline.scenario` (B2a) — the player borrows the `timeline` moveset (`combat/sparring.*.ron`) against a still skeleton: a heavy held from the press shows `charging, turns in 0.23s` (`step --until named:charging`) and turns into `spar_heavy_full` (-25), a tapped one stays `spar_heavy` (-12); a light pressed while the heavy winds up answers `ok: queued, light starts in 0.5…` and the jab lands with no `light rejected`; a lunge into nothing writes `e5 spar_lunge missed: +0.60s recovery` and shows `missed +0.60s`; a lunge staggered in its windup keeps 40% of its cooldown on the `lunge` slot, so its variant on `technique.2` answers `lunge is on cooldown (ready in 0.5…)`; a channel started with `hold=true` lasts while held and ends on `hold=false`; locked on the skeleton to the north, a roll east (`spar_roll_keep`, `face: Keep`) keeps the player `facing N`. At the end the player has its own moveset, no `RunExtras` and nothing queued;
 - `body_state.scenario` (B2b) — the player borrows the `bodystate` moveset and the skeleton the `sparring` one: a ward gives the player `barrier 50 (7.…)` and journals `e5 barrier 50 for 8.0s`; three slams of 15 come out of it (`e7 -> e5 spar_slam -15 (hp 100) [barrier -15]`, health whole, `barrier 35`, `20`, `5`) and the fourth hurts for 10 (`(hp 90) [barrier -5]`, no `Barrier` left); `damage_taken id=e7 key=core mult=2 seconds=1` doubles a jab (`-12`) and the next one a second later is `-6` again with no `DamageTaken`; a jab that chills procs `spar_chill`, shows `proc gate spar_chill`, a second inside 2 s is swallowed and empties the bar (`Statuses.0[0].buildup == 0`, the chill not restarted), one past the gate restarts it, and a jolt procs and expires in a tick with no slot. At the end both have their own movesets and no barrier, multiplier, proc gate or chill;
+- `objects.scenario` (B4) — the skeleton e8 borrows the `caster` moveset and volleys at the player: `e8 spawns 3 x bolt_fly`, `combat_objects` and `observe` show the bolts (`projectile of e8`), a side bolt stops at a pillar and lays a puddle at its foot, the middle one meets the player once (`e8 -> e5 bolt_fly -8`, credited to the caster) and its puddle hits from the next tick and then every 0.8 s, building up `spar_chill`; a roll toward the next volley's bolt evades it and the bolt is spent all the same; the line telegraphs its six zones from 0.35 s to 1.15 s and the rings their 32 from 0.50 s to 1.16 s, and every object is gone once its action is over; `objects.json` is its reference replay, and `stand/objects.scenario` plays the volley in co-op (both clients have the host's bolts, by id, and see the host's hits);
 - `boss_fight`, `dodge`, `errors` — the switch to phase 2, a roll to dodge a hit, errors that teach;
 - `npc_director.scenario` (E6) — three skeletons against one player in god mode, 30 s of combat: the sandbox condition `three_attacking`
   (three hit at once) is never met on any tick, but each skeleton gets its own turn, and the tokens rotate;

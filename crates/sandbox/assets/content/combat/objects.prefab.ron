@@ -1,0 +1,10 @@
+// Spawned combat objects (B4): what the caster's actions lay down (`objects.action.ron`). They are
+// not fighters: no health, no hurtbox; an action spawns them for its fighter and gives each one an
+// action to run.
+{
+    // A bolt flies straight; the homing one turns toward the target it was shot at.
+    "bolt": (components: {"AiKind": ("projectile"), "Projectile": (speed: 15.0, lifetime: 2.4, aim_height: 0.9)}),
+    "bolt_homing": (components: {"AiKind": ("projectile"), "Projectile": (speed: 15.0, lifetime: 2.4, homing: 0.9, aim_height: 0.9)}),
+    // A zone on the ground: what it does is its action's.
+    "zone": (components: {"AiKind": ("zone")}),
+}

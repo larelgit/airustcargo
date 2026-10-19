@@ -644,6 +644,79 @@ fn the_hosts_typed_events_reach_a_client_with_its_entities() {
     assert!(!client_entities.contains(&Entity::PLACEHOLDER));
 }
 
+/// The hits a member's observers saw, by `eN`: `(attacker, target, action, amount, hp left)`, and
+/// the `source` of each (an object, by `eN` when the member has it).
+#[derive(Resource, Default)]
+struct Hits(Vec<(String, String, String, String, String)>, Vec<Option<String>>);
+
+fn watch_hits(world: &mut World) {
+    world.init_resource::<Hits>();
+    world.add_observer(|event: On<shards::action::Damaged>, ids: Query<&AiId>, mut hits: ResMut<Hits>| {
+        let e = event.event();
+        let name = |entity: Entity| ids.get(entity).map_or_else(|_| format!("{entity}"), ToString::to_string);
+        hits.0.push((name(e.attacker), name(e.target), e.action.clone(), e.amount.to_string(), e.hp_left.to_string()));
+        hits.1.push(e.source.map(name));
+    });
+}
+
+/// The combat objects a member has, by `eN`, in id order.
+fn objects(stand: &Stand, member: usize) -> Vec<String> {
+    let world = stand.world(member);
+    let Some(mut q) = world.try_query::<(&AiId, &shards::action::CombatObject)>() else { return Vec::new() };
+    let mut ids: Vec<AiId> = q.iter(world).map(|(id, _)| *id).collect();
+    ids.sort();
+    ids.into_iter().map(|id| id.to_string()).collect()
+}
+
+/// Spawned combat objects (B4): the host's caster volleys at the client's player and the bolt
+/// that meets it lays a puddle there. The client is sent the objects with the host's ids, and the
+/// hits it sees are the host's, in order, but for `source`: an object that is gone by the time an
+/// event reaches the client comes as no entity (the comparison modulo `source` is the test's).
+#[test]
+fn objects_hit_the_same_on_host_and_client() {
+    use shards::ai_core::{call_tool, AgentSessions, Scope};
+    let mut stand = stand_with(1, lossy());
+    watch_hits(stand.world_mut(HOST));
+    watch_hits(stand.world_mut(C1));
+    let target = body(&stand, C1);
+    for id in ["e6", "e7", "e8", "e14"] {
+        assert!(stand.call(HOST, "npc_set_state", json!({"id": id, "state": "calm"})).ok);
+    }
+    for (id, x, z) in [(target.as_str(), 5.0, 0.0), ("e8", 5.0, -15.0), (PLAYER, -15.0, 15.0)] {
+        assert!(stand.call(HOST, "teleport", json!({"id": id, "x": x, "z": z, "y": 0})).ok);
+    }
+    let caster = json!({"id": "e8", "component": "Fighter", "path": "moveset", "value": "caster"});
+    assert!(stand.call(HOST, "set", caster).ok);
+    stand.run(2);
+    stand.world_mut(HOST).resource_mut::<AgentSessions>().configure("caster", Scope::Dev, Some(AiId(8)));
+    for (tool, args) in [("lock_on", json!({"target": target})), ("light_attack", json!({}))] {
+        let out = call_tool(stand.world_mut(HOST), "caster", tool, args);
+        assert!(out.ok, "{tool}: {}", out.result);
+    }
+    // The volley is out at 1 s: three bolts in the air. A side bolt bursts at the pillar 0.43 s
+    // later, the middle one at the player 0.92 s later, the last at the south wall 2.3 s later; from
+    // then on the three puddles are the only objects for 1.5 s, and the client has them too.
+    stand.run(80);
+    let flying = objects(&stand, HOST);
+    assert_eq!(flying.len(), 3, "three bolts on the host: {flying:?}");
+    stand.run(180);
+    let puddles = objects(&stand, HOST);
+    assert_eq!(puddles.len(), 3, "three puddles on the host: {puddles:?}");
+    assert_eq!(objects(&stand, C1), puddles, "the client has the host's objects, by id");
+    // The bolt met the player, its burst laid a puddle, and the puddle hit again.
+    stand.run(100);
+    let (host, client) = (stand.world(HOST).resource::<Hits>(), stand.world(C1).resource::<Hits>());
+    let bolt = host.0.iter().filter(|h| h.1 == target && h.2 == "bolt_fly").count();
+    let puddle = host.0.iter().filter(|h| h.1 == target && h.2 == "chill_puddle").count();
+    assert_eq!(bolt, 1, "one bolt meets the client's player: {:?}", host.0);
+    assert!(puddle >= 2, "the puddle hits every 0.8 s: {:?}", host.0);
+    assert!(host.0.iter().all(|h| h.0 == "e8"), "every hit is credited to the caster: {:?}", host.0);
+    assert!(host.1.iter().all(Option::is_some), "each names its object: {:?}", host.1);
+    assert!(!client.0.is_empty());
+    assert_eq!(&host.0[..client.0.len()], &client.0[..], "the host's hits, in its order, modulo source");
+    assert_eq!(desyncs(&stand, C1), 0);
+}
+
 /// The `ActionSound`s a member heard: `(actor, action, sound)`.
 #[derive(Resource, Default)]
 struct Sounds(Vec<(Entity, String, String)>);
