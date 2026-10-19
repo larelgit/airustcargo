@@ -926,3 +926,38 @@ fn a_status_built_up_by_an_object_names_its_owner() {
     let _ = brute;
     assert_eq!(app.world().resource::<BleedSources>().0, [Some(ai_id(&app, hero))], "the owner, not the bolt");
 }
+
+/// B5 with FU4: a spawn aims only at a body that stands. A lock, or the `AimTarget` a brain mirrors, on a body that fell this
+/// tick (they let it go a tick later) is passed over to the next candidate; with none left the spawn is skipped and says so.
+#[test]
+fn an_aimed_spawn_passes_over_a_downed_lock_and_aim_target() {
+    use shards_action::{go_down, AimTarget};
+    let mut app = arena();
+    let hero = hero(app.world_mut(), "hero", Vec3::ZERO, N);
+    let near = brute(app.world_mut(), Vec3::new(0.0, 0.0, -3.0), S);
+    let far = brute(app.world_mut(), Vec3::new(4.0, 0.0, -4.0), S);
+    step(&mut app, 1);
+    let mark = r#"(prefab: ["t_mark"], action: ["t_wait"], aim: AtTarget)"#;
+    let at = |app: &App, e: Entity| app.world().get::<Transform>(e).unwrap().translation;
+    // Standing, the lock is the target.
+    lock(&mut app, hero, near);
+    let laid = spawn(&mut app, hero, mark);
+    assert_eq!(laid.len(), 1);
+    assert!((at(&app, laid[0]) - at(&app, near)).with_y(0.0).length() < 1e-3, "at the lock's feet");
+    // The locked body goes down: the lock (still set: no lock rules here) is passed over for the mirror's target.
+    assert!(go_down(app.world_mut(), near, None, None));
+    let far_id = ai_id(&app, far);
+    app.world_mut().entity_mut(hero).insert(AimTarget(Some(far_id)));
+    let laid = spawn(&mut app, hero, mark);
+    assert_eq!(laid.len(), 1);
+    assert!((at(&app, laid[0]) - at(&app, far)).with_y(0.0).length() < 1e-3, "at the standing target's feet, not the downed one's");
+    // The mirror names a downed body too: nothing stands to aim at, and the journal says so.
+    let near_id = ai_id(&app, near);
+    app.world_mut().entity_mut(hero).insert(AimTarget(Some(near_id)));
+    assert!(spawn(&mut app, hero, mark).is_empty());
+    let lines: Vec<String> = app.world().resource::<ai_core::AiJournal>().after(0).0.map(|e| e.text.clone()).collect();
+    assert!(lines.iter().any(|l| l.contains("spawn of test skipped: it aims at a target and there is none")), "{lines:?}");
+    // A bolt fired then has no target to home on either.
+    let bolts = spawn(&mut app, hero, r#"(prefab: ["t_bolt"], action: ["t_fly"], at: (forward: 0.5, up: 1))"#);
+    assert_eq!(flight(&app, bolts[0]).target, None, "no flight target on a downed body");
+}

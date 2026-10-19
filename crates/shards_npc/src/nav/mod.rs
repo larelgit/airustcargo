@@ -87,9 +87,9 @@ pub use settings::{NavBodyDef, NavSettings, NavSettingsDef, DEFAULT_BODY};
 pub use tile::NavTile;
 pub use tools::{bake_files, bake_region, BakeReport, NavOverlay};
 
-use ai_core::AiId;
+use ai_core::{AiId, AiIndex};
 use bevy::prelude::*;
-use shards_action::{AimTarget, Dead};
+use shards_action::{AimTarget, Dead, Standing};
 use shards_content::ContentDb;
 use shards_core::{flat, Intent};
 use shards_motion::perception::{
@@ -725,14 +725,18 @@ type DriveData = (Entity, &'static NpcBrain, &'static NavAgent, &'static mut Npc
 /// movement, the point to face, the presses, the held inputs, and its brain's target for `AimTarget`. An NPC with orders of its own
 /// (an agent took it over with `move_to` or `attack`) follows those instead.
 pub(crate) fn drive_intents(
+    index: Res<AiIndex>,
+    standing: Query<(), Standing>,
     mut npcs: Query<DriveData, With<Npc>>,
     mut commands: Commands,
 ) {
     for (entity, brain, agent, mut drive, mut intent, aim_target) in &mut npcs {
         // The brain's target is what its spawned objects aim at (`SpawnAim::Target`, `AtTarget`): the brain never writes
         // `Intent::target` (a lock-on), so `shards_action` reads this mirror after it. A body that has none yet (one restored
-        // from an older snapshot) gets it when there is something to mirror.
+        // from an older snapshot) gets it when there is something to mirror. Only a body that stands (B5: neither dead nor
+        // down) is mirrored: perception already forgets a fallen one, and the mirror never names it in between.
         let target = if brain.active { brain.target } else { None };
+        let target = target.filter(|id| index.get(*id).is_some_and(|e| standing.contains(e)));
         match aim_target {
             Some(mut aim) if aim.0 != target => aim.0 = target,
             Some(_) => {}

@@ -36,7 +36,7 @@ use ai_core::{AiId, AiIndex, DetRng, SimSeed, SimTick};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use serde::Serialize;
-use shards_action::{Dead, FighterView};
+use shards_action::{FighterView, Standing};
 use shards_content::ContentDb;
 use shards_core::{flat, PlayerId};
 use shards_motion::PhysicsWorld;
@@ -184,8 +184,9 @@ pub(crate) fn plan_notes<'w, 's>(
     notes
 }
 
-/// The players the director counts: alive.
-pub(crate) type Players<'w, 's> = Query<'w, 's, (), (With<PlayerId>, Without<Dead>)>;
+/// The players the director counts: standing (neither dead nor down: a downed player asks for no
+/// attackers).
+pub(crate) type Players<'w, 's> = Query<'w, 's, (), (With<PlayerId>, Standing)>;
 
 /// How many players the director counts ([`Players`]).
 pub(crate) fn living_players(players: &Players) -> u32 {
@@ -364,8 +365,8 @@ pub fn schedule_report(p: &ScheduleParams, entity: Entity, what_if: &WhatIf, dev
         None => {
             let seen = p.index.get(target_id).and_then(|e| p.targets.get(e).ok());
             match seen {
-                Some((at, false, collider)) => (at.translation, collider.map_or(0.4, |c| c.shape.half_extents().x)),
-                _ => return Err(format!("{target_id} is gone or dead: pass target=<an entity that stands> to judge against one")),
+                Some((at, false, collider, false)) => (at.translation, collider.map_or(0.4, |c| c.shape.half_extents().x)),
+                _ => return Err(format!("{target_id} is gone, dead or down: pass target=<an entity that stands> to judge against one")),
             }
         }
     };

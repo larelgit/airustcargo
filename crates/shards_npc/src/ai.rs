@@ -134,10 +134,10 @@ fn rules_guard(w: &World) -> Option<String> {
 /// How far past its sight range an NPC counts as near for `npc_near` (× the range).
 pub const NEAR_SIGHT: f32 = 1.5;
 
-/// `npc_near`: some living player's body is within [`NEAR_SIGHT`] × the sight range of an
+/// `npc_near`: some standing player's (not dead, not downed) body is within [`NEAR_SIGHT`] × the sight range of an
 /// active NPC (its perception's, the engine's default without one).
 fn npc_near(w: &World) -> bool {
-    let Some(mut players) = w.try_query_filtered::<&Transform, (With<shards_core::PlayerId>, Without<shards_action::Dead>)>() else {
+    let Some(mut players) = w.try_query_filtered::<&Transform, (With<shards_core::PlayerId>, shards_action::Standing)>() else {
         return false;
     };
     let players: Vec<Vec3> = players.iter(w).map(|t| t.translation).collect();

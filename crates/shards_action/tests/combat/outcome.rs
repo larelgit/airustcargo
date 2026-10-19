@@ -273,6 +273,44 @@ fn a_blow_that_kills_is_weighed_without_the_break_it_never_makes() {
     assert_eq!(app.world().resource::<Staggers>().0, 0, "a corpse does not stagger");
     assert_eq!(app.world().get::<shards_action::Poise>(victim).unwrap().current, poise_before, "nor does it take poise");
 }
+
+#[test]
+fn the_kill_weight_follows_the_lethal_hooks_answer() {
+    // The same killing blow (`r_hit_poise` on a victim with 1 health) with a game's lethal hook (B5),
+    // asked before the event: a blow the hook lets the body survive keeps the rest of the blow, its
+    // break too (`Break`, one `Staggered`); one that lays it down is weighed as a kill (`Heavy`, its
+    // poise untouched), as a death is.
+    fn survive(_: &mut World, _: &shards_action::Lethal) -> shards_action::Fate {
+        shards_action::Fate::Survive { health: 5.0, grace: 0.0 }
+    }
+    fn down(_: &mut World, _: &shards_action::Lethal) -> shards_action::Fate {
+        shards_action::Fate::Down { bleed: None }
+    }
+    let cases: [(shards_action::LethalHook, HitWeight, u32, bool); 2] =
+        [(survive, HitWeight::Break, 1, false), (down, HitWeight::Heavy, 0, true)];
+    for (hook, weight, staggers, downed) in cases {
+        let (mut app, attacker, victim) = bout_with("r_victim", |app| {
+            app.add_lethal_hook(hook);
+            app.init_resource::<Staggers>();
+            app.add_observer(|_: On<shards_action::Staggered>, mut n: ResMut<Staggers>| n.0 += 1);
+        });
+        app.world_mut().get_mut::<Health>(victim).unwrap().current = 1.0;
+        let poise_before = app.world().get::<shards_action::Poise>(victim).unwrap().current;
+        press(&mut app, attacker, "technique.2");
+        step(&mut app, 8);
+        let hit = seen(&app).damaged.last().unwrap().clone();
+        assert_eq!((hit.hp_left, hit.weight), (0.0, weight), "{hit:?}");
+        assert_eq!(app.world().resource::<Staggers>().0, staggers, "{hit:?}");
+        assert!(app.world().get::<shards_action::Dead>(victim).is_none(), "{hit:?}");
+        assert_eq!(app.world().get::<shards_action::Downed>(victim).is_some(), downed, "{hit:?}");
+        let poise = app.world().get::<shards_action::Poise>(victim).unwrap().current;
+        assert_eq!(poise == poise_before, downed, "only the survivor takes the poise: {poise} of {poise_before}");
+        if !downed {
+            assert_eq!(app.world().get::<Health>(victim).unwrap().current, 5.0);
+        }
+    }
+}
+
 #[test]
 fn ignored_hits_print_their_reason() {
     fn ignore(ctx: &mut DamageCtx, _: &World) {

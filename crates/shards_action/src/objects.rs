@@ -38,6 +38,7 @@ use shards_motion::{LayerMask, PhysicsWorld, QueryFilter};
 
 use crate::context::cut_action;
 use crate::def::{ActionDef, CombatTuning, Local, EPS};
+use crate::combat::Downed;
 use crate::fighter::{report_once, Dead, Fighter, Team};
 use crate::machine::{crossed, force_action, step_run, telegraph, ActionEnd, ActionEnded, ActionState, PendingEffects};
 use crate::zone::{hit_zones, yaw};
@@ -191,7 +192,8 @@ pub struct Projectile {
     pub speed: f32,
     /// Seconds of flight before it ends, with no impact.
     pub lifetime: f32,
-    /// Weight per second of the turn toward its target (0: straight).
+    /// Weight per second of the turn toward its target (0: straight). A dead or downed target is not
+    /// followed: the projectile flies on straight.
     pub homing: f32,
     /// Homing aims this far above the target's feet.
     pub aim_height: f32,
@@ -310,13 +312,20 @@ fn owner_of(world: &World, spawner: Entity) -> Option<AiId> {
 #[reflect(Component, Default)]
 pub struct AimTarget(pub Option<AiId>);
 
-/// What a spawner aims at: its lock-on target, else its [`AimTarget`], else (an object) the target its projectile flies at.
+/// What a spawner aims at: its lock-on target, else its [`AimTarget`], else (an object) the target its projectile flies at;
+/// each only while it stands (B5's [`Standing`](crate::Standing): a dead or downed body is no target). A lock or a brain's
+/// target on a body that fell is let go a tick later (the lock check, the brain's perception); a spawn in between passes
+/// over it to the next one, and with none it is skipped.
 fn target_of(world: &World, spawner: Entity) -> Option<AiId> {
+    let stands = |id: &AiId| {
+        world.resource::<AiIndex>().get(*id).is_some_and(|e| world.get::<Dead>(e).is_none() && world.get::<Downed>(e).is_none())
+    };
     world
         .get::<Intent>(spawner)
         .and_then(|i| i.target)
-        .or_else(|| world.get::<AimTarget>(spawner).and_then(|a| a.0))
-        .or_else(|| world.get::<ProjectileFlight>(spawner).and_then(|f| f.target))
+        .filter(stands)
+        .or_else(|| world.get::<AimTarget>(spawner).and_then(|a| a.0).filter(stands))
+        .or_else(|| world.get::<ProjectileFlight>(spawner).and_then(|f| f.target).filter(stands))
 }
 
 /// One object of a spawn, placed: its index on the lists, where, which way it faces, which way it
@@ -656,7 +665,7 @@ pub(crate) fn move_projectiles(
     index: Res<AiIndex>,
     physics: Res<PhysicsWorld>,
     mut projectiles: Query<(Entity, &AiId, &CombatObject, &Projectile, &mut ProjectileFlight, &mut Transform, &mut ActionState)>,
-    bodies: Query<(&Transform, Has<Dead>), Without<ProjectileFlight>>,
+    bodies: Query<(&Transform, Has<Dead>, Has<Downed>), Without<ProjectileFlight>>,
     mut commands: Commands,
 ) {
     if projectiles.is_empty() {
@@ -686,7 +695,7 @@ pub(crate) fn move_projectiles(
             continue;
         }
         if p.homing > 0.0
-            && let Some((there, false)) = flight.target.and_then(|id| index.get(id)).and_then(|e| bodies.get(e).ok()).map(|(t, dead)| (t.translation, dead))
+            && let Some((there, false)) = flight.target.and_then(|id| index.get(id)).and_then(|e| bodies.get(e).ok()).map(|(t, dead, down)| (t.translation, dead || down))
         {
             let want = there + Vec3::Y * p.aim_height - pos;
             if want.length_squared() > 0.01 {
@@ -898,7 +907,7 @@ pub(crate) fn plugin(app: &mut App) {
             run_objects.in_set(ActionSystems::Objects),
             move_projectiles.in_set(SimSet::Move).after(shards_motion::ControllerSystems::Move),
             consume_projectiles.in_set(ActionSystems::Hits).after(crate::machine::check_misses),
-            tend_objects.in_set(ActionSystems::Deaths).before(crate::combat::check_deaths),
+            tend_objects.in_set(ActionSystems::Deaths).before(crate::combat::tick_downed),
         ),
     )
     .register_ai_describer("object", describe_object)

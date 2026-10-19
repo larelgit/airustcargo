@@ -11,7 +11,7 @@ use ai_core::{AiAppExt, AiId, AiPlayer, Call, DevCommand, Scope, ToolResult};
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use shards_action::Dead;
+use shards_action::Standing;
 use shards_content::ContentDb;
 use shards_core::{flat, PlayerId};
 use shards_motion::{CharacterController, CharacterParams};
@@ -80,9 +80,9 @@ fn overlay_tool(In(call): In<Call<NpcOverlayArgs>>, world: &mut World) -> ToolRe
     Ok(format!("npc overlay on\n{lines}"))
 }
 
-/// Players' living bodies: the overlay shows what is near them (a fallen one's body lies
-/// there, and the NPCs around it have nobody to fight).
-type Players = (Or<(With<PlayerId>, With<AiPlayer>)>, Without<Dead>);
+/// Players' standing bodies: the overlay shows what is near them (a fallen or downed one's body
+/// lies there, and the NPCs around it have nobody to fight).
+type Players = (Or<(With<PlayerId>, With<AiPlayer>)>, Standing);
 
 /// Whether `at` is within [`NEAR`] of a player (anywhere, when there is none).
 fn near_players(players: &[Vec3], at: Vec3) -> bool {

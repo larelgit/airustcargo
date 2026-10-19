@@ -25,8 +25,10 @@
 //!   it carries `Dead` or is gone, so every death counts: a hit, a status, a fall, a kill volume,
 //!   a dev `kill`.
 //! - **Participants.** Every player body is one, wherever it stands. They are *out* when dead, or
-//!   when an out rule registered with [`EncounterAppExt::add_encounter_out_rule`] says so (a
-//!   downed state plugs in there). When every participant is out the run is wiped.
+//!   when an out rule registered with [`EncounterAppExt::add_encounter_out_rule`] says so: the
+//!   module registers `downed` itself (a body the action module's lethal hook brought down,
+//!   `shards_action::Downed`), so a wipe counts every incapacitated player. When every participant
+//!   is out the run is wiped.
 //! - **The host runs it, clients see it.** The step is in `SimSet::Resolve`, which runs only where
 //!   the simulation does. [`EncounterRuns`] and [`EncounterMember`] replicate; the umbrella sends
 //!   the events as `net_event`s, keeps `NetAlways` on the members of a `net_always` fight and
@@ -305,6 +307,8 @@ impl Plugin for EncounterPlugin {
             .add_content::<EncounterRulesDef>()
             .add_content_check::<PrefabDef>("encounter anchors", anchor::check_anchor)
             .init_resource::<EncounterHooks>()
+            // A downed player is out (B5): a fight where every player is down or dead is wiped.
+            .add_encounter_out_rule("downed", |world, entity| world.get::<shards_action::Downed>(entity).is_some())
             // The runs are simulation state outside entities with an `AiId`; a snapshot mid-wave
             // resumes the fight exactly. A snapshot without runs removes this world's.
             .add_snapshot_resource::<EncounterRuns>()

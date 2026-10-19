@@ -1,0 +1,26 @@
+// The kit for `downed.scenario` and `stand/downed.scenario` (B5): the duelist's (`sparring.moveset.ron`),
+// a fighter that goes down instead of dying while a partner stands (the sandbox's lethal hook,
+// `gameplay/fate.rs`), and interact revives a downed ally next to it. Actions in
+// `downed.action.ron` and `sparring.action.ron`.
+{
+    "partner": (
+        inputs: {"light": "spar_jab", "heavy": "spar_slam", "dodge": "spar_roll", "block": "spar_guard", "technique.1": "spar_crusher"},
+        stagger: "player_stagger",
+        death: "player_death",
+        // Forced when it goes down; the hook bleeds it out when the pose ends.
+        downed: "spar_down",
+        reactions: [
+            (action: "spar_react_light", push: 2.0, decel: 12.0),
+            (action: "spar_react_heavy", push: 4.0, decel: 12.0),
+            (action: "spar_react_down", push: 4.0, decel: 12.0),
+        ],
+        reaction_immunity: 0.2,
+        reaction_protection: 1.0,
+        guard_broken: "spar_guard_broken",
+        guard_broken_push: (0.2, 10.0),
+        // Interact is the revive while a downed ally lies within its reach (a pair): nothing else.
+        context: [
+            (input: "interact", action: "spar_revive", when: [Pair]),
+        ],
+    ),
+}

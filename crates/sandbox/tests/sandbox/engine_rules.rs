@@ -455,6 +455,47 @@ fn a_memory_out_of_order_stops_the_game() {
     assert!(line.contains("e5 Memory `dodged` left = NaN: a finite time above 0"), "{line}");
 }
 #[test]
+fn a_downed_body_that_is_not_down_or_a_bad_grace_stops_the_game() {
+    use shards::action::{Downed, Grace};
+    // A Downed marker on a body at full health (a game that inserts it by hand, not by `go_down`).
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.entity_mut(player).insert(Downed::default());
+    });
+    let line = stops_on(&mut app, "action.downed_sane", 2);
+    assert!(line.contains("e5 is Downed with Health.current = 100 (a downed body has none)"), "{line}");
+
+    // Downed and dead at once.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.entity_mut(player).insert((Downed::default(), shards::action::Dead));
+    });
+    let line = stops_on(&mut app, "action.downed_sane", 2);
+    assert!(line.contains("e5 is Downed and Dead at once"), "{line}");
+
+    // A bleed-out that is no time.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.get_mut::<Health>(player).unwrap().current = 0.0;
+        world.entity_mut(player).insert(Downed { bleed: Some(f32::NAN), by: None });
+    });
+    let line = stops_on(&mut app, "action.downed_sane", 2);
+    assert!(line.contains("e5 Downed.bleed = NaN is not a finite number of seconds >= 0"), "{line}");
+
+    // A grace that never runs out.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.entity_mut(player).insert(Grace { left: f32::INFINITY });
+    });
+    let line = stops_on(&mut app, "action.grace_sane", 2);
+    assert!(line.contains("e5 Grace.left = inf is not a finite number >= 0"), "{line}");
+}
+
+#[test]
 fn body_and_motion_state_that_does_not_belong_stops_the_game() {
     use shards::action::LeapRun;
     use shards::motion::{Ghost, Launch};

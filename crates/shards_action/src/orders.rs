@@ -12,6 +12,7 @@ use shards_core::{flat, Intent, Order, Predicted};
 use shards_motion::{CharacterController, CharacterParams, Collider, MotionState, PhysicsWorld};
 
 use crate::def::{ActionDef, MovesetDef};
+use crate::combat::Downed;
 use crate::fighter::{Charges, Cooldowns, Dead, Fighter, Stamina};
 use crate::context::ContextInputs;
 use crate::leap::{radius_of, LeapSite};
@@ -38,9 +39,16 @@ type Attackers<'w, 's> = Query<
         Option<&'static CharacterController>,
         Option<&'static CharacterParams>,
         Has<Dead>,
+        Has<Downed>,
         Option<&'static ContextInputs>,
     ),
 >;
+
+/// Where an order's target stands, whether it is dead, its body, whether it is down.
+type Target = (&'static Transform, Has<Dead>, Option<&'static Collider>, Has<Downed>);
+
+/// A client's predicted body: its fighter, intent, place, whether it is dead and whether it is down.
+type Walker = (&'static Fighter, &'static mut Intent, &'static Transform, Has<Dead>, Has<Downed>);
 
 /// `SimSet::Input`, after core's `follow_orders`: carries out the front
 /// `Order::Attack` of every fighter. Each fighter only writes its own `Intent`.
@@ -50,18 +58,18 @@ pub(crate) fn follow_attack_orders(
     db: Res<ContentDb>,
     index: Res<AiIndex>,
     physics: Res<PhysicsWorld>,
-    targets: Query<(&Transform, Has<Dead>, Option<&Collider>)>,
+    targets: Query<Target>,
     mut fighters: Attackers,
 ) {
     let dt = time.delta_secs();
-    for (entity, fighter, mut intent, state, tf, stamina, cooldowns, charges, motion, controller, params, dead, context) in &mut fighters {
+    for (entity, fighter, mut intent, state, tf, stamina, cooldowns, charges, motion, controller, params, dead, downed, context) in &mut fighters {
         let Some(order) = intent.orders.front().cloned() else { continue };
         let Order::Attack { target, ref input, repeat } = order else { continue };
-        if dead {
+        if dead || downed {
             continue;
         }
-        let goal = index.get(target).and_then(|e| targets.get(e).ok()).filter(|(_, target_dead, _)| !target_dead);
-        let Some((target_tf, _, collider)) = goal else {
+        let goal = index.get(target).and_then(|e| targets.get(e).ok()).filter(|(_, target_dead, _, target_down)| !target_dead && !target_down);
+        let Some((target_tf, _, collider, _)) = goal else {
             end(&mut intent);
             // The lock-on to a corpse goes with the order.
             if intent.target == Some(target) {
@@ -155,17 +163,17 @@ fn approach(
 pub(crate) fn steer_attack_orders(
     db: Res<ContentDb>,
     index: Res<AiIndex>,
-    targets: Query<(&Transform, Has<Dead>, Option<&Collider>)>,
-    mut fighters: Query<(&Fighter, &mut Intent, &Transform, Has<Dead>), With<Predicted>>,
+    targets: Query<Target>,
+    mut fighters: Query<Walker, With<Predicted>>,
 ) {
-    for (fighter, mut intent, tf, dead) in &mut fighters {
+    for (fighter, mut intent, tf, dead, downed) in &mut fighters {
         let Some(Order::Attack { target, input, .. }) = intent.orders.front().cloned() else { continue };
-        if dead {
+        if dead || downed {
             continue;
         }
-        let goal = index.get(target).and_then(|e| targets.get(e).ok()).filter(|(_, target_dead, _)| !target_dead);
+        let goal = index.get(target).and_then(|e| targets.get(e).ok()).filter(|(_, target_dead, _, target_down)| !target_dead && !target_down);
         match goal {
-            Some((there, _, collider)) => {
+            Some((there, _, collider, _)) => {
                 approach(&db, fighter, &mut intent, tf.translation, target, &input, there.translation, collider);
             }
             None => end(&mut intent),

@@ -9,7 +9,7 @@
 //! | `rules` | world | the rule set the world plays (`{"mode": null}` where the game has no rules, written in every game). Applying `null` does nothing at all. A mode that is not the one in play sets it, adds 1 to the rules' `generation` and triggers `RulesChanged` (`Load`); no body is rescaled by the load, the next tick brings them to it. A mode this game's content lacks is not refused: the journal warns and the mode in play stays. A game without `rules/default` is handed a mode as any game is handed one it lacks: the journal says so. Nothing on a co-op client |
 //! | `encounters` | world | the keys of the `once` encounters the world has won. Applying it despawns the runs of the encounters standing and remembers the keys; the next tick makes fresh runs (a won key comes back won, silently, with no events; the rest start over). A fight in progress is not saved |
 //! | `position` | character | the body's feet, its rotation (characters turn about Y: that is their facing) and the region it stood in. Applied onto a body in the same region only; in another one the body stays where it is and the journal says why |
-//! | `vitals` | character | health, stamina and charges. Applied to the components the body already has (a fresh body has what its prefab gives it); a charge the body lacks is added. A body that died since the save is revived (`shards_action::revive`, as the dev `heal` does, and `Healed` follows); a save made at zero health leaves it dead |
+//! | `vitals` | character | health, stamina and charges. Applied to the components the body already has (a fresh body has what its prefab gives it); a charge the body lacks is added. A body that died since the save is revived (`shards_action::revive`, as the dev `heal` does, and `Healed` follows); a save made at zero health leaves it dead. A save keeps no downed state (B5): a body saved while down loads dead, and a body down at the load stands up with the saved health or, with none, dies |
 //!
 //! A game replaces one with a section of the same name (`position` as "restore at the last
 //! camp"): the new one takes its place in the order sections are applied and starts a migration
@@ -20,7 +20,7 @@ use ai_core::journal::{self, JournalKind};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use shards_action::{revive, Charge, Charges, Health, Healed, Stamina};
+use shards_action::{revive, revive_downed, Charge, Charges, Downed, Health, Healed, Stamina};
 use shards_content::ContentDb;
 use shards_rules::ActiveRules;
 use shards_save::{SaveAppExt, SaveKind, SaveSection};
@@ -486,7 +486,26 @@ impl SaveSection for VitalsSave {
             charges.0.sort_by(|a, b| a.name.cmp(&b.name));
         }
         // A body that died since the save lives again, the way the dev `heal` brings it back.
-        // A save made at zero health stays dead: `check_deaths` kills what has no health left.
+        // A save made at zero health stays dead: `check_deaths` kills what has no health left
+        // (it asks the lethal hooks with `LethalCause::Health`, for which the engine's games die).
+        // A save keeps no downed state: a body saved while down was saved at zero health, so it
+        // loads dead. A body down when a save is loaded takes the saved state: it stands up with
+        // the saved health, or with none it is no longer down and `check_deaths` kills it.
+        if world.get::<Downed>(body).is_some() {
+            match hp.filter(|hp| *hp > 0.0) {
+                Some(hp) => {
+                    let max = world.get::<Health>(body).map_or(hp, |h| h.max);
+                    revive_downed(world, body, hp / max.max(f32::EPSILON), 0.0, None);
+                    if let Some(mut health) = world.get_mut::<Health>(body) {
+                        health.current = hp;
+                    }
+                }
+                None => {
+                    world.entity_mut(body).remove::<Downed>();
+                }
+            }
+            return Ok(());
+        }
         if let Some(hp) = hp.filter(|hp| *hp > 0.0)
             && revive(world, body)
         {

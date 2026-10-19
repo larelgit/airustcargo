@@ -5,7 +5,9 @@ use ai_core::AiAppExt;
 use bevy::prelude::*;
 use serde_json::json;
 use shards_motion::{ColliderId, ColliderIds};
-use shards_action::combat::{Blocked, Damaged, Died, Evaded, GuardBroken, Parried, PerfectEvaded, Reacted, Staggered};
+use shards_action::combat::{
+    Blocked, Damaged, Died, Evaded, GuardBroken, Parried, PerfectEvaded, Reacted, Revived, Staggered, Survived, WentDown,
+};
 use shards_action::machine::{ActionRejected, ActionStarted, Healed, Telegraph};
 use shards_action::{ActionSound, BarrierGranted, PairEnded, PairStarted};
 use shards_net::{hooks::NetLeft, NetEventAppExt, NetHooks};
@@ -31,6 +33,10 @@ impl Plugin for EngineNetPlugin {
             .net_event::<GuardBroken>()
             .net_event::<Staggered>()
             .net_event::<Died>()
+            // A body down, revived, sparing a lethal blow (B5): the journal and the HUD show the host's.
+            .net_event::<WentDown>()
+            .net_event::<Revived>()
+            .net_event::<Survived>()
             .net_event::<Healed>()
             // The HUD shows a barrier when it is granted; nothing of it is predicted.
             .net_event::<BarrierGranted>()

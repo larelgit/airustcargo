@@ -415,6 +415,48 @@ fn a_leap_with_no_landing_takes_no_token() {
     assert!(leaps(&app) >= 1, "{:#?}", journal(&app));
 }
 
+/// One of two players goes down (B5): the director counts only standing players, so the limit
+/// falls to two tokens; the tokens on the downed one come back ("target gone").
+#[test]
+fn a_downed_player_counts_as_gone() {
+    let mut app = app();
+    record_starts(&mut app);
+    let hero = player(app.world_mut(), 0, Vec3::ZERO);
+    let other = player(app.world_mut(), 1, Vec3::new(50.0, 0.0, 50.0));
+    let grunts = ring(&mut app, 5, Vec3::ZERO, "grunt", "jabber", "default");
+    let grants = |app: &App| -> Vec<shards_npc::Grant> {
+        grunts.iter().filter_map(|e| app.world().get::<AttackToken>(*e).unwrap().held.clone()).collect()
+    };
+    let mut ready = false;
+    for _ in 0..2400 {
+        step(&mut app, 1);
+        let held = grants(&app);
+        if held.len() == 3 && held.iter().any(|g| !g.in_flight()) {
+            ready = true;
+            break;
+        }
+    }
+    assert!(ready, "three tokens out, one of them not pressed yet");
+    assert!(shards_action::go_down(app.world_mut(), other, None, None));
+    step(&mut app, 1);
+    let held = grants(&app);
+    assert!(held.len() <= 2 || held.iter().all(|g| g.in_flight()), "the limit is two now: {held:#?}");
+    for t in 0..600 {
+        step(&mut app, 1);
+        if t > 60 {
+            assert!(grants(&app).len() <= 2, "tick {t} after: more than two tokens with one standing player");
+        }
+    }
+    // The last standing player goes down too: every token comes back and none is taken.
+    assert!(shards_action::go_down(app.world_mut(), hero, None, None));
+    step(&mut app, 120);
+    assert!(grants(&app).is_empty(), "no token on a downed body: {:#?}", grants(&app));
+    assert!(!lines(&app, "target gone").is_empty(), "{:#?}", journal(&app));
+    let before = lines(&app, "takes an attack token").len();
+    step(&mut app, 300);
+    assert_eq!(lines(&app, "takes an attack token").len(), before, "{:#?}", journal(&app));
+}
+
 /// A brain-driven NPC's spawn with `aim: AtTarget` finds its target through `AimTarget` (the brain's own
 /// target, mirrored by the drive) with no `lock_on`: the zone lands at the target's feet.
 #[test]
@@ -459,4 +501,43 @@ fn an_npc_without_the_aim_target_component_is_still_driven_and_gets_it() {
     step(&mut app, 120);
     assert!(app.world().get::<Transform>(npc).unwrap().translation.distance(start) > 0.5, "it walked: it is driven");
     assert_eq!(app.world().get::<AimTarget>(npc).map(|a| a.0), Some(Some(aid(&app, hero))));
+}
+
+/// B5 with FU4: the NPC's target goes down while it casts. A spawn aims only at a body that stands, so one made before the
+/// drive runs again passes over the downed hero; on the next tick the brain has forgotten it and the mirror is empty, and the
+/// cast's own `AtTarget` spawn is skipped: nothing is laid at a downed body's feet.
+#[test]
+fn an_npc_whose_target_goes_down_lays_nothing_at_it() {
+    use shards_action::{go_down, spawn_objects, AimTarget, CombatObject, SpawnDef};
+    let mut app = app();
+    record_starts(&mut app);
+    let hero = player(app.world_mut(), 0, Vec3::new(1.5, 0.0, 0.0));
+    let at = Vec3::new(-5.0, 0.0, 1.0);
+    let layer = Npc::new("grunt", "grunt").with_plan("layer").with_director("single");
+    let npc = crate::common::npc(app.world_mut(), "layer", layer, at, (Vec3::new(1.5, 0.0, 0.0) - at).normalize());
+    let hero_id = aid(&app, hero);
+    let casting = |app: &App| app.world().resource::<Started>().0.iter().any(|s| s.1 == npc && s.2 == "lay");
+    for _ in 0..1200 {
+        step(&mut app, 1);
+        if casting(&app) {
+            break;
+        }
+    }
+    assert!(casting(&app), "the cast started: {:#?}", journal(&app));
+    assert_eq!(app.world().get::<AimTarget>(npc).unwrap().0, Some(hero_id));
+    // The hero goes down between ticks: the mirror still names it, but a spawn passes over it.
+    assert!(go_down(app.world_mut(), hero, None, None));
+    let def: SpawnDef = ron::from_str(r#"(prefab: ["zone"], action: ["lay_zone"], aim: AtTarget)"#).unwrap();
+    assert!(spawn_objects(app.world_mut(), npc, "probe", &def, None).is_empty(), "nothing at a downed body's feet");
+    assert!(!lines(&app, "spawn of probe skipped").is_empty(), "{:#?}", journal(&app));
+    // The next tick the brain forgets it and the mirror follows.
+    step(&mut app, 1);
+    assert_eq!(app.world().get::<NpcBrain>(npc).unwrap().target, None);
+    assert_eq!(app.world().get::<AimTarget>(npc).unwrap().0, None, "the mirror names no downed body");
+    step(&mut app, 60);
+    let world = app.world_mut();
+    assert_eq!(world.query::<&CombatObject>().iter(world).count(), 0);
+    let skipped = lines(&app, "spawn of lay skipped");
+    assert!(!skipped.is_empty(), "{:#?}", journal(&app));
+    assert_eq!(app.world().get::<AimTarget>(npc).unwrap().0, None);
 }

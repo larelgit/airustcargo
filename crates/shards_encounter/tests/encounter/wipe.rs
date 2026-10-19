@@ -1,6 +1,7 @@
 //! Wipes: a wipe in a running wave despawns it silently and rewinds one wave; in a wave
 //! before the first it goes to 0; between waves it rewinds nothing; the resume is tick exact; a
-//! placed wave is pulled back, not despawned; an out rule stands in for a downed state.
+//! placed wave is pulled back, not despawned; a downed body (B5) is out, and so is one a game's own
+//! out rule counts.
 
 use shards::prelude::*;
 use shards::encounter::RunState;
@@ -144,16 +145,35 @@ fn one_body_down_is_not_a_wipe_and_every_body_down_is() {
 }
 
 #[test]
-fn an_out_rule_counts_a_participant_as_out_like_a_downed_state_would() {
+fn a_games_out_rule_counts_a_participant_as_out() {
     let mut app = watched(1);
     let Ring { key, p0 } = ring_at(&mut app, 1);
-    app.world_mut().entity_mut(p0).insert(Downed);
+    app.world_mut().entity_mut(p0).insert(Benched);
     tick(&mut app);
     assert!(matches!(state(&app, &key), RunState::Wiped { .. }), "{:?}", state(&app, &key));
-    // Standing again (the revive removes the marker) resumes it.
-    app.world_mut().entity_mut(p0).remove::<Downed>();
+    // Back in (the game removes the marker) resumes it.
+    app.world_mut().entity_mut(p0).remove::<Benched>();
     tick(&mut app);
     assert!(matches!(state(&app, &key), RunState::Wiped { resume: Some(_), .. }));
+}
+
+/// The engine's own `downed` out rule (B5): a downed body is out without a game's rule, and a wipe
+/// counts every incapacitated player, dead or down.
+#[test]
+fn a_downed_body_is_out_and_a_wipe_counts_dead_and_down_alike() {
+    let mut app = watched(1);
+    let Ring { key, p0 } = ring_at(&mut app, 1);
+    let p1 = player(&mut app, 1, Vec3::new(2.0, 0.0, 3.0));
+    assert!(shards::action::go_down(app.world_mut(), p0, None, None));
+    step(&mut app, 5);
+    assert_eq!(state(&app, &key), RunState::Running, "p1 still stands");
+    kill(&mut app, p1);
+    tick(&mut app);
+    assert!(matches!(state(&app, &key), RunState::Wiped { .. }), "one dead, one down: {:?}", state(&app, &key));
+    // Stood up again: the wipe resumes.
+    assert!(shards::action::revive_downed(app.world_mut(), p0, 0.5, 0.0, None));
+    tick(&mut app);
+    assert!(matches!(state(&app, &key), RunState::Wiped { resume: Some(_), .. }), "{:?}", state(&app, &key));
 }
 
 #[test]

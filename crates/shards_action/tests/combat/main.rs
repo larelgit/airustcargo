@@ -9,6 +9,7 @@ mod common;
 mod context;
 mod golden;
 mod hits;
+mod lethal;
 mod lock;
 mod modifiers;
 mod objects;

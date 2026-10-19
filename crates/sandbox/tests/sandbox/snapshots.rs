@@ -1180,6 +1180,56 @@ fn mid_pair_and_with_a_guard_press_armed() {
     });
 }
 
+/// The player and the skeleton e7 with the `partner` moveset (B5), e7 on the player's team 1 m north
+/// of it and down (the dev `down` tool: its bleed-out runs 5 s); both calm.
+fn next_to_a_downed_ally() -> App {
+    let mut app = sandbox::test_app(42);
+    calm_skeletons(&mut app);
+    calm_warden(&mut app);
+    ok(&mut app, "set", json!({"id": PLAYER, "component": "Fighter", "path": "moveset", "value": "partner"}));
+    ok(&mut app, "set", json!({"id": "e7", "component": "Fighter", "path": "moveset", "value": "partner"}));
+    ok(&mut app, "set", json!({"id": "e7", "component": "Team", "value": "heroes"}));
+    ok(&mut app, "teleport", json!({"id": PLAYER, "x": 0, "z": 0, "y": 0}));
+    ok(&mut app, "teleport", json!({"id": "e7", "x": 0, "z": -1.0, "y": 0}));
+    step(&mut app, 2);
+    ok(&mut app, "down", json!({"id": "e7", "bleed": 5}));
+    step(&mut app, 30);
+    app
+}
+
+/// The downed state (B5): taken while a body lies down and bleeds out (it dies inside the window),
+/// and mid-revive (the pair live, then the revive's grace).
+#[test]
+fn a_downed_body_and_a_revive_come_back() {
+    use shards::action::{Downed, Grace, Paired, Pairing};
+    let app = next_to_a_downed_ally();
+    assert!(app.world().get::<Downed>(entity(&app, "e7")).is_some_and(|d| d.bleed.is_some_and(|b| b > 4.0)));
+    assert_eq!(action(&app, "e7"), "spar_down");
+    assert_continues_alike("down and bleeding out", app, |app| {
+        step(app, 360);
+    });
+
+    let mut app = next_to_a_downed_ally();
+    ok(&mut app, "interact", json!({"hold": true}));
+    step(&mut app, 30);
+    assert_eq!(action(&app, PLAYER), "spar_revive");
+    assert!(app.world().get::<Pairing>(entity(&app, PLAYER)).is_some());
+    assert!(app.world().get::<Paired>(entity(&app, "e7")).is_some());
+    assert_continues_alike("mid-revive", app, |app| {
+        step(app, 160);
+    });
+
+    let mut app = next_to_a_downed_ally();
+    ok(&mut app, "interact", json!({"hold": true}));
+    ok(&mut app, "step", json!({"ticks": 240, "until": [{"journal": "e7 revived by e5"}]}));
+    step(&mut app, 10);
+    assert!(app.world().get::<Grace>(entity(&app, "e7")).is_some(), "the revive's grace runs");
+    assert_continues_alike("in a revive's grace", app, |app| {
+        ok(app, "interact", json!({"hold": false}));
+        step(app, 90);
+    });
+}
+
 #[test]
 fn a_barrier_a_timed_multiplier_and_a_proc_gate_come_back() {
     use shards::action::{Barrier, DamageTaken, ProcGates};

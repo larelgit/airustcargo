@@ -7,7 +7,9 @@ use ai_core::{label, AiAppExt};
 use bevy::prelude::*;
 
 use crate::body::{describe_barrier, describe_damage_taken, describe_proc_gates, Barrier, BarrierGranted, DamageTaken, ProcGates};
-use crate::combat::{Blocked, Damaged, Died, Evaded, GuardBroken, IgnoreReason, Parried, PerfectEvaded, Reacted, Staggered};
+use crate::combat::{
+    Blocked, Damaged, Died, Downed, Evaded, Grace, GuardBroken, IgnoreReason, Parried, PerfectEvaded, Reacted, Revived, Staggered, Survived, WentDown,
+};
 use crate::context::{
     describe_context, describe_guard_arm, describe_memory, describe_paired, describe_pairing, finishable_by, ContextInputs, GuardArm, Memory,
     PairEnded, PairStarted, Paired, Pairing,
@@ -29,6 +31,8 @@ pub(crate) fn register(app: &mut App) {
         .register_ai_component::<Stamina>(describe_stamina)
         .register_ai_component::<Poise>(describe_poise)
         .register_ai_component::<Dead>(|_| "dead".into())
+        .register_ai_component::<Downed>(describe_downed)
+        .register_ai_component::<Grace>(|g| format!("grace {:.2}s", g.left.max(0.0)))
         .register_ai_component::<ActionState>(describe_action)
         .register_ai_component::<Statuses>(describe_statuses)
         .register_ai_component::<InputBuffer>(describe_buffer)
@@ -50,6 +54,7 @@ pub(crate) fn register(app: &mut App) {
         .add_ai_condition("charging", charging)
         .add_ai_condition("pair_ready", pair_ready)
         .add_ai_condition("paired", paired)
+        .add_ai_condition("downed", any_downed)
         .journal_event::<PairStarted>(|e, w| Some(format!("{} takes {} with {}", label(w, e.attacker), label(w, e.victim), e.action)))
         .journal_event::<PairEnded>(|e, w| {
             Some(match e.victim {
@@ -124,6 +129,19 @@ pub(crate) fn register(app: &mut App) {
                 _ => format!("{} died", label(w, e.entity)),
             })
         })
+        .journal_event::<WentDown>(|e, w| {
+            Some(match e.bleed {
+                Some(s) => format!("{} is down (bleeds out in {s:.1}s)", label(w, e.entity)),
+                None => format!("{} is down", label(w, e.entity)),
+            })
+        })
+        .journal_event::<Revived>(|e, w| {
+            Some(match e.by {
+                Some(by) => format!("{} revived by {}", label(w, e.entity), label(w, by)),
+                None => format!("{} revived", label(w, e.entity)),
+            })
+        })
+        .journal_event::<Survived>(|e, w| Some(format!("{} survived a lethal hit (hp {:.0})", label(w, e.entity), e.health)))
         .journal_event::<ActionMissed>(|e, w| {
             Some(format!("{} {} missed: +{:.2}s recovery", label(w, e.entity), e.action, e.extra))
         })
@@ -230,6 +248,19 @@ fn pair_ready(world: &World) -> bool {
 /// Some pair runs.
 fn paired(world: &World) -> bool {
     world.try_query::<&Pairing>().is_some_and(|mut q| q.iter(world).next().is_some())
+}
+
+/// Some body is down.
+fn any_downed(world: &World) -> bool {
+    world.try_query::<&Downed>().is_some_and(|mut q| q.iter(world).next().is_some())
+}
+
+/// `downed 14.2s` (the bleed-out left), `downed` for a body that bleeds out only when the game says.
+fn describe_downed(d: &Downed) -> String {
+    match d.bleed {
+        Some(s) => format!("downed {:.1}s", s.max(0.0)),
+        None => "downed".to_owned(),
+    }
 }
 
 /// `intangible, passes through bodies` while a body has its `ghost` window open (a describer cannot

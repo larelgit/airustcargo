@@ -15,7 +15,7 @@
 //!                  ActionSystems::Machine   can_start reads ContextInputs: a bound input starts its action
 //!                  ActionSystems::Effects   start_pairs: a paired action that started takes its victim
 //! SimSet::Resolve  ActionSystems::Hits      a pair's strike: Finisher weight, end of the break, forced reaction
-//!                  ActionSystems::Fighters  age_memory; tend_pairs: a dead, gone or distant victim is lost
+//!                  ActionSystems::Fighters  age_memory; tend_pairs: a dead, downed (but to a revive), gone or distant victim is lost
 //! ```
 
 use ai_core::{AiId, AiIndex, SimTick};
@@ -24,8 +24,8 @@ use shards_content::ContentDb;
 use shards_core::{flat, Intent, NetRole, PlayerId};
 use shards_motion::{MotionState, PhysicsWorld};
 
-use crate::combat::{clear_line, Blocked, Damaged, Died, Evaded, GuardBroken, Parried, PerfectEvaded, Reacted, Staggered};
-use crate::def::{ActionDef, CombatTuning, Forget, GuardPress, MovesetDef, PairAngle, PairDef, PairSelect, PairState, PairTeam, Recall, When, EPS};
+use crate::combat::{clear_line, Blocked, Damaged, Died, Downed, Evaded, GuardBroken, Parried, PerfectEvaded, Reacted, Staggered, Standing};
+use crate::def::{ActionDef, CombatTuning, Effect, Forget, GuardPress, MovesetDef, PairAngle, PairDef, PairSelect, PairState, PairTeam, Recall, When, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Poise, Stamina, Team};
 use crate::machine::{interrupted, ActionEnd, ActionEnded, ActionStarted, ActionState};
 use crate::zone::body_radius;
@@ -269,7 +269,7 @@ pub fn resolve(world: &World, entity: Entity) -> Option<ContextInputs> {
         return None;
     }
     let mut out = ContextInputs::default();
-    if world.get::<Dead>(entity).is_some() {
+    if world.get::<Dead>(entity).is_some() || world.get::<Downed>(entity).is_some() {
         return Some(out);
     }
     let running = world.get::<ActionState>(entity).and_then(|s| s.current.as_ref()).map(|r| r.action.as_str());
@@ -307,7 +307,8 @@ pub fn resolve(world: &World, entity: Entity) -> Option<ContextInputs> {
 /// Where `entity` faces for the angle test of a pair's `select`. [`PairAngle::Facing`] (the default): its body's facing, as
 /// design 6.4 and the original game's finisher candidate have it (not the lock-on direction and not the stick: a player running
 /// away from a broken enemy has no finisher on it, and a locked player whose body looks elsewhere is judged by the body).
-/// [`PairAngle::Intent`]: the direction to its lock-on target, else its movement input's direction, else the facing.
+/// [`PairAngle::Intent`]: the direction to its lock-on target (one that stands: a lock on a body that fell this tick means
+/// nothing), else its movement input's direction, else the facing.
 fn meant_facing(world: &World, entity: Entity, from: PairAngle) -> Vec3 {
     let facing = world.get::<Transform>(entity).and_then(|t| flat(*t.forward()).try_normalize()).unwrap_or(Vec3::NEG_Z);
     if from == PairAngle::Facing {
@@ -318,10 +319,22 @@ fn meant_facing(world: &World, entity: Entity, from: PairAngle) -> Vec3 {
     let locked = intent
         .and_then(|i| i.target)
         .and_then(|id| world.resource::<AiIndex>().get(id))
+        .filter(|e| world.get::<Dead>(*e).is_none() && world.get::<Downed>(*e).is_none())
         .and_then(|e| world.get::<Transform>(e))
         .zip(here)
         .and_then(|(there, here)| flat(there.translation - here).try_normalize());
     locked.or_else(|| intent.and_then(|i| flat(i.move_dir).try_normalize())).unwrap_or(facing)
+}
+
+/// Whether `candidate` is in the pair state `state` now. A downed body is in `Downed` and in no
+/// other state: a finisher never takes it, a revive takes nothing else.
+fn in_state(world: &World, candidate: Entity, state: PairState) -> bool {
+    let down = world.get::<Downed>(candidate).is_some();
+    match state {
+        PairState::Broken => !down && world.get::<Poise>(candidate).is_some_and(Poise::is_broken),
+        PairState::Any => !down,
+        PairState::Downed => down,
+    }
 }
 
 /// Whether `candidate` is a victim `entity`'s pair `select` may take now (every rule but the
@@ -339,10 +352,7 @@ fn qualifies(world: &World, entity: Entity, candidate: Entity, select: &PairSele
         PairTeam::Hostile => hostile(mine, theirs),
         PairTeam::Ally => mine.is_some() && mine == theirs,
     };
-    let state_ok = match select.state {
-        PairState::Broken => world.get::<Poise>(candidate).is_some_and(Poise::is_broken),
-        PairState::Any => true,
-    };
+    let state_ok = in_state(world, candidate, select.state);
     if !team_ok || !state_ok {
         return false;
     }
@@ -372,7 +382,7 @@ fn qualifies(world: &World, entity: Entity, candidate: Entity, select: &PairSele
     if let Some(slack) = select.slack {
         let mine_flat = to.length();
         let nearer = world
-            .try_query_filtered::<(Entity, &Transform, Option<&Team>), (With<PlayerId>, Without<Dead>)>()
+            .try_query_filtered::<(Entity, &Transform, Option<&Team>), (With<PlayerId>, Standing)>()
             .is_some_and(|mut q| {
                 q.iter(world).any(|(other, t, team)| {
                     other != entity && other != candidate && team == mine && flat(there - t.translation).length() + slack < mine_flat - EPS
@@ -543,8 +553,14 @@ pub(crate) fn start_pairs(world: &mut World) {
         if !running || world.get::<Dead>(p.attacker).is_some() {
             continue;
         }
+        // A victim the binding named is taken if it is still free; a downed one only by a pair
+        // that takes the downed (a revive), and only a downed one by such a pair.
+        let down_ok = |world: &World, v: Entity| world.get::<Downed>(v).is_some() == (pair.select.state == PairState::Downed);
         let free = |world: &World, v: Entity| {
-            world.get::<Dead>(v).is_none() && world.get::<Health>(v).is_some() && world.get::<Paired>(v).is_none_or(|x| x.by == me)
+            world.get::<Dead>(v).is_none()
+                && world.get::<Health>(v).is_some()
+                && world.get::<Paired>(v).is_none_or(|x| x.by == me)
+                && down_ok(world, v)
         };
         let named = p.victim.and_then(|id| world.resource::<AiIndex>().get(id)).filter(|v| free(world, *v));
         let chosen_here = named.is_none();
@@ -597,7 +613,9 @@ fn pair_of(world: &World, attacker: Entity) -> Option<(&Pairing, PairDef)> {
 
 /// Ends `attacker`'s pair (`end` says how): both marks go, a victim still in the pair's victim
 /// action is let go (its action is cut) unless the pair finished, and [`PairEnded`] says so. The
-/// one way every pair ends.
+/// one way every pair ends. When the pair is cut because its attacker died or went down, a victim
+/// whose poise is still broken goes back to its stagger for the rest of its break
+/// ([`resume_stagger`]): the pair neither hands it a fresh break nor ends the one it has.
 pub fn release_pair(world: &mut World, attacker: Entity, end: PairEnd) {
     let Some(pairing) = world.get_entity_mut(attacker).ok().and_then(|mut e| e.take::<Pairing>()) else { return };
     let victim_action = world.resource::<ContentDb>().get::<ActionDef>(&pairing.action).and_then(|d| d.pair.as_ref()?.victim_action.clone());
@@ -609,14 +627,62 @@ pub fn release_pair(world: &mut World, attacker: Entity, end: PairEnd) {
         }
         let held = world.get::<ActionState>(v).and_then(|s| s.current.as_ref()).is_some_and(|r| Some(&r.action) == victim_action.as_ref());
         if end != PairEnd::Finished && held && world.get::<Dead>(v).is_none() {
-            cut_action(world, v);
+            let fallen = world.get::<Dead>(attacker).is_some() || world.get::<Downed>(attacker).is_some();
+            let broken = world.get::<Poise>(v).is_some_and(Poise::is_broken);
+            if !(end == PairEnd::Cut && fallen && broken && resume_stagger(world, v)) {
+                cut_action(world, v);
+            }
         }
     }
     let killed = world.entity_mut(attacker).take::<PairKilled>().is_some();
     world.trigger(PairEnded { attacker, victim, action: pairing.action, end, killed });
 }
 
-/// `ActionSystems::Fighters`: pairs whose victim died, is gone or (with `break_range`) got too far
+/// Puts `entity`, whose poise is broken, back into its moveset's `stagger` so that the stagger ends
+/// with the break: positioned `length - broken` into it, or run whole and lengthened by what the
+/// break has beyond it. No [`Staggered`](crate::Staggered): this is the stagger it was in, not a
+/// new one. `false` if it has no stagger to go back to (or is not broken, or is dead or down).
+pub fn resume_stagger(world: &mut World, entity: Entity) -> bool {
+    let Some(broken) = world.get::<Poise>(entity).filter(|p| p.is_broken()).map(|p| p.broken) else { return false };
+    if world.get::<Dead>(entity).is_some() || world.get::<Downed>(entity).is_some() {
+        return false;
+    }
+    let db = world.resource::<ContentDb>();
+    let Some(action) = world.get::<Fighter>(entity).and_then(|f| db.get::<MovesetDef>(&f.moveset)).and_then(|m| m.stagger.clone()) else {
+        return false;
+    };
+    let Some(def) = db.get::<ActionDef>(&action).cloned() else { return false };
+    if !crate::machine::force_action(world, entity, &action) {
+        return false;
+    }
+    let length = def.length();
+    if broken > length + EPS {
+        crate::machine::extend_recovery(world, entity, broken - length);
+    } else if let Some(run) = world.get_mut::<ActionState>(entity).and_then(|s| s.into_inner().current.as_mut()) {
+        let t = (length - broken).max(0.0);
+        (run.t, run.prev) = (t, t);
+        run.refresh(&def, 0.0);
+    }
+    true
+}
+
+/// Whether a pair whose `select` takes bodies in `state` still holds a victim that is `dead` or `down` (`revived`: the pair's run
+/// is past its own `Revive` effect, [`past_revive`]). Never a dead one. A pair that takes the downed (a revive) holds a downed one,
+/// or the one its own revive stood up, until its run ends; a victim that stood up some other way (a `heal`, a game's
+/// [`revive_downed`](crate::revive_downed)) it no longer holds. Any other pair holds only one that stands. The rule
+/// [`start_pairs`] takes a victim by (`down_ok`), kept while the pair runs: [`tend_pairs`] loses the others on its pass, and a
+/// paired run's aim (the machine's, a client's prediction) stops following them as soon as they change, not a tick later.
+pub(crate) fn keeps_victim(state: PairState, dead: bool, down: bool, revived: bool) -> bool {
+    !dead && if state == PairState::Downed { down || revived } else { !down }
+}
+
+/// Whether a run of `def` that is `t` seconds in has carried out its `Revive` effect (it crossed the effect's time, as the
+/// machine's `crossed` judges it): a downed victim it held is standing by its doing.
+pub(crate) fn past_revive(def: &ActionDef, t: f32) -> bool {
+    def.effects.iter().any(|e| matches!(e.effect, Effect::Revive { .. }) && e.at <= t + EPS)
+}
+
+/// `ActionSystems::Fighters`: pairs whose victim died, went down (but to a revive), is gone or (with `break_range`) got too far
 /// are lost, in `AiId` order; a victim lost to its death stops the attacker's run where it is, one
 /// lost to the distance cuts it. A mark whose other side is gone goes, and a halt outlives no run.
 pub(crate) fn tend_pairs(world: &mut World) {
@@ -629,14 +695,19 @@ pub(crate) fn tend_pairs(world: &mut World) {
             continue;
         };
         let instance = pairing.instance;
-        let runs = world.get::<ActionState>(attacker).and_then(|s| s.current.as_ref()).is_some_and(|r| r.instance == instance);
-        if !runs || world.get::<Dead>(attacker).is_some() {
+        let run = world.get::<ActionState>(attacker).and_then(|s| s.current.as_ref()).filter(|r| r.instance == instance);
+        let revived = run.is_some_and(|r| world.resource::<ContentDb>().get::<ActionDef>(&r.action).is_some_and(|d| past_revive(d, r.t)));
+        if run.is_none() || world.get::<Dead>(attacker).is_some() || world.get::<Downed>(attacker).is_some() {
             release_pair(world, attacker, PairEnd::Cut);
             continue;
         }
         let victim = world.resource::<AiIndex>().get(pairing.victim);
+        // A victim that went down is lost as a dead one is, except to a pair that takes the downed; to such a pair (a revive)
+        // a victim that stood up some other way (a `heal`, a game's `revive_downed`) is lost too, unless its own revive did it.
+        let kept =
+            |v: Entity| keeps_victim(def.select.state, world.get::<Dead>(v).is_some(), world.get::<Downed>(v).is_some(), revived);
         match victim {
-            Some(v) if world.get::<Dead>(v).is_none() => {
+            Some(v) if kept(v) => {
                 let (Some(a), Some(b)) = (world.get::<Transform>(attacker), world.get::<Transform>(v)) else { continue };
                 let apart = flat(b.translation - a.translation).length();
                 if def.break_range.is_some_and(|r| apart > r + EPS) {
@@ -943,10 +1014,7 @@ pub(crate) fn strike(world: &World, attacker: Entity, target: Entity, action: &s
         return None;
     }
     let broken = world.get::<Poise>(target).is_some_and(Poise::is_broken);
-    let in_state = match def.select.state {
-        PairState::Broken => broken,
-        PairState::Any => true,
-    };
+    let in_state = in_state(world, target, def.select.state);
     in_state.then_some(Strike { tier: def.strike_reaction, end_break: def.ends_break && !pairing.broke_once && broken })
 }
 

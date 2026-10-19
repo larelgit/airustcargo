@@ -1,0 +1,144 @@
+# Co-op downed and revive (B5): the host's warden lays c1's e15 down with a lethal slash (the sandbox's
+# lethal hook spares it: its moveset has a downed pose and other players stand). On c1 the body is
+# down: its own controls refuse, nothing is predicted for it. c2's e16 holds interact next to it; the
+# client does not predict a paired action, so the host starts the revive and, 3 s later, stands
+# e15 up with 30 % health and a second of grace; c1 sees it stand and plays on. Down a second time with
+# nobody near, it bleeds out 20 s later.
+#
+# The three players get the `partner` moveset (`content/combat/downed.*.ron`); they go back at the end.
+#
+#   cargo sandbox --stand 2 --headless --paused --port 0 --port-file F --net-sim latency=150,loss=0.02 &
+#   SHARDS_PORT_FILE=F cargo shards wait --peer all
+#   SHARDS_PORT_FILE=F cargo shards scenario crates/sandbox/scenarios/stand/downed.scenario
+#   SHARDS_PORT_FILE=F cargo shards stand stop
+stand clients=2 latency=150 loss=0.02
+seed 42
+
+@host act npc_set_state id=e6 state=calm
+@host act npc_set_state id=e7 state=calm
+@host act npc_set_state id=e8 state=calm
+@host act npc_set_state id=e14 state=calm
+@host act heal id=e5
+@host act heal id=e15
+@host act heal id=e16
+@host act heal id=e6
+@host act set id=e6 component=Boss path=phase value=1
+@host act set id=e5 component=Fighter path=moveset value=partner
+@host act set id=e15 component=Fighter path=moveset value=partner
+@host act set id=e16 component=Fighter path=moveset value=partner
+@host act teleport id=e5 x=8 z=12 y=0
+@host act teleport id=e15 x=0 z=12 y=0
+@host act teleport id=e16 x=3 z=13 y=0
+@host act teleport id=e6 x=0 z=9.5 y=0
+@host act teleport id=e7 x=-12 z=2 y=0
+@c1 act stop
+@c2 act stop
+step 120
+invariant !journal "desync"
+
+@host session --agent warden --scope dev --subject e6
+@host act lock_on target=e15
+@host expect result contains "ok: locked on e15"
+@c1 session --agent bot --scope player --player 1
+@c1 session --agent scenario
+@c2 session --agent bot --scope player --player 2
+@c2 session --agent scenario
+step 40
+
+# --- 1. a lethal slash lays e15 down: on the host, and on c1 a moment later
+@host act set id=e15 component=Health path=current value=10
+@host act light_attack
+@host expect result contains "ok: slash"
+@host step 60 --until "journal:e15 is down"
+@host expect journal "e15 is down (bleeds out in 20.0s)"
+@host expect !journal "e15 died"
+@c1 step 60 --until "journal:e15 is down"
+@c1 expect journal "e15 is down (bleeds out in 20.0s)"
+step 20
+@c1 act inspect id=e15
+@c1 expect result contains "downed"
+@c1 session --agent bot
+@c1 act? light_attack
+@c1 expect result contains "you are down"
+@c1 session --agent scenario
+@c2 act inspect id=e15
+@c2 expect result contains "downed"
+step 20
+invariant !journal "desync"
+
+# --- 2. c2's e16 holds interact next to it: the host starts the revive and stands e15 up
+@host act lock_on off=true
+@host act teleport id=e6 x=0 z=4 y=0
+@host act teleport id=e16 x=1 z=12 y=0
+step 30
+@c2 session --agent bot
+@c2 act interact hold=true
+@c2 expect result contains "ok: spar_revive"
+@c2 session --agent scenario
+@host step 60 --until "journal:e16 takes e15 with spar_revive"
+@host expect stopped "e16 takes e15"
+@host step 240 --until "journal:e15 revived"
+@host expect journal "e15 revived by e16"
+@host expect field e15 Health.current > 29.99
+@host expect field e15 Health.current < 30.01
+@c1 step 120 --until "journal:e15 revived by e16"
+@c1 expect journal "e16 takes e15 with spar_revive"
+@c2 step 120 --until "journal:e16 lets go of e15 (finished)"
+@c2 session --agent bot
+@c2 act interact hold=false
+@c2 session --agent scenario
+step 60
+@c1 act inspect id=e15
+@c1 expect result !contains "downed"
+# standing again: its controls answer
+@c1 session --agent bot
+@c1 act light_attack
+@c1 expect result contains "ok: spar_jab"
+@c1 session --agent scenario
+step 60
+@c1 act net_status
+@c1 expect result contains "\"mispredicted\": 0"
+@c2 act net_status
+@c2 expect result contains "\"mispredicted\": 0"
+
+# --- 3. down again and nobody comes: e15 bleeds out 20 s later, killed by the warden
+@host act heal id=e15
+@host act teleport id=e16 x=6 z=13 y=0
+@host act teleport id=e6 x=0 z=9.5 y=0
+step 30
+@host act lock_on target=e15
+@host expect result contains "ok: locked on e15"
+step 40
+@host act set id=e15 component=Health path=current value=10
+@host act light_attack
+@host expect result contains "ok: slash"
+@host step 60 --until "journal:e15 is down"
+@host expect journal "e15 is down (bleeds out in 20.0s)"
+@host step 1300 --until "journal:e15 died"
+@host expect journal "e15 died (killed by e6)"
+@c1 step 120 --until "journal:e15 died"
+# (the event can come a few ticks before the state that goes with it)
+step 30
+@c1 act inspect id=e15
+@c1 expect result !contains "downed"
+invariant !journal "desync"
+
+# --- the arena as it was: movesets back, nobody locked on, everybody healed
+@host act lock_on off=true
+@host session --agent scenario
+@c1 session --agent scenario
+@c2 session --agent scenario
+@host act set id=e5 component=Fighter path=moveset value=player
+@host act set id=e15 component=Fighter path=moveset value=player
+@host act set id=e16 component=Fighter path=moveset value=player
+@host act heal id=e5
+@host act heal id=e15
+@host act heal id=e16
+@host act heal id=e6
+@host act teleport id=e5 x=0 z=12 y=0
+@host act teleport id=e15 x=2 z=12 y=0
+@host act teleport id=e16 x=4 z=12 y=0
+@host act teleport id=e6 x=0 z=-6 y=0
+@host act teleport id=e7 x=-12 z=2 y=0
+step 200
+invariant !journal "desync"

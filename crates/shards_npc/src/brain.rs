@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 use ai_core::journal::{self, JournalKind};
 use ai_core::{AiId, AiVisible, DetRng, SimSeed};
 use bevy::prelude::*;
-use shards_action::{ActionState, AimTarget, Dead, Health};
+use shards_action::{ActionState, AimTarget, Dead, Downed, Health};
 use shards_content::ContentDb;
 use shards_core::flat;
 use shards_world::Dormant;
@@ -139,7 +139,7 @@ pub struct NpcBrain {
     pub point: Option<Vec3>,
     /// What it acts on: its perception's focus.
     pub target: Option<AiId>,
-    /// `false` while dormant (out of every active zone) or dead: it does nothing.
+    /// `false` while dormant (out of every active zone), dead or down: it does nothing.
     pub active: bool,
     /// Attacks it finished (token used and returned).
     pub attacks_done: u32,
@@ -449,12 +449,13 @@ pub struct NpcStateChanged {
 /// without a place gets the one its NPC stands on.
 pub(crate) fn update_activity(world: &mut World) {
     let rule = world.get_resource::<NpcActivity>().copied().unwrap_or_default();
-    let Some(mut q) = world.try_query_filtered::<(Entity, Has<Dead>, Option<&Home>, &Transform), With<Npc>>() else {
+    let Some(mut q) = world.try_query_filtered::<(Entity, (Has<Dead>, Has<Downed>), Option<&Home>, &Transform), With<Npc>>() else {
         return;
     };
+    // A downed NPC does nothing either, until it is revived.
     let found: Vec<(Entity, bool, Option<Vec3>)> = q
         .iter(world)
-        .map(|(e, dead, home, tf)| (e, !dead && (rule.0)(world, e), home.filter(|h| h.pos.is_none()).map(|_| tf.translation)))
+        .map(|(e, (dead, downed), home, tf)| (e, !dead && !downed && (rule.0)(world, e), home.filter(|h| h.pos.is_none()).map(|_| tf.translation)))
         .collect();
     for (e, active, settle) in found {
         if let Some(mut brain) = world.get_mut::<NpcBrain>(e)

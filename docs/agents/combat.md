@@ -19,3 +19,10 @@ Read this when you drive a fight through `dodge`, `light_attack`, `block`, `use_
   be locked on to goes before `LockSystems::Check` (`SimSet::Cleanup`, after `CoreSystems::ClearPresses`), or the rule
   `action.lock_on_valid` stops the game.
 - Spawned combat objects (B4): an action's `Spawn` effect lays down projectiles, ground zones and summons (`crates/shards_action/src/objects.rs`; manual, "Spawned combat objects (B4)"). Watch them with the `combat_objects` query (id, owner, kind, action, phase, seconds left), the `objects_live` and `projectile_flying` conditions and the describer lines `projectile of e8 15.0m/s -> e5 0.40s`; their hits are the owner's (`Damaged.source` is the object). An aim that needs a lock-on target and finds none spawns nothing and says so in the journal: `lock_on` first. The caps `max_objects` and `max_objects_per_owner` are content (`combat_tuning`); a capped spawn is a `[warn] e8 spawn capped: …` line. A dead owner's objects go with it.
+- Down, not dead (B5): where the game's lethal hook spares a body (the sandbox: a `partner` moveset while another player
+  stands), a lethal hit lays it down (`e7 is down (bleeds out in 20.0s)`, `observe`/`inspect` show `downed 14.2s`). A downed
+  body starts nothing (`you are down`), hits pass over it (`-0 (hp 0, downed)`) and nobody targets it; `attack` and `lock_on`
+  refuse it. To stand an ally up, stand within reach and hold interact (`interact hold=true`) for the revive's time
+  (`ok: spar_revive`, then `e7 revived by e5`); letting go, moving away or being hit ends it. Wait with
+  `step --until "journal:revived"` or `--until named:downed`. A dev agent's `heal` stands a body up at once and `down id= bleed=`
+  lays one down.

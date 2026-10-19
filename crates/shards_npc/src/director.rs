@@ -28,7 +28,7 @@
 use ai_core::{AiId, AiIndex, SimRng, SimTick};
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
-use shards_action::{ActionState, Charges, Cooldowns, Dead, Fighter, FighterView, InputBuffer, LeapSite, Stamina};
+use shards_action::{ActionState, Charges, Cooldowns, Dead, Downed, Fighter, FighterView, InputBuffer, LeapSite, Stamina};
 use shards_content::ContentDb;
 use shards_core::{flat, Intent};
 use shards_motion::{CharacterController, CharacterParams, Collider, MotionState, PhysicsWorld};
@@ -205,16 +205,16 @@ pub(crate) fn npc_site<'a>(
     Some(LeapSite::body(physics, entity, (transform.translation, *transform.forward()), controller.resolve(own, Some(db)), intent?, target))
 }
 
-/// Where a target stands, its body radius, whether it is alive.
-pub(crate) type Targets<'w, 's> = Query<'w, 's, (&'static Transform, Has<Dead>, Option<&'static Collider>)>;
+/// Where a target stands, its body radius, whether it is alive, whether it is down.
+pub(crate) type Targets<'w, 's> = Query<'w, 's, (&'static Transform, Has<Dead>, Option<&'static Collider>, Has<Downed>)>;
 
 /// A live target as an NPC knows it: where it perceives it (seen this tick: where it is;
-/// else where it was last seen or heard) and its body radius; `None` once it is dead, gone
-/// or forgotten. NPCs do not cheat: what they steer and strike at is what they perceive.
+/// else where it was last seen or heard) and its body radius; `None` once it is dead, down,
+/// gone or forgotten. NPCs do not cheat: what they steer and strike at is what they perceive.
 pub(crate) fn target_of(index: &AiIndex, targets: &Targets, perceived: &Perceived, id: AiId) -> Option<(Vec3, f32)> {
     let known = perceived.get(id)?;
-    let (_, dead, collider) = targets.get(index.get(id)?).ok()?;
-    (!dead).then(|| (known.pos, collider.map_or(0.4, |c| c.shape.half_extents().x)))
+    let (_, dead, collider, downed) = targets.get(index.get(id)?).ok()?;
+    (!dead && !downed).then(|| (known.pos, collider.map_or(0.4, |c| c.shape.half_extents().x)))
 }
 
 /// NPCs by `AiId`.
