@@ -8,7 +8,7 @@
 //!    by the last attacks ([`SequenceBan`]), startable by the action machine's own rule
 //!    ([`can_start`]: now, or by waiting), within what is left of the target's collision budget,
 //!    allowed to overlap with the attacks already in flight on it, and spaced from the other
-//!    NPCs' strikes ([`refusal`] names the rule that keeps an option out, [`crate::schedule`]);
+//!    NPCs' strikes (`refusal` names the rule that keeps an option out, [`crate::schedule`]);
 //! 2. picks among those whose window holds the distance now (else among all of them, unless
 //!    the plan is `in_range_only`), by weight, with the NPC's `SimRng` stream;
 //! 3. walks into the chosen option's window, and presses its input when the machine says it
@@ -173,10 +173,7 @@ pub fn resolve(plan: &AttackPlanDef, db: &ContentDb, moveset: &str, target_radiu
 
 /// Whether an attack tagged `tags` is banned after `history` (oldest first).
 pub fn banned(bans: &[SequenceBan], tags: &[String], history: &[PastAttack]) -> bool {
-    bans.iter().any(|ban| {
-        ban.then.iter().any(|t| tags.contains(t))
-            && history.iter().rev().take(ban.within as usize).any(|past| ban.after.iter().any(|a| past.tags.contains(a)))
-    })
+    ban_of(bans, tags, history).is_some()
 }
 
 /// [`banned`] with the reason: the first ban (its index in `bans`) that forbids an attack tagged
@@ -261,11 +258,12 @@ impl InFlight {
         Self(all)
     }
 
-    /// What is left of `target`'s budget for `me`, and the tags of the others' attacks on it.
-    pub(crate) fn on(&self, target: AiId, me: AiId, director: &DirectorDef) -> (Option<f32>, Vec<Vec<String>>) {
+    /// What is left of `target`'s budget for `me`, and the others' attacks on it: their holders
+    /// and tags.
+    pub(crate) fn on(&self, target: AiId, me: AiId, director: &DirectorDef) -> (Option<f32>, Vec<(AiId, Vec<String>)>) {
         let others = self.0.iter().filter(|(t, holder, ..)| *t == target && *holder != me);
         let spent: f32 = others.clone().map(|(_, _, cost, _)| *cost).sum();
-        (director.budget.map(|b| b - spent), others.map(|(.., tags)| tags.clone()).collect())
+        (director.budget.map(|b| b - spent), others.map(|(_, holder, _, tags)| (*holder, tags.clone())).collect())
     }
 
     fn add(&mut self, target: AiId, holder: AiId, cost: f32, tags: Vec<String>) {
@@ -276,7 +274,11 @@ impl InFlight {
 /// Why option `o` may not be chosen now, distance aside: the first rule that refuses it, in the
 /// order of [`Refusal`]; `None`: it may be chosen. The director's grant and the planner both ask
 /// it ([`crate::schedule`]). Every rule is a pure read, so the order decides only which rule is
-/// named, never whether the option passes.
+/// named, never whether the option passes. The action machine is asked exactly where the rules
+/// before `refusal` asked it (after the weight, the cooldown and the bans, a closed option too):
+/// its rule reads definitions no other rule reads (the action a running action's cancel window
+/// or a context binding routes the input to), and the replay's `content` check records what the
+/// simulation read, so a recording made before verifies the same.
 pub(crate) fn refusal(o: &Resolved, i: &Inputs) -> Option<Refusal> {
     let weighted = o.weight > 0.0;
     if !weighted {
@@ -287,26 +289,35 @@ pub(crate) fn refusal(o: &Resolved, i: &Inputs) -> Option<Refusal> {
     if !cooled {
         return Some(Refusal::Cooldown { left });
     }
-    if o.gated && !i.open.is_some_and(|options| options.allowed.contains(&o.name)) {
+    let closed = o.gated && !i.open.is_some_and(|options| options.allowed.contains(&o.name));
+    let ban = ban_of(&i.plan_def.bans, &o.tags, &i.plan.history);
+    // Startable now, or by waiting: a busy fighter, stamina or an action cooldown only delay it
+    // while the machine gives a time it would start by; with none (a held action with no end,
+    // stamina that never regenerates to the cost) it refuses, as death, a missing input or action,
+    // no charges, the mode gate, a leap off the ground or with no landing do. Asked of a closed
+    // option too, its answer unused: see above.
+    let machine = if ban.is_none() {
+        can_start(&i.view, &o.input, i.dt).err().filter(|blocker| blocker.ready_in().is_none())
+    } else {
+        None
+    };
+    if closed {
         let when = i.plan_def.options.iter().find(|p| p.label() == o.name).map_or_else(String::new, |p| {
             p.when.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
         });
         return Some(Refusal::Closed { when });
     }
-    if let Some((ban, past)) = ban_of(&i.plan_def.bans, &o.tags, &i.plan.history) {
+    if let Some((ban, past)) = ban {
         return Some(Refusal::Banned { after: past.name.clone(), ban });
     }
-    // Startable now, or by waiting: a busy fighter, stamina or an action cooldown only delay it.
-    if let Err(blocker) = can_start(&i.view, &o.input, i.dt)
-        && blocker.ready_in().is_none()
-    {
+    if let Some(blocker) = machine {
         return Some(Refusal::Machine { reason: blocker.reason() });
     }
     if let Some(left) = over_budget(o, i) {
         return Some(Refusal::Budget { left, cost: o.cost });
     }
-    if let Some(with) = overlap(o, i) {
-        return Some(Refusal::Overlap { with: with.clone() });
+    if let Some((by, with)) = overlap(o, i) {
+        return Some(Refusal::Overlap { by: *by, with: with.clone() });
     }
     if let Some((by, ticks)) = i.spacing
         && i.director.is_strike(&o.tags)
@@ -333,9 +344,10 @@ fn over_budget(o: &Resolved, i: &Inputs) -> Option<f32> {
     i.budget.filter(|&left| !within(left))
 }
 
-/// The tags of the first attack in flight on the target that option `o` may not overlap with.
-fn overlap<'a>(o: &Resolved, i: &'a Inputs) -> Option<&'a Vec<String>> {
-    i.overlapping.iter().find(|tags| !i.director.may_overlap(&o.tags, tags))
+/// The first attack in flight on the target that option `o` may not overlap with: its holder and
+/// its tags.
+fn overlap<'a>(o: &Resolved, i: &'a Inputs) -> Option<&'a (AiId, Vec<String>)> {
+    i.overlapping.iter().find(|(_, tags)| !i.director.may_overlap(&o.tags, tags))
 }
 
 /// `NpcSystems::Plan`: every token holder that strikes, in `AiId` order, chooses an attack,
@@ -605,8 +617,18 @@ mod tests {
         }
     }
 
-    /// The rules as they were written before [`refusal`], word for word: the conjunction the
-    /// tests below hold `refusal` to (no rule added, none dropped, none changed).
+    /// The ban rule as it was written before [`ban_of`], word for word: `banned` is now
+    /// `ban_of(..).is_some()`, so the old conjunction below asks this copy instead.
+    fn banned_old(bans: &[SequenceBan], tags: &[String], history: &[PastAttack]) -> bool {
+        bans.iter().any(|ban| {
+            ban.then.iter().any(|t| tags.contains(t))
+                && history.iter().rev().take(ban.within as usize).any(|past| ban.after.iter().any(|a| past.tags.contains(a)))
+        })
+    }
+
+    /// The rules as they were written before [`refusal`], word for word (only `banned` reads
+    /// [`banned_old`]): the conjunction the tests below hold `refusal` to (no rule added, none
+    /// dropped, none changed), in its order, which is the order it asked the action machine in.
     #[allow(clippy::too_many_arguments, reason = "the old signature, kept as it was")]
     fn feasible_old(
         o: &Resolved,
@@ -622,7 +644,7 @@ mod tests {
     ) -> bool {
         o.weight > 0.0
             && plan.cooldown(&o.name) <= 0.0
-            && !banned(&plan_def.bans, &o.tags, &plan.history)
+            && !banned_old(&plan_def.bans, &o.tags, &plan.history)
             && match can_start(view, &o.input, dt) {
                 Ok(_) => true,
                 Err(blocker) => blocker.ready_in().is_some(),
@@ -640,23 +662,66 @@ mod tests {
 
     const DT: f32 = 1.0 / 60.0;
 
-    /// Content for the machine's rule: moveset `m` starts `act_a` by `a` and `act_b` by `b`; it has
-    /// no `z`.
-    fn machine_db() -> ContentDb {
+    /// Content for the machine's rule: moveset `m` starts `act_a` by `a` and `act_b` by `b`, and
+    /// `act_h` by `h`; it has no `z`. While `act_a` swings, its cancel window routes `b` into
+    /// `act_c`, an action no input of the moveset names; `act_h` loops while `a` is held. The
+    /// database counts what is read while the returned scope is open, as a world's does.
+    fn machine_db() -> (ContentDb, ai_core::SimScope) {
         let mut kinds = shards_content::ContentKinds::default();
         kinds.register::<ActionDef>();
         kinds.register::<MovesetDef>();
         let source = |path: &str, text: &str| shards_content::db::Source { path: path.into(), text: text.into() };
-        ContentDb::build(
+        let mut db = ContentDb::build(
             &kinds,
             &[
                 source(
                     "content/t.action.ron",
-                    r#"{ "act_a": (net_id: 1, phases: [("swing", 0.5)]), "act_b": (net_id: 2, phases: [("swing", 0.5)]) }"#,
+                    r#"{
+                        "act_a": (net_id: 1, phases: [("swing", 0.5)], cancels: [(span: Phase("swing"), into: [Combo("b", "act_c")])]),
+                        "act_b": (net_id: 2, phases: [("swing", 0.5)]),
+                        "act_c": (net_id: 3, phases: [("swing", 0.5)]),
+                        "act_h": (net_id: 4, phases: [("loop", 0.5)], hold: (input: "a", span: Phase("loop"))),
+                    }"#,
                 ),
-                source("content/t.moveset.ron", r#"{ "m": (inputs: {"a": "act_a", "b": "act_b"}) }"#),
+                source("content/t.moveset.ron", r#"{ "m": (inputs: {"a": "act_a", "b": "act_b", "h": "act_h"}) }"#),
             ],
-        )
+        );
+        let scope = ai_core::SimScope::default();
+        db.watch(Some(scope.clone()));
+        (db, scope)
+    }
+
+    /// A fighter running `action` (of `machine_db`) `t` seconds in.
+    fn running(action: &str, t: f32) -> shards_action::ActionState {
+        let phase = if action == "act_h" { "loop" } else { "swing" };
+        let run = shards_action::Running {
+            action: action.into(),
+            instance: 1,
+            t,
+            prev: (t - DT).max(0.0),
+            length: 0.5,
+            facing: Vec3::NEG_Z,
+            dir: None,
+            input: None,
+            forced: false,
+            hit: Vec::new(),
+            phase: phase.into(),
+            phase_end: 0.5,
+            windows: default(),
+            zone: None,
+            zone_until: 0.0,
+            anim: None,
+        };
+        shards_action::ActionState { current: Some(run), started: 1 }
+    }
+
+    /// The definitions `read` reads (`kind/id`), counted from nothing.
+    fn reads(db: &ContentDb, scope: &ai_core::SimScope, read: impl FnOnce()) -> Vec<String> {
+        db.set_used(&std::collections::BTreeSet::new());
+        let open = scope.open();
+        read();
+        drop(open);
+        db.used_parts().into_iter().map(|(part, _)| part).collect()
     }
 
     /// One option judged on one set of inputs, all owned, so a test can change what any rule reads.
@@ -665,22 +730,28 @@ mod tests {
         o: Resolved,
         plan_def: AttackPlanDef,
         plan: NpcPlan,
+        /// What the fighter runs, and the inputs it holds.
+        state: shards_action::ActionState,
+        held: Vec<String>,
         dead: bool,
         cooldowns: Option<shards_action::Cooldowns>,
         budget: Option<f32>,
-        overlapping: Vec<Vec<String>>,
+        overlapping: Vec<(AiId, Vec<String>)>,
         director: DirectorDef,
         spacing: Option<(AiId, u64)>,
         open: Option<NpcOptions>,
     }
 
-    /// What the rules said of a case: `refusal`, `feasible`, the old conjunction, and whether
-    /// `fits` agrees with the old press check.
+    /// What the rules said of a case: `refusal`, `feasible`, the old conjunction, whether `fits`
+    /// agrees with the old press check, and the definitions `refusal` read (`kind/id`), with
+    /// whether the old conjunction read the same.
     struct Judged {
         refusal: Option<Refusal>,
         feasible: bool,
         old: bool,
         fits_agree: bool,
+        reads: Vec<String>,
+        reads_agree: bool,
     }
 
     impl Case {
@@ -691,6 +762,8 @@ mod tests {
                 o: option("a", 1.0, 0.0, 5.0, &["light"]),
                 plan_def: AttackPlanDef::default(),
                 plan: NpcPlan::default(),
+                state: default(),
+                held: Vec::new(),
                 dead: false,
                 cooldowns: None,
                 budget: None,
@@ -701,11 +774,10 @@ mod tests {
             }
         }
 
-        fn judge(&self, db: &ContentDb) -> Judged {
-            let state = shards_action::ActionState::default();
+        fn judge(&self, db: &ContentDb, scope: &ai_core::SimScope) -> Judged {
             let view = shards_action::FighterView {
                 cooldowns: self.cooldowns.as_ref(),
-                ..shards_action::FighterView::new(db, "m", &state, &[], self.dead)
+                ..shards_action::FighterView::new(db, "m", &self.state, &self.held, self.dead)
             };
             let inputs = Inputs {
                 plan_def: &self.plan_def,
@@ -718,23 +790,31 @@ mod tests {
                 spacing: self.spacing,
                 open: self.open.as_ref(),
             };
-            let old = feasible_old(
-                &self.o,
-                &self.plan_def,
-                &self.plan,
-                &inputs.view,
-                DT,
-                self.budget,
-                &self.overlapping,
-                &self.director,
-                self.spacing.is_some(),
-                self.open.as_ref(),
-            );
+            let tags: Vec<Vec<String>> = self.overlapping.iter().map(|(_, tags)| tags.clone()).collect();
+            let mut old = false;
+            let old_reads = reads(db, scope, || {
+                old = feasible_old(
+                    &self.o,
+                    &self.plan_def,
+                    &self.plan,
+                    &inputs.view,
+                    DT,
+                    self.budget,
+                    &tags,
+                    &self.director,
+                    self.spacing.is_some(),
+                    self.open.as_ref(),
+                );
+            });
+            let mut judged = None;
+            let new_reads = reads(db, scope, || judged = refusal(&self.o, &inputs));
             Judged {
-                refusal: refusal(&self.o, &inputs),
+                refusal: judged,
                 feasible: feasible(&self.o, &inputs),
                 old,
-                fits_agree: fits(&self.o, &inputs) == fits_old(&self.o, self.budget, &self.overlapping, &self.director),
+                fits_agree: fits(&self.o, &inputs) == fits_old(&self.o, self.budget, &tags, &self.director),
+                reads_agree: new_reads == old_reads,
+                reads: new_reads,
             }
         }
     }
@@ -788,69 +868,111 @@ mod tests {
             (
                 |c| {
                     c.director.allowed = vec![("light".into(), "light".into())];
-                    c.overlapping = vec![vec!["light".into()], vec!["heavy".into()]];
+                    c.overlapping = vec![(AiId(4), vec!["light".into()]), (AiId(6), vec!["heavy".into()])];
                 },
-                Refusal::Overlap { with: vec!["heavy".into()] },
+                Refusal::Overlap { by: AiId(6), with: vec!["heavy".into()] },
             ),
             (|c| c.spacing = Some((AiId(7), 12)), Refusal::Spacing { by: AiId(7), ticks: 12 }),
         ]
     }
 
     /// Each rule closed alone gives its own refusal, with the numbers that refused it; two closed
-    /// give the earlier one; and wherever `refusal` refuses, the old conjunction did too.
+    /// give the earlier one; and wherever `refusal` refuses, the old conjunction did too, having
+    /// read the same definitions.
     #[test]
     fn each_rule_refuses_by_its_name_and_the_first_in_order_is_named() {
-        let db = machine_db();
-        let judged = Case::open().judge(&db);
+        let (db, scope) = machine_db();
+        let judged = Case::open().judge(&db, &scope);
         assert_eq!(judged.refusal, None);
-        assert!(judged.feasible && judged.old && judged.fits_agree);
+        assert!(judged.feasible && judged.old && judged.fits_agree && judged.reads_agree);
         let closers = closers();
         for (k, (close, expected)) in closers.iter().enumerate() {
             let mut case = Case::open();
             close(&mut case);
-            let judged = case.judge(&db);
+            let judged = case.judge(&db, &scope);
             assert_eq!(judged.refusal.as_ref(), Some(expected), "{} alone", RULES[k]);
             assert_eq!(rule(expected), RULES[k]);
-            assert!(!judged.feasible && !judged.old && judged.fits_agree, "{} alone", RULES[k]);
+            assert!(!judged.feasible && !judged.old && judged.fits_agree && judged.reads_agree, "{} alone", RULES[k]);
             for (later, _) in &closers[k + 1..] {
                 let mut case = Case::open();
                 later(&mut case);
                 close(&mut case);
-                let judged = case.judge(&db);
+                let judged = case.judge(&db, &scope);
                 assert_eq!(judged.refusal.as_ref().map(rule), Some(RULES[k]), "{case:?}");
-                assert!(!judged.feasible && !judged.old);
+                assert!(!judged.feasible && !judged.old && judged.reads_agree, "{case:?}");
             }
         }
     }
 
     /// The machine's rule refuses only what it would start neither now nor by waiting: an action
-    /// on its own cooldown waits, an input the moveset lacks never starts.
+    /// on its own cooldown waits, and so does a running action that ends; an input the moveset
+    /// lacks never starts, nor does anything while a held action loops with no end.
     #[test]
     fn the_machine_refuses_only_what_waiting_does_not_start() {
-        let db = machine_db();
+        let (db, scope) = machine_db();
         let mut case = Case::open();
         case.cooldowns = Some(shards_action::Cooldowns(vec![shards_action::Cooldown { action: "act_a".into(), left: 1.0 }]));
-        let judged = case.judge(&db);
+        let judged = case.judge(&db, &scope);
         assert_eq!(judged.refusal, None, "an action cooldown only delays it");
         assert!(judged.feasible && judged.old);
         let mut case = Case::open();
         case.o.input = "z".into();
-        let judged = case.judge(&db);
+        let judged = case.judge(&db, &scope);
         assert_eq!(judged.refusal, Some(Refusal::Machine { reason: "no action for `z`".into() }));
         assert!(!judged.feasible && !judged.old);
+        // Busy in a loop held with no end: it gives no time, so it refuses; let go, it ends and waits.
+        let mut case = Case::open();
+        case.state = running("act_h", 0.2);
+        case.held = vec!["a".into()];
+        let judged = case.judge(&db, &scope);
+        assert_eq!(judged.refusal, Some(Refusal::Machine { reason: "busy (loop act_h 0.30s)".into() }));
+        assert!(!judged.feasible && !judged.old);
+        case.held.clear();
+        let judged = case.judge(&db, &scope);
+        assert_eq!(judged.refusal, None, "a running action that ends only delays it");
+        assert!(judged.feasible && judged.old);
+    }
+
+    /// The machine reads a definition no other rule reads: the action a running action's cancel
+    /// window routes the input to. A closed option still asks it where the old rules did (no ban
+    /// refuses it), so a session reads, and a replay's `content` check records, what it did before.
+    #[test]
+    fn a_closed_option_reads_what_the_old_rules_read() {
+        let (db, scope) = machine_db();
+        let mut case = Case::open();
+        case.o.input = "b".into();
+        case.state = running("act_a", 0.2);
+        let judged = case.judge(&db, &scope);
+        assert_eq!(judged.refusal, None, "act_a's window lets b through into act_c");
+        assert!(judged.reads.contains(&"action/act_c".to_owned()), "{:?}", judged.reads);
+        case.o.gated = true;
+        case.open = Some(NpcOptions::default());
+        let judged = case.judge(&db, &scope);
+        assert_eq!(judged.refusal, Some(Refusal::Closed { when: String::new() }));
+        assert!(judged.reads.contains(&"action/act_c".to_owned()), "closed, it still asks the machine: {:?}", judged.reads);
+        assert!(judged.reads_agree);
+        // A ban kept the old rules from asking the machine: closed and banned, it reads nothing.
+        case.plan_def.bans = vec![SequenceBan { after: vec!["a".into()], then: vec!["a".into()], within: 1 }];
+        case.plan.history = vec![PastAttack { name: "a".into(), tags: vec!["a".into()] }];
+        let judged = case.judge(&db, &scope);
+        assert_eq!(judged.refusal, Some(Refusal::Closed { when: String::new() }));
+        assert_eq!(judged.reads, Vec::<String>::new());
+        assert!(judged.reads_agree);
     }
 
     /// The property: over many random options and states (a fixed seed), `refusal` passes exactly
-    /// the options the old conjunction passed, `feasible` is `refusal(..).is_none()`, the press
-    /// check `fits` is the old one, `ban_of` finds a ban exactly where `banned` does, and every
-    /// rule refuses somewhere.
+    /// the options the old conjunction passed and reads the definitions it read, `feasible` is
+    /// `refusal(..).is_none()`, the press check `fits` is the old one, `ban_of` finds a ban exactly
+    /// where the old ban rule does, `Closed` quotes the option's own `when`, and every rule refuses
+    /// somewhere.
     #[test]
     fn refusal_passes_exactly_what_the_old_rules_passed() {
-        let db = machine_db();
+        let (db, scope) = machine_db();
         let mut rng = DetRng::new(0x5eed_08a1);
         let names = ["a", "b", "z"];
         let tag_pool = ["light", "heavy", "zone", "move", "a", "b"];
         let tags = |rng: &mut DetRng| -> Vec<String> { tag_pool.iter().filter(|_| rng.chance(0.35)).map(|t| (*t).to_owned()).collect() };
+        let conds = ["enraged", "!calm", "phase_2"];
         let mut refused = [0u32; 8];
         let mut passed = 0u32;
         for n in 0..20_000 {
@@ -864,6 +986,18 @@ mod tests {
             if rng.chance(0.2) {
                 o.input = (*rng.pick(&names).unwrap()).to_owned();
             }
+            // Every name's option in the plan, each with conditions of its own (at least one).
+            let options: Vec<crate::def::AttackOption> = names
+                .iter()
+                .map(|label| {
+                    let mut when: Vec<&str> = conds.iter().copied().filter(|_| rng.chance(0.5)).collect();
+                    if when.is_empty() {
+                        when.push(*rng.pick(&conds).unwrap());
+                    }
+                    let when = when.into_iter().map(|c| crate::def::Cond::new(c, default())).collect();
+                    crate::def::AttackOption { input: Some((*label).to_owned()), when, ..default() }
+                })
+                .collect();
             let mut plan = NpcPlan::default();
             for name in names {
                 if rng.chance(0.3) {
@@ -887,29 +1021,43 @@ mod tests {
             if rng.chance(0.3) {
                 director.spacing_exempt_tags = vec!["move".into()];
             }
+            // Free, or in `act_a` (whose window routes `b` into `act_c`), or in `act_h` (`a` held or not).
+            let (state, held) = match rng.below(4) {
+                0 => (running("act_a", 0.2), Vec::new()),
+                1 => (running("act_h", 0.2), if rng.chance(0.5) { vec!["a".to_owned()] } else { Vec::new() }),
+                _ => (default(), Vec::new()),
+            };
             let case = Case {
                 o,
-                plan_def: AttackPlanDef { bans, ..default() },
+                plan_def: AttackPlanDef { bans, options, ..default() },
                 plan,
+                state,
+                held,
                 dead: rng.chance(0.1),
                 cooldowns: rng
                     .chance(0.3)
                     .then(|| shards_action::Cooldowns(vec![shards_action::Cooldown { action: "act_a".into(), left: 1.0 }])),
                 budget: rng.chance(0.5).then(|| *rng.pick(&[0.0, 0.5, 1.0, 1.00005, 2.5]).unwrap()),
-                overlapping: (0..rng.below(3)).map(|_| tags(&mut rng)).collect(),
+                overlapping: (0..rng.below(3)).map(|k| (AiId(20 + k), tags(&mut rng))).collect(),
                 director,
                 spacing: rng.chance(0.4).then(|| (AiId(9), 1 + u64::from(rng.below(40)))),
                 open: rng.chance(0.5).then(|| NpcOptions { allowed: names.iter().filter(|_| rng.chance(0.5)).map(|n| (*n).to_owned()).collect() }),
             };
-            let judged = case.judge(&db);
+            let judged = case.judge(&db, &scope);
             assert_eq!(judged.refusal.is_none(), judged.old, "case {n}: {case:?} gives {:?}", judged.refusal);
             assert_eq!(judged.feasible, judged.refusal.is_none(), "case {n}");
             assert!(judged.fits_agree, "case {n}: {case:?}");
+            assert!(judged.reads_agree, "case {n}: {case:?} reads {:?}", judged.reads);
             assert_eq!(
                 ban_of(&case.plan_def.bans, &case.o.tags, &case.plan.history).is_some(),
-                banned(&case.plan_def.bans, &case.o.tags, &case.plan.history),
+                banned_old(&case.plan_def.bans, &case.o.tags, &case.plan.history),
                 "case {n}: {case:?}"
             );
+            if let Some(Refusal::Closed { when }) = &judged.refusal {
+                let own = case.plan_def.options.iter().find(|p| p.input.as_deref() == Some(case.o.name.as_str())).unwrap();
+                let written: Vec<String> = own.when.iter().map(ToString::to_string).collect();
+                assert!(!when.is_empty() && *when == written.join(", "), "case {n}: {when:?} for {:?}", own.when);
+            }
             match &judged.refusal {
                 Some(r) => refused[RULES.iter().position(|x| *x == rule(r)).unwrap()] += 1,
                 None => passed += 1,
