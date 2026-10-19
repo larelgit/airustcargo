@@ -1203,3 +1203,45 @@ fn a_barrier_a_timed_multiplier_and_a_proc_gate_come_back() {
         step(app, 250);
     });
 }
+
+/// The skeleton e8 as a caster (`combat/caster.moveset.ron`), 15 m north of the player and locked
+/// on it, its volley pressed; the rest calm.
+fn a_caster_at_the_player() -> App {
+    let mut app = sandbox::test_app(42);
+    calm_skeletons(&mut app);
+    calm_warden(&mut app);
+    ok(&mut app, "set", json!({"id": "e8", "component": "Fighter", "path": "moveset", "value": "caster"}));
+    ok(&mut app, "teleport", json!({"id": PLAYER, "x": 5, "z": 0, "y": 0}));
+    ok(&mut app, "teleport", json!({"id": "e8", "x": 5, "z": -15, "y": 0}));
+    step(&mut app, 2);
+    app.world_mut().resource_mut::<AgentSessions>().configure("caster", Scope::Dev, Some(AiId(8)));
+    for (tool, args) in [("lock_on", json!({"target": PLAYER})), ("light_attack", json!({}))] {
+        let out = shards::ai_core::call_tool(app.world_mut(), "caster", tool, args);
+        assert!(out.ok, "{tool} as the caster: {}", out.result);
+    }
+    app
+}
+
+/// Spawned combat objects (B4): taken with the volley in the air (the homing bolt closing in), and
+/// with a puddle that has hit the player and keeps its per-target marks.
+#[test]
+fn mid_flight_and_with_a_puddle_ticking() {
+    use shards::action::{CombatObject, ProjectileFlight, Repeats};
+    let mut app = a_caster_at_the_player();
+    step(&mut app, 80);
+    let world = app.world_mut();
+    let flying = world.query::<(&CombatObject, &ProjectileFlight)>().iter(world).filter(|(_, f)| f.dir != Vec3::ZERO).count();
+    assert_eq!(flying, 3, "three bolts in the air");
+    assert_continues_alike("bolts in flight", app, |app| {
+        step(app, 200);
+    });
+
+    let mut app = a_caster_at_the_player();
+    step(&mut app, 150);
+    let world = app.world_mut();
+    let marks = world.query::<&Repeats>().iter(world).map(|r| r.0.len()).sum::<usize>();
+    assert!(marks > 0, "the puddle has hit the player and keeps the mark");
+    assert_continues_alike("a puddle with marks", app, |app| {
+        step(app, 150);
+    });
+}

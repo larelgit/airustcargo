@@ -1,0 +1,81 @@
+# Co-op spawned combat objects (B4): the host's skeleton e8, given the `caster` moveset, volleys
+# at c1's player e15 while c2's e16 watches from the side. Nothing is predicted: the bolts are
+# host entities that come over to both clients with their ids, the bolt that meets e15 is the
+# host's, credited to the caster, and its puddle hits e15 again on the host while c1 sees the
+# same lines.
+#
+# e8 gets the `caster` moveset (`content/combat/caster.moveset.ron`, `objects.*.ron`) and goes back
+# at the end.
+#
+#   cargo sandbox --stand 2 --headless --paused --port 0 --port-file F --net-sim latency=150,loss=0.02 &
+#   SHARDS_PORT_FILE=F cargo shards wait --peer all
+#   SHARDS_PORT_FILE=F cargo shards scenario crates/sandbox/scenarios/stand/objects.scenario
+#   SHARDS_PORT_FILE=F cargo shards stand stop
+stand clients=2 latency=150 loss=0.02
+seed 42
+
+@host act npc_set_state id=e6 state=calm
+@host act npc_set_state id=e7 state=calm
+@host act npc_set_state id=e8 state=calm
+@host act npc_set_state id=e14 state=calm
+@host act heal id=e5
+@host act heal id=e15
+@host act heal id=e16
+@host act heal id=e8
+@host act set id=e8 component=Fighter path=moveset value=caster
+@host act teleport id=e5 x=-15 z=15 y=0
+@host act teleport id=e16 x=-15 z=12 y=0
+@host act teleport id=e15 x=5.5 z=0 y=0
+@host act teleport id=e8 x=5.5 z=-15 y=0
+@c1 act stop
+@c2 act stop
+step 120
+invariant !journal "desync"
+
+@host session --agent caster --scope dev --subject e8
+@host act lock_on target=e15
+@host expect result contains "ok: locked on e15"
+@host session --agent scenario
+step 31
+
+# --- 1. the volley: the bolts are on both clients too, by the host's ids
+@host session --agent caster
+@host act light_attack
+@host expect result contains "ok: caster_volley"
+@host session --agent scenario
+@host step 120 --until "journal:e8 spawns 3 x bolt_fly"
+step 20
+@host act combat_objects owner=e8
+@host expect result contains "bolt_fly"
+@c1 act combat_objects owner=e8
+@c1 expect result contains "bolt_fly"
+@c2 act combat_objects owner=e8
+@c2 expect result contains "bolt_fly"
+
+# --- 2. the bolt that meets e15 is the host's, credited to the caster; its puddle hits again
+@host step 80 --until "journal:e8 -> e15 bolt_fly"
+@host expect journal "e8 -> e15 bolt_fly -8"
+step 60
+@c1 expect journal "e8 -> e15 bolt_fly -8"
+@host step 120 --until "journal:e8 -> e15 chill_puddle"
+@host expect journal "e8 -> e15 chill_puddle -2"
+step 60
+@c1 expect journal "e8 -> e15 chill_puddle -2"
+
+# --- back as it was: every object gone everywhere
+@host session --agent caster
+@host act lock_on off=true
+@host session --agent scenario
+@host act set id=e8 component=Fighter path=moveset value=skeleton
+@host act heal id=e15
+@host act heal id=e16
+@host act heal id=e8
+@host act teleport id=e5 x=0 z=12 y=0
+@host act teleport id=e8 x=12 z=-2 y=0
+step 300
+@host act combat_objects
+@host expect result !contains "owner"
+@c1 act combat_objects
+@c1 expect result !contains "owner"
+@c2 act combat_objects
+@c2 expect result !contains "owner"

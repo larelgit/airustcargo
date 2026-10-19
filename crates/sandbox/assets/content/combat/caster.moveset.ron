@@ -1,0 +1,11 @@
+// A caster of combat objects (B4) for `objects.scenario`: a volley of bolts at its lock-on target,
+// a line of zones ahead, rings of zones around it. A skeleton borrows it (its stagger, flinch and
+// death stay the skeleton's). Actions in `objects.action.ron`.
+{
+    "caster": (
+        inputs: {"light": "caster_volley", "heavy": "caster_line", "technique.1": "caster_radial"},
+        stagger: "skeleton_stagger",
+        hit: "skeleton_flinch",
+        death: "skeleton_death",
+    ),
+}
