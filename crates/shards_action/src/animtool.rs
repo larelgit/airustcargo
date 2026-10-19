@@ -188,6 +188,7 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
     let plays = |name: &str| bound.map(|b| (b.layer_clip(name).map(str::to_owned), b.layer_share(name)));
     let mut layers: Vec<String> = Vec::new();
     for name in set.layers.keys() {
+        #[allow(unused_mut, reason = "the drawn side replaces it")]
         let mut text = match layer.filter(|l| l.layer == name) {
             Some(l) => format!("{name}: {} (wanted)", l.choice.clip.unwrap_or("-")),
             None => format!("{name}: none"),
@@ -219,7 +220,12 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
             if list.is_empty() { "nothing".to_owned() } else { list.join(", ") }
         ));
     }
-    if !carried.is_empty() {
+    // Drawn, the bridge may still show props the moveset no longer carries (an open equip).
+    #[cfg(feature = "render")]
+    let placed = bound.is_some_and(|b| b.places().next().is_some());
+    #[cfg(not(feature = "render"))]
+    let placed = false;
+    if !carried.is_empty() || placed {
         let rules = run.and_then(|r| {
             let rules = set.mount_rules(&r.action, r.anim.as_deref(), def.map_or(&[], |d| d.tags.as_slice()))?;
             Some((rules, def?, action.map_or(r.t, |(_, t, _)| t)))
