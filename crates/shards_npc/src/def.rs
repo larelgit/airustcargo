@@ -495,14 +495,21 @@ impl ContentDef for DirectorDef {
             refs.error("spacing_exempt_tags without a min_spacing exempts nothing; set `min_spacing` or leave the tags out");
         }
         for (i, w) in self.waiting.iter().enumerate() {
-            non_negative(refs, &format!("waiting[{i}].distance"), w.distance);
-            non_negative(refs, &format!("waiting[{i}].orbit"), w.orbit);
-            if !(0.0..=1.0).contains(&w.speed) {
-                refs.error(format!("waiting[{i}].speed is a movement input in 0..1 (is {})", w.speed));
-            }
-            if w.role == Role::Strafe && w.period <= 0.0 {
-                refs.error(format!("waiting[{i}].period must be > 0 for a strafe (is {})", w.period));
-            }
+            w.validate(&format!("waiting[{i}]"), refs);
+        }
+    }
+}
+
+impl WaitRole {
+    /// The checks of a waiting role, for a director's `waiting[i]` and a plan's `wait`.
+    fn validate(&self, at: &str, refs: &mut Refs) {
+        non_negative(refs, &format!("{at}.distance"), self.distance);
+        non_negative(refs, &format!("{at}.orbit"), self.orbit);
+        if !(0.0..=1.0).contains(&self.speed) {
+            refs.error(format!("{at}.speed is a movement input in 0..1 (is {})", self.speed));
+        }
+        if self.role == Role::Strafe && self.period <= 0.0 {
+            refs.error(format!("{at}.period must be > 0 for a strafe (is {})", self.period));
         }
     }
 }
@@ -681,6 +688,22 @@ pub struct AttackPlanDef {
     /// on the director it changes nothing.
     #[serde(skip_serializing_if = "is_false")]
     pub ignores_spacing: bool,
+    /// The NPC fights without the director's tokens (a boss among its adds, CDD 27.2): it is
+    /// granted the right to attack whenever it asks and some option may be chosen, whatever the
+    /// director's limit. Its grant is not counted, not limited, not lowered and never times out
+    /// (`patience`), and no `TokenGranted`/`TokenReturned` is triggered for it. Its own choice and
+    /// press do not wait on the target's `budget` or `allowed` combinations. Its strikes are noted
+    /// for the director's spacing like anyone's, and its attacks in flight count against the
+    /// others' `budget` and combinations. Combine with `ignores_spacing` for "never waits, still
+    /// counts". Off (the default): it fights by the tokens.
+    #[serde(skip_serializing_if = "is_false")]
+    pub tokenless: bool,
+    /// The role this NPC waits in instead of a slot of its director's `waiting` list: while it
+    /// holds no grant, and while it holds one with no option chosen (nothing in reach). It takes
+    /// no slot, so the others' slots do not move. `None`: a slot, and with a grant the planner
+    /// closes in or stands, as before.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wait: Option<WaitRole>,
 }
 
 impl Default for AttackPlanDef {
@@ -696,6 +719,8 @@ impl Default for AttackPlanDef {
             first_rest: None,
             press_on_decision: false,
             ignores_spacing: false,
+            tokenless: false,
+            wait: None,
         }
     }
 }
@@ -809,6 +834,9 @@ impl ContentDef for AttackPlanDef {
                     ));
                 }
             }
+        }
+        if let Some(wait) = &self.wait {
+            wait.validate("wait", refs);
         }
         for (i, b) in self.bans.iter().enumerate() {
             if b.after.is_empty() || b.then.is_empty() {
@@ -1038,7 +1066,7 @@ mod tests {
             ]
         );
         let neutral = serde_json::to_string(&AttackPlanDef::default()).unwrap();
-        for field in ["rest_interrupted", "first_rest", "press_on_decision", "ignores_spacing"] {
+        for field in ["rest_interrupted", "first_rest", "press_on_decision", "ignores_spacing", "tokenless", "wait"] {
             assert!(!neutral.contains(field), "{field} stays out of a plan that does not use it: {neutral}");
         }
     }
@@ -1091,6 +1119,38 @@ mod tests {
         assert_eq!(plan(vec![option(Some(2))], vec![]).memory(), 2);
         assert_eq!(plan(vec![option(Some(2)), option(Some(5))], vec![ban(3)]).memory(), 5);
         assert_eq!(plan(vec![option(Some(2))], vec![ban(4)]).memory(), 4);
+    }
+
+    /// `tokenless` and `wait` read, serialize and round-trip; a plan's waiting role is checked as a
+    /// director's is, under `wait.`.
+    #[test]
+    fn tokenless_and_a_waiting_role_round_trip_and_the_role_validates() {
+        let plan: AttackPlanDef =
+            ron(r#"(options: [(input: "light")], tokenless: true, wait: (role: Strafe, distance: 2.4, speed: 1.0, orbit: 2.0, period: 1.875))"#);
+        assert!(plan.tokenless);
+        assert_eq!(plan.wait.as_ref().map(|w| (w.role, w.distance, w.period)), Some((Role::Strafe, 2.4, 1.875)));
+        let json = serde_json::to_value(&plan).unwrap();
+        assert_eq!(json["tokenless"], true);
+        assert_eq!(json["wait"]["role"], "Strafe");
+        assert_eq!(serde_json::from_value::<AttackPlanDef>(json).unwrap(), plan);
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<AttackPlanDef>();
+        let text = r#"{
+            "ok": (options: [(input: "light")], tokenless: true, wait: (role: Hold, distance: 2.0)),
+            "bad": (options: [(input: "light")], wait: (role: Strafe, distance: -1.0, speed: 1.5, orbit: -2.0, period: 0.0)),
+        }"#;
+        let db = ContentDb::build(&kinds, &[shards_content::db::Source { path: "content/p.attack_plan.ron".into(), text: text.into() }]);
+        let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+        let at = |what: &str| format!("content/p.attack_plan.ron: attack_plan `bad`: {what}");
+        assert_eq!(
+            errors,
+            [
+                at("wait.distance must be a number >= 0 (is -1)"),
+                at("wait.orbit must be a number >= 0 (is -2)"),
+                at("wait.speed is a movement input in 0..1 (is 1.5)"),
+                at("wait.period must be > 0 for a strafe (is 0)"),
+            ]
+        );
     }
 
     #[test]

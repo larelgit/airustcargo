@@ -576,7 +576,7 @@ fn aim_at_victim(world: &mut World, attacker: Entity, victim: Entity, instance: 
     if !def.turn.is_empty() {
         return;
     }
-    let facing = crate::machine::steer(&def, dir, &intent, here, forward, Some(there));
+    let facing = crate::machine::steer(def, dir, &intent, here, forward, Some(there));
     if let Some(mut state) = world.get_mut::<ActionState>(attacker)
         && let Some(run) = state.current.as_mut().filter(|r| r.instance == instance)
     {
