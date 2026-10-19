@@ -38,6 +38,9 @@ is_default!(shift_is_default, f32, 0.12);
 is_default!(pitch_deg_is_default, f32, 2.0);
 is_default!(yaw_deg_is_default, f32, 2.0);
 is_default!(roll_deg_is_default, f32, 3.0);
+is_default!(fit_margin_is_default, f32, 0.15);
+is_default!(tilt_max_is_default, f32, 0.6);
+is_default!(fit_rate_is_default, f32, 6.0);
 
 fn is_false(v: &bool) -> bool {
     !*v
@@ -67,11 +70,43 @@ pub struct FramingTuning {
     /// framing: the direction to it is not defined. 0: always frames.
     #[serde(skip_serializing_if = "zero_f32")]
     pub min_horizontal: f32,
+    /// Keeping the player and the locked target in frame together (R4). `None` (the default):
+    /// the camera looks at the focus, and a target high on a big body may leave the top of
+    /// the frame.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fit: Option<FitTuning>,
 }
 
 impl Default for FramingTuning {
     fn default() -> Self {
-        Self { yaw_rate: 7.0, pitch_rate: 7.0, pitch_target: None, pitch_clamp: (0.15, 0.7), min_horizontal: 0.0 }
+        Self { yaw_rate: 7.0, pitch_rate: 7.0, pitch_target: None, pitch_clamp: (0.15, 0.7), min_horizontal: 0.0, fit: None }
+    }
+}
+
+/// The view of a camera locked on to a target high on a big body (R4). The camera still
+/// stands where the framing puts it, but the view turns up from the focus as far as it
+/// takes to keep the target inside the frame's top margin, and never so far that the
+/// player's feet leave the bottom margin: when both cannot be kept, the player is. Never
+/// down: a target below the focus is framed as before.
+#[derive(Reflect, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[reflect(Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct FitTuning {
+    /// How far inside the top and bottom edges the target and the feet are kept, as a share
+    /// of half the frame's height (0 at the edge, below 1).
+    #[serde(skip_serializing_if = "fit_margin_is_default")]
+    pub margin: f32,
+    /// The most the view turns up from the focus (radians).
+    #[serde(skip_serializing_if = "tilt_max_is_default")]
+    pub tilt_max: f32,
+    /// How fast the turn catches up, and goes back to 0 after the lock (1/s, exact exponential).
+    #[serde(skip_serializing_if = "fit_rate_is_default")]
+    pub rate: f32,
+}
+
+impl Default for FitTuning {
+    fn default() -> Self {
+        Self { margin: 0.15, tilt_max: 0.6, rate: 6.0 }
     }
 }
 
@@ -324,6 +359,15 @@ impl CameraTuning {
         let clamp_ok = finite("framing.pitch_clamp.0", clamp_lo, &mut out) & finite("framing.pitch_clamp.1", clamp_hi, &mut out);
         if clamp_ok && clamp_lo > clamp_hi {
             out.push(format!("framing.pitch_clamp ({clamp_lo}, {clamp_hi}) has its low end above its high end"));
+        }
+        if let Some(fit) = &framing.fit {
+            if finite("framing.fit.margin", fit.margin, &mut out) && !(0.0..1.0).contains(&fit.margin) {
+                out.push(format!("framing.fit.margin {} must be in [0, 1): a share of half the frame's height", fit.margin));
+            }
+            if finite("framing.fit.tilt_max", fit.tilt_max, &mut out) && !(0.0..=limit).contains(&fit.tilt_max) {
+                out.push(format!("framing.fit.tilt_max {} must be within [0, {limit:.2}] radians", fit.tilt_max));
+            }
+            positive_rate("framing.fit.rate", fit.rate, &mut out);
         }
         // A clamp wider than the pitch limits is fine: the framed pitch is held to them afterwards,
         // like any pitch, so narrowing `pitch` does not also need a narrower clamp.

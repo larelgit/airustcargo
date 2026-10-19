@@ -21,3 +21,5 @@ mod tools;
 mod voxel;
 #[cfg(feature = "render")]
 mod camera;
+#[cfg(feature = "render")]
+mod camera_big;

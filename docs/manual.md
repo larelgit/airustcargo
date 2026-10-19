@@ -85,7 +85,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 213 definitions in 63 files
+cargo shards content check                 # ok: 214 definitions in 64 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -108,7 +108,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 213 definitions in 63 files
+# ok: 214 definitions in 64 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -598,7 +598,7 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 213 definitions in 63 files
+content: 214 definitions in 64 files
   action  70
   animset  1
   attack_plan  3
@@ -649,7 +649,7 @@ content: 213 definitions in 63 files
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 213 definitions in 63
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 214 definitions in 64
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -965,6 +965,8 @@ For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, spr
 | `framing.pitch_target` | `None`: the pitch of the line from the target to the focus | a fixed pitch to frame at |
 | `framing.pitch_clamp` | `(0.15, 0.7)` | the range that geometric pitch is held to |
 | `framing.min_horizontal` | `0` (always frames) | nearer than this to the target (m, on the ground, from the focus) the camera stops framing |
+| `framing.fit` | `None`: the view looks at the focus | keep the player and a locked target high on a big body in frame together (R4, below); `Some(())` takes the defaults of its fields |
+| `framing.fit.margin` / `tilt_max` / `rate` | `0.15` / `0.6` / `6` | how far inside the top and bottom edges the target and the feet are kept (a share of half the frame's height, below 1); the most the view turns up (radians); how fast the turn catches up and goes back after the lock, 1/s |
 | `arm.radius` / `arm.min_distance` | `0.25` / `0.7` (`CAMERA_RADIUS`, `MIN_DISTANCE`) | the sphere a wall pulls in; never closer than this to the focus |
 | `arm.follow_rate` | `None`: at once | how fast the arm grows back after a wall let go of it, and how fast its nominal length follows `ThirdPersonCamera::distance`, 1/s. It always shortens at once |
 | `flick.mouse_threshold_px` | `14` (`FLICK` 0.035 rad at the standard map's 0.0025 rad/px) | horizontal mouse pixels, summed, that switch the lock-on target |
@@ -976,7 +978,7 @@ For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, spr
 | `trauma.decay` | `1.4` (`TRAUMA_DECAY`, linear) | trauma drained per second |
 | `trauma.shift_m` / `pitch_deg` / `yaw_deg` / `roll_deg` | `0.12` / `2` / `2` / `3` | the most a shake of trauma 1 moves and turns the view (scaled by trauma squared) |
 
-The ranges of `pitch`, `follow_rate`, the rates, thresholds and amplitudes are content errors when out of range (a rate must be above 0, a re-arm level below the threshold, and so on). `framing.pitch_clamp` must not have its low end above its high end; it may be wider than `pitch`, since the framed pitch is then held to the pitch limits like any other. Two things stay constants on purpose: the engine's 30..120 limit on the field of view (the player's setting is clamped to it too) and the shake's noise frequencies (the look of the noise, not a feel number).
+The ranges of `pitch`, `follow_rate`, the rates, thresholds and amplitudes are content errors when out of range (a rate must be above 0, a re-arm level below the threshold, and so on). `framing.pitch_clamp` must not have its low end above its high end, and `framing.fit` needs a margin in [0, 1), a `tilt_max` within ±(π/2 − 0.02) and a rate above 0; it may be wider than `pitch`, since the framed pitch is then held to the pitch limits like any other. Two things stay constants on purpose: the engine's 30..120 limit on the field of view (the player's setting is clamped to it too) and the shake's noise frequencies (the look of the noise, not a feel number).
 
 *Smoothing.* Every smoothing is the exact exponential `1 - exp(-rate * dt)` through `bevy::math::ops::exp`, so it does not depend on the frame rate (`damp`, `lock_framing`, `arm_reach`). `critically_damped_step(x, v, target, omega, dt)` is the closed form of a critically damped spring (for a landing dip: kick `v`, aim at 0); one step of `2 dt` equals two of `dt`. *The arm*: a wall pulls it in at once; once it lets go the shortfall below the nominal length shrinks at `arm.follow_rate` (the rate acts on the shortfall, so a plain zoom is smoothed once, by `arm_length`; `ThirdPersonCamera::arm_reach` is where it stood last frame, `arm_length` its nominal length), never past what is free and never closer than `arm.min_distance` (as far as the room allows). A jump of the focus (a teleport) resets it.
 
@@ -984,6 +986,21 @@ The ranges of `pitch`, `follow_rate`, the rates, thresholds and amplitudes are c
 
 *Offsets.* `CameraOffsets` (a resource, neutral by default) is what a game's systems add to the base values; `orbit_camera` reads it after them, every frame: `fov_add_deg` is added to the player's field of view before the engine's 30..120 limit (sprint widening, a finisher's punch); `focus_dip_m` lowers the camera and what it looks at together, so the picture drops without tilting (a landing dip; negative raises); `pitch_min` / `pitch_max` narrow the tuning's pitch range (an override outside it is held to it), and the stored pitch is clamped to the result (a swim cap: the camera stays above the water; lifting the cap does not push the pitch back up). **The writer owns its value**: the system that writes a field sets it on every frame it wants an effect and puts it back to `0.0` / `None` itself when it is done. The camera only reads: it never decays, sums or stores an offset, and it never writes `CameraSettings`, `ThirdPersonCamera::focus` or the stored pitch except through the clamp above, so an offset stays as its writer left it until the writer puts it back (a writer that stops without resetting
 leaves its effect on). Two systems that want the same field must be combined by the game into one writer. Write in `PostUpdate` before `CameraSystems::Orbit` to be seen on the same frame (the set is empty without the `render` feature, so the writers run and are testable headless).
+
+**The camera next to a big body (R4).** A locked camera looks at the player's head. Next to a body several times the player's height,
+a lock point on it (a horn, a core high in its chest; "Lock points (R3)") leaves the top of the frame, while the frame's bottom
+third, below the player's feet, stays empty. The measurement (`tests/motion/camera_big.rs`, `measure`, through the real
+`orbit_camera`, at the defaults: arm 5.5 m, focus 1.5 m, 70°): the feet sit at y −0.37 of the frame (−1 bottom, 1 top), and a
+point 6 m up at 2 m ahead, 9 m up at 8 m and 12 m up at any distance reach its top edge or pass it. A `framing.fit` keeps both: the camera stands
+where the framing puts it, but its view turns up from the focus about its own horizontal axis (`ThirdPersonCamera::tilt`,
+`fit_tilt`) just far enough to put the target on the top margin, and never so far that the feet leave the bottom margin; when
+both cannot be kept, the player is (the player and the threat, not the whole silhouette). With the defaults a point fits up
+to about 9 m at 2 m ahead, 10 m at 4 m, and 12 m from 6 m out. The view never turns down, a target the frame
+already holds (a body of a person's height, framed at its chest) gives the very same camera as without a fit, and after the lock
+the view comes back to the focus at `fit.rate`. A lower camera needs no new number: `framing.pitch_clamp`'s low end is how far
+down the framed arm may go (`(0.0, 0.7)` keeps it level with the head next to a big body). Without a `fit` nothing changes. The
+lock pick and the flick read the camera's `Transform`, so with a tilt they measure from what the player sees. The far plane
+(Bevy's default 1000 m) did not need a number. The sandbox's `combat/camera.camera.ron` turns the fit on for its colossus.
 
 **Lock-on rules (C6).** With a `lock_on` definition (content kind `lock_on`, `*.lock_on.ron`, the id `default` (another id is a content error: the engine reads no other), hot reload; `shards::motion::camera::LockOnDef`), lock-on is a simulation rule rather than the camera's: the camera, the `lock_on` tool and the check of every lock use the same plain functions (`shards::motion::camera::lock`), so a window and a headless run decide alike. Without one, everything above holds as it was (the camera's own pick, switch and release, no check), and a game sees no change; the sandbox has one, the template none.
 
@@ -1930,8 +1947,8 @@ pair, and the parts check refuses `lock_body: false` with no lock point).
 - *Co-op*: a client's lock on a point is its input; the host checks it like any lock, and the markers come with the part.
 
 **Limits, on purpose.** Points are where their parts are: they follow the body's transform, not its animation. The flick is
-horizontal only (a point straight above another, a horn over the core, is reached by name); a vertical flick belongs to the
-big-body camera (R4).
+horizontal only (a point straight above another, a horn over the core, is reached by name). The big-body camera (R4) keeps a high
+point in frame; it adds no vertical flick.
 
 
 ## Levels from Blender (E4.2)
@@ -6700,6 +6717,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 | `combat/body.action.ron`, `combat/body.moveset.ron` | body and motion (B2c): `spar_leap` (a landing search toward the lock-on target, no landing in water over 1 m), `spar_spin` (walks while it spins), `burrow` (intangible, a ghost), `spar_stroke` (`afloat`), the movesets `mover` and `burrower`; net ids 126-129 |
 | `combat/objects.prefab.ron`, `combat/objects.action.ron`, `combat/caster.moveset.ron` | spawned combat objects (B4): the prefabs `bolt`, `bolt_homing` (`Projectile`) and `zone`; the `caster` moveset's volley (three bolts in a fan at the lock-on target, the middle one homing; each bursts where it stops and lays a chilling puddle that hits every 0.8 s), line (six zones ahead, landing one after another) and rings (eight lines of four zones, turned at random, landing from the inside out); net ids 170-185 |
 | `characters/colossus.prefab.ron`, `combat/colossus.parts.ron` | body parts (R1): the prefab `colossus` (6 m tall, 1200 health, no brain, the locomotion `colossus`) and its five parts (two legs that double poise, a hand with 60 health that passes half a hit on, a horn out of reach, a core that starts closed and triples a hit), all five lock points (R3) and the body none; only `parts.scenario` spawns it |
+| `combat/camera.camera.ron` | the camera's numbers (C7): the code defaults, and the fit (R4) that keeps a high lock point on the colossus in frame with the player |
 | `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters; for the action timeline (B2a), `spar_heavy` (charges into `spar_heavy_full` when held 0.25 s; a light or a dodge pressed in its windup waits for its recovery), `spar_lunge` and `spar_lunge_far` (one `lunge` cooldown slot; the lunge turns at 360°/s within 45°, at most 0.4 m closer for the turning and not toward a target behind a wall, recovers 0.6 s longer on a whiff and keeps 40% of its cooldown when cut in its windup), `spar_channel` (`while_held`), `spar_roll_keep` (`face: Keep`), and the moveset `timeline` (a single slot by priority), which `timeline.scenario` lends to the player; for body state (B2b), `spar_ward` (a barrier of half the caster's health for 8 s), `spar_frost` and `spar_zap` (jabs that carry a full bar of chill or jolt), the moveset `bodystate`, and in `combat/sparring.status.ron` the statuses `spar_chill` (a 2 s proc gate, no cooling and a restart while active, a refused proc empties the bar) and `spar_jolt` (an instant status outside the cap), which `body_state.scenario` lends to the player |
 | `combat/skeleton.action.ron`, `combat/fighters.moveset.ron`, `combat/tuning.combat_tuning.ron` | the skeleton's claw, the movesets, the input buffer |
 | `npc/monsters.behavior.ron`, `monsters.perception.ron`, `monsters.director.ron`, `monsters.attack_plan.ron` | how the monsters think: the `skeleton` and `warden` state machines (with a `calm` state that the scenarios do not let the monster leave), sight, the `default` director (two tokens for one player) and the `boss` director (the guard strikes on its own), the guard's attack plans |

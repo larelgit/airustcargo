@@ -1,0 +1,10 @@
+// The camera's numbers. Every field not written here takes the engine's default (the numbers the
+// camera always had); the only change is the fit (R4): locked on to a point high on a big body (the
+// colossus's horn), the view turns up from the player as far as it takes to keep the point in frame,
+// and never so far that the player's feet leave it. A target the frame already holds (any body of
+// a person's height) is framed exactly as without it.
+{
+    "default": (
+        framing: (fit: Some(())),
+    ),
+}

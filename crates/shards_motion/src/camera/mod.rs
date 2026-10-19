@@ -34,7 +34,7 @@ use shards_content::{ContentAppExt, ContentDb};
 use shards_settings::{AccessibilitySettings, ControlSettings};
 
 pub use math::{
-    aim_assist, arm_length, arm_reach, critically_damped_step, damp, lock_framing, lock_holds, next_lock_target, orbit_angles,
+    aim_assist, arm_length, arm_reach, critically_damped_step, damp, fit_tilt, lock_framing, lock_holds, next_lock_target, orbit_angles,
     orbit_offset, orbit_position, pick_lock_target, pitch_limits, resolve_camera_collision, shake_offset, shake_offset_with,
     wrap_angle, FlickState, LockCandidate, LockView, ShakeOffset, Side,
 };
@@ -42,7 +42,7 @@ pub use lock::{
     body_point, in_frustum, lock_candidates, lock_score, pick_lock, signed_bearing, sight_clear, switch_lock, switch_target, LockHooks,
     LockOnDef, LockWeights, Lockable, PickView,
 };
-pub use tuning::{ArmTuning, CameraOffsets, CameraTuning, FlickTuning, FramingTuning, TraumaTuning};
+pub use tuning::{ArmTuning, CameraOffsets, CameraTuning, FitTuning, FlickTuning, FramingTuning, TraumaTuning};
 
 /// A camera that orbits a character. Put it on the camera entity; `yaw` and `pitch` are
 /// where the player looks (`input` turns the move axes by `yaw`).
@@ -56,6 +56,10 @@ pub struct ThirdPersonCamera {
     pub yaw: f32,
     /// Tilt, radians; positive looks down from above.
     pub pitch: f32,
+    /// How far the view is turned up from the focus (radians) to keep a locked target in frame
+    /// with the player (`FramingTuning::fit`, R4); 0 without a fit. The camera stands where `yaw`
+    /// and `pitch` put it either way.
+    pub tilt: f32,
     /// Distance from the focus point (m) when nothing is in the way.
     pub distance: f32,
     /// Height of the focus point above the character's feet (m).
@@ -79,6 +83,7 @@ impl Default for ThirdPersonCamera {
             target: Entity::PLACEHOLDER,
             yaw: 0.0,
             pitch: 0.35,
+            tilt: 0.0,
             distance: 5.5,
             height: 1.5,
             focus: Vec3::ZERO,
