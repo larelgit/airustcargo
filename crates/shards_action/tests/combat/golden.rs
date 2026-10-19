@@ -56,3 +56,34 @@ fn new_fields_keep_old_json() {
         assert_eq!(got, want, "{path}: its definitions no longer normalize to the JSON they had at 988723b");
     }
 }
+
+/// The animsets that exist outside the sandbox's, with the hash of their definitions as of the
+/// props slice (D1.1): every field it added is left out of a set's JSON at its default, so a set
+/// that does not use them keeps the hash a co-op handshake compares. (The sandbox's own set uses
+/// them on purpose and is not in the list.)
+const ANIMSET_GOLDEN: &[(&str, u64)] = &[("template/assets/content/anim.animset.ron", 0x9d0b4ea5510c9151)];
+
+fn animset_hash_of(path: &str) -> u64 {
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let text = std::fs::read_to_string(format!("{root}/{path}")).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let mut kinds = ContentKinds::default();
+    kinds.register::<ActionDef>();
+    kinds.register::<MovesetDef>();
+    kinds.register::<StatusDef>();
+    kinds.register::<shards_action::AnimSet>();
+    kinds.register::<shards_action::PropDef>();
+    ContentDb::build(&kinds, &[Source { path: path.into(), text }]).hash()
+}
+
+#[test]
+fn existing_animsets_keep_their_json() {
+    let now: Vec<(&str, u64)> = ANIMSET_GOLDEN.iter().map(|(path, _)| (*path, animset_hash_of(path))).collect();
+    if std::env::var("PRINT_GOLDEN").is_ok() {
+        for (path, hash) in &now {
+            println!("    (\"{path}\", {hash:#018x}),");
+        }
+    }
+    for ((path, want), (_, got)) in ANIMSET_GOLDEN.iter().zip(&now) {
+        assert_eq!(got, want, "{path}: its definitions no longer normalize to the JSON they had before props and families");
+    }
+}
