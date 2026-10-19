@@ -121,10 +121,11 @@ impl MountState {
         }
     }
 
-    /// What a new binding of the same body starts from: everything but the sockets the model
-    /// lacked (a new model may have them).
+    /// What a new binding of the same body starts from: everything but the bones found in the old
+    /// model and the sockets it lacked. The new model's bones are found again (an old bone that is
+    /// still there for a frame must not be taken), and the props move under them.
     pub(crate) fn taken_over(&self) -> Self {
-        Self { missing: BTreeSet::new(), ..self.clone() }
+        Self { bones: BTreeMap::new(), missing: BTreeSet::new(), ..self.clone() }
     }
 
     /// The entity showing `prop`, if it is drawn.
@@ -469,4 +470,19 @@ pub(crate) fn plugin(app: &mut App) {
             }
         })
         .add_observer(|e: On<shards_motion::Landed>, mut b: Query<&mut AnimationBound>| note(&mut b, e.entity, "landed"));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_new_binding_finds_its_bones_again_and_keeps_the_equip() {
+        let mut state = MountState { since: Some(1.5), ..default() };
+        state.bones.insert("hand".to_owned(), ("hand_r".to_owned(), Entity::PLACEHOLDER));
+        state.missing.insert("back".to_owned());
+        let next = state.taken_over();
+        assert!(next.bones.is_empty() && next.missing.is_empty());
+        assert_eq!(next.since, Some(1.5));
+    }
 }

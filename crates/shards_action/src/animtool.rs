@@ -235,8 +235,9 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
         let mut places = mount_places(&MountView { carried: &carried, previous: &[], run: rules, equip, cut: &[] });
         // Drawn: what the bridge computed (it also knows the previous moveset's props and the cut hold).
         #[cfg(feature = "render")]
+        // Its placements, hidden props and props on missing sockets included.
         if let Some(b) = bound
-            && b.props().next().is_some()
+            && b.places().next().is_some()
         {
             places = b.places().map(|(p, place)| (p.to_owned(), place.clone())).collect();
         }
