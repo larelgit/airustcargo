@@ -8,7 +8,7 @@
 //! | `region` | world | the region in the world: its id, seed, generator version, manifest hash and (v2) the manifest itself. Applying it builds the region from that manifest, without the generator, and changes to it through the world module's region change (when it differs from the one there): a game update that changes the generator leaves a saved world as it was. Refused, changing nothing, when content no longer has what the manifest names; a manifest that does not match its hash is damage (the save's backups are tried). A save of v1 kept no manifest: it is migrated to v2 without one, generated again, and refused if it no longer comes out the same; its next save is a v2 one |
 //! | `encounters` | world | the keys of the `once` encounters the world has won. Applying it despawns the runs of the encounters standing and remembers the keys; the next tick makes fresh runs (a won key comes back won, silently, with no events; the rest start over). A fight in progress is not saved |
 //! | `position` | character | the body's feet, its rotation (characters turn about Y: that is their facing) and the region it stood in. Applied onto a body in the same region only; in another one the body stays where it is and the journal says why |
-//! | `vitals` | character | health, stamina and charges. Applied to the components the body already has (a fresh body has what its prefab gives it); a charge the body lacks is added. A body that died since the save is revived (`shards_action::revive`, as the dev `heal` does, and `Healed` follows); a save made at zero health leaves it dead |
+//! | `vitals` | character | health, stamina and charges. Applied to the components the body already has (a fresh body has what its prefab gives it); a charge the body lacks is added. A body that died since the save is revived (`shards_action::revive`, as the dev `heal` does, and `Healed` follows); a save made at zero health leaves it dead. A save keeps no downed state (B5): a body saved while down loads dead, and a body down at the load stands up with the saved health or, with none, dies |
 //!
 //! A game replaces one with a section of the same name (`position` as "restore at the last
 //! camp"): the new one takes its place in the order sections are applied and starts a migration
@@ -19,7 +19,7 @@ use ai_core::journal::{self, JournalKind};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use shards_action::{revive, Charge, Charges, Health, Healed, Stamina};
+use shards_action::{revive, revive_downed, Charge, Charges, Downed, Health, Healed, Stamina};
 use shards_content::ContentDb;
 use shards_save::{SaveAppExt, SaveKind, SaveSection};
 use shards_world::manifest::{Layout, FORMAT};
@@ -444,7 +444,26 @@ impl SaveSection for VitalsSave {
             charges.0.sort_by(|a, b| a.name.cmp(&b.name));
         }
         // A body that died since the save lives again, the way the dev `heal` brings it back.
-        // A save made at zero health stays dead: `check_deaths` kills what has no health left.
+        // A save made at zero health stays dead: `check_deaths` kills what has no health left
+        // (it asks the lethal hooks with `LethalCause::Health`, for which the engine's games die).
+        // A save keeps no downed state: a body saved while down was saved at zero health, so it
+        // loads dead. A body down when a save is loaded takes the saved state: it stands up with
+        // the saved health, or with none it is no longer down and `check_deaths` kills it.
+        if world.get::<Downed>(body).is_some() {
+            match hp.filter(|hp| *hp > 0.0) {
+                Some(hp) => {
+                    let max = world.get::<Health>(body).map_or(hp, |h| h.max);
+                    revive_downed(world, body, hp / max.max(f32::EPSILON), 0.0, None);
+                    if let Some(mut health) = world.get_mut::<Health>(body) {
+                        health.current = hp;
+                    }
+                }
+                None => {
+                    world.entity_mut(body).remove::<Downed>();
+                }
+            }
+            return Ok(());
+        }
         if let Some(hp) = hp.filter(|hp| *hp > 0.0)
             && revive(world, body)
         {

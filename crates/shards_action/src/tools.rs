@@ -10,12 +10,12 @@ use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use shards_content::ContentDb;
-use shards_core::input_names::{BLOCK, DODGE, HEAVY, LIGHT, PARRY, TECHNIQUE, USE_ITEM};
+use shards_core::input_names::{BLOCK, DODGE, HEAVY, INTERACT, LIGHT, PARRY, TECHNIQUE, USE_ITEM};
 use shards_core::{flat, Intent, NetRole, Order, Predicted};
 use shards_motion::camera::{LockOnDef, Side};
 
 use crate::body::{clear_barrier, clear_damage_taken, describe_damage_taken, extend_damage_taken, grant_barrier, set_damage_taken, Barrier, DamageTaken};
-use crate::combat::{react, revive, stagger, Reaction, StaggerCause};
+use crate::combat::{react, revive, revive_downed, stagger, Downed, Reaction, StaggerCause, Standing};
 use crate::context::{forget, remember, resolve as resolve_context};
 use crate::def::{ActionDef, BufferMode, CombatTuning, MovesetDef, Steer, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team};
@@ -34,6 +34,7 @@ pub(crate) fn register(app: &mut App) {
         .add_ai_tool("dodge", Scope::Player, dodge)
         .add_ai_tool("use_technique", Scope::Player, use_technique)
         .add_ai_tool("use_item", Scope::Player, use_item)
+        .add_ai_tool("interact", Scope::Player, interact)
         .add_ai_tool("lock_on", Scope::Player, lock_on)
         .add_ai_tool("attack", Scope::Player, attack)
         .add_ai_tool("god", Scope::Dev, god)
@@ -42,6 +43,7 @@ pub(crate) fn register(app: &mut App) {
         .add_ai_tool("damage_taken", Scope::Dev, damage_taken)
         .add_ai_tool("stagger", Scope::Dev, stagger_tool)
         .add_ai_tool("react", Scope::Dev, react_tool)
+        .add_ai_tool("down", Scope::Dev, down_tool)
         .add_ai_tool("remember", Scope::Dev, remember_tool)
         .add_ai_condition("reacting", reacting)
         .add_dev_entry("combat", "god", "Immortality on / off", DevCommand::Live(god_line))
@@ -459,7 +461,7 @@ fn where_is(world: &World, here: Vec3, target: AiId) -> String {
 fn nearest_enemy(world: &World, me: Entity, here: Vec3, range: f32) -> Option<AiId> {
     let team = world.get::<Team>(me);
     let mut q =
-        world.try_query_filtered::<(Entity, &AiId, &Transform, Option<&Team>), (With<Fighter>, Without<Dead>)>()?;
+        world.try_query_filtered::<(Entity, &AiId, &Transform, Option<&Team>), (With<Fighter>, Standing)>()?;
     q.iter(world)
         .filter(|(e, _, _, t)| *e != me && hostile(team, *t))
         .map(|(_, id, tf, _)| (flat(tf.translation - here).length(), *id))
@@ -491,6 +493,9 @@ fn attack(In(call): In<Call<AttackArgs>>, world: &mut World) -> ToolResult {
     }
     if world.get::<Dead>(target).is_some() {
         return Err(format!("{} is already dead", call.args.target));
+    }
+    if world.get::<Downed>(target).is_some() {
+        return Err(format!("{} is down: hits pass over a downed body; attack a standing one", call.args.target));
     }
     // An AI-visible entity need not be in the world (a director, a quest): the order would be
     // dropped by `follow_attack_orders` on the next tick, which walks to and faces a position.
@@ -563,8 +568,11 @@ pub struct HealArgs {
 fn heal(In(call): In<Call<HealArgs>>, world: &mut World) -> ToolResult {
     let e = dev_target(world, &call.caller, call.args.id)?;
     let who = label(world, e);
+    let before = world.get::<Health>(e).ok_or_else(|| format!("{who} has no Health"))?.current;
+    // A downed body stands up first (its pose is cut), then is healed in full like any other.
+    let stood = revive_downed(world, e, 1.0, 0.0, None);
     let mut health = world.get_mut::<Health>(e).ok_or_else(|| format!("{who} has no Health"))?;
-    let gained = health.max - health.current;
+    let gained = health.max - before;
     health.current = health.max;
     let hp = health.current;
     if let Some(mut s) = world.get_mut::<Stamina>(e) {
@@ -573,9 +581,52 @@ fn heal(In(call): In<Call<HealArgs>>, world: &mut World) -> ToolResult {
     if let Some(mut p) = world.get_mut::<Poise>(e) {
         p.refill();
     }
-    let revived = revive(world, e);
+    let revived = revive(world, e) || stood;
     world.trigger(Healed { entity: e, amount: gained, hp });
     Ok(format!("healed {who} to {hp:.0}{}", if revived { ", revived" } else { "" }))
+}
+
+/// Bring a fighter down now, as a lethal hook's `Down` does: health 0, hits ignored, no actions, its
+/// moveset's `downed` pose; it bleeds out (dies) after `bleed` seconds unless it is revived first
+/// (a partner's revive, or `heal`). Without `bleed` it stays down until revived.
+#[derive(Deserialize, JsonSchema)]
+pub struct DownArgs {
+    pub id: Id,
+    /// Seconds before it bleeds out. Default: none (down until revived).
+    pub bleed: Option<f32>,
+}
+
+fn down_tool(In(call): In<Call<DownArgs>>, world: &mut World) -> ToolResult {
+    let e = call.args.id.entity(world)?;
+    let id = call.args.id;
+    if world.get::<Fighter>(e).is_none() || world.get::<Health>(e).is_none() {
+        return Err(format!("{id} is not a fighter with Health"));
+    }
+    if world.get::<Dead>(e).is_some() {
+        return Err(format!("{id} is dead; `heal` it first"));
+    }
+    if world.get::<Downed>(e).is_some() {
+        return Err(format!("{id} is down already"));
+    }
+    if let Some(b) = call.args.bleed
+        && !(b >= 0.0 && b.is_finite())
+    {
+        return Err(format!("bleed {b} must be a number of seconds >= 0; leave it out to stay down until revived"));
+    }
+    if !crate::combat::go_down(world, e, call.args.bleed, None) {
+        return Err(format!("{id} cannot go down"));
+    }
+    Ok(match call.args.bleed {
+        Some(b) => format!("{id} is down (bleeds out in {b:.1}s)"),
+        None => format!("{id} is down"),
+    })
+}
+
+/// Interact: press (or hold) the interact button. With a moveset action for `interact` (a revive
+/// of a downed ally next to you) it starts that action, which goes on only while the button is
+/// held: `hold=true` keeps it held, `hold=false` lets go. Answers `ok`, `ok: queued` or why not.
+fn interact(In(call): In<Call<HoldArgs>>, world: &mut World) -> ToolResult {
+    press_held(world, &call.caller, INTERACT, None, "", call.args.hold)
 }
 
 /// Grant `id` (default: you) a barrier that takes damage before health: the larger of its pool and
@@ -682,6 +733,9 @@ fn stagger_tool(In(call): In<Call<StaggerArgs>>, world: &mut World) -> ToolResul
     if world.get::<Dead>(e).is_some() {
         return Err(format!("{} is dead", call.args.id));
     }
+    if world.get::<Downed>(e).is_some() {
+        return Err(format!("{} is down; `heal` stands it up first", call.args.id));
+    }
     let length = world
         .resource::<ContentDb>()
         .get::<MovesetDef>(&moveset)
@@ -725,6 +779,9 @@ fn react_tool(In(call): In<Call<ReactArgs>>, world: &mut World) -> ToolResult {
         .ok_or_else(|| format!("{} is not a fighter", call.args.id))?;
     if world.get::<Dead>(e).is_some() {
         return Err(format!("{} is dead", call.args.id));
+    }
+    if world.get::<Downed>(e).is_some() {
+        return Err(format!("{} is down; `heal` stands it up first", call.args.id));
     }
     let back = world.get::<Transform>(e).map_or(Vec3::Z, |t| -flat(*t.forward()));
     if !react(world, e, Reaction::forced(tier, None, back)) {

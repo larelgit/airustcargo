@@ -415,6 +415,15 @@ pub enum Effect {
     },
     /// A game hook registered with `add_action_effect`: `Custom("spawn_fireball")`.
     Custom(String),
+    /// Revives the running action's pair victim if it is downed
+    /// ([`revive_downed`](crate::revive_downed)): `health` share of its max (`0.3` is 30 %), then
+    /// `grace` seconds in which hits are ignored ([`Grace`](crate::Grace)). On a pair whose `select`
+    /// takes a downed ally (`team: Ally, state: Downed`).
+    Revive {
+        health: f32,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        grace: f32,
+    },
 }
 
 /// An [`Effect`] at `at` seconds into the action. Inside a hold loop it fires on every
@@ -857,10 +866,13 @@ impl PairTeam {
 /// The state a pair victim must be in ([`PairSelect::state`]).
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PairState {
-    /// Its poise is broken.
+    /// Its poise is broken (and it is not down).
     Broken,
-    /// Any (alive, not paired by another).
+    /// Any (alive, not down, not paired by another).
     Any,
+    /// It is down ([`Downed`](crate::Downed)): a revive, with `team: Ally`. The other states never
+    /// take a downed body.
+    Downed,
 }
 
 /// What a press turns into when a cancel window allows it.
@@ -1242,6 +1254,19 @@ impl ContentDef for ActionDef {
                 }
                 // The sound is checked where the mixer is (`AudioDef`), as a telegraph's is.
                 Effect::Sound(_) | Effect::Custom(_) => {}
+                Effect::Revive { health, grace } => {
+                    if !(*health > 0.0 && *health <= 1.0) {
+                        check.refs.error(format!("effects[{i}] Revive health is a share of max health, above 0 and at most 1 (is {health})"));
+                    }
+                    if !(*grace >= 0.0 && grace.is_finite()) {
+                        check.refs.error(format!("effects[{i}] Revive grace must be a number of seconds, 0 or more (is {grace})"));
+                    }
+                    if self.pair.as_ref().is_none_or(|p| p.select.state != PairState::Downed) {
+                        check.refs.error(format!(
+                            "effects[{i}] Revive revives the pair's victim: give the action a `pair` whose select has `state: Downed`"
+                        ));
+                    }
+                }
             }
         }
         if let Some(telegraph) = &self.telegraph {
@@ -1619,6 +1644,10 @@ pub struct MovesetDef {
     /// Played once on death.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub death: Option<String>,
+    /// Forced when the fighter goes down (a lethal hook's `Fate::Down`): its downed pose, held until
+    /// it is revived or bleeds out. `None`: its action is cut and it stands still.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub downed: Option<String>,
     /// Reaction actions by tier: light (1), heavy (2), knockdown (3). Empty: the old flinch (`hit`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reactions: Vec<ReactionDef>,
@@ -1805,7 +1834,7 @@ impl ContentDef for MovesetDef {
             refs.require::<ActionDef>(action, &format!("inputs.{input}"));
         }
         for (slot, action) in
-            [("stagger", &self.stagger), ("hit", &self.hit), ("death", &self.death), ("guard_broken", &self.guard_broken)]
+            [("stagger", &self.stagger), ("hit", &self.hit), ("death", &self.death), ("downed", &self.downed), ("guard_broken", &self.guard_broken)]
         {
             if let Some(action) = action {
                 refs.require::<ActionDef>(action, slot);

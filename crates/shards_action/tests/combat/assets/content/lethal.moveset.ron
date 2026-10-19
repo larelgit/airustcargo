@@ -1,0 +1,30 @@
+{
+    // A fighter that can go down (its `downed` pose), and revives a downed ally with interact.
+    "l_hero": (
+        inputs: {"light": "l_jab"},
+        stagger: "l_stagger",
+        death: "l_death",
+        downed: "l_down",
+        reactions: [
+            (action: "l_react_light", push: 2.0, decel: 12.0),
+            (action: "l_react_heavy", push: 3.0, decel: 12.0),
+            (action: "l_react_down", push: 4.0, decel: 12.0),
+        ],
+        context: [
+            (input: "interact", action: "l_revive", when: [Pair]),
+        ],
+    ),
+    // The same without a downed pose: its action is cut when it goes down.
+    "l_plain": (
+        inputs: {"light": "l_jab"},
+        stagger: "l_stagger",
+        death: "l_death",
+    ),
+    // The foe: a blow that kills from full health (with a status, poise and a heavy reaction), and a
+    // small slash.
+    "l_foe": (
+        inputs: {"light": "l_slash", "heavy": "l_smash"},
+        stagger: "l_stagger",
+        death: "l_death",
+    ),
+}

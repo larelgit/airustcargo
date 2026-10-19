@@ -45,7 +45,7 @@ use shards_motion::{
     CharacterController, CharacterParams, Collider, Ghost, Launch, LocomotionInput, MotionState, MoveModifiers, PhysicsWorld,
 };
 
-use crate::combat::Died;
+use crate::combat::{Died, Downed, Revived, WentDown};
 use crate::context::{arm_idle, fresh_press, guard_press, step_arm, ContextInputs, GuardArm, RunHalted};
 use crate::def::{ActionDef, BufferMode, CombatTuning, MovesetDef, EPS};
 use crate::fighter::{sprint_rule, Charges, Cooldowns, Dead, Fighter, Stamina};
@@ -131,7 +131,9 @@ pub(crate) fn plugin(app: &mut App) {
         .init_resource::<ActionPredictor>()
         .add_observer(heard_started)
         .add_observer(heard_rejected)
-        .add_observer(heard_died);
+        .add_observer(heard_died)
+        .add_observer(heard_went_down)
+        .add_observer(heard_revived);
 }
 
 /// What [`predict_actions`] reads and writes of the own body.
@@ -156,6 +158,8 @@ pub(crate) struct PredictedBody {
     ghost: Has<Ghost>,
     shown: Option<&'static mut PredictedAction>,
     dead: Has<Dead>,
+    /// The host's, replicated: the own body is down.
+    downed: Has<Downed>,
     /// The host's, replicated: what this tick binds, the guard press, a halted run.
     context: Option<&'static ContextInputs>,
     arm: Option<&'static GuardArm>,
@@ -347,7 +351,7 @@ pub(crate) fn predict_actions(
     // The press rule on this machine's own presses, as the host's `arm_guard` runs it.
     let rule = moveset.and_then(|m| guard_press(&db, m));
     match &rule {
-        Some((press, inputs)) if !b.dead => {
+        Some((press, inputs)) if !b.dead && !b.downed => {
             let down = inputs.iter().any(|i| b.intent.is_held(i));
             let pressed = b.intent.pressed.iter().any(|p| inputs.contains(&p.input.as_str()));
             let running = shown.as_ref().map(|s| s.run.instance);
@@ -370,7 +374,7 @@ pub(crate) fn predict_actions(
         shown = None;
         cap_queue(&mut predictor.queued, ttl);
     }
-    if b.dead {
+    if b.dead || b.downed {
         predictor.queued.clear();
     } else {
         let running = shown.as_ref().and_then(|s| db.get::<ActionDef>(&s.run.action));
@@ -405,9 +409,10 @@ pub(crate) fn predict_actions(
         off_ground: crate::machine::off_ground(b.motion),
         leap: site,
         context: b.context,
+        downed: b.downed,
         ..FighterView::new(&db, &b.fighter.moveset, &local, &b.intent.held, b.dead)
     };
-    let choice = (!b.dead).then(|| choose_in(&view, &predictor.queued, dt)).flatten();
+    let choice = (!b.dead && !b.downed).then(|| choose_in(&view, &predictor.queued, dt)).flatten();
     // A paired action is not predicted (13a, "Context staleness"): whether it starts depends on the
     // host's state of the victim (its break, who stands nearer), which the host resolves on its own
     // tick, so the press is let go and the host's `ActionStarted` is taken over when it comes. In
@@ -540,7 +545,7 @@ pub(crate) fn predict_actions(
     let rule = sprint_rule(&db, b.motion, b.body);
     let held = b.intent.is_held(SPRINT);
     let out_of_stamina = !free_sprint(b.modifiers, b.motion) && b.stamina.is_some_and(|s| s.sprint_blocked(rule, held));
-    steer_locomotion(&mut b.loco, shown.as_ref().map(|s| &s.run), &db, b.dead, out_of_stamina, external);
+    steer_locomotion(&mut b.loco, shown.as_ref().map(|s| &s.run), &db, b.dead || b.downed, out_of_stamina, external);
     // The own body passes through characters while the run it shows has its ghost window open.
     let ghost = shown
         .as_ref()
@@ -722,5 +727,25 @@ fn heard_died(event: On<Died>, bodies: Query<(), With<Predicted>>, net: Option<R
         && let Some(mut net) = net
     {
         net.snap = Some("died".into());
+    }
+}
+
+/// The own body went down on the host: it takes the host's state at once (its downed pose, no
+/// prediction of its own until it is revived).
+fn heard_went_down(event: On<WentDown>, bodies: Query<(), With<Predicted>>, net: Option<ResMut<NetPrediction>>) {
+    if bodies.contains(event.event().entity)
+        && let Some(mut net) = net
+    {
+        net.snap = Some("went down".into());
+    }
+}
+
+/// The own body was revived on the host: it takes the host's state at once (the pose is cut, the
+/// health and the grace are the host's).
+fn heard_revived(event: On<Revived>, bodies: Query<(), With<Predicted>>, net: Option<ResMut<NetPrediction>>) {
+    if bodies.contains(event.event().entity)
+        && let Some(mut net) = net
+    {
+        net.snap = Some("revived".into());
     }
 }

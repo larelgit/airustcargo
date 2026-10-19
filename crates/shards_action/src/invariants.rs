@@ -1,5 +1,5 @@
 //! The engine rules `action.resources_in_range`, `action.running_sane`, `action.protection_sane`,
-//! `action.knockback_sane`, `action.extras_follow_run`, `action.barrier_sane`, `action.damage_taken_sane`, `action.pairs_match`, `action.memory_sane`, `action.leap_follows_run` and `action.ghost_follows_run`.
+//! `action.knockback_sane`, `action.extras_follow_run`, `action.barrier_sane`, `action.damage_taken_sane`, `action.pairs_match`, `action.memory_sane`, `action.leap_follows_run`, `action.ghost_follows_run`, `action.downed_sane` and `action.grace_sane`.
 
 use ai_core::{with_query, AiId, AiIndex, Offenders, SimTick};
 use bevy::prelude::*;
@@ -8,7 +8,8 @@ use shards_content::ContentDb;
 use crate::context::{GuardArm, Memory, Paired, Pairing};
 use crate::body::{Barrier, DamageTaken};
 use crate::def::ActionDef;
-use crate::fighter::{Fighter, Health, Knockback, Poise, Protection, Stamina};
+use crate::combat::{Downed, Grace};
+use crate::fighter::{Dead, Fighter, Health, Knockback, Poise, Protection, Stamina};
 use crate::machine::{ActionState, LeapRun, RunExtras};
 use shards_motion::Ghost;
 
@@ -313,6 +314,41 @@ pub fn ghost_follows_run(world: &World) -> Option<String> {
             if !due {
                 let now = state.current.as_ref().map_or("no action".to_owned(), |r| format!("`{}`", r.action));
                 bad.note(*id, || format!("Ghost while it runs {now}, which has no open ghost window"));
+            }
+        }
+    });
+    bad.report()
+}
+
+/// The engine rule `action.downed_sane`: a [`Downed`] body is not [`Dead`] (death takes `Downed`
+/// away), has `Health.current == 0` (going down sets it, a revive takes `Downed` away before it
+/// gives health back) and a bleed-out that is `None` or a finite number of seconds `>= 0`
+/// (`go_down` cleans the one it is given, `tick_downed` stops at `EPS`). A violation names a
+/// writer that healed, killed or timed a downed body behind the engine's back.
+pub fn downed_sane(world: &World) -> Option<String> {
+    let mut bad = Offenders::default();
+    with_query::<(&AiId, &Downed, Option<&Health>, Has<Dead>), (), _>(world, |query| {
+        for (id, d, health, dead) in query.iter(world) {
+            if dead {
+                bad.note(*id, || "is Downed and Dead at once".to_owned());
+            } else if let Some(h) = health.filter(|h| h.current != 0.0) {
+                bad.note(*id, || format!("is Downed with Health.current = {} (a downed body has none)", h.current));
+            } else if let Some(b) = d.bleed.filter(|b| !(b.is_finite() && *b >= 0.0)) {
+                bad.note(*id, || format!("Downed.bleed = {b} is not a finite number of seconds >= 0"));
+            }
+        }
+    });
+    bad.report()
+}
+
+/// The engine rule `action.grace_sane`: every [`Grace`] holds a finite `left >= 0` (`grant_grace`
+/// takes only finite times above 0 and `tick_grace` floors at 0).
+pub fn grace_sane(world: &World) -> Option<String> {
+    let mut bad = Offenders::default();
+    with_query::<(&AiId, &Grace), (), _>(world, |query| {
+        for (id, g) in query.iter(world) {
+            if !(g.left.is_finite() && g.left >= 0.0) {
+                bad.note(*id, || format!("Grace.left = {} is not a finite number >= 0", g.left));
             }
         }
     });

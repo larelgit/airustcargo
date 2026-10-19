@@ -27,6 +27,7 @@ use shards_motion::{
 
 use std::ops::DerefMut;
 
+use crate::combat::Downed;
 use crate::context::{fresh_press, ContextInputs, GuardArm, PendingPair, PendingPairs, RunHalted};
 use crate::body::grant_barrier;
 use crate::cue::ActionSound;
@@ -354,6 +355,8 @@ pub struct FighterView<'a> {
     /// `Intent::held`: decides whether a hold loop keeps going.
     pub held: &'a [String],
     pub dead: bool,
+    /// The fighter is down ([`Downed`]): it starts nothing ([`Blocker::Downed`]).
+    pub downed: bool,
     /// This tick's context ([`ContextInputs`]): a bound input starts its bound action.
     pub context: Option<&'a ContextInputs>,
     /// How the body moves now: the mode gate ([`MovesetDef::only_in`]) judges it. `None`: not judged.
@@ -369,7 +372,7 @@ impl<'a> FighterView<'a> {
     /// A view of a fighter with the moveset `moveset`, in `state`, holding `held`; every resource
     /// absent, the mode and the leap site not judged. Set the fields the caller has.
     pub fn new(db: &'a ContentDb, moveset: &'a str, state: &'a ActionState, held: &'a [String], dead: bool) -> Self {
-        Self { db, moveset, state, stamina: None, cooldowns: None, charges: None, held, dead, context: None, mode: None, off_ground: None, leap: None }
+        Self { db, moveset, state, stamina: None, cooldowns: None, charges: None, held, dead, downed: false, context: None, mode: None, off_ground: None, leap: None }
     }
 
     /// The fighter `entity` as the world has it now; `None` if it is no fighter.
@@ -384,6 +387,7 @@ impl<'a> FighterView<'a> {
             charges: e.get::<Charges>(),
             held: e.get::<Intent>().map_or(&[], |i| i.held.as_slice()),
             dead: e.contains::<Dead>(),
+            downed: e.contains::<Downed>(),
             context: e.get::<ContextInputs>(),
             mode: e.get::<MotionState>().map(|m| m.mode),
             off_ground: off_ground(e.get::<MotionState>()),
@@ -418,6 +422,8 @@ pub struct Start {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Blocker {
     Dead,
+    /// The fighter is down ([`Downed`]): nothing starts until it is revived.
+    Downed,
     /// The fighter's moveset is not in content.
     NoMoveset {
         moveset: String,
@@ -493,6 +499,7 @@ impl Blocker {
     pub fn reason(&self) -> String {
         match self {
             Blocker::Dead => "dead".into(),
+            Blocker::Downed => "down".into(),
             Blocker::NoMoveset { moveset } => format!("no moveset `{moveset}`"),
             Blocker::NoInput { input, .. } => format!("no action for `{input}`"),
             Blocker::NoAction { action } => format!("no action `{action}` in content"),
@@ -510,6 +517,7 @@ impl Blocker {
     pub fn message(&self) -> String {
         match self {
             Blocker::Dead => "you are dead; a dev agent can `heal` you".into(),
+            Blocker::Downed => "you are down: a partner can revive you (a dev agent can `heal` you)".into(),
             Blocker::NoMoveset { moveset } => {
                 format!("your moveset `{moveset}` is not in content; `content_list kind=moveset` lists them")
             }
@@ -610,6 +618,9 @@ pub fn can_start(v: &FighterView, input: &str, dt: f32) -> Result<Start, Blocker
 pub(crate) fn can_start_toward(v: &FighterView, input: &str, dt: f32, dir: Option<Vec3>) -> Result<Start, Blocker> {
     if v.dead {
         return Err(Blocker::Dead);
+    }
+    if v.downed {
+        return Err(Blocker::Downed);
     }
     let moveset = v.moveset_def().ok_or_else(|| Blocker::NoMoveset { moveset: v.moveset.to_owned() })?;
     let mut blockers: Vec<Blocker> = Vec::new();
@@ -866,6 +877,7 @@ pub(crate) struct FighterData {
     leap: Option<&'static mut LeapRun>,
     ghost: Has<Ghost>,
     dead: Has<Dead>,
+    downed: Has<Downed>,
     context: Option<&'static ContextInputs>,
     arm: Option<&'static mut GuardArm>,
     halted: Option<&'static RunHalted>,
@@ -921,7 +933,7 @@ pub(crate) fn run_machines(
         }
         let mode = moveset.map_or(&BufferMode::PerInput, |m| &m.buffer);
         let running_def = f.state.current.as_ref().and_then(|r| db.get::<ActionDef>(&r.action));
-        if f.dead {
+        if f.dead || f.downed {
             if !f.buffer.queued.is_empty() {
                 f.buffer.queued.clear();
             }
@@ -1205,6 +1217,7 @@ fn view<'a>(f: &'a FighterDataItem, db: &'a ContentDb, leap: Option<LeapSite<'a>
         mode: f.motion.map(|m| m.mode),
         off_ground: off_ground(f.motion),
         context: f.context,
+        downed: f.downed,
         ..FighterView::new(db, &f.fighter.moveset, &f.state, &f.intent.held, f.dead)
     }
 }
@@ -1247,7 +1260,7 @@ pub(crate) fn launch_due(at: f32, lo: f32, hi: f32) -> bool {
 
 /// The first buffered press that can start, else a held input that can.
 fn choose<'a>(f: &'a FighterDataItem, db: &'a ContentDb, leap: Option<LeapSite<'a>>, dt: f32) -> Option<Choice> {
-    if f.dead {
+    if f.dead || f.downed {
         return None;
     }
     choose_in(&view(f, db, leap), &f.buffer.queued, dt)
@@ -1823,7 +1836,7 @@ fn steer_body(f: &mut FighterDataItem, db: &ContentDb, external: Vec3) {
     let out_of_stamina =
         !free_sprint(f.modifiers, f.motion) && f.stamina.as_ref().is_some_and(|s| s.sprint_blocked(rule, held));
     let Some(loco) = f.loco.as_mut() else { return };
-    steer_locomotion(loco, f.state.current.as_ref(), db, f.dead, out_of_stamina, external);
+    steer_locomotion(loco, f.state.current.as_ref(), db, f.dead || f.downed, out_of_stamina, external);
 }
 
 /// Whether a sprint costs no stamina, so an empty one does not stop it: the body's
@@ -1994,7 +2007,8 @@ pub(crate) fn apply_effects(world: &mut World) {
 pub fn apply_effect(world: &mut World, entity: Entity, action: &str, effect: &Effect) {
     match effect {
         Effect::Heal(amount) => {
-            if world.get::<Dead>(entity).is_some() {
+            // A downed body stands up only by a revive.
+            if world.get::<Dead>(entity).is_some() || world.get::<Downed>(entity).is_some() {
                 return;
             }
             let Some(mut health) = world.get_mut::<Health>(entity) else { return };
@@ -2028,6 +2042,16 @@ pub fn apply_effect(world: &mut World, entity: Entity, action: &str, effect: &Ef
                         format!("action `{action}`: no effect hook `{name}`; register it with app.add_action_effect");
                     report_once(world, format!("effect {name}"), text);
                 }
+            }
+        }
+        Effect::Revive { health, grace } => {
+            // The victim of the pair this action holds, if it is still down.
+            let victim = world
+                .get::<crate::context::Pairing>(entity)
+                .filter(|p| p.action == action)
+                .and_then(|p| world.resource::<AiIndex>().get(p.victim));
+            if let Some(victim) = victim {
+                crate::combat::revive_downed(world, victim, *health, *grace, Some(entity));
             }
         }
     }

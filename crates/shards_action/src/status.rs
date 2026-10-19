@@ -520,6 +520,21 @@ fn run_changes(world: &mut World, entity: Entity, changes: Vec<StatusChange>) {
     }
 }
 
+/// Clears every status of `entity`, buildup and all: the active ones expire first, in id order
+/// ([`StatusExpired`], then their `on_expire` hooks). A body that goes down loses them.
+pub(crate) fn clear_statuses(world: &mut World, entity: Entity) {
+    let Some(statuses) = world.get::<Statuses>(entity) else { return };
+    if statuses.0.is_empty() {
+        return;
+    }
+    let expired: Vec<StatusChange> =
+        statuses.0.iter().filter(|e| e.active > 0.0).map(|e| StatusChange::Expired(e.id.clone())).collect();
+    if let Some(mut statuses) = world.get_mut::<Statuses>(entity) {
+        statuses.0.clear();
+    }
+    run_changes(world, entity, expired);
+}
+
 /// `SimSet::Resolve`, after hits: every living entity's statuses tick, in `AiId` order.
 /// The dead's are frozen (no hooks run on a corpse); a revive resumes them.
 pub fn update_statuses(world: &mut World) {

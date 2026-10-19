@@ -140,16 +140,17 @@ pub use anim::{
     AnimationCue, BodyStatus, ClipChoice, ClipDef, CueDef, GroundSpeeds, LayerChoice, LayerDef, Locomotion, MAX_LAYERS,
 };
 pub use combat::{
-    deal_damage, end_break, kill, kill_with, poise_damage, react, reset_poise, revive, stagger, Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died,
-    Evaded, GuardBroken, HitWeight, IgnoreReason, Outcome, Parried, PerfectEvaded, Reacted, Reaction,
-    StaggerCause, Staggered,
+    bleed_out, deal_damage, end_break, go_down, grant_grace, kill, kill_with, lethal, poise_damage, react, reset_poise, revive, revive_downed, stagger,
+    Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died, Downed, Evaded, Fate, Grace, GuardBroken, HitWeight, IgnoreReason, Lethal,
+    LethalCause, LethalHook, LethalHooks, Outcome, Parried, PerfectEvaded, Reacted, Reaction, Revived, StaggerCause, Staggered, Standing, Survived,
+    WentDown,
 };
 pub use body::{
     clear_barrier, clear_damage_taken, extend_damage_taken, grant_barrier, set_damage_taken, Barrier, BarrierGranted, DamageTaken,
     DamageTakenExpired, ProcGates, TakenMult,
 };
 pub use context::{
-    cut_action, forget, hold_break, pair_victim, release_pair, remember, Bound, ContextCondition, ContextConditions, ContextInputs,
+    cut_action, forget, hold_break, pair_victim, release_pair, remember, resume_stagger, Bound, ContextCondition, ContextConditions, ContextInputs,
     GuardArm, Memory, PairEnd, PairEnded, PairStarted, Paired, Pairing, Remembered, RunHalted,
 };
 pub use cue::{ActionSound, SoundCue};
@@ -243,6 +244,11 @@ pub trait ActionAppExt {
     /// The game's condition `name` for context bindings (`When::Condition(name)`): whether it
     /// holds for the fighter now. The same name replaces a condition.
     fn add_context_condition(&mut self, name: &str, condition: ContextCondition) -> &mut Self;
+
+    /// A veto before a gameplay death ([`Lethal`]): the hook answers [`Fate::Die`], a survive or
+    /// going down. Hooks are asked in registration order and the first answer that is not `Die`
+    /// wins; [`kill`] never asks them.
+    fn add_lethal_hook(&mut self, hook: LethalHook) -> &mut Self;
 }
 
 impl ActionAppExt for App {
@@ -274,6 +280,11 @@ impl ActionAppExt for App {
         let mut conditions = self.world_mut().get_resource_or_init::<ContextConditions>();
         conditions.0.retain(|(n, _)| n != name);
         conditions.0.push((name.to_owned(), condition));
+        self
+    }
+
+    fn add_lethal_hook(&mut self, hook: LethalHook) -> &mut Self {
+        self.world_mut().get_resource_or_init::<LethalHooks>().0.push(hook);
         self
     }
 }
@@ -337,7 +348,12 @@ impl Plugin for ActionPlugin {
             .register_type::<Reacted>()
             .register_type::<GuardBroken>()
             .register_type::<Staggered>()
-            .register_type::<Died>();
+            .register_type::<Died>()
+            .register_type::<Downed>()
+            .register_type::<Grace>()
+            .register_type::<WentDown>()
+            .register_type::<Revived>()
+            .register_type::<Survived>();
         // Known to the world from the start, so `&World` queries (tools, zones) work
         // before the first tick or the first death.
         let world = app.world_mut();
@@ -346,12 +362,15 @@ impl Plugin for ActionPlugin {
         world.register_component::<Team>();
         world.register_component::<Dead>();
         world.register_component::<Invulnerable>();
+        world.register_component::<Downed>();
+        world.register_component::<Grace>();
         app.add_content::<ActionDef>()
             .add_content::<MovesetDef>()
             .add_content::<StatusDef>()
             .add_content::<CombatTuning>()
             .add_content::<AnimSet>()
             .init_resource::<DamageHooks>()
+            .init_resource::<LethalHooks>()
             .init_resource::<StatusEffects>()
             .init_resource::<ActionEffects>()
             .init_resource::<machine::PendingEffects>()
@@ -368,7 +387,9 @@ impl Plugin for ActionPlugin {
             .add_engine_invariant("action.pairs_match", invariants::pairs_match)
             .add_engine_invariant("action.memory_sane", invariants::memory_sane)
             .add_engine_invariant("action.leap_follows_run", invariants::leap_follows_run)
-            .add_engine_invariant("action.ghost_follows_run", invariants::ghost_follows_run);
+            .add_engine_invariant("action.ghost_follows_run", invariants::ghost_follows_run)
+            .add_engine_invariant("action.downed_sane", invariants::downed_sane)
+            .add_engine_invariant("action.grace_sane", invariants::grace_sane);
         coverage::plugin(app);
         app
             // The machine runs after motion's `Intent → LocomotionInput` step: it
@@ -409,6 +430,7 @@ impl Plugin for ActionPlugin {
                     machine::finish_actions.in_set(ActionSystems::Fighters).after(fighter::update_fighters),
                     fighter::tick_protection.in_set(ActionSystems::Fighters).after(machine::finish_actions),
                     body::tick_body_state.in_set(ActionSystems::Fighters).after(fighter::tick_protection),
+                    combat::tick_grace.in_set(ActionSystems::Fighters).after(body::tick_body_state).before(context::age_memory),
                     status::update_statuses.in_set(ActionSystems::Statuses),
                     status::statuses_to_modifiers::<()>.in_set(ModifierSystems::Statuses),
                     status::statuses_to_modifiers::<With<Predicted>>.in_set(ModifierSystems::PredictStatuses),
@@ -416,7 +438,7 @@ impl Plugin for ActionPlugin {
                     stance::actions_to_modifiers::<With<Predicted>>
                         .in_set(ModifierSystems::PredictContribute)
                         .after(ModifierSystems::PredictStatuses),
-                    combat::check_deaths.in_set(ActionSystems::Deaths),
+                    (combat::tick_downed, combat::check_deaths).chain().in_set(ActionSystems::Deaths),
                     orders::steer_attack_orders.in_set(ActionSystems::PredictOrders),
                     predict::predict_actions.in_set(ActionSystems::Predict),
                 ),

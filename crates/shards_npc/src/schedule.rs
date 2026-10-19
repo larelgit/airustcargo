@@ -30,7 +30,7 @@
 
 use ai_core::AiId;
 use bevy::prelude::*;
-use shards_action::{Dead, FighterView};
+use shards_action::{FighterView, Standing};
 use shards_content::ContentDb;
 use shards_core::PlayerId;
 use shards_motion::PhysicsWorld;
@@ -140,8 +140,9 @@ pub(crate) fn plan_notes<'w, 's>(
     notes
 }
 
-/// The players the director counts: alive.
-pub(crate) type Players<'w, 's> = Query<'w, 's, (), (With<PlayerId>, Without<Dead>)>;
+/// The players the director counts: standing (neither dead nor down: a downed player asks for no
+/// attackers).
+pub(crate) type Players<'w, 's> = Query<'w, 's, (), (With<PlayerId>, Standing)>;
 
 /// How many players the director counts ([`Players`]).
 pub(crate) fn living_players(players: &Players) -> u32 {

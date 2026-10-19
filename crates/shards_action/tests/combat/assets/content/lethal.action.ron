@@ -1,0 +1,36 @@
+// The lethal hook and the downed state (B5). Net ids 220-239.
+{
+    "l_jab": (
+        net_id: 220,
+        phases: [("windup", 0.1), ("active", 0.1), ("recovery", 0.2)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.5, angle: 120), damage: 5)],
+    ),
+    // Lands 0.2 s after the press.
+    "l_slash": (
+        net_id: 221,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.2)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.5, angle: 120), damage: 10)],
+    ),
+    // Lands 0.2 s after the press: more than a full health bar, a slow, a poise break, a heavy reaction.
+    "l_smash": (
+        net_id: 222,
+        phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.5, angle: 120), damage: 150, poise: 50,
+                status: [("slow", 200)], reaction: 2)],
+    ),
+    "l_down": (net_id: 223, phases: [("down", 5.0)]),
+    "l_death": (net_id: 224, phases: [("fall", 1.0)]),
+    "l_stagger": (net_id: 225, phases: [("stagger", 0.8)]),
+    "l_react_light": (net_id: 226, phases: [("react", 0.3)]),
+    "l_react_heavy": (net_id: 227, phases: [("react", 0.5)]),
+    "l_react_down": (net_id: 228, phases: [("react", 1.0)]),
+    // The revive: held 1 s next to a downed ally, 30 % health and 1 s of grace.
+    "l_revive": (
+        net_id: 229,
+        phases: [("revive", 1.0)],
+        while_held: "interact",
+        pair: (select: (team: Ally, state: Downed, range: 1.6, height: 1.2, angle: 180),
+               exclusive: true, break_range: 2.0, cancel_on_hurt: true),
+        effects: [(at: 1.0, effect: Revive(health: 0.3, grace: 1.0))],
+    ),
+}

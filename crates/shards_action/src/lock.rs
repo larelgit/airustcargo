@@ -39,6 +39,7 @@ use shards_motion::camera::{LockHooks, LockOnDef, Side};
 use shards_motion::{LockOnTarget, MotionSystems, PhysicsWorld};
 
 use crate::def::CombatTuning;
+use crate::combat::Downed;
 use crate::fighter::{hostile, Dead, Fighter, Team};
 use crate::zone::{body_radius, zones_threatening};
 
@@ -147,7 +148,8 @@ pub(crate) fn plugin(app: &mut App) {
     app.world_mut().register_component::<LockSight>();
 }
 
-/// Whether a body of team `viewer` may lock on to one with these parts: alive, and marked
+/// Whether a body of team `viewer` may lock on to one with these parts: alive (`dead` is dead or
+/// down: a downed body is no target), and marked
 /// [`LockOnTarget`] or a fighter of another team.
 pub fn may_lock(viewer: Option<&Team>, marked: bool, fighter: bool, dead: bool, team: Option<&Team>) -> bool {
     !dead && (marked || (fighter && hostile(viewer, team)))
@@ -160,7 +162,7 @@ pub fn lockable(world: &World, viewer: Entity, candidate: Entity) -> bool {
             world.get::<Team>(viewer),
             world.get::<LockOnTarget>(candidate).is_some(),
             world.get::<Fighter>(candidate).is_some(),
-            world.get::<Dead>(candidate).is_some(),
+            world.get::<Dead>(candidate).is_some() || world.get::<Downed>(candidate).is_some(),
             world.get::<Team>(candidate),
         )
 }
@@ -407,6 +409,9 @@ pub fn release_lock(world: &mut World, entity: Entity) -> Option<AiId> {
 pub fn may_lock_on(world: &World, me: Entity, target: Entity, id: AiId, def: &LockOnDef) -> Result<(), String> {
     if world.get::<Dead>(target).is_some() {
         return Err(format!("{id} is dead; lock on to a living target"));
+    }
+    if world.get::<Downed>(target).is_some() {
+        return Err(format!("{id} is down: no target; lock on to a standing one"));
     }
     let (Some(here), Some(there)) = (world.get::<Transform>(me), world.get::<Transform>(target)) else {
         return Err(format!("{id} has no position to lock on to; lock on to a body in the world"));
