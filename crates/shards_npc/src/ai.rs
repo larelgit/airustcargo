@@ -20,7 +20,8 @@ use crate::chain::{ChainPressed, ChainRefused, NpcChain};
 use crate::director::{AttackToken, TokenGranted, TokenReturned};
 use crate::nav::{local_grid_path, local_grid_route, NavAgent, NavPaths, NAVMESH};
 use crate::perception::Perceived;
-use crate::planner::{NpcOptions, NpcPlan};
+use crate::planner::{repeats_of, NpcOptions, NpcPlan};
+use crate::schedule::{schedule_report, ScheduleParams, WhatIf};
 use crate::strike::{wait_of, NpcStrike};
 
 pub(crate) fn register(app: &mut App) {
@@ -54,6 +55,7 @@ pub(crate) fn register(app: &mut App) {
             ))
         })
         .add_ai_query("npc_state", Scope::Player, npc_state)
+        .add_ai_query("npc_schedule", Scope::Player, npc_schedule)
         .add_ai_query("nav_path", Scope::Player, nav_path)
         .add_ai_tool("npc_set_state", Scope::Dev, npc_set_state)
         // `step --until named:npc_attacking`: until an NPC's attack (by its token) is under way.
@@ -189,6 +191,52 @@ pub struct NpcStateArgs {
     pub id: Id,
 }
 
+/// Which options an NPC may choose now, the first rule that refuses each of the others, and each
+/// eligible option's chance (the director's grant and the planner judge by the same rules). A dev
+/// caller also gets `pick`: the option the next tick's draw would take, when the next tick is a
+/// decision tick of an NPC that holds a grant. Read-only.
+#[derive(Deserialize, JsonSchema)]
+pub struct NpcScheduleArgs {
+    /// The NPC: 42 or "e42".
+    pub id: Id,
+    /// Judge against this target. Default: its grant's target, else its brain's.
+    pub target: Option<Id>,
+    /// Meters, instead of the measured distance.
+    pub distance: Option<f32>,
+    /// Degrees 0-180 (0 ahead, 180 behind), instead of the measured angle.
+    pub angle: Option<f32>,
+    /// Living players, instead of the counted ones.
+    pub players: Option<u32>,
+}
+
+fn npc_schedule(In(call): In<Call<NpcScheduleArgs>>, p: ScheduleParams, role: Option<Res<shards_core::NetRole>>) -> ToolResult<Value> {
+    // The grants, the targets and the think timers it reads are the host's; a client has none of them.
+    if role.is_some_and(|r| !r.simulates()) {
+        return Err("the host owns NPC plans: ask the host".to_owned());
+    }
+    let args = &call.args;
+    if let Some(angle) = args.angle
+        && !(0.0..=180.0).contains(&angle)
+    {
+        return Err(format!("angle must be 0..180 degrees (is {angle})"));
+    }
+    if let Some(distance) = args.distance
+        && !(distance >= 0.0 && distance.is_finite())
+    {
+        return Err(format!("distance must be >= 0 and finite (is {distance})"));
+    }
+    if args.players == Some(0) {
+        return Err("players must be at least 1 (is 0)".to_owned());
+    }
+    let entity = p.resolve(args.id.0)?;
+    if !p.is_npc(entity) {
+        return Err(format!("{} is not an NPC (it has no Npc component)", args.id));
+    }
+    let what_if = WhatIf { target: args.target.map(|t| t.0), distance: args.distance, angle: args.angle, players: args.players };
+    let report = schedule_report(&p, entity, &what_if, call.caller.scope.allows(Scope::Dev))?;
+    serde_json::to_value(report).map_err(|e| e.to_string())
+}
+
 fn npc_state(In(call): In<Call<NpcStateArgs>>, world: &World) -> ToolResult<Value> {
     let entity = call.args.id.entity(world)?;
     let e = world.entity(entity);
@@ -321,6 +369,15 @@ fn extras(world: &World, entity: Entity, npc: &Npc, perceived: &Perceived, here:
             .unwrap_or_default();
         let closed: Vec<&String> = gated.iter().filter(|g| !o.allowed.contains(g)).collect();
         out["plan"]["options"] = json!({"open": o.allowed, "closed": closed});
+    }
+    // The repeat gate's count: the newest attack and how many times in a row it was chosen.
+    if let Some(newest) = world.get::<NpcPlan>(entity).and_then(|p| p.history.last().map(|h| (h.name.clone(), repeats_of(&p.history, &h.name))))
+        && world
+            .get_resource::<shards_content::ContentDb>()
+            .and_then(|db| npc.plan.as_deref().and_then(|p| db.peek::<crate::def::AttackPlanDef>(p)))
+            .is_some_and(|p| p.options.iter().any(|o| o.max_repeats.is_some()))
+    {
+        out["plan"]["repeats"] = json!({"name": newest.0, "times": newest.1});
     }
     let def = perception_of(world, npc);
     if let Some(keep) = def.keep_range {
