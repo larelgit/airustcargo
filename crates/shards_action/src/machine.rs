@@ -14,7 +14,7 @@
 //! state clears at the end of the tick), and the next action can start in the tick
 //! after. A window is open in a tick when it touches the time that tick covered.
 
-use ai_core::{AiId, AiIndex};
+use ai_core::{AiId, AiIndex, SimTick};
 use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use shards_content::ContentDb;
@@ -27,6 +27,7 @@ use shards_motion::{
 
 use std::ops::DerefMut;
 
+use crate::context::{fresh_press, ContextInputs, GuardArm, PendingPair, PendingPairs, RunHalted};
 use crate::body::grant_barrier;
 use crate::cue::ActionSound;
 use crate::def::{touches, ActionDef, BufferMode, CancelTo, CombatTuning, Effect, Face, MovesetDef, StaminaMode, Steer, EPS};
@@ -353,6 +354,8 @@ pub struct FighterView<'a> {
     /// `Intent::held`: decides whether a hold loop keeps going.
     pub held: &'a [String],
     pub dead: bool,
+    /// This tick's context ([`ContextInputs`]): a bound input starts its bound action.
+    pub context: Option<&'a ContextInputs>,
     /// How the body moves now: the mode gate ([`MovesetDef::only_in`]) judges it. `None`: not judged.
     pub mode: Option<MotionMode>,
     /// The body is somewhere the controller drops a launch ([`off_ground`]): a leap would launch
@@ -366,7 +369,7 @@ impl<'a> FighterView<'a> {
     /// A view of a fighter with the moveset `moveset`, in `state`, holding `held`; every resource
     /// absent, the mode and the leap site not judged. Set the fields the caller has.
     pub fn new(db: &'a ContentDb, moveset: &'a str, state: &'a ActionState, held: &'a [String], dead: bool) -> Self {
-        Self { db, moveset, state, stamina: None, cooldowns: None, charges: None, held, dead, mode: None, off_ground: None, leap: None }
+        Self { db, moveset, state, stamina: None, cooldowns: None, charges: None, held, dead, context: None, mode: None, off_ground: None, leap: None }
     }
 
     /// The fighter `entity` as the world has it now; `None` if it is no fighter.
@@ -381,6 +384,7 @@ impl<'a> FighterView<'a> {
             charges: e.get::<Charges>(),
             held: e.get::<Intent>().map_or(&[], |i| i.held.as_slice()),
             dead: e.contains::<Dead>(),
+            context: e.get::<ContextInputs>(),
             mode: e.get::<MotionState>().map(|m| m.mode),
             off_ground: off_ground(e.get::<MotionState>()),
             leap: LeapSite::of(world, entity),
@@ -389,6 +393,16 @@ impl<'a> FighterView<'a> {
 
     pub fn moveset_def(&self) -> Option<&'a MovesetDef> {
         self.db.get::<MovesetDef>(self.moveset)
+    }
+
+    /// The action `input` starts now: the action its context binds it to, else the moveset's.
+    pub fn action_for(&self, input: &str) -> Option<&'a str> {
+        self.bound(input).or_else(|| self.moveset_def()?.action(input))
+    }
+
+    /// The action this tick's context binds `input` to, if any.
+    pub fn bound(&self, input: &str) -> Option<&'a str> {
+        self.context.and_then(|c| c.bound(input)).map(|b| b.action.as_str())
     }
 }
 
@@ -600,14 +614,18 @@ pub(crate) fn can_start_toward(v: &FighterView, input: &str, dt: f32, dir: Optio
     let moveset = v.moveset_def().ok_or_else(|| Blocker::NoMoveset { moveset: v.moveset.to_owned() })?;
     let mut blockers: Vec<Blocker> = Vec::new();
     let mut cancel = false;
-    let mut action = moveset.action(input).map(str::to_owned);
+    // A bound input starts its bound action, through any window, a `Combo` one included.
+    let bound = v.bound(input);
+    let mut action = bound.or_else(|| moveset.action(input)).map(str::to_owned);
     if let Some(run) = &v.state.current
         && let Some(def) = v.db.get::<ActionDef>(&run.action)
     {
         match def.cancel_into(input, run.prev, run.t) {
             Some(to) => {
                 cancel = true;
-                if let CancelTo::Action(id) = to {
+                if let CancelTo::Action(id) = to
+                    && bound.is_none()
+                {
                     action = Some(id);
                 }
             }
@@ -624,7 +642,10 @@ pub(crate) fn can_start_toward(v: &FighterView, input: &str, dt: f32, dir: Optio
                     (Some(_), None) => true,
                     _ => false,
                 };
-                if by_cancel && let Some((_, CancelTo::Action(id))) = next {
+                if by_cancel
+                    && bound.is_none()
+                    && let Some((_, CancelTo::Action(id))) = next
+                {
                     action = Some(id);
                 }
                 blockers.push(Blocker::Busy {
@@ -845,6 +866,9 @@ pub(crate) struct FighterData {
     leap: Option<&'static mut LeapRun>,
     ghost: Has<Ghost>,
     dead: Has<Dead>,
+    context: Option<&'static ContextInputs>,
+    arm: Option<&'static mut GuardArm>,
+    halted: Option<&'static RunHalted>,
 }
 
 /// What the machine decided for one fighter this tick.
@@ -865,7 +889,9 @@ pub(crate) fn run_machines(
     db: Res<ContentDb>,
     index: Res<AiIndex>,
     physics: Res<PhysicsWorld>,
+    tick: Res<SimTick>,
     mut pending: ResMut<PendingEffects>,
+    mut pairs: ResMut<PendingPairs>,
     mut commands: Commands,
     positions: Query<(&Transform, Option<&CharacterParams>, Option<&Collider>)>,
     mut fighters: Query<FighterData>,
@@ -874,6 +900,7 @@ pub(crate) fn run_machines(
     if dt <= 0.0 {
         return;
     }
+    let now = tick.0;
     let tuning = CombatTuning::of(&db);
     let (ttl, sight) = (tuning.input_buffer, tuning.sight_height);
     let mut order: Vec<(u32, Entity)> = fighters.iter().map(|f| (f.id.map_or(u32::MAX, |i| i.0), f.entity)).collect();
@@ -950,8 +977,22 @@ pub(crate) fn run_machines(
                 let facing = plan_dir.unwrap_or_else(|| start_facing(def, choice.dir, &f.intent, here, forward, target));
                 let instance = f.state.started;
                 f.state.started += 1;
-                let run =
+                let mut run =
                     Running::new(&choice.start.action, def, instance, facing, choice.dir, Some(choice.input.clone()));
+                // A guard that needs a fresh press takes the press now: its perfect window opens
+                // only if the press was fresh and recent, and the press arms no later guard.
+                if let Some(press) = def.guard.as_ref().and_then(|g| g.perfect_needs_press.as_ref()) {
+                    let fresh = fresh_press(f.arm.as_deref(), press, now, dt);
+                    if let Some(arm) = f.arm.as_mut() {
+                        arm.armed = false;
+                        arm.run = fresh.then_some(instance);
+                    }
+                }
+                gate_perfect(&mut run, def, f.arm.as_deref());
+                if def.pair.is_some() {
+                    let victim = f.context.and_then(|c| c.bound(&choice.input)).filter(|b| b.action == run.action).and_then(|b| b.victim);
+                    pairs.0.push(PendingPair { attacker: entity, action: run.action.clone(), instance, victim });
+                }
                 if let Some(old) = f.state.current.take() {
                     cap_buffer(&mut f.buffer, ttl);
                     commands.trigger(ActionEnded::of(entity, &old, ActionEnd::Cancelled));
@@ -996,6 +1037,9 @@ pub(crate) fn run_machines(
                     let aimed = tracked(def, &f.intent, target, sees);
                     let scale = leap.map_or(1.0, |l| l.scale);
                     (spans, external) = step_run(run, def, extras.as_mut(), scale, &f.intent, here, aimed, dt);
+                    if f.halted.is_some_and(|h| h.instance == run.instance) {
+                        external = Vec3::ZERO;
+                    }
                     // The launch: once, in the tick that crosses `leap.at` (a body with no controller has
                     // nothing to launch).
                     if let (Some(l), Some(state)) = (def.leap.as_ref(), leap.as_mut())
@@ -1018,6 +1062,7 @@ pub(crate) fn run_machines(
                         }
                     }
                     run.refresh(def, RunExtras::extra_of(extras.as_ref()));
+                    gate_perfect(run, def, f.arm.as_deref());
                     // Held long enough: it turns into its charged action, if the stamina is there.
                     if let Some(into) = charge_due(run, def, extras.as_ref()) {
                         match db.get::<ActionDef>(into) {
@@ -1028,6 +1073,7 @@ pub(crate) fn run_machines(
                                     let ended = ActionEnded::of(entity, run, ActionEnd::Branched);
                                     run.action = into.to_owned();
                                     run.refresh(into_def, RunExtras::extra_of(extras.as_ref()));
+                                    gate_perfect(run, into_def, f.arm.as_deref());
                                     commands.trigger(ended);
                                     commands.trigger(ActionStarted {
                                         entity,
@@ -1158,6 +1204,7 @@ fn view<'a>(f: &'a FighterDataItem, db: &'a ContentDb, leap: Option<LeapSite<'a>
         charges: f.charges.as_deref(),
         mode: f.motion.map(|m| m.mode),
         off_ground: off_ground(f.motion),
+        context: f.context,
         ..FighterView::new(db, &f.fighter.moveset, &f.state, &f.intent.held, f.dead)
     }
 }
@@ -1214,11 +1261,11 @@ pub(crate) fn choose_in(view: &FighterView, queued: &[Queued], dt: f32) -> Optio
             return Some(Choice { start, input: q.input.clone(), dir: q.dir, queued: Some(i) });
         }
     }
-    let moveset = view.moveset_def()?;
+    view.moveset_def()?;
     for held in view.held {
-        let Some(def) = moveset.action(held).and_then(|a| view.db.get::<ActionDef>(a)) else { continue };
+        let Some(def) = view.action_for(held).and_then(|a| view.db.get::<ActionDef>(a)) else { continue };
         let starts_held = def.hold.as_ref().is_some_and(|h| h.input == *held);
-        if !starts_held || moveset.action(held).is_some_and(|a| view.state.is(a)) {
+        if !starts_held || view.action_for(held).is_some_and(|a| view.state.is(a)) {
             continue;
         }
         if let Ok(start) = can_start(view, held, dt) {
@@ -1465,14 +1512,28 @@ fn pay_branch(
 }
 
 /// Whether a fighter with `moveset`, running `running`, has a use for a press of `input`:
-/// its moveset maps it, or the running action combos into something with it.
+/// its moveset maps it or binds it in its `context`, or the running action combos into
+/// something with it.
 pub(crate) fn understands(input: &str, moveset: Option<&MovesetDef>, running: Option<&ActionDef>) -> bool {
-    moveset.is_some_and(|m| m.inputs.contains_key(input))
+    moveset.is_some_and(|m| m.inputs.contains_key(input) || m.context.iter().any(|b| b.input == input))
         || running.is_some_and(|d| {
             d.cancels
                 .iter()
                 .any(|c| c.into.iter().any(|t| matches!(t, crate::def::Transition::Combo(i, _) if i == input)))
         })
+}
+
+/// The perfect window of a guard that needs a fresh press (`perfect_needs_press`) stays shut
+/// unless such a press started this very run ([`GuardArm::run`]). The machine, a forced start and a
+/// client's prediction all call it after the windows are worked out, so the pipeline, `observe`
+/// and the prediction read the same window.
+pub(crate) fn gate_perfect(run: &mut Running, def: &ActionDef, arm: Option<&GuardArm>) {
+    if run.windows.perfect
+        && def.guard.as_ref().is_some_and(|g| g.perfect_needs_press.is_some())
+        && arm.is_none_or(|a| a.run != Some(run.instance))
+    {
+        run.windows.perfect = false;
+    }
 }
 
 /// Takes what starting `action` costs.
@@ -1984,7 +2045,9 @@ pub fn force_action(world: &mut World, entity: Entity, action: &str) -> bool {
     let facing = state.current.as_ref().map_or(feet.1, |r| r.facing);
     let instance = state.started;
     state.started += 1;
-    let run = Running::new(action, &def, instance, facing, None, None);
+    let mut run = Running::new(action, &def, instance, facing, None, None);
+    // A forced guard that needs a fresh press had none: no perfect window.
+    gate_perfect(&mut run, &def, None);
     let mut effects = Vec::new();
     let mut telegraphs = Vec::new();
     begin(entity, &def, &run, feet.0, &mut effects, &mut |t| telegraphs.push(t));

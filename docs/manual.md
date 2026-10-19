@@ -81,7 +81,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 179 definitions in 53 files
+cargo shards content check                 # ok: 186 definitions in 55 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -104,7 +104,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 179 definitions in 53 files
+# ok: 186 definitions in 55 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -592,8 +592,8 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 179 definitions in 53 files
-  action  46
+content: 186 definitions in 55 files
+  action  52
   animset  1
   attack_plan  3
   audio  1
@@ -616,7 +616,7 @@ content: 179 definitions in 53 files
   lock_on  1
   locomotion  3
   look  15
-  moveset  10
+  moveset  11
   music  1
   nav  1
   net  0
@@ -640,7 +640,7 @@ content: 179 definitions in 53 files
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 179 definitions in 53
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 186 definitions in 55
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -1213,7 +1213,7 @@ A hit can ask for more than damage: a **reaction tier** (what the target is put 
                reaction_armor: 0, reaction_immunity: 0.2, reaction_protection: 1.0, break_protection: 3.0) }
 ```
 
-**The pipeline after B1.** `detect` (a hit with `LineOfSight` skips a target when a ray from the attacker's chest to the target's meets a `LayerMask::WORLD` collider; the two bodies' own colliders never count; a skipped target is not marked, so it can still be hit later in the same window; the chest is `CombatTuning::sight_height`, 0.6, of the body's height) → `resolve` fills a `DamageCtx` (`credit`, `dir`, `reaction`, `reaction_armor`, `knockback`, `taken`, `guard_mult`, `weight`, `ignore_reason`) → `modifiers` (god mode, i-frames and perfect evades, guards with per-hit costs and shares, `Armor`) → the game's hooks → `apply`. `apply` works out a **plan** first (does the poise break, does the target react), so `Damaged` can carry its `weight` and `reaction` while still being triggered before death, statuses and poise, as it always was. Events name the credited entity (`DamageCtx::credit`) as `attacker` or `killer`; `source` is the combat object that hit (`DamageCtx::attacker`) when it is not the credited entity: a hook that sets `credit` to an owner gets `source` set to the object on `Damaged`, `Blocked`, `GuardBroken`, `Parried`, `Evaded`, `PerfectEvaded` and `Died` (`kill_with` for a game that kills itself; `kill` leaves it `None`). A parry staggers `DamageCtx::attacker`, the object that hit. A status a hook appends to a blocked hit is applied (the block applies whatever is left in the context after the hooks, by default the `status_mult` share). `Damaged::ignore_reason` is `None` for a hit that landed; a hook that sets `Ignored` without a reason prints `ignored`. `HitWeight::Counter` and `Finisher` and `IgnoreReason::Downed` are reserved: the engine never sets them, a game hook may.
+**The pipeline after B1.** `detect` (a hit with `LineOfSight` skips a target when a ray from the attacker's chest to the target's meets a `LayerMask::WORLD` collider; the two bodies' own colliders never count; a skipped target is not marked, so it can still be hit later in the same window; the chest is `CombatTuning::sight_height`, 0.6, of the body's height) → `resolve` fills a `DamageCtx` (`credit`, `dir`, `reaction`, `reaction_armor`, `knockback`, `taken`, `guard_mult`, `weight`, `ignore_reason`) → `modifiers` (god mode, i-frames and perfect evades, guards with per-hit costs and shares, `Armor`) → the game's hooks → `apply`. `apply` works out a **plan** first (does the poise break, does the target react), so `Damaged` can carry its `weight` and `reaction` while still being triggered before death, statuses and poise, as it always was. Events name the credited entity (`DamageCtx::credit`) as `attacker` or `killer`; `source` is the combat object that hit (`DamageCtx::attacker`) when it is not the credited entity: a hook that sets `credit` to an owner gets `source` set to the object on `Damaged`, `Blocked`, `GuardBroken`, `Parried`, `Evaded`, `PerfectEvaded` and `Died` (`kill_with` for a game that kills itself; `kill` leaves it `None`). A parry staggers `DamageCtx::attacker`, the object that hit. A status a hook appends to a blocked hit is applied (the block applies whatever is left in the context after the hooks, by default the `status_mult` share). `Damaged::ignore_reason` is `None` for a hit that landed; a hook that sets `Ignored` without a reason prints `ignored`. A hit's `weight` is at least its action's `weight` (a floor, B3; none by default), and a paired action's strike is at least `Finisher`; a game hook may still set it. `IgnoreReason::Downed` is reserved: the engine never sets it, a game hook may.
 
 - **Guard.** The cost of a block is `hit.guard_damage` (else the hit's damage) times `stamina_per_damage`. A perfect guard pays `perfect_cost_mult` of it (`Parried { stamina }`, journal `, -10 stamina` only when above 0); when it cannot pay, the guard breaks, perfect or not, and spends all the stamina. `parry_staggers: false` leaves the attacker alone: the game's `Parried` observer decides (poise through `poise_damage`, a recoil through `react`). A guard break lets `break_damage_mult` (else `damage_mult`) of the damage through, a block `damage_mult`; a block lets `status_mult` of the status buildup through, a break `break_status_mult` (0, the old rule, lets none). A break forces the moveset's `guard_broken` action (then `Staggered { cause: GuardBroken }`), else its `stagger`; `guard_broken_push: (scale, decel)` starts a push at `scale` times the body's current flat velocity. **The guard is decided before the hooks**, from the damage as the hit defines it: a hook that rescales damage must also change `outcome` and `guard_mult` if it wants Blocked versus GuardBroken decided again; the engine does not redo the guard after the hooks.
 - **Perfect evade.** A hit that meets i-frames while a `perfect_iframes` span is also open is `Outcome::PerfectEvaded`: `Evaded`, then `PerfectEvaded`. Not for a hit with `NoPerfectEvade` (ground zones), nor for one that does no damage. The attacker's ledger marks the defender at the first detection, so it is once per swing. Every `perfect_iframes` span must lie inside the i-frames. **`perfect_iframes` and `armor` spans are sampled at the instant of the tick** (`start <= t <= end`), not over the tick: the roll's `Secs(0.105, 0.215)` is open in ticks 7 to 12 (6 ticks at 60 Hz), not 13. Content copied from a source that samples the same way keeps its literal numbers. (`iframes`, `hyper_armor`, guard and hit windows keep the older over-the-tick rule.)
@@ -1380,6 +1380,198 @@ run is dropped and the body goes back to the host's state.
 **What the AI sees.** Describe: `charging, turns in 0.12s` while the starting input is held (`charging, turns when the stamina is
 there` once it waits for stamina), `missed +0.60s` after a whiff. Journal: `e5 lunge missed: +0.60s recovery`, and the
 single slot's drops as `rejected` lines. `step --until named:charging` waits for any fighter holding a charge.
+
+### Context and paired actions (B3)
+
+What a press starts can depend on the moment: the light attack is a finisher next to a broken enemy, a counter just after a
+parry, a cut out of a roll, and the plain light otherwise. A guard can open its perfect window only on a fresh press. A paired
+action takes a victim and holds it for its whole run. All of it is content, off by default and unserialized at its default, so
+content hashes and the reference replays of content made before it do not change; a fighter whose moveset uses none of it
+never carries any of the new components.
+
+```ron
+// content/combat/context.action.ron (the sandbox)
+{
+    "spar_finisher": (
+        net_id: 150,
+        phases: [("lunge", 0.25), ("strike", 0.15), ("recovery", 0.45)],
+        hits: [(span: Phase("strike"), shape: Cone(range: 2.6, angle: 120), damage: 25, knockback: 4.0)],
+        iframes: [Phases("lunge", "recovery")],
+        displacement: [(0.0, 0.0), (0.25, 0.6)],
+        pair: (
+            select: (state: Broken, range: 2.0, height: 1.2, angle: 100, line_of_sight: true, prefer_target: true, slack: 0.3),
+            victim_action: "spar_finished",     // forced on the victim when the pair starts
+            only_victim: true,                  // the finisher's hits find only its victim
+            hold_break: 0.55,                   // the victim's break lasts at least this long from the start
+            ends_break: true,                   // the first landed strike ends the break (once)
+            break_range: 4.0,                   // farther apart than this: the pair is lost
+        ),
+    ),
+    "spar_finished": (net_id: 151, phases: [("held", 1.0)]),
+    "spar_counter": (net_id: 152, /* .. */ weight: Counter),      // the floor of its hits' `Damaged::weight`
+    "spar_parry_guard": (
+        net_id: 155,
+        phases: [("raise", 0.18), ("hold", 0.3), ("lower", 0.1)],
+        hold: (input: "block", span: Phase("hold")),
+        guard: (span: Phases("raise", "hold"), perfect: Phase("raise"), perfect_needs_press: (gap: 0.35, entry: 0.15)),
+    ),
+}
+// content/combat/context.moveset.ron
+{ "contextual": (
+    inputs: {"light": "spar_jab", "dodge": "spar_dodge", "block": "spar_parry_guard" /* .. */},
+    remember: [
+        (key: "parried", on: Parried, seconds: 0.5, forget: [Reacted, Started("dodge"), Used]),
+        (key: "dodged", on: Ended("dodge"), seconds: 0.3, forget: [Hurt, Used]),
+    ],
+    context: [                                   // per input, the first binding whose `when` all hold wins
+        (input: "light", action: "spar_finisher", when: [Pair]),
+        (input: "light", action: "spar_counter", when: [Remembers("parried"), StaminaAbove(0.0)]),
+        (input: "light", action: "spar_dodge_cut", when: [Remembers("dodged")]),
+    ],
+) }
+```
+
+**Memories** (`MovesetDef::remember: [(key, on, seconds, forget)]`). When `on` happens to the fighter it remembers `key` for
+`seconds` (again: the time starts over); when one of `forget` happens it forgets it. `on` is `Parried`, `PerfectEvaded`,
+`Blocked`, `Evaded`, `Landed` (a hit of its that was not ignored), `Hurt` (damage above 0), `Ended(tag)` (an action of its with
+the tag ended, by any end but a charge's turn) or `Started(tag)`; `forget` is `Hurt`, `Reacted` (a reaction, a stagger or a
+guard break started on it), `Started(tag)` or `Used` (a binding that needs the memory started its action). An event's forgets
+go first, then its remembers. The lazy component `Memory` holds the live ones, sorted by key. A memory ages in the fighter
+chain of every tick from the tick it is made, so one of 0.5 s made on tick `N` is seen by the presses of ticks `N+1` to `N+29`.
+`remember(world, entity, key, seconds)` and `forget(world, entity, key)` are for a game.
+
+**Bindings** (`MovesetDef::context: [(input, action, when)]`). `ActionSystems::Context`, the first of the tick's action
+systems, resolves every fighter's bindings in `AiId` order into the lazy component `ContextInputs { bound: [(input, action,
+binding, victim)] }`: for each input, the first binding in content order whose `when` all hold. `when` is `Remembers(key)`,
+`Pair` (the binding's action is paired and its `select` finds a victim now; the victim is kept with the binding),
+`StaminaAbove(v)` (a fighter without stamina always has enough) or `Condition(name)` (a game's `add_context_condition(name,
+fn(&World, Entity) -> bool)`). A binding never holds for the action the fighter runs now (a running finisher does not restart
+itself through a cancel window), and a dead fighter has none.
+
+**Precedence.** A bound input starts its bound action wherever the input would start anything: from idle, from a buffered
+press, from a held input, and in a cancel window, where it beats the window's own target for that input (a `Combo` link or an
+action override). There is no per-binding priority field: the order of `context` is the order, and the sandbox lists the
+finisher, then the counter, then the cut out of a roll; the moveset's plain action is the fallback. `resolve(world, entity)`
+gives the same answer at any time (the tools answer from it), and `can_start` reads it as `FighterView::context`.
+
+**The guard's press** (`GuardDef::perfect_needs_press: (gap, entry, rearm)`; 0.35 s, 0.15 s and `true` by default). A press of
+a guard's input is the button going down: a press in `Intent::pressed`, or the input becoming held. A press is **fresh**
+(armed) when the previous one is at least `gap` old, or there was none. A guard that starts within `entry` of a fresh press, and
+is the first guard to start from it, keeps its perfect window. Any other start has none and only blocks: a held guard that
+comes back after an attack, a roll or a hit; a press too soon after the last one; a guard that starts more than `entry` after
+its press. A parry makes the next press fresh whatever the gap (`rearm`). Without the field, every start of the guard has its
+perfect window, as before. The press is stamped by tick into the lazy component `GuardArm { pressed, armed, down, run }`.
+`ActionSystems::Context` keeps it and removes it once it says nothing an absent one would not. The perfect window is closed in
+one place, `gate_perfect`, after every refresh of a run's windows (the machine, `force_action`, a client's prediction).
+Godot's quirk of stamping the press when the guard starts, not when the button goes down, is not reproduced.
+
+**Paired actions** (`ActionDef::pair`; a paired action has no `charge`, a content error, since the charge would turn the run into another action that the pair does not name). When a paired action starts, the machine notes it, and `start_pairs` (in
+`ActionSystems::Effects`, before the effects) takes the victim: the binding's victim if it is still free, else what `select`
+finds now. `select: (team, state, range, height, angle, line_of_sight, prefer_target, slack)` asks for a fighter with
+`Health` that is alive and not held by another, and that:
+
+- is of another team (`Hostile`, the default) or of the fighter's own (`Ally`);
+- is in the state (`Broken`: its poise is broken; `Any`);
+- is within `range` plus its body radius on the ground plane, and within `height` up or down;
+- is within `angle` degrees (a half-angle) of the body's facing. Not the lock-on direction and not the stick, as in the
+  original game's finisher candidate: a player running away from a broken enemy has no finisher on it, and a locked player
+  whose body looks elsewhere is judged by the body (a test pins it);
+- has no world collider between the two chests, when `line_of_sight` is set;
+- with `slack`, has no other living player of the fighter's team nearer to it by more than `slack` metres (two players next to
+  one broken enemy: only the nearer gets the finisher).
+
+The lock-on target wins when it qualifies (it must pass the same tests, the angle too) and `prefer_target` is set; otherwise the nearest wins, ties by `AiId`. With no victim
+the action runs on its own.
+
+The pair puts the lazy components `Pairing { victim, action, instance, broke_once }` on the fighter and `Paired { by, exclusive
+}` on the victim. It forces `victim_action` on the victim, keeps a broken victim broken for at least `hold_break` from the
+start, and triggers `PairStarted { attacker, victim, action }`. While it lasts:
+
+- the fighter's hits find only its victim (`only_victim`), for the whole run: a finisher that kills its victim, or loses it to
+  a despawn, goes on with its lunge stopped and hits nobody else (`RunHalted` keeps `only_victim` after the `Pairing` is
+  gone). Other attackers can still hit the victim unless the pair is
+  `exclusive` (kept for revives: then nobody else's hits find it);
+- **the strike**: the pair's first hit that lands on a victim still in the pair's state ends its break (`ends_break`, once a
+  pair; the break protection starts) and forces the reaction `strike_reaction` (3, a knockdown, by default; 0: none, the
+  damage lands, `Damaged::reaction` is `None` and the victim keeps its held pose) with `Reaction::forced` and the hit's
+  knockback. It ignores the victim's armour and immunity (`ignore_armor`: confirmed against combat-actor 4.11,
+  `_receive_finisher`, which forces `hit_react` with no armour test, sets no immunity and gives no hit grace), starts no
+  immunity, and replaces the held action; no statuses and no poise damage come with it. The hit's weight is at least
+  `Finisher`, and the pair's weight and reaction hold whatever the barrier, the damage-taken multipliers and the hooks do to the
+  damage (a barrier that swallows the strike, a `DamageTaken` of 3: a test pins both). `DamageCtx::pair` tells a damage hook the
+  hit is such a strike before it runs, with `weight` already raised to `Finisher`: a finisher's formula keys on it;
+- the victim's hold and broken poise refuse every other attacker's reactions, not the holder's;
+- `tend_pairs` (fighter chain, `AiId` order) ends the pair. It is `Cut` when the fighter's run is no longer the pair's. It is
+  `Lost` when the victim is gone or dead (the run goes on with its lunge stopped: the lazy `RunHalted { instance }` zeroes the
+  run's own motion until the run ends), or when the two are farther apart than `break_range` (the run is cut). `cancel_on_hurt`
+  cuts the run on damage above 0 to the fighter.
+
+Every end goes through `release_pair(world, attacker, end)`. It takes both marks off, cuts the victim's `victim_action` unless
+the pair `Finished` with the victim alive (the strike's reaction already replaced it, or the held pose runs out), and triggers
+`PairEnded { attacker, victim, action, end }` (`Finished`, `Lost`, `Cut`; `victim` is `None` when it no longer exists). A
+finisher whose strike kills its victim ends as `Lost` (the victim is dead when `tend_pairs` looks), never `Finished`, and the
+journal says `lets go of e7 (lost)`: a game that keys on the end of a pair (a lane that rewards finishers) listens to `Damaged`
+with `weight: Finisher` or to `Died`, not to `PairEnd::Finished`. When the attacker dies mid-pair the pair is `Cut` and the
+victim's held action is cut with it, so its broken poise ends with that action (the victim is free at once; no ruling asks for
+more).
+`cut_action(world, entity)` ends a run with `ActionEnded { end: Interrupted }`.
+
+**Prediction and co-op.** Bindings, memories, the guard's press and pairs are decided on the host: `ActionSystems::Context` and
+`start_pairs` run in the simulation, and their observers return at once on a machine that does not simulate. Their components
+replicate like any other. A client's prediction starts the bound action from its copy of `ContextInputs` (a light that is plain there is predicted
+as the plain light), and the host resolves the press on the tick it is stamped with, from its own context and with its own
+choice of victim; it never takes the client's.
+
+**A paired action is not predicted** (13a, "Context staleness"). The stand test `context_staleness_around_the_break_is_counted`
+presses light on the client from 9 ticks before to 9 ticks after the host breaks the enemy, and from 30 to 46 ticks after (the
+end of the stagger), over 150 ms and 2 % loss. With the finisher predicted, every press near the end of the stagger was
+mispredicted (the host's break had lapsed before the stamped tick: 10 of 10 from 30 ticks on), and every press in the window
+before the client's copy showed the finisher was a predicted jab the host turned into a finisher (18 of 19). So the client does
+not predict an action with `pair`: the press is let go, the host starts the finisher on its own tick and the client takes
+the run over (the answer of `light_attack` says `the host starts it`). The finisher therefore starts on a client about a round
+trip after the press. What stays: a press made before the client's copy shows the finisher is predicted as the plain light and
+replaced by the host's finisher when it comes (`net: predicted spar_jab not confirmed`, counted in `mispredicted`: 18 of 19
+trials in that window, 0 from 9 ticks on). The test with two players next to one broken enemy
+(`the_slack_handoff_between_two_players_is_counted`, 12 trials, the second player stepping in around the first one's press)
+had exactly one finisher each time, taken by whoever the host found nearer.
+
+Known co-op limitation (the stale window): for about half a round trip after the host's break, a client still shows a jab
+that the host replaces with the finisher through the predictor's reconcile (18 of 19 presses in that window, 0 outside it). It
+is accepted for now, no host-tick resolution is built, and it is an item for the M8 co-op feel check.
+
+**The guard's press, predicted.** A client runs the same press rule on its own `Intent` (`step_arm`, the function the host's
+`arm_guard` calls; its result is the predictor's own `GuardArm`), so a guard it starts shows the perfect window the host will
+give it, from the first tick, whenever the presses agree. Once the host confirms the start, the host's `GuardArm` decides what
+is shown. A test compares the shown window with the host's tick by tick (122 shared ticks, 22 with a perfect window, 0 differ).
+`PairStarted` and `PairEnded` travel to clients.
+
+**What the AI sees.** Describe: `remembers parried 0.32s`, `light -> spar_finisher on e7` (the bound inputs), `pairing e7`,
+`held by e5`, `guard press armed` and `guard armed (perfect window)`, and on a possible victim `finishable by e5`. That last
+one is derived from the players' bindings each time it is asked; it is not a component. Journal: `e5 takes e7 with
+spar_finisher`, `e5 lets go of e7 (finished)` (or `lost`, `cut`). Conditions: `step --until named:pair_ready` (some fighter's
+context binds a paired action on a victim), `named:paired` (some pair runs). Dev tools: `remember id=e5 key=parried
+seconds=0.5` (0 forgets; without `seconds`, the moveset's own time) and `stagger id=e7 poise=true` (breaks the poise for the
+stagger's length, as a poise break does). The HUD source `you.finisher` is a flag: an input of the viewer is bound to a paired
+action on a victim now. The engine rules `action.pairs_match` and `action.memory_sane` stop the game on a broken pair or
+memory.
+
+**State.** `Memory`, `ContextInputs`, `GuardArm`, `Pairing`, `Paired` and `RunHalted` are lazy components of `AiId` entities:
+snapshots, replay checks and co-op clients get them by the default rules. `ContextConditions` (registered at build time) and
+`PendingPairs` (the pairs the machine started, taken in the same tick) are not simulation state. The guard's press rule is
+read from content only for the guards that have it (the scan peeks at the others), so the replays of content made before B3
+keep their `content` parts. The scan runs for every fighter every tick (a few hash lookups per input of its moveset); it is not
+cached because a content reload could make a cache stale. A guard pressed that never starts leaves a `GuardArm` for
+`gap` seconds, and replay checks read it only through the fighters' hashed state. NPC planning (`shards_npc`) plans the
+moveset's plain action for an input: it does not see `ContextInputs`, so an NPC whose moveset has `context` is planned for the
+plain action while the machine starts the bound one; give such an NPC no bindings, or plan its bound actions as their own
+inputs.
+
+**Content checks.** `Recall::Ended`, `Recall::Started` and `Forget::Started` name a tag that some action must carry; a tag no
+`ActionDef` has is a content error (a typo would otherwise never fire). The `remember` tool takes 0 to 600 seconds.
+
+**Not in B3.** A `Downed` pair state (B5) and an "intangible" exclusion (B2c). Two parts of Godot's guard behaviour (design
+13.11) are not built and have no ruling: "a guard press cancels a queued light or heavy" and "a guard cancel from recovery only
+on a fresh press". The ledger rows C26-C28 only settle the arming rule and the press-stamp quirk. They wait for a ruling.
 
 ### Body state: barrier, damage taken, status rules (B2b)
 
@@ -2632,6 +2824,7 @@ How the game describes itself to the AI:
 ```rust
 app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.max))
    .register_ai_describer("orders", |e| /* a fragment from several components */)
+   .register_ai_world_describer("finishable", |w, e| /* a fragment that needs the world around it */)
    .journal_event::<Damaged>(|e, w| Some(format!("{} -> {} -{:.0}", label(w, e.source), label(w, e.target), e.amount)))
    .add_ai_tool("move_to", Scope::Player, move_to)   // action: journal and list of changes
    .add_ai_query("threats", Scope::Player, threats)  // read: no journal
@@ -3447,6 +3640,8 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `action.leap_follows_run` | every `LeapRun` (what a leap keeps, B2c) belongs to the run its fighter is running (the same `instance`) of an action that leaps, with a finite `scale >= 0` |
 | `action.ghost_follows_run` | a fighter carries `Ghost` only while its running action has `ghost` and an `intangible` span open in the tick. On a fighter the ghost is the machine's |
 | `action.lock_on_valid` | with a `lock_on` definition, no body's `Intent.target` names an entity that no longer exists or is dead: the lock-on check (`LockSystems::Check`, after `CoreSystems::ClearPresses`) lets go of such a lock at the end of every tick, after the deaths and the engine's despawns of that tick, so a violation names a lock set later in the tick or a body taken away after the check (a game system in `SimSet::Cleanup` after the check: it belongs before it). Without a definition locks are not checked and the rule passes (C6) |
+| `action.pairs_match` | a `Pairing` (a paired action's hold, B3) belongs to the run its fighter is running (the same action and `instance`), its victim (when it still exists) carries `Paired` by that fighter, and every `Paired` whose holder still exists is named by the holder's `Pairing`. The two marks are put in and taken out together (`release_pair`), so one alone is a pair a system broke behind the engine's back |
+| `action.memory_sane` | every `Memory` (what a fighter remembers for a while, B3) is not empty, holds finite times above 0 and keys sorted and unique, and every `GuardArm`'s press is not after the current tick |
 | `npc.state_known` | `NpcBrain.state` is a state of the NPC's behaviour. Three carve-outs, each a state the engine itself leaves behind: an empty state (before the NPC's first decided tick), an inactive NPC (dormant or dead: the brain passes it through, so a state a hot reload removed stays until it wakes), and an NPC whose behaviour is not in content (that is reported once as a content problem) |
 | `npc.strike_spacing` | two NPCs of one director whose `min_spacing` is set never began strikes less than that apart (in whole ticks), for the starts that went through the spacing rule: the planner's presses and checked combo continuations (`NpcStrike::gated`). Judged from the last strike each NPC noted. Three carve-outs: an NPC whose plan has `ignores_spacing` is not the one held to the rule (its starts still hold the others), a strike a state hook pressed itself is noted but neither held to the rule nor held against other NPCs (the hook may or may not have asked `strike_ready`, and may start between another NPC's planned press and its start), and an action with one of the director's `spacing_exempt_tags` is not noted at all. A director without a `min_spacing` is never judged |
 | `npc.tokens_within_limit` | after the director ran, no token is held by a dead body, and each director holds no more tokens than its limit for the living players, unless every holder beyond the limit has its attack in flight (an attack under way keeps its token to its end). It is judged right after the director, not at the end of the tick: a holder that dies in `Resolve` keeps its token until the next tick's director takes it back, so the end of the tick would fire on every kill. A small system next to the director writes what it found to the resource `TokenAudit`, which the rule reads; it is recomputed every tick and is not part of a snapshot or a replay |
@@ -3472,7 +3667,7 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-26 rules, checked after every tick
+28 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
@@ -3485,6 +3680,8 @@ $ shards assert list
   action.damage_taken_sane  engine rule  armed
   action.knockback_sane  engine rule  armed
   action.extras_follow_run  engine rule  armed
+  action.pairs_match  engine rule  armed
+  action.memory_sane  engine rule  armed
   action.leap_follows_run  engine rule  armed
   action.ghost_follows_run  engine rule  armed
   action.lock_on_valid  engine rule  armed

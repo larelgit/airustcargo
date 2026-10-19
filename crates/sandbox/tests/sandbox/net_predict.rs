@@ -656,6 +656,320 @@ fn host_cut_drops_the_shown_run() {
     assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
 }
 
+// --- context and paired actions (B3) ---------------------------------------------------------
+
+/// The client's body gets the `contextual` moveset (light is a finisher next to a broken enemy, a
+/// counter after a parry) and the skeleton e7 the `sparring` one; e7 stands 1.8 m north of the
+/// body, the body locked on to it. The host's agent `skeleton` possesses e7.
+fn context_stand() -> (Stand, String, Entity) {
+    let mut stand = stand_with(1, lossy());
+    calm(&mut stand);
+    let id = body(&stand, C1);
+    for (who, moveset) in [(id.as_str(), "contextual"), ("e7", "sparring")] {
+        let out = stand.call(HOST, "set", json!({"id": who, "component": "Fighter", "path": "moveset", "value": moveset}));
+        assert!(out.ok, "{}", out.result);
+    }
+    stand.world_mut(HOST).resource_mut::<shards::ai_core::AgentSessions>().configure("skeleton", shards::ai_core::Scope::Dev, Some(AiId(7)));
+    stand.run(60);
+    let mine = own(&stand, C1);
+    assert_eq!(stand.world(C1).get::<shards::action::Fighter>(mine).unwrap().moveset, "contextual");
+    face_off(&mut stand, &id);
+    let out = stand.call(C1, "lock_on", json!({"target": "e7"}));
+    assert!(out.ok, "{}", out.result);
+    let out = stand.call_as(HOST, "skeleton", "lock_on", json!({"target": id}));
+    assert!(out.ok, "{}", out.result);
+    stand.run(30);
+    (stand, id, mine)
+}
+
+/// The body at the origin and e7 1.8 m north of it, both healed, settled.
+fn face_off(stand: &mut Stand, id: &str) {
+    for (who, z) in [(id, 0.0), ("e7", -1.8)] {
+        for (tool, args) in [("heal", json!({"id": who})), ("teleport", json!({"id": who, "x": 0, "y": 0, "z": z}))] {
+            let out = stand.call(HOST, tool, args);
+            assert!(out.ok, "{tool}: {}", out.result);
+        }
+    }
+    stand.run(90);
+}
+
+/// Whether the client shows its light attack bound to a finisher (its copy of the host's context).
+fn finisher_shown(stand: &Stand, mine: Entity) -> bool {
+    stand.world(C1).get::<shards::action::ContextInputs>(mine).is_some_and(|c| c.bound("light").is_some_and(|b| b.victim.is_some()))
+}
+
+/// A client presses light as soon as its copy shows the finisher (a few ticks of reaction at most),
+/// twelve times over a 150 ms, 2 % loss link. A paired action is not predicted (13a, "Context
+/// staleness"; see `context_staleness_around_the_break_is_counted`): the host resolves the press on
+/// its own tick and the client takes the finisher over, so nothing the client shows is ever wrong.
+#[test]
+fn client_finishers_are_confirmed_by_the_host() {
+    let (mut stand, id, mine) = context_stand();
+    let trials = 12u64;
+    let mut missed = Vec::new();
+    for trial in 0..trials {
+        face_off(&mut stand, &id);
+        let before = prediction(&stand, C1);
+        let out = stand.call(HOST, "stagger", json!({"id": "e7", "poise": true}));
+        assert!(out.ok, "{}", out.result);
+        run_until(&mut stand, 120, "the client shows the finisher", |s| finisher_shown(s, mine));
+        // A reaction of 0 to 9 ticks (up to 150 ms).
+        stand.run(trial % 4 * 3);
+        let out = stand.call(C1, "light_attack", json!({}));
+        assert_eq!(text(&out), "ok: spar_finisher · the host starts it (a paired action is not predicted)", "trial {trial}");
+        let takes = format!("{id} takes e7 with spar_finisher");
+        run_until(&mut stand, 120, "the host takes e7", |s| journal(s, HOST).iter().filter(|l| l.contains(&takes)).count() as u64 > trial);
+        stand.run(150);
+        let after = prediction(&stand, C1);
+        assert_eq!(after.predicted, before.predicted, "trial {trial}: a paired action is not predicted");
+        if after.mispredicted > before.mispredicted {
+            missed.push(trial);
+        }
+    }
+    println!("B3 stand: {} client finisher misprediction(s) in {trials} trials at latency 150 ms, loss 2 % (none predicted)", missed.len());
+    assert!(missed.is_empty(), "mispredicted in trials {missed:?}: {:#?}", journal(&stand, C1));
+    assert!(!has_line(&stand, C1, "not confirmed"), "{:#?}", journal(&stand, C1));
+    let downs = journal(&stand, HOST).iter().filter(|l| l.contains("e7 reacts knockdown")).count() as u64;
+    assert_eq!(downs, trials, "every finisher knocked e7 down: {:#?}", journal(&stand, HOST));
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+    verify_host(&stand);
+}
+
+/// A client's guard press against the host's skeleton slam: fresh, so the guard is perfect and
+/// parries; the counter the parry binds to light is pressed from the client's copy of the context
+/// and confirmed.
+#[test]
+fn a_client_parries_and_counters() {
+    let (mut stand, id, _) = context_stand();
+    let before = prediction(&stand, C1);
+    let out = stand.call_as(HOST, "skeleton", "heavy_attack", json!({}));
+    assert!(out.ok, "{}", out.result);
+    // The slam starts on the host's next tick; the client's guard is to start 24 ticks into it (0.4 s,
+    // the raise ends after its hit lands). A press is stamped with the client's tick, which runs ahead.
+    let slam = sim::tick(stand.world(HOST)) + 1;
+    assert!(sim::tick(stand.world(C1)) < slam + 23, "the client is less than 0.38 s ahead");
+    run_until(&mut stand, 60, "the client reaches the guard's tick", |s| sim::tick(s.world(C1)) + 1 >= slam + 24);
+    let out = stand.call(C1, "block", json!({}));
+    assert!(out.ok, "{}", out.result);
+    let parried = format!("{id} parried e7 spar_slam");
+    for _ in 0..120 {
+        if has_line(&stand, HOST, &parried) {
+            break;
+        }
+        stand.run(1);
+    }
+    assert!(has_line(&stand, HOST, &parried), "slam at {slam}: {:#?}", journal(&stand, HOST).iter().rev().take(25).collect::<Vec<_>>());
+    run_until(&mut stand, 60, "the client shows the counter", |s| {
+        let mine = own(s, C1);
+        s.world(C1).get::<shards::action::ContextInputs>(mine).and_then(|c| c.bound("light")).is_some_and(|b| b.action == "spar_counter")
+    });
+    let out = stand.call(C1, "light_attack", json!({}));
+    assert_eq!(text(&out), "ok: spar_counter · predicted, host confirms");
+    assert!(stand.call(C1, "block", json!({"on": false})).ok);
+    let counter = format!("{id} -> e7 spar_counter -14");
+    run_until(&mut stand, 120, "the host's counter", |s| has_line(s, HOST, &counter));
+    stand.run(90);
+    let after = prediction(&stand, C1);
+    println!(
+        "B3 stand: guard and counter from a client: {} predicted, {} confirmed, {} mispredicted",
+        after.predicted - before.predicted,
+        after.confirmed - before.confirmed,
+        after.mispredicted - before.mispredicted
+    );
+    assert_eq!(after.mispredicted, before.mispredicted, "{:#?}", journal(&stand, C1));
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+    verify_host(&stand);
+}
+
+/// One staleness trial: the body presses light `k` ticks after (negative: before) the host breaks
+/// e7's poise, over the lossy link. Returns what the client predicted and how it fared.
+fn staleness_trial(stand: &mut Stand, id: &str, k: i64) -> Staleness {
+    face_off(stand, id);
+    let before = prediction(stand, C1);
+    let broken = |stand: &mut Stand| {
+        let out = stand.call(HOST, "stagger", json!({"id": "e7", "poise": true}));
+        assert!(out.ok, "{}", out.result);
+    };
+    let take = |stand: &mut Stand| {
+        let out = stand.call(C1, "light_attack", json!({}));
+        assert!(out.ok, "{}", out.result);
+        text(&out).to_owned()
+    };
+    let said = if k >= 0 {
+        broken(stand);
+        stand.run(k as u64);
+        take(stand)
+    } else {
+        let said = take(stand);
+        stand.run((-k) as u64);
+        broken(stand);
+        said
+    };
+    stand.run(180);
+    let after = prediction(stand, C1);
+    let takes = format!("{id} takes e7 with spar_finisher");
+    Staleness {
+        k,
+        said,
+        mispredicted: after.mispredicted - before.mispredicted,
+        host_finisher: journal(stand, HOST).iter().filter(|l| l.contains(&takes)).count(),
+    }
+}
+
+#[derive(Debug)]
+struct Staleness {
+    k: i64,
+    said: String,
+    mispredicted: u64,
+    host_finisher: usize,
+}
+
+/// 13a "Context staleness": a press in the window before the client's copy of the host's context
+/// shows the finisher (one way latency plus a tick after the break), and one near the end of the
+/// stagger, when the host's break may lapse before the stamped tick. The counts are reported
+/// (`--nocapture`); a predicted finisher the host does not confirm, or a predicted jab the host
+/// turned into a finisher, is a misprediction.
+#[test]
+fn context_staleness_around_the_break_is_counted() {
+    let (mut stand, id, _) = context_stand();
+    let mut rows = Vec::new();
+    for k in (-9..=9).chain([30, 34, 36, 38, 40, 41, 42, 43, 44, 46]) {
+        rows.push(staleness_trial(&mut stand, &id, k));
+    }
+    let mut finisher_predicted = 0;
+    let mut finisher_missed = 0;
+    let mut other_answered_differently = 0;
+    for r in &rows {
+        println!("B3 staleness k={:>3}: {:<48} mispredicted {} host finishers so far {}", r.k, r.said, r.mispredicted, r.host_finisher);
+        if r.said.contains("spar_finisher") {
+            finisher_predicted += 1;
+            finisher_missed += r.mispredicted;
+        } else {
+            other_answered_differently += r.mispredicted;
+        }
+    }
+    println!(
+        "B3 stand: staleness over {} trials at latency 150 ms, loss 2 %: {finisher_predicted} finisher presses ({finisher_missed} predicted and not confirmed), {other_answered_differently} other predictions the host answered differently",
+        rows.len()
+    );
+    // The finisher is never predicted, so it is never wrong; the jab predicted from a context that is
+    // a round trip stale is replaced by the host's finisher (counted above, reported in the PR).
+    assert_eq!(finisher_missed, 0, "{rows:#?}");
+    assert!(rows.iter().all(|r| !(r.said.contains("spar_finisher") && r.said.contains("predicted, host confirms"))), "{rows:#?}");
+    assert_eq!(desyncs(&stand, C1), 0, "{:#?}", journal(&stand, C1));
+    verify_host(&stand);
+}
+
+/// Two players of one team on the host's e7: C1 sees the finisher (C2 stands far), then C2 steps
+/// 0.8 m nearer to e7 than C1 (more than the finisher's `slack`) `j` ticks around C1's press, so
+/// the host's choice of who takes e7 changes under C1's finger (C2 presses as it steps in). No
+/// finisher is predicted: the counts are the finishers each player got and C1's mispredictions.
+#[test]
+fn the_slack_handoff_between_two_players_is_counted() {
+    let mut stand = stand_with(2, lossy());
+    calm(&mut stand);
+    let (a, b) = (body(&stand, C1), body(&stand, C2));
+    for (who, moveset) in [(a.as_str(), "contextual"), (b.as_str(), "contextual"), ("e7", "sparring")] {
+        let out = stand.call(HOST, "set", json!({"id": who, "component": "Fighter", "path": "moveset", "value": moveset}));
+        assert!(out.ok, "{}", out.result);
+    }
+    stand.run(60);
+    let mine = own(&stand, C1);
+    let mut rows = Vec::new();
+    for j in [-12, -9, -6, -3, 0, 3, 6, 9, 12, 18, 24, 30] {
+        for (who, x, z) in [(a.as_str(), 0.0, 0.0), ("e7", 0.0, -1.8), (b.as_str(), 6.0, 6.0)] {
+            for (tool, args) in [("heal", json!({"id": who})), ("teleport", json!({"id": who, "x": x, "y": 0, "z": z}))] {
+                assert!(stand.call(HOST, tool, args).ok);
+            }
+        }
+        stand.run(90);
+        let before = (prediction(&stand, C1), prediction(&stand, C2));
+        let (takes_a, takes_b) = (format!("{a} takes e7 with spar_finisher"), format!("{b} takes e7 with spar_finisher"));
+        let seen = |stand: &Stand, needle: &str| journal(stand, HOST).iter().filter(|l| l.contains(needle)).count();
+        let (had_a, had_b) = (seen(&stand, &takes_a), seen(&stand, &takes_b));
+        assert!(stand.call(HOST, "stagger", json!({"id": "e7", "poise": true})).ok);
+        run_until(&mut stand, 120, "C1 shows the finisher", |s| finisher_shown(s, mine));
+        stand.run(2);
+        // j ticks after C1's press (negative: before), C2 steps in.
+        let step_in = |stand: &mut Stand| {
+            assert!(stand.call(HOST, "teleport", json!({"id": b, "x": 0, "y": 0, "z": -0.9})).ok);
+            assert!(stand.call(C2, "light_attack", json!({})).ok);
+        };
+        let press_a = |stand: &mut Stand| assert!(stand.call(C1, "light_attack", json!({})).ok);
+        if j >= 0 {
+            press_a(&mut stand);
+            stand.run(j as u64);
+            step_in(&mut stand);
+        } else {
+            step_in(&mut stand);
+            stand.run((-j) as u64);
+            press_a(&mut stand);
+        }
+        stand.run(180);
+        let after = (prediction(&stand, C1), prediction(&stand, C2));
+        rows.push((j, seen(&stand, &takes_a) - had_a, seen(&stand, &takes_b) - had_b, after.0.mispredicted - before.0.mispredicted));
+    }
+    for (j, a_took, b_took, missed) in &rows {
+        println!("B3 slack j={j:>3}: C1 took e7 {a_took}x, C2 {b_took}x, C1 mispredicted {missed}");
+    }
+    let predicted_finishers: u64 = rows.iter().map(|r| r.3).sum();
+    println!("B3 stand: slack handoff over {} trials, 2 clients, latency 150 ms, loss 2 %: {predicted_finishers} client mispredictions", rows.len());
+    assert!(rows.iter().all(|r| r.1 + r.2 <= 1), "one finisher per break: {rows:?}");
+    assert_eq!(desyncs(&stand, C1) + desyncs(&stand, C2), 0);
+    verify_host(&stand);
+}
+
+/// The client's guard against the host's: a fresh press opens the perfect window on the same ticks
+/// on both machines, and a press too soon after the last opens it on neither. The client runs its
+/// own press rule on its own presses (\`ActionPredictor::arm\`), not the host's arm a round trip late.
+#[test]
+fn a_predicted_guard_shows_the_hosts_perfect_window() {
+    let (mut stand, id, mine) = context_stand();
+    let theirs = entity(&stand, HOST, &id).unwrap();
+    let mut host: BTreeMap<u64, bool> = BTreeMap::new();
+    let mut client: BTreeMap<u64, bool> = BTreeMap::new();
+    let sample = |stand: &mut Stand, ticks: u64, host: &mut BTreeMap<u64, bool>, client: &mut BTreeMap<u64, bool>| {
+        for _ in 0..ticks {
+            stand.run(1);
+            let h = stand.world(HOST).get::<ActionState>(theirs).and_then(|s| s.current.as_ref().filter(|r| r.action == "spar_parry_guard").map(|r| r.windows.perfect));
+            if let Some(w) = h {
+                host.insert(sim::tick(stand.world(HOST)), w);
+            }
+            if let Some(s) = shown(stand, mine).filter(|s| s.action == "spar_parry_guard") {
+                client.insert(sim::tick(stand.world(C1)), s.run.windows.perfect);
+            }
+        }
+    };
+    // A fresh press from rest.
+    assert!(stand.call(C1, "block", json!({})).ok);
+    sample(&mut stand, 40, &mut host, &mut client);
+    assert!(stand.call(C1, "block", json!({"on": false})).ok);
+    sample(&mut stand, 90, &mut host, &mut client);
+    let fresh_ticks = client.values().filter(|w| **w).count();
+    // The same guard raised again 6 ticks after it was let go: inside the gap, no perfect window.
+    assert!(stand.call(C1, "block", json!({})).ok);
+    sample(&mut stand, 4, &mut host, &mut client);
+    assert!(stand.call(C1, "block", json!({"on": false})).ok);
+    sample(&mut stand, 4, &mut host, &mut client);
+    assert!(stand.call(C1, "block", json!({})).ok);
+    sample(&mut stand, 40, &mut host, &mut client);
+    assert!(stand.call(C1, "block", json!({"on": false})).ok);
+    sample(&mut stand, 60, &mut host, &mut client);
+    let both: Vec<u64> = client.keys().filter(|t| host.contains_key(t)).copied().collect();
+    let differing: Vec<(u64, bool, bool)> = both.iter().filter(|t| client[t] != host[t]).map(|t| (*t, client[t], host[t])).collect();
+    println!(
+        "B3 stand: predicted guard windows: {} ticks on both, {} with a perfect window on the client, {} on the host, {} differ",
+        both.len(),
+        client.values().filter(|w| **w).count(),
+        host.values().filter(|w| **w).count(),
+        differing.len()
+    );
+    assert!(fresh_ticks > 0, "a fresh press opens a perfect window on the client: {client:?}");
+    assert!(both.len() > 40, "{} shared ticks", both.len());
+    assert!(differing.is_empty(), "client vs host perfect window: {differing:?}");
+    assert_eq!(desyncs(&stand, C1), 0);
+    verify_host(&stand);
+}
 // --- body and motion (B2c) -------------------------------------------------------------------
 
 /// The client's body gets the `mover` moveset (a leap, a spin, a burrow, a stroke) on the host and is
