@@ -1,0 +1,45 @@
+// Plans of the scheduler tests (the gates of an option: angle, players, max_repeats, forbid_after).
+{
+    // Repeats: the light jab may be chosen twice in a row, the smash as often as it likes.
+    "sched_repeats": (
+        options: [(input: "light", weight: 3.0, max_repeats: Some(2)), (input: "heavy", weight: 1.0)],
+        in_range_only: true,
+        rest: (0.1, 0.1),
+    ),
+    // Angle: the smash answers a target behind, the jab a target in front. Chooses on decision ticks.
+    "sched_angle": (
+        options: [
+            (input: "turn", weight: 1.0, angle: Some((95.0, 180.0))),
+            (input: "light", weight: 1.0, angle: Some((0.0, 90.0))),
+        ],
+        in_range_only: true,
+        press_on_decision: true,
+        rest: (0.1, 0.1),
+    ),
+    // Two phases that share the option `light`: it rests 5 s after each swing, and never twice in a row.
+    "sched_phase_1": (options: [(input: "light", cooldown: 5.0, max_repeats: Some(1)), (input: "heavy")], in_range_only: true, rest: (0.1, 0.1)),
+    "sched_phase_2": (options: [(input: "light", cooldown: 5.0, max_repeats: Some(1)), (input: "turn", name: "spin")], in_range_only: true, rest: (0.1, 0.1)),
+    // The far option only: a target 5 m away is walked up to.
+    "sched_far": (options: [(input: "heavy", name: "far", min: 2.0, max: Some(3.0))], rest: (0.1, 0.1)),
+    "sched_near": (options: [(input: "light", name: "near")], rest: (0.1, 0.1)),
+    // Free, then strict: the strict plan would refuse a second jab in a row.
+    "sched_free": (options: [(input: "light")], in_range_only: true, rest: (0.1, 0.1)),
+    "sched_strict": (options: [(input: "light", max_repeats: Some(1))], in_range_only: true, rest: (0.1, 0.1)),
+    // The draw: re-chosen on every tick among what fits.
+    "sched_draw": (
+        options: [(input: "light", weight: 3.0), (input: "heavy", weight: 1.0), (input: "turn", weight: 2.0, angle: Some((0.0, 90.0)))],
+        in_range_only: true,
+        rest: (0.1, 0.2),
+    ),
+    // Every gate at once.
+    "sched_all": (
+        options: [
+            (input: "light", weight: 3.0, max_repeats: Some(2)),
+            (input: "heavy", weight: 1.4, cooldown: 2.0, max_repeats: Some(1), tags: ["zone_center"], forbid_after: ["zone_center"]),
+            (input: "turn", weight: 4.0, cooldown: 1.0, max_repeats: Some(1), angle: Some((95.0, 180.0))),
+            (input: "heavy", name: "pair", weight: 1.0, players: Some((2, 3)), tags: ["zone_center"], forbid_after: ["zone_center"]),
+        ],
+        in_range_only: true,
+        rest: (0.1, 0.2),
+    ),
+}

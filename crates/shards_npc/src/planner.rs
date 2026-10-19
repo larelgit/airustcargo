@@ -27,7 +27,7 @@ use shards_core::flat;
 use crate::brain::{clamp_to_leash, salt};
 use crate::def::{AttackPlanDef, DirectorDef, SequenceBan};
 use crate::director::{order, target_of, Fighting, Grant, Targets};
-use crate::schedule::{inputs, plan_notes, FightCx, Inputs, Refusal};
+use crate::schedule::{inputs, living_players, plan_notes, FightCx, Inputs, Players, Refusal};
 use crate::strike::pool;
 
 /// An NPC's attack history and timers: gameplay state, kept in replays.
@@ -120,6 +120,11 @@ pub struct Resolved {
     pub cost: f32,
     /// The option has `when` conditions: it may be chosen only while the NPC's [`NpcOptions`] lists it.
     pub gated: bool,
+    /// The option's gates from the plan (`None` and empty for an `auto` option); see [`crate::AttackOption`].
+    pub angle: Option<(f32, f32)>,
+    pub players: Option<(u32, u32)>,
+    pub max_repeats: Option<u32>,
+    pub forbid_after: Vec<String>,
 }
 
 /// The options of `plan` for a fighter with moveset `moveset`, against a target of body
@@ -143,6 +148,10 @@ pub fn resolve(plan: &AttackPlanDef, db: &ContentDb, moveset: &str, target_radiu
             cooldown: o.map_or(0.0, |o| o.cooldown),
             cost: o.map_or(1.0, |o| o.cost),
             gated: o.is_some_and(|o| !o.when.is_empty()),
+            angle: o.and_then(|o| o.angle),
+            players: o.and_then(|o| o.players),
+            max_repeats: o.and_then(|o| o.max_repeats),
+            forbid_after: o.map(|o| o.forbid_after.clone()).unwrap_or_default(),
             tags,
             name,
         }
@@ -188,6 +197,11 @@ pub(crate) fn ban_of<'a>(bans: &[SequenceBan], tags: &[String], history: &'a [Pa
     })
 }
 
+/// How many of the newest `history` entries, counted back while they last, are option `name`.
+pub(crate) fn repeats_of(history: &[PastAttack], name: &str) -> u32 {
+    history.iter().rev().take_while(|past| past.name == name).count() as u32
+}
+
 /// Index of a weighted pick among `(index, weight)`; weights `<= 0` never win.
 pub fn pick_weighted(rng: &mut DetRng, options: &[(usize, f32)]) -> Option<usize> {
     let total: f32 = options.iter().map(|(_, w)| w.max(0.0)).sum();
@@ -218,17 +232,29 @@ pub fn choose(
     in_range_only: bool,
     rng: &mut DetRng,
 ) -> Option<usize> {
+    pick_weighted(rng, &choice_pool(options, allowed, distance, in_range_only))
+}
+
+/// The `(index, weight)` pool [`choose`] draws from: the options `allowed` says may be chosen
+/// whose window holds `distance` if any does, else (unless `in_range_only`) all of them; empty
+/// when nothing may be drawn (no draw is made then).
+pub(crate) fn choice_pool(
+    options: &[Resolved],
+    allowed: impl Fn(&Resolved) -> bool,
+    distance: f32,
+    in_range_only: bool,
+) -> Vec<(usize, f32)> {
     let eligible: Vec<(usize, f32)> =
         options.iter().enumerate().filter(|(_, o)| o.weight > 0.0 && allowed(o)).map(|(i, o)| (i, o.weight)).collect();
     let fits: Vec<(usize, f32)> =
         eligible.iter().copied().filter(|(i, _)| in_window(&options[*i], distance)).collect();
     if !fits.is_empty() {
-        return pick_weighted(rng, &fits);
+        fits
+    } else if in_range_only {
+        Vec::new()
+    } else {
+        eligible
     }
-    if in_range_only {
-        return None;
-    }
-    pick_weighted(rng, &eligible)
 }
 
 /// How near an NPC with nothing chosen closes in: the shortest `max` among the options
@@ -301,11 +327,32 @@ pub(crate) fn refusal(o: &Resolved, i: &Inputs) -> Option<Refusal> {
     } else {
         None
     };
+    if let Some((min, max)) = o.angle
+        && (i.moment.angle < min - 1e-4 || i.moment.angle > max + 1e-4)
+    {
+        return Some(Refusal::Angle { angle: i.moment.angle, min, max });
+    }
     if closed {
         let when = i.plan_def.options.iter().find(|p| p.label() == o.name).map_or_else(String::new, |p| {
             p.when.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
         });
         return Some(Refusal::Closed { when });
+    }
+    if let Some((min, max)) = o.players
+        && (i.moment.players < min || i.moment.players > max)
+    {
+        return Some(Refusal::Players { players: i.moment.players, min, max });
+    }
+    if let Some(max) = o.max_repeats {
+        let times = repeats_of(&i.plan.history, &o.name);
+        if times >= max {
+            return Some(Refusal::Repeats { times, max });
+        }
+    }
+    if let Some(last) = i.plan.history.last()
+        && let Some(tag) = o.forbid_after.iter().find(|t| last.tags.contains(t))
+    {
+        return Some(Refusal::ForbidAfter { tag: tag.clone(), after: last.name.clone() });
     }
     if let Some((ban, past)) = ban {
         return Some(Refusal::Banned { after: past.name.clone(), ban });
@@ -361,11 +408,13 @@ pub(crate) fn plan_attacks(
     db: Res<ContentDb>,
     index: Res<AiIndex>,
     physics: Res<PhysicsWorld>,
+    players: Players,
     targets: Targets,
     mut npcs: Query<Fighting>,
 ) {
     let dt = time.delta_secs();
-    let cx = FightCx { db: &db, physics: &physics, tick: tick.0, dt };
+    let players = living_players(&players);
+    let cx = FightCx { db: &db, physics: &physics, tick: tick.0, dt, players };
     let mut inflight = InFlight::collect(npcs.iter().map(|f| (*f.id, f.token.held.as_ref())));
     let mut notes = plan_notes(&db, npcs.iter(), tick.0, dt);
     for (id, entity) in order(&npcs) {
@@ -461,6 +510,7 @@ pub(crate) fn plan_attacks(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schedule::Moment;
 
     fn option(name: &str, weight: f32, min: f32, max: f32, tags: &[&str]) -> Resolved {
         let mut tags: Vec<String> = tags.iter().map(|t| (*t).to_owned()).collect();
@@ -476,6 +526,10 @@ mod tests {
             tags,
             cost: 1.0,
             gated: false,
+            angle: None,
+            players: None,
+            max_repeats: None,
+            forbid_after: Vec::new(),
         }
     }
 
@@ -740,6 +794,7 @@ mod tests {
         director: DirectorDef,
         spacing: Option<(AiId, u64)>,
         open: Option<NpcOptions>,
+        moment: Moment,
     }
 
     /// What the rules said of a case: `refusal`, `feasible`, the old conjunction, whether `fits`
@@ -771,6 +826,7 @@ mod tests {
                 director: DirectorDef::default(),
                 spacing: None,
                 open: None,
+                moment: Moment { angle: 0.0, players: 1 },
             }
         }
 
@@ -789,6 +845,7 @@ mod tests {
                 director: self.director.clone(),
                 spacing: self.spacing,
                 open: self.open.as_ref(),
+                moment: self.moment,
             };
             let tags: Vec<Vec<String>> = self.overlapping.iter().map(|(_, tags)| tags.clone()).collect();
             let mut old = false;
@@ -820,13 +877,21 @@ mod tests {
     }
 
     /// The rules in the order `refusal` asks them.
-    const RULES: [&str; 8] = ["weight", "cooldown", "closed", "banned", "machine", "budget", "overlap", "spacing"];
+    const RULES: [&str; 12] =
+        ["weight", "cooldown", "angle", "closed", "players", "repeats", "forbid_after", "banned", "machine", "budget", "overlap", "spacing"];
+
+    /// Which of [`RULES`] the old conjunction ([`feasible_old`]) had: the others are the scheduler's gates.
+    const OLD: [bool; 12] = [true, true, false, true, false, false, false, true, true, true, true, true];
 
     fn rule(r: &Refusal) -> &'static str {
         match r {
             Refusal::Weight => "weight",
             Refusal::Cooldown { .. } => "cooldown",
+            Refusal::Angle { .. } => "angle",
             Refusal::Closed { .. } => "closed",
+            Refusal::Players { .. } => "players",
+            Refusal::Repeats { .. } => "repeats",
+            Refusal::ForbidAfter { .. } => "forbid_after",
             Refusal::Banned { .. } => "banned",
             Refusal::Machine { .. } => "machine",
             Refusal::Budget { .. } => "budget",
@@ -839,10 +904,17 @@ mod tests {
     type Closer = (fn(&mut Case), Refusal);
 
     /// For each rule of [`RULES`], in order, its [`Closer`].
-    fn closers() -> [Closer; 8] {
+    fn closers() -> [Closer; 12] {
         [
             (|c| c.o.weight = 0.0, Refusal::Weight),
             (|c| c.plan.cooldowns = vec![PlanCooldown { name: "a".into(), left: 0.5 }], Refusal::Cooldown { left: 0.5 }),
+            (
+                |c| {
+                    c.o.angle = Some((95.0, 180.0));
+                    c.moment.angle = 10.0;
+                },
+                Refusal::Angle { angle: 10.0, min: 95.0, max: 180.0 },
+            ),
             (
                 |c| {
                     c.o.gated = true;
@@ -854,6 +926,22 @@ mod tests {
                     c.open = Some(NpcOptions { allowed: vec!["b".into()] });
                 },
                 Refusal::Closed { when: "enraged, !calm".into() },
+            ),
+            (|c| { c.o.players = Some((2, 3)); c.moment.players = 1; }, Refusal::Players { players: 1, min: 2, max: 3 }),
+            (
+                |c| {
+                    c.o.max_repeats = Some(2);
+                    let past = PastAttack { name: "a".into(), tags: vec!["a".into(), "light".into()] };
+                    c.plan.history = vec![past.clone(), past];
+                },
+                Refusal::Repeats { times: 2, max: 2 },
+            ),
+            (
+                |c| {
+                    c.o.forbid_after = vec!["zone".into(), "slam".into()];
+                    c.plan.history = vec![PastAttack { name: "slam".into(), tags: vec!["slam".into(), "zone".into()] }];
+                },
+                Refusal::ForbidAfter { tag: "zone".into(), after: "slam".into() },
             ),
             (
                 |c| {
@@ -892,14 +980,16 @@ mod tests {
             let judged = case.judge(&db, &scope);
             assert_eq!(judged.refusal.as_ref(), Some(expected), "{} alone", RULES[k]);
             assert_eq!(rule(expected), RULES[k]);
-            assert!(!judged.feasible && !judged.old && judged.fits_agree && judged.reads_agree, "{} alone", RULES[k]);
-            for (later, _) in &closers[k + 1..] {
+            assert!(!judged.feasible && judged.fits_agree && judged.reads_agree, "{} alone", RULES[k]);
+            assert_eq!(judged.old, !OLD[k], "{} alone: the old conjunction knows only its own rules", RULES[k]);
+            for (j, (later, _)) in closers.iter().enumerate().skip(k + 1) {
                 let mut case = Case::open();
                 later(&mut case);
                 close(&mut case);
                 let judged = case.judge(&db, &scope);
                 assert_eq!(judged.refusal.as_ref().map(rule), Some(RULES[k]), "{case:?}");
-                assert!(!judged.feasible && !judged.old && judged.reads_agree, "{case:?}");
+                assert!(!judged.feasible && judged.reads_agree, "{case:?}");
+                assert!(judged.old || OLD[k] || OLD[j], "the old conjunction refuses only what an old rule closed: {case:?}");
             }
         }
     }
@@ -973,7 +1063,7 @@ mod tests {
         let tag_pool = ["light", "heavy", "zone", "move", "a", "b"];
         let tags = |rng: &mut DetRng| -> Vec<String> { tag_pool.iter().filter(|_| rng.chance(0.35)).map(|t| (*t).to_owned()).collect() };
         let conds = ["enraged", "!calm", "phase_2"];
-        let mut refused = [0u32; 8];
+        let mut refused = [0u32; 12];
         let mut passed = 0u32;
         for n in 0..20_000 {
             let name = *rng.pick(&names).unwrap();
@@ -1042,6 +1132,7 @@ mod tests {
                 director,
                 spacing: rng.chance(0.4).then(|| (AiId(9), 1 + u64::from(rng.below(40)))),
                 open: rng.chance(0.5).then(|| NpcOptions { allowed: names.iter().filter(|_| rng.chance(0.5)).map(|n| (*n).to_owned()).collect() }),
+                moment: Moment { angle: 0.0, players: 1 },
             };
             let judged = case.judge(&db, &scope);
             assert_eq!(judged.refusal.is_none(), judged.old, "case {n}: {case:?} gives {:?}", judged.refusal);
@@ -1065,10 +1156,79 @@ mod tests {
         }
         assert!(passed > 100, "{passed} of 20000 passed");
         for (k, count) in refused.iter().enumerate() {
-            assert!(*count > 50, "the rule {} refused only {count} of 20000: {refused:?}", RULES[k]);
+            assert!(!OLD[k] || *count > 50, "the rule {} refused only {count} of 20000: {refused:?}", RULES[k]);
         }
     }
 
+
+    fn history(names: &[&str]) -> Vec<PastAttack> {
+        names.iter().map(|n| PastAttack { name: (*n).into(), tags: vec![(*n).into()] }).collect()
+    }
+
+    /// The run of one option back from the newest attack, against limits of 1 and 2.
+    #[test]
+    fn repeats_count_back_from_the_newest_attack() {
+        let (db, scope) = machine_db();
+        let cases: [(&[&str], u32); 5] = [(&[], 0), (&["a"], 1), (&["a", "a"], 2), (&["b", "a", "a"], 2), (&["a", "b", "a"], 1)];
+        for (names, times) in cases {
+            assert_eq!(repeats_of(&history(names), "a"), times, "{names:?}");
+            for max in [1, 2] {
+                let mut case = Case::open();
+                case.o.max_repeats = Some(max);
+                case.plan.history = history(names);
+                let refused = case.judge(&db, &scope).refusal;
+                let expected = (times >= max).then_some(Refusal::Repeats { times, max });
+                assert_eq!(refused, expected, "{names:?} against max_repeats {max}");
+            }
+        }
+        // A history shorter than the limit cannot refuse; an option nobody limits never does.
+        let mut case = Case::open();
+        case.plan.history = history(&["a", "a", "a", "a"]);
+        assert_eq!(case.judge(&db, &scope).refusal, None);
+    }
+
+    /// `forbid_after` reads only the newest attack, by the tags the history kept (the option's, its
+    /// action's and its name).
+    #[test]
+    fn forbid_after_looks_at_the_newest_attack_only() {
+        let (db, scope) = machine_db();
+        let past = |name: &str, tags: &[&str]| PastAttack { name: name.into(), tags: tags.iter().map(|t| (*t).to_owned()).collect() };
+        let mut case = Case::open();
+        case.o.forbid_after = vec!["zone".into()];
+        case.plan.history = vec![past("slam", &["slam", "zone"]), past("jab", &["jab"])];
+        assert_eq!(case.judge(&db, &scope).refusal, None, "the zone attack is older than the newest");
+        case.plan.history = vec![past("jab", &["jab"]), past("slam", &["slam", "zone"])];
+        assert_eq!(case.judge(&db, &scope).refusal, Some(Refusal::ForbidAfter { tag: "zone".into(), after: "slam".into() }));
+        case.o.forbid_after = vec!["slam".into()];
+        assert_eq!(
+            case.judge(&db, &scope).refusal,
+            Some(Refusal::ForbidAfter { tag: "slam".into(), after: "slam".into() }),
+            "the name counts as a tag"
+        );
+        case.plan.history.clear();
+        assert_eq!(case.judge(&db, &scope).refusal, None, "nothing before it");
+    }
+
+    /// Players `(1, 1)` is open solo and closed for two; `(2, 3)` the reverse; the angle's edges have
+    /// the planner's slack.
+    #[test]
+    fn the_players_and_angle_windows_open_and_close() {
+        let (db, scope) = machine_db();
+        let judge = |players: Option<(u32, u32)>, living: u32, angle: Option<(f32, f32)>, off: f32| {
+            let mut case = Case::open();
+            case.o.players = players;
+            case.o.angle = angle;
+            case.moment = Moment { angle: off, players: living };
+            case.judge(&db, &scope).refusal.is_none()
+        };
+        assert!(judge(Some((1, 1)), 1, None, 0.0) && !judge(Some((1, 1)), 2, None, 0.0) && !judge(Some((1, 1)), 0, None, 0.0));
+        assert!(!judge(Some((2, 3)), 1, None, 0.0) && judge(Some((2, 3)), 2, None, 0.0) && judge(Some((2, 3)), 3, None, 0.0));
+        assert!(!judge(Some((2, 3)), 4, None, 0.0));
+        let behind = Some((95.0, 180.0));
+        assert!(judge(None, 1, behind, 150.0) && judge(None, 1, behind, 95.0) && judge(None, 1, behind, 180.0));
+        assert!(!judge(None, 1, behind, 94.0) && !judge(None, 1, behind, 0.0));
+        assert!(judge(None, 1, behind, 94.99995), "within the planner's 1e-4 slack");
+    }
     #[test]
     fn budgets_and_combinations_come_from_the_attacks_in_flight() {
         let grant = |target: u32, cost: f32, tags: &[&str], pressed: bool| Grant {

@@ -1,0 +1,91 @@
+# The boss scheduler's gates (N8a2): an option of an attack plan carries an angle window, a
+# player-count window, a repeat limit and a `forbid_after` tag, one judge asks them for the
+# director's grant and the planner alike, and `npc_schedule` says why an option is refused. The
+# warden fights on two plans written here with `content_apply` (one per phase, the way the
+# sandbox's phase system swaps them) and taken away again at the end, so the sandbox's own content
+# (and the other reference replays' content) is what it was. The engine rules
+# `npc.tokens_within_limit`, `npc.strike_spacing` and `npc.plan_sequence` judge every tick: a
+# violation stops the step and fails the run.
+
+seed 42
+
+# --- the world as the game spawns it, whatever was played in it before
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+step 120
+act heal id=e5
+act heal id=e6
+act set id=e6 component=Boss path=phase value=1
+act set id=e6 component=NpcPlan value='{"history": [], "cooldowns": [], "rest": 0.5, "attacks": 0}'
+
+# --- the definitions: the warden's four inputs as options with a gate each (every window holds
+# 1.5 m, so the range never decides what the checks below read)
+act content_apply changes='[{"kind": "attack_plan", "id": "sched_boss", "def": {"options": [{"input": "light", "weight": 3.0, "max": 3.0, "max_repeats": 2, "tags": ["melee"]}, {"input": "heavy", "weight": 1.4, "max": 3.2, "cooldown": 4.0, "tags": ["zone"], "forbid_after": ["zone"]}, {"input": "technique.1", "weight": 4.0, "max": 3.0, "cooldown": 3.0, "angle": [95.0, 180.0]}, {"input": "technique.2", "weight": 1.0, "max": 6.0, "players": [2, 3]}], "in_range_only": true, "press_on_decision": false, "rest": [0.6, 1.0]}}, {"kind": "attack_plan", "id": "sched_boss_enraged", "def": {"options": [{"input": "light", "weight": 3.0, "max": 3.0, "max_repeats": 2, "tags": ["melee"]}, {"input": "heavy", "weight": 1.4, "max": 3.2, "cooldown": 4.0, "tags": ["zone"], "forbid_after": ["zone"]}, {"input": "technique.1", "weight": 4.0, "max": 3.0, "cooldown": 3.0, "angle": [95.0, 180.0]}, {"input": "technique.2", "weight": 1.0, "max": 6.0, "players": [2, 3]}], "in_range_only": true, "rest": [0.3, 0.6]}}]'
+act set id=e6 component=Boss path=plans value='["sched_boss", "sched_boss_enraged"]'
+act teleport id=e5 x=0 z=-3.5 y=0
+act teleport id=e6 x=0 z=-6 y=0
+act teleport id=e7 x=-18 z=18 y=0
+act teleport id=e8 x=18 z=18 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+act god
+act npc_set_state id=e6 state=guard
+step 30
+invariant field e5 Health.current > 0
+
+# --- 1. the explanation: the same judge as the planner, against any angle and any player count
+# (nothing moves, and the distance is fixed so that the range decides nothing)
+act npc_schedule id=e6 target=e5 distance=1.5 angle=150
+expect result contains "\"what_if\": true"
+expect result !contains "angle:"
+act npc_schedule id=e6 target=e5 distance=1.5 angle=10
+expect result contains "angle: the target is 10 degrees off the facing; this option needs 95-180"
+act npc_schedule id=e6 target=e5 distance=1.5 players=2
+expect result !contains "players: "
+act npc_schedule id=e6 target=e5 distance=1.5
+expect result contains "players: 1 living, this option needs 2-3"
+act? npc_schedule id=e6 target=e5 distance=1.5 angle=200
+expect result contains "angle must be 0..180 degrees (is 200)"
+
+# --- 2. the fight: the gates hold over a long run, and the rule `npc.plan_sequence` judges every press
+mark
+step 900
+expect result !contains "stopped: invariant"
+expect journal "e6 -> e5"
+act npc_state id=e6
+expect result contains "\"repeats\""
+act npc_schedule id=e6 target=e5 distance=1.5
+expect result contains "\"history\""
+
+# --- 3. the phase change swaps the plan and keeps what the plan remembers: the cooldown of `heavy`
+# is the same option in both
+act set id=e6 component=NpcPlan path=cooldowns value='[{"name": "heavy", "left": 10.0}]'
+act set id=e6 component=Health path=current value=290
+step 2
+act npc_state id=e6
+expect result contains "\"id\": \"sched_boss_enraged\""
+expect result contains "\"heavy\": 9.9"
+act npc_schedule id=e6 target=e5 distance=1.5
+expect result contains "cooldown: 9.9"
+step 600
+expect result !contains "stopped: invariant"
+
+# --- back as it was
+act god on=false
+act set id=e6 component=Boss path=plans value='["warden", "warden_enraged"]'
+act set id=e6 component=Boss path=phase value=1
+act heal id=e6
+act heal id=e5
+act set id=e6 component=NpcPlan value='{"history": [], "cooldowns": [], "rest": 0.5, "attacks": 0}'
+act npc_set_state id=e6 state=calm
+step 2
+act npc_state id=e6
+expect result contains "\"id\": \"warden\""
+act content_apply changes='[{"kind": "attack_plan", "id": "sched_boss", "before": {"options": [{"input": "light", "weight": 3.0, "max": 3.0, "max_repeats": 2, "tags": ["melee"]}, {"input": "heavy", "weight": 1.4, "max": 3.2, "cooldown": 4.0, "tags": ["zone"], "forbid_after": ["zone"]}, {"input": "technique.1", "weight": 4.0, "max": 3.0, "cooldown": 3.0, "angle": [95.0, 180.0]}, {"input": "technique.2", "weight": 1.0, "max": 6.0, "players": [2, 3]}], "in_range_only": true, "press_on_decision": false, "rest": [0.6, 1.0]}}, {"kind": "attack_plan", "id": "sched_boss_enraged", "before": {"options": [{"input": "light", "weight": 3.0, "max": 3.0, "max_repeats": 2, "tags": ["melee"]}, {"input": "heavy", "weight": 1.4, "max": 3.2, "cooldown": 4.0, "tags": ["zone"], "forbid_after": ["zone"]}, {"input": "technique.1", "weight": 4.0, "max": 3.0, "cooldown": 3.0, "angle": [95.0, 180.0]}, {"input": "technique.2", "weight": 1.0, "max": 6.0, "players": [2, 3]}], "in_range_only": true, "rest": [0.3, 0.6]}}]'
+act content_list kind=attack_plan
+expect result !contains "sched_boss"
