@@ -517,9 +517,11 @@ fn run_changes(world: &mut World, entity: Entity, changes: Vec<StatusChange>, so
                 let stacks = world.get::<Statuses>(entity).and_then(|s| s.get(&status)).map_or(1, |e| e.stacks);
                 world.trigger(StatusApplied { entity, status, stacks, source });
                 if let Some(h) = hooks {
+                    // Restore the outer value: a hook may build up another status whose hook runs inside.
+                    let outer = world.get_resource::<StatusSource>().copied().unwrap_or_default();
                     world.insert_resource(StatusSource(source));
                     (h.on_apply)(world, entity);
-                    world.insert_resource(StatusSource(None));
+                    world.insert_resource(outer);
                 }
             }
             StatusChange::Ticked(_) => {

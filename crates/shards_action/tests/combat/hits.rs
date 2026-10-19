@@ -447,3 +447,29 @@ fn a_status_knows_who_built_it_up() {
     shards_action::add_status_buildup_from(app.world_mut(), hero, "bleed", 100.0, Some(other));
     assert_eq!(app.world().resource::<Sources>().event.last(), Some(&Some(other)));
 }
+
+fn nest_and_read(world: &mut World, e: Entity) {
+    // The hook of the outer status builds another one up on someone else (its hook runs inside),
+    // then reads its own source again.
+    let outer = world.resource::<shards_action::StatusSource>().0;
+    world.resource_mut::<Sources>().hook.push(outer);
+    let other = world.query_filtered::<Entity, With<Fighter>>().iter(world).find(|x| *x != e).unwrap();
+    if outer == Some(ai_core::AiId(1)) {
+        shards_action::add_status_buildup_from(world, other, "bleed", 100.0, Some(ai_core::AiId(2)));
+    }
+    let again = world.resource::<shards_action::StatusSource>().0;
+    world.resource_mut::<Sources>().hook.push(again);
+}
+
+#[test]
+fn a_nested_status_hook_leaves_the_outer_source_alone() {
+    let (mut app, hero, _brute) = duel_with("hero", |app| {
+        app.init_resource::<Sources>();
+        app.add_status_effect("bleed", nest_and_read, nothing, nothing);
+    });
+    shards_action::add_status_buildup_from(app.world_mut(), hero, "bleed", 100.0, Some(ai_core::AiId(1)));
+    // Outer reads 1, inner reads 2 twice (inner reads itself, then its own end), outer reads 1 again.
+    let hook = &app.world().resource::<Sources>().hook;
+    assert_eq!(hook, &[Some(ai_core::AiId(1)), Some(ai_core::AiId(2)), Some(ai_core::AiId(2)), Some(ai_core::AiId(1))]);
+    assert_eq!(app.world().resource::<shards_action::StatusSource>().0, None);
+}
