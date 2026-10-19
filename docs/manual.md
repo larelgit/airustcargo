@@ -1686,12 +1686,13 @@ zone or a hazard) or `Health` (health run out some other way, found by `check_de
 that answers `Survive` or `Down` only for a hit matches on `Hit` and lets everything else die: a kill volume or a pit refuses a
 survive that way (ledger E61). The answers:
 
+- The hooks are asked about a body that stands only: `lethal` returns `Die` at once, asking nothing, for a body that is gone, dead or down (a `Died` observer may have killed a second body of `check_deaths`'s list), and a `Survive` never lands on a fallen body. A hook is asked once per call of `lethal`; an observer of `Damaged` that deals damage to the body at 0 health asks again (cause `Damage`), and the `Damaged` event of a blow the hooks spare carries `hp_left` 0, so an observer reads `Survived` and `WentDown`, not `hp_left <= 0`, for a fall.
 - `Fate::Die`: the death as it always was (`kill_with` with the same arguments: `Died`, the death action). With no hook, or
   hooks that all say `Die`, a fighter dies exactly as before B5, and the reference replays did not change.
 - `Fate::Survive { health, grace }`: health is set to `health` (clamped to `(2 * EPS, max]`; a number that is not finite means
   full), `grace` seconds of `Grace` (a time that is not finite and above 0 gives none), then `Survived { entity, killer, health
-  }`. For a hit the rest of it goes on: its statuses, its poise (a break staggers) and its reaction, as Godot's survive does
-  (combat-actor 4.10).
+  }`. For a hit the rest of it goes on: its statuses, its poise (a break staggers) and its reaction, as a game's survive rule expects
+  (a hit that does not kill).
 - `Fate::Down { bleed }`: `go_down(world, entity, bleed, killer)`; nothing else of the hit applies.
 
 For a hit the hooks are asked right after the damage, before the hit's event (`Damaged`, `Blocked`,
@@ -1706,8 +1707,8 @@ input buffer and its push, ends its statuses (`StatusExpired` for each active on
 bleed }` and forces its moveset's `downed` action (a pose; a moveset without one has its action cut). It refuses a body that
 is gone, dead, already down or without `Health`. While a body is down:
 
-- every hit on it is `Ignored` with `IgnoreReason::Downed` (after `Invulnerable`, before i-frames: the hit is used up, as
-  Godot's null result is), `deal_damage` does nothing to it, and no reaction or stagger starts on it;
+- every hit on it is `Ignored` with `IgnoreReason::Downed` (after `Invulnerable`, before i-frames: the hit is used up, as a null result
+  is), `deal_damage` does nothing to it (so a pit or a kill volume that must also finish a downed body calls `kill` or `bleed_out` on it; `deal_damage` is for a body that stands), and no reaction or stagger starts on it;
 - it starts nothing (`Blocker::Downed`: "you are down: a partner can revive you (a dev agent can `heal` you)"), its buffer is
   dropped every tick, its orders end when it goes down and the movement tools (`move`, `move_to`, `stop`, `jump`, `sprint`,
   `glide`) refuse it with the same words, as they refuse the dead, the controller does not walk it (`steer_locomotion` owns
@@ -1747,12 +1748,14 @@ Letting go of interact ends it (`while_held`), moving apart past 2 m ends it (`b
 ends it (`cancel_on_hurt`); only a revive held to 3 s runs the effect. A content check refuses a `Revive` whose action has no
 pair selecting `Downed`, a `health` outside `(0, 1]` or a `grace` that is not a finite time `>= 0`. The moveset binds it as a
 context binding (`(input: "interact", action: "spar_revive", when: [Pair])`), so a press with no downed ally in reach starts
-nothing. `MovesetDef::downed` names the pose (the sandbox's `spar_down`, 20 s).
+nothing. `MovesetDef::downed` names the pose (the sandbox's `spar_down`, 20 s). The pose is an ordinary action, not held: make it at least as long as the bleed-out time, or a body down longer (a `bleed` of `None`, a game that bleeds it out itself) plays idle while it still ignores hits.
+
+The player tool `interact` (a press of the engine's `interact` input, which starts a bound revive) is the engine's: a game that defines its own tool must not reuse the name.
 
 **Grace.** `Grace { left }` ignores every hit (`IgnoreReason::Grace`) while `left > EPS`. `grant_grace(world, entity,
 seconds)` gives or lengthens one (it never shortens one). `tick_grace` (`ActionSystems::Fighters`, after the body state)
 counts it down and takes it off within half a tick of 0: `s` seconds granted on tick `N` cover the hits of `s * 60` ticks. The
-survive's protection is content's number, not a constant: Godot's 1.5 s is 1.0 s here until the owner rules (ledger E60, C57).
+survive's protection is content's number, not a constant (the sandbox's is 1.0 s).
 
 **A fallen attacker.** An attacker that dies or goes down mid-pair lets go of its victim (`cut`). A victim whose poise is
 still broken goes back into its stagger for exactly the rest of its break (`resume_stagger`): no fresh break, no `Staggered`,

@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use serde_json::json;
 use shards_action::prelude::*;
 use shards_action::{
-    bleed_out, go_down, kill, ActionAppExt, Downed, Fate, Grace, Lethal, LethalCause, Paired, Pairing, Statuses,
+    bleed_out, deal_damage, deal_ruled_damage, go_down, kill, ActionAppExt, Downed, Fate, Grace, Lethal, LethalCause, Paired, Pairing, Statuses,
 };
 use shards_core::PlayerId;
 
@@ -372,7 +372,8 @@ fn heal_stands_a_downed_body_up_and_bleed_out_kills_it() {
 fn a_downed_body_is_refused_the_movement_tools_and_loses_its_orders() {
     // As a dead body is (FU2): the order it had ends when it goes down, and the movement tools,
     // which the motion module owns, refuse it the way its action tools do.
-    let (mut app, hero, _foe) = arena(None);
+    let (mut app, hero, foe) = arena(None);
+    let f = id(&app, foe);
     ok(&mut app, "move_to", json!({"target": {"x": 5.0, "z": 0.0}}));
     assert_eq!(app.world().get::<shards_core::Intent>(hero).unwrap().orders.len(), 1);
     assert!(go_down(app.world_mut(), hero, None, None));
@@ -385,6 +386,8 @@ fn a_downed_body_is_refused_the_movement_tools_and_loses_its_orders() {
         ("jump", json!({})),
         ("sprint", json!({})),
         ("glide", json!({})),
+        ("lock_on", json!({"target": f})),
+        ("use_item", json!({"item": "flask"})),
     ];
     for (tool, args) in tools {
         let refused = fails(&mut app, tool, args);
@@ -405,7 +408,10 @@ fn a_downed_body_is_refused_the_movement_tools_and_loses_its_orders() {
 /// The `c_hero` finisher has taken the broken `c_foe` (its poise broken, held in `c_held`), a few ticks
 /// before its strike.
 fn finisher_holding() -> (App, Entity, Entity) {
-    let mut app = app();
+    finisher_holding_in(app())
+}
+
+fn finisher_holding_in(mut app: App) -> (App, Entity, Entity) {
     let world = app.world_mut();
     let hero = hero(world, "c_hero", Vec3::ZERO, N);
     let foe = fighter(world, "Foe", "c_foe", "monsters", Vec3::new(0.0, 0.0, -1.8), S);
@@ -423,7 +429,10 @@ fn finisher_holding() -> (App, Entity, Entity) {
 }
 
 fn the_victim_keeps_the_rest_of_its_break(fall: fn(&mut World, Entity)) {
-    let (mut app, hero, foe) = finisher_holding();
+    the_victim_keeps_the_rest_of_its_break_in(finisher_holding(), fall);
+}
+
+fn the_victim_keeps_the_rest_of_its_break_in((mut app, hero, foe): (App, Entity, Entity), fall: fn(&mut World, Entity)) {
     let broken = app.world().get::<Poise>(foe).unwrap().broken;
     let staggers = lines(&app, &format!("{} staggered", id(&app, foe))).len();
     fall(app.world_mut(), hero);
@@ -443,9 +452,9 @@ fn the_victim_keeps_the_rest_of_its_break(fall: fn(&mut World, Entity)) {
     step(&mut app, ticks - 1);
     assert_eq!(action(&app, foe), "c_stagger");
     assert!(app.world().get::<Poise>(foe).unwrap().is_broken());
-    step(&mut app, 2);
-    assert_ne!(action(&app, foe), "c_stagger");
-    assert!(!app.world().get::<Poise>(foe).unwrap().is_broken());
+    step(&mut app, 1);
+    assert_ne!(action(&app, foe), "c_stagger", "the stagger ends on the tick the break does");
+    assert!(!app.world().get::<Poise>(foe).unwrap().is_broken(), "the break ends on the tick the stagger does");
 }
 
 #[test]
@@ -458,4 +467,111 @@ fn the_attacker_goes_down_mid_pair() {
     the_victim_keeps_the_rest_of_its_break(|world, hero| {
         assert!(go_down(world, hero, None, None));
     });
+}
+
+/// A hook that lets a player body (the hero) fall by going down and everything else die.
+fn downs_players(world: &mut World, lethal: &Lethal) -> Fate {
+    if world.get::<PlayerId>(lethal.entity).is_some() { Fate::Down { bleed: None } } else { Fate::Die }
+}
+
+#[test]
+fn the_attacker_is_downed_mid_pair_by_a_lethal_hit_through_the_hook() {
+    let setup = app_with(|app| {
+        app.add_lethal_hook(downs_players);
+    });
+    let (mut app, hero, foe) = finisher_holding_in(setup);
+    app.world_mut().entity_mut(hero).insert(PlayerId(0));
+    the_victim_keeps_the_rest_of_its_break_in((app, hero, foe), |world, hero| {
+        // The damage path: the hook says Down, and the pair lets its victim go.
+        deal_damage(world, hero, 1.0e6, None);
+        assert!(world.get::<Downed>(hero).is_some());
+    });
+}
+
+#[test]
+fn the_attacker_dies_mid_pair_by_a_lethal_hit_through_the_hook() {
+    let setup = app_with(|app| {
+        app.add_lethal_hook(|_, _| Fate::Die);
+    });
+    the_victim_keeps_the_rest_of_its_break_in(finisher_holding_in(setup), |world, hero| {
+        deal_damage(world, hero, 1.0e6, None);
+        assert!(world.get::<Dead>(hero).is_some());
+    });
+}
+
+#[test]
+fn deal_damage_and_ruled_damage_ask_the_hooks_with_the_damage_cause() {
+    let (mut app, hero, _foe) = arena(Some(&[Fate::Survive { health: 3.0, grace: 0.5 }]));
+    let left = deal_damage(app.world_mut(), hero, 1.0e6, None);
+    assert_eq!(left, 3.0);
+    assert_eq!(hp(&app, hero), 3.0);
+    assert!(app.world().get::<Grace>(hero).is_some());
+    assert_eq!(asked(&app), [(0, LethalCause::Damage, None)]);
+    // The ruled damage goes through it too.
+    let left = deal_ruled_damage(app.world_mut(), hero, 1.0e6, None);
+    assert_eq!(left, 3.0);
+    assert_eq!(asked(&app).len(), 2);
+    // A hook that says Down: the body is down, with no health.
+    let (mut app, hero, _foe) = arena(Some(&[Fate::Down { bleed: Some(5.0) }]));
+    deal_damage(app.world_mut(), hero, 1.0e6, None);
+    assert!(downed(&app, hero).is_some());
+    assert_eq!(hp(&app, hero), 0.0);
+    // And a downed body is skipped by the damage: nothing is asked again.
+    assert_eq!(deal_damage(app.world_mut(), hero, 5.0, None), 0.0);
+    assert_eq!(asked(&app).len(), 1);
+}
+
+#[test]
+fn a_hook_that_despawns_the_body_ends_the_asking() {
+    let mut app = app_with(|app| {
+        app.add_lethal_hook(|world, lethal| {
+            world.despawn(lethal.entity);
+            Fate::Survive { health: 5.0, grace: 1.0 }
+        })
+        .add_lethal_hook(|_, _| panic!("a gone body is not asked about again"));
+    });
+    let world = app.world_mut();
+    let foe = fighter(world, "Foe", "l_foe", "monsters", Vec3::ZERO, S);
+    step(&mut app, 2);
+    deal_damage(app.world_mut(), foe, 1.0e6, None);
+    assert!(app.world().get_entity(foe).is_err());
+    step(&mut app, 2);
+}
+
+/// Spares what is not a player body; a player's death takes every other body with it at once (a summon
+/// bound to its master, killed by the game from inside its hook or its `Died` observer).
+fn spares_summons(world: &mut World, lethal: &Lethal) -> Fate {
+    world.get_resource_or_init::<Asked>().0.push((0, lethal.cause, None));
+    if world.get::<PlayerId>(lethal.entity).is_none() {
+        return Fate::Survive { health: 5.0, grace: 1.0 };
+    }
+    let others: Vec<Entity> = world.query_filtered::<Entity, (With<Fighter>, Without<Dead>)>().iter(world).filter(|e| *e != lethal.entity).collect();
+    for other in others {
+        kill(world, other, None, None);
+    }
+    Fate::Die
+}
+
+#[test]
+fn a_body_killed_while_the_deaths_are_carried_out_is_not_asked_about_nor_spared() {
+    let mut app = app_with(|app| {
+        app.init_resource::<Asked>().add_lethal_hook(spares_summons);
+    });
+    let world = app.world_mut();
+    let hero = hero(world, "l_hero", Vec3::ZERO, N);
+    world.entity_mut(hero).insert(PlayerId(0));
+    let foe = fighter(world, "Foe", "l_foe", "monsters", Vec3::new(0.0, 0.0, -1.8), S);
+    step(&mut app, 2);
+    // Both run out of health on the same tick: the hero's death (the first by id) kills the foe,
+    // which is still in the list of the dying.
+    for e in [hero, foe] {
+        app.world_mut().get_mut::<Health>(e).unwrap().current = 0.0;
+    }
+    step(&mut app, 2);
+    assert!(app.world().get::<Dead>(hero).is_some());
+    assert!(app.world().get::<Dead>(foe).is_some(), "the foe died with its master");
+    assert_eq!(hp(&app, foe), 0.0, "no survive landed on the corpse");
+    assert!(app.world().get::<Grace>(foe).is_none());
+    assert!(lines(&app, "survived").is_empty(), "{:#?}", journal(&app));
+    assert_eq!(asked(&app).len(), 1, "only the hero was asked: {:?}", asked(&app));
 }

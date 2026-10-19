@@ -331,7 +331,7 @@ pub enum LethalCause {
 pub enum Fate {
     /// It dies ([`kill`]).
     Die,
-    /// It lives on with `health` (clamped to `(EPS, max]`) and `grace` seconds of [`Grace`]; the
+    /// It lives on with `health` (clamped to `(2Â·EPS, max]`, so `check_deaths` never finds a survivor out of health) and `grace` seconds of [`Grace`]; the
     /// rest of the blow (its statuses, poise and reaction) goes on.
     Survive { health: f32, grace: f32 },
     /// It goes down ([`go_down`]) with `bleed` seconds before it dies (`None`: until it is revived
@@ -990,6 +990,13 @@ fn hurt(world: &mut World, target: Entity, damage: f32) -> (f32, f32) {
 /// returns the health as it is: the host's state brings the damage, so an observer that calls
 /// this on every machine does not kill twice.
 ///
+/// A downed body is skipped like a dead one (it has no health to deal): a pit or a kill volume that
+/// must also finish a downed body calls [`kill`] (or [`bleed_out`]) on it. The lethal hooks are asked
+/// once per call; an observer of [`Damaged`] that deals damage to the same body at 0 health asks them
+/// again (cause [`LethalCause::Damage`]), and a body a hook spares has a [`Damaged`] event with
+/// `hp_left` 0 (the fate is decided before the event): an observer reads [`Survived`] and
+/// [`WentDown`], not `hp_left <= 0`, for a fall.
+///
 /// It is never scaled by the rules (`shards_rules`): a pit or a kill volume that deals the target's
 /// health must kill in every mode. A game's damage over time that the rules should scale calls
 /// [`deal_ruled_damage`].
@@ -1078,6 +1085,11 @@ pub fn lethal(
     action: Option<String>,
     cause: LethalCause,
 ) -> Fate {
+    // A body that is gone, dead or down has nothing left to spare: the hooks are not asked about it
+    // (a `Died` observer may have killed a second body of `check_deaths`'s list).
+    if world.get_entity(entity).is_err() || world.get::<Dead>(entity).is_some() || world.get::<Downed>(entity).is_some() {
+        return Fate::Die;
+    }
     let fate = ask_lethal(world, entity, killer, source, action.clone(), cause);
     if world.get_entity(entity).is_err() {
         return Fate::Die;
@@ -1127,6 +1139,9 @@ fn carry_out(
             Fate::Die
         }
         Fate::Survive { health, grace } => {
+            if world.get::<Dead>(entity).is_some() || world.get::<Downed>(entity).is_some() {
+                return Fate::Die;
+            }
             let Some(mut h) = world.get_mut::<Health>(entity) else { return Fate::Die };
             let hp = if health.is_finite() { health.min(h.max).max(2.0 * EPS) } else { h.max };
             h.current = hp;

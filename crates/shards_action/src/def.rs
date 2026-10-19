@@ -1823,8 +1823,9 @@ pub struct MovesetDef {
     /// Played once on death.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub death: Option<String>,
-    /// Forced when the fighter goes down (a lethal hook's `Fate::Down`): its downed pose, held until
-    /// it is revived or bleeds out. `None`: its action is cut and it stands still.
+    /// Forced when the fighter goes down (a lethal hook's `Fate::Down`): its downed pose, an ordinary
+    /// action: make it at least as long as the bleed-out time (a body down longer than its pose
+    /// plays idle while it still ignores hits). `None`: its action is cut and it stands still.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub downed: Option<String>,
     /// Reaction actions by tier: light (1), heavy (2), knockdown (3). Empty: the old flinch (`hit`).

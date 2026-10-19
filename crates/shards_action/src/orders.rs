@@ -47,6 +47,9 @@ type Attackers<'w, 's> = Query<
 /// Where an order's target stands, whether it is dead, its body, whether it is down.
 type Target = (&'static Transform, Has<Dead>, Option<&'static Collider>, Has<Downed>);
 
+/// A client's predicted body: its fighter, intent, place, whether it is dead and whether it is down.
+type Walker = (&'static Fighter, &'static mut Intent, &'static Transform, Has<Dead>, Has<Downed>);
+
 /// `SimSet::Input`, after core's `follow_orders`: carries out the front
 /// `Order::Attack` of every fighter. Each fighter only writes its own `Intent`.
 pub(crate) fn follow_attack_orders(
@@ -161,11 +164,11 @@ pub(crate) fn steer_attack_orders(
     db: Res<ContentDb>,
     index: Res<AiIndex>,
     targets: Query<Target>,
-    mut fighters: Query<(&Fighter, &mut Intent, &Transform, Has<Dead>), With<Predicted>>,
+    mut fighters: Query<Walker, With<Predicted>>,
 ) {
-    for (fighter, mut intent, tf, dead) in &mut fighters {
+    for (fighter, mut intent, tf, dead, downed) in &mut fighters {
         let Some(Order::Attack { target, input, .. }) = intent.orders.front().cloned() else { continue };
-        if dead {
+        if dead || downed {
             continue;
         }
         let goal = index.get(target).and_then(|e| targets.get(e).ok()).filter(|(_, target_dead, _, target_down)| !target_dead && !target_down);

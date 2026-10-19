@@ -22,6 +22,10 @@ Read this when you run a co-op stand (`--stand`, `--net-sim`, `--peer`) or touch
 
 - **The host chooses the rules.** `rules_set` is `NetRoute::HostOnly`: a guest is refused with "the host chooses the rules: call it on the host"; `ActiveRules` replicates, and `RulesChanged` is a net event the umbrella registers (`net_wiring.rs`), so a guest's HUD and journal see a change. The session size counts the player bodies seated in the session: `net_wiring.rs` installs the `SessionFilter` that leaves out a body with `NetLeft` (it waits for its player's rejoin). The world save section `rules` is the host's; a guest applies nothing of it. See "Rules (C3)" in the manual.
 
+## Downed bodies in co-op
+
+- A client predicts nothing of going down: `WentDown`, `Revived` and `Survived` are net events, the predictor holds a client's own downed body (`PredictedBody.downed`: it neither walks nor steers an attack order) and snaps to the host's `Downed`. The revive is a paired action decided by the host. Stand: `crates/sandbox/scenarios/stand/downed.scenario` (a client goes down and is revived at `--net-sim latency=150,loss=0.02`).
+
 ## Steam behind the engine API
 
 - **Steam sits behind the engine's API** (`shards_steam`, the `steam` feature; `steam_sdk` is the real client). There are no `steamworks` types in

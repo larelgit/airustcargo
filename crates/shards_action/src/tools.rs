@@ -386,6 +386,7 @@ pub struct ItemArgs {
 fn use_item(In(call): In<Call<ItemArgs>>, world: &mut World) -> ToolResult {
     let input = format!("{USE_ITEM}.{}", call.args.item);
     let me = me(world, &call.caller)?;
+    dead_refusal(world, &call.caller)?;
     require_input(world, me, &input, USE_ITEM, "item")?;
     press(world, &call.caller, &input, None, "")
 }
@@ -428,6 +429,8 @@ fn lock_on(In(call): In<Call<LockOnArgs>>, world: &mut World) -> ToolResult {
         release_lock(world, me);
         return Ok("ok: lock-on released".into());
     }
+    // A downed body fights nobody: it takes no lock (releasing one stays allowed).
+    dead_refusal(world, &call.caller)?;
     // Without a `lock_on` definition: the nearest living enemy within the combat tuning's
     // range, and any target asked for by id (as before the lock-on rules).
     let rules = LockOnDef::active(world.get_resource::<ContentDb>()).cloned();
