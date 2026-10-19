@@ -45,6 +45,8 @@ pub fn app_with_plugins(before: impl FnOnce(&mut App), setup: impl FnOnce(&mut A
         paused: true,
         port: None,
         crash_replays: false,
+        // Tick timing is wall-clock: a journal compared between two runs must not hold it.
+        report_perf: false,
         hot_reload: false,
         seed: 7,
         asset_dir: dir.clone(),

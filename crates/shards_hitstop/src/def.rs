@@ -104,6 +104,16 @@ pub struct When {
     /// Only a blow the local player is in (attacker, target or defender) matches. A fight between
     /// two others, a hazard's tick or a crowd far from the player then holds nothing.
     pub involves_local: bool,
+    /// Only a machine that is not in a co-op session (`NetRole::Single`: not hosting, not joined)
+    /// matches. A host counts as co-op even before anyone has joined: it holds the pictures of the
+    /// bodies and never the clock. For a hold the design gives to solo play only, such as a perfect
+    /// dodge's. Off by default, and left out of the file at its default.
+    #[serde(skip_serializing_if = "is_off")]
+    pub solo: bool,
+}
+
+fn is_off(flag: &bool) -> bool {
+    !*flag
 }
 
 /// One rule of the table: a condition and the hold it gives, in seconds.
@@ -165,6 +175,8 @@ pub struct HitInfo {
     pub ignored: bool,
     /// The local player is one of the bodies of the blow (set when the table is consulted).
     pub local: bool,
+    /// This machine is not in a co-op session (set when the table is consulted).
+    pub solo: bool,
 }
 
 impl When {
@@ -177,6 +189,7 @@ impl When {
             && self.action.as_deref().is_none_or(|a| info.action.as_deref() == Some(a))
             && self.ignored == info.ignored
             && (!self.involves_local || info.local)
+            && (!self.solo || info.solo)
     }
 
     /// Whether every event `other` matches is matched here too (so a rule `other` placed after
@@ -184,6 +197,7 @@ impl When {
     fn covers(&self, other: &When) -> bool {
         self.ignored == other.ignored
             && (!self.involves_local || other.involves_local)
+            && (!self.solo || other.solo)
             && self.event.is_none_or(|e| other.event == Some(e))
             && self.weight_at_least.is_none_or(|w| other.weight_at_least.is_some_and(|o| o >= w))
             && self.reaction_at_least.is_none_or(|r| other.reaction_at_least.is_some_and(|o| o >= r))
@@ -211,6 +225,9 @@ impl When {
         }
         if self.involves_local {
             parts.push("local player involved".to_owned());
+        }
+        if self.solo {
+            parts.push("solo play only".to_owned());
         }
         parts.join(" · ")
     }
@@ -305,7 +322,7 @@ mod tests {
     }
 
     fn info(event: EventKind, weight: Option<Weight>, reaction: Option<u8>) -> HitInfo {
-        HitInfo { event, weight, reaction, cause: None, action: None, ignored: false, local: false }
+        HitInfo { event, weight, reaction, cause: None, action: None, ignored: false, local: false, solo: false }
     }
 
     const LADDER: &str = r#"(
@@ -383,5 +400,20 @@ mod tests {
         let all = When::default();
         let local = When { involves_local: true, ..When::default() };
         assert!(all.covers(&local) && !local.covers(&all), "a rule for every blow shadows a local one, not the other way round");
+    }
+
+    #[test]
+    fn a_solo_rule_matches_only_a_machine_outside_co_op_and_stays_out_of_the_file_at_its_default() {
+        let def = read(r#"(rules: [(when: (event: PerfectEvaded, solo: true), seconds: 0.1)])"#);
+        let mut dodge = info(EventKind::PerfectEvaded, None, None);
+        assert!(def.select(&dodge).is_none(), "in co-op");
+        dodge.solo = true;
+        assert!(def.select(&dodge).is_some(), "alone");
+        let all = When::default();
+        let solo = When { solo: true, ..When::default() };
+        assert!(all.covers(&solo) && !solo.covers(&all), "a rule for every machine shadows a solo one, not the other way round");
+        assert!(solo.describe().ends_with("solo play only"));
+        assert!(serde_json::to_value(&all).unwrap().get("solo").is_none(), "off by default, so not written");
+        assert_eq!(serde_json::to_value(&solo).unwrap().get("solo"), Some(&serde_json::json!(true)));
     }
 }

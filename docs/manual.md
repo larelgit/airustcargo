@@ -36,34 +36,37 @@ Instructions for agents are in [AGENTS.md](../AGENTS.md) (the short core and an 
 8. [Levels from Blender (E4.2)](#levels-from-blender-e42)
 9. [World and generation (E5)](#world-and-generation-e5)
 10. [Navigation and NPCs (E6)](#navigation-and-npcs-e6)
-    - [Encounters (G9)](#encounters-g9)
-11. [The AI layer](#the-ai-layer): [what the AI sees](#what-the-ai-sees) · [tools](#tools) · [time and determinism](#time-and-determinism) · [groundwork for networking](#groundwork-for-networking-phase-c) · [transports and the CLI](#transports-and-the-cli) · [screenshots](#screenshots) · [agents](#agents)
-12. [Scenarios (E11)](#scenarios-e11)
-13. [Invariants (E11)](#invariants-e11)
-14. [Tick time (E11)](#tick-time-e11)
-15. [Developer menu and console (E11)](#developer-menu-and-console-e11)
-16. [Replays](#replays)
-17. [Snapshots (E11.4)](#snapshots-e114)
-18. [Heavy mode](#heavy-mode)
-19. [Saves (E8.1–5)](#saves-e815)
-20. [Settings (E8.6)](#settings-e86)
-21. [UI (E9)](#ui-e9)
-22. [Localization (E9.4)](#localization-e94)
-23. [Audio (E9.5)](#audio-e95)
-24. [Stylised materials (E10.1)](#stylised-materials-e101)
-25. [Foliage and small objects (E10.2)](#foliage-and-small-objects-e102)
-26. [Effects and decals (E10.3)](#effects-and-decals-e103)
-27. [Rules (C3)](#rules-c3)
-28. [Voxel terrain (core)](#voxel-terrain-core)
-29. [Voxel regions (A2c)](#voxel-regions-a2c)
-30. [Steam (E10.5)](#steam-e105)
-31. [Builds for players and Windows (E10.6)](#builds-for-players-and-windows-e106)
-32. [Crash reports (E10.7)](#crash-reports-e107)
-33. [The sandbox](#the-sandbox)
-34. [Tests and CI](#tests-and-ci)
-35. [What's next](#whats-next)
-36. [Building and iterating fast](#building-and-iterating-fast)
-37. [Conventions and building](#conventions-and-building)
+11. [Encounters (G9)](#encounters-g9)
+12. [The AI layer](#the-ai-layer): [what the AI sees](#what-the-ai-sees) · [tools](#tools) · [time and determinism](#time-and-determinism) · [groundwork for networking](#groundwork-for-networking-phase-c) · [transports and the CLI](#transports-and-the-cli) · [screenshots](#screenshots) · [agents](#agents)
+13. [Scenarios (E11)](#scenarios-e11)
+14. [Invariants (E11)](#invariants-e11)
+15. [Tick time (E11)](#tick-time-e11)
+16. [Frame time and the performance test (E10)](#frame-time-and-the-performance-test-e10)
+17. [Developer menu and console (E11)](#developer-menu-and-console-e11)
+18. [Replays](#replays)
+19. [Snapshots (E11.4)](#snapshots-e114)
+20. [Heavy mode](#heavy-mode)
+21. [Coverage](#coverage)
+22. [Saves (E8.1–5)](#saves-e815)
+23. [Settings (E8.6)](#settings-e86)
+24. [UI (E9)](#ui-e9)
+25. [Localization (E9.4)](#localization-e94)
+26. [Audio (E9.5)](#audio-e95)
+27. [Stylised materials (E10.1)](#stylised-materials-e101)
+28. [Foliage and small objects (E10.2)](#foliage-and-small-objects-e102)
+29. [Effects and decals (E10.3)](#effects-and-decals-e103)
+30. [Hit stop (C2)](#hit-stop-c2)
+31. [Rules (C3)](#rules-c3)
+32. [Voxel terrain (core)](#voxel-terrain-core)
+33. [Voxel regions (A2c)](#voxel-regions-a2c)
+34. [Steam (E10.5)](#steam-e105)
+35. [Builds for players and Windows (E10.6)](#builds-for-players-and-windows-e106)
+36. [Crash reports (E10.7)](#crash-reports-e107)
+37. [The sandbox](#the-sandbox)
+38. [Tests and CI](#tests-and-ci)
+39. [What's next](#whats-next)
+40. [Building and iterating fast](#building-and-iterating-fast)
+41. [Conventions and building](#conventions-and-building)
 
 ## Quick start
 
@@ -1029,13 +1032,15 @@ leaves its effect on). Two systems that want the same field must be combined by 
 | tool | what it does |
 |---|---|
 | `move_to` | walk to an entity or to a point `{x, z}`; `within`, `queue`; `path=true` follows the route from `path_to` |
-| `move`, `stop` | walk N metres by compass (N = −Z, E = +X); stop |
+| `move`, `stop` | walk N metres by compass (N = −Z, E = +X); stop. `move`, `move_to`, `stop`, `jump`, `sprint` and `glide` refuse a dead body with the text every action tool gives (`you are dead; a dev agent can `heal` you`), and a death drops the orders the body held (`Intent.orders`, and the `move_dir` they set; a body with no orders keeps its `Intent`, which its keyboard or brain rewrites every tick), so nothing runs after a `heal` |
 | `jump`, `sprint`, `glide` | jump (out of water, onto the shore); sprint and glide as a state that is on (`on=false` turns it off) |
 | `clearance` | query: how far in the eight directions, and what will stop you |
 | `move_info` | query: what modifies a character's movement (slow, caps, root, stance, rates, sprint cost), the walk, run, sprint and swim speeds they leave, and the wading depth |
 | `path_to` | query: the route over what can be walked, swum and climbed |
 | `input_bindings` (player), `rebind` (developer) | controls; `rebind` writes to the `controls` settings |
 | `physics_overlay` (developer, window) | colliders and volumes |
+
+**An order that makes no progress ends** (`shards_motion::orders`). A `move` or `move_to` order whose body has not come closer to its goal (flat distance) by 0.1 m (`STALL_PROGRESS`) for 2 s (`STALL_SECONDS`) is dropped as `blocked`: the steering is zeroed, the event `OrderEnded` is triggered, the journal says `e1 move_to (20.0, 0.0) ended: blocked (no closer than 0.10 m in 2.0 s)`, and `observe` shows `last order ended: move_to (20.0, 0.0): blocked` on the body until its next order starts (the lazy component `OrderProgress`; snapshots keep it, replay checks leave it out since the queue itself is checked). The orders behind it run on. A sprint order against a wall no longer drains the stamina for ever. The count waits while the body is not free to walk (an action holds it: `LocomotionInput.locked`, or a push moves it: `external`), and restarts at every 0.1 m gained, so a slow walk (a crawl of 0.05 m/s is enough), a guard, a stagger, a walk round a corner and a route (`path=true` is one order per leg, each with its own count) are never ended. An order to an *entity* also counts a body that moves at least 0.1 m while its target moves at least 0.1 m too (a chase of a target that runs away is not blocked; a body that circles a target that stands still, or one that is wedged while its target runs, is). When several bodies stall on the same tick the journal lines come in `AiId` order. It runs in the simulation only; a client's orders are ended by its host. The movement tools also refuse a dead body (`you are dead; a dev agent can `heal` you`), and a death drops the orders.
 
 Errors teach too (`jump` in the water by the shore: `ok: jumping out of the water onto the ledge 0.4m ahead (+1.3m)`; far from the shore: `the ledge is 2.1m ahead (+1.3m), out of reach from the water: swim within … and jump, or keep swimming into it`).
 
@@ -1109,7 +1114,7 @@ The `shards_action` crate. An attack, a block, a parry, a roll and a flask are a
 - An action hands its displacement (`displacement`) to the controller through `LocomotionInput::external`: only the controller moves the body, so a lunge stops at a wall. You do not have to write it by hand: it can be baked from a clip (`bake`, see "Displacement from a clip" below).
 - Animation and sound are names only: `anim: "light_1"` (a clip; if the game has clip sets, the content check requires one of them to play it), `telegraph.sound` (a sound from `*.sound.ron`: the audio module plays it where the hit lands), and the effect `Sound("whoosh")` (it is played from the body at its moment, for example a swing: `effects: [(at: 0.2, effect: Sound("whoosh"))]`), see "Audio".
 
-**The machine.** A press from `Intent` waits in the input buffer `CombatTuning::input_buffer` (0.15 s by default) until its action becomes possible; cancel windows let one action be interrupted by another (combos); a held action repeats (a raised block). One rule, `can_start`, answers both the machine and the tools: `ok: light_1`, `ok: queued, light starts in 0.10s`, `not enough stamina: 20/40 (ready in 1.5s)`, `busy: windup light_1 0.17s (ready in 0.27s, when a cancel window opens)`. A press whose time has run out is written to the journal: `e5 light rejected: busy (active light_1 0.10s)`. A cancel window with a `queue` span holds a press made while that span is open until the window opens (the press lives until then plus the buffer time), and a moveset can keep one press at a time by priority (`buffer: SingleSlot(..)`); a cooldown can be shared by several actions (`cost.cooldown_key`). See "Action timeline (B2a)" below.
+**The machine.** A press from `Intent` waits in the input buffer `CombatTuning::input_buffer` (0.15 s by default) until its action becomes possible; cancel windows let one action be interrupted by another (combos); a held action repeats (a raised block). The status line of an action held by its loop says so and for how long: `hold block held 1.20s guard` (the seconds the loop has kept it, `Running::held`, display only and not in snapshots), where a phase that runs out says `hold block 0.27s` (the time it has left). One rule, `can_start`, answers both the machine and the tools: `ok: light_1`, `ok: queued, light starts in 0.10s`, `not enough stamina: 20/40 (ready in 1.5s)`, `busy: windup light_1 0.17s (ready in 0.27s, when a cancel window opens)`. A press whose time has run out is written to the journal: `e5 light rejected: busy (active light_1 0.10s)`. A cancel window with a `queue` span holds a press made while that span is open until the window opens (the press lives until then plus the buffer time), and a moveset can keep one press at a time by priority (`buffer: SingleSlot(..)`); a cooldown can be shared by several actions (`cost.cooldown_key`). See "Action timeline (B2a)" below.
 
 **Hits** are detected in `SimSet::Resolve` after movement. Attack shapes overlap hurtboxes (colliders with the `HURTBOX` layer; the `Fighter` collider gets it). Attackers and targets are taken in `AiId` order. One target is hit once per action (and once per `group`). The damage pipeline: immortality (`god`) → invulnerability (`Evaded`, `PerfectEvaded` inside a perfect-evade window) → parry (`Parried`, the attacker staggers unless the guard says otherwise) / block (`Blocked`, costs stamina) / guard break (`GuardBroken`) → damage taken (`DamageTaken`, B2b) → armour → game hooks (`add_damage_hook`, in registration order) → barrier and health, statuses, poise (a break is `stagger`; otherwise a reaction of the tier the hit asked for, or the old flinch) → death; see "Hit outcome: reactions, protection, pushes (B1)" below. Events: `Damaged`, `Staggered`, `Died`, `Healed`, `ActionStarted`, `ActionRejected`, `ActionSound` (the `Sound` effect).
 
@@ -1220,7 +1225,7 @@ A hit can ask for more than damage: a **reaction tier** (what the target is put 
 
 **The pipeline after B1.** `detect` (a hit with `LineOfSight` skips a target when a ray from the attacker's chest to the target's meets a `LayerMask::WORLD` collider; the two bodies' own colliders never count; a skipped target is not marked, so it can still be hit later in the same window; the chest is `CombatTuning::sight_height`, 0.6, of the body's height) → `resolve` fills a `DamageCtx` (`credit`, `dir`, `reaction`, `reaction_armor`, `knockback`, `taken`, `guard_mult`, `weight`, `ignore_reason`) → `modifiers` (god mode, i-frames and perfect evades, guards with per-hit costs and shares, `Armor`) → the game's hooks → `apply`. `apply` works out a **plan** first (does the poise break, does the target react), so `Damaged` can carry its `weight` and `reaction` while still being triggered before death, statuses and poise, as it always was. Events name the credited entity (`DamageCtx::credit`) as `attacker` or `killer`; `source` is the combat object that hit (`DamageCtx::attacker`) when it is not the credited entity: a hook that sets `credit` to an owner gets `source` set to the object on `Damaged`, `Blocked`, `GuardBroken`, `Parried`, `Evaded`, `PerfectEvaded` and `Died` (`kill_with` for a game that kills itself; `kill` leaves it `None`). A parry staggers `DamageCtx::attacker`, the object that hit. A status a hook appends to a blocked hit is applied (the block applies whatever is left in the context after the hooks, by default the `status_mult` share). `Damaged::ignore_reason` is `None` for a hit that landed; a hook that sets `Ignored` without a reason prints `ignored`. A hit's `weight` is at least its action's `weight` (a floor, B3; none by default), and a paired action's strike is at least `Finisher`; a game hook may still set it. `IgnoreReason::Downed` is reserved: the engine never sets it, a game hook may.
 
-- **Guard.** The cost of a block is `hit.guard_damage` (else the hit's damage) times `stamina_per_damage`. A perfect guard pays `perfect_cost_mult` of it (`Parried { stamina }`, journal `, -10 stamina` only when above 0); when it cannot pay, the guard breaks, perfect or not, and spends all the stamina. `parry_staggers: false` leaves the attacker alone: the game's `Parried` observer decides (poise through `poise_damage`, a recoil through `react`). A guard break lets `break_damage_mult` (else `damage_mult`) of the damage through, a block `damage_mult`; a block lets `status_mult` of the status buildup through, a break `break_status_mult` (0, the old rule, lets none). A break forces the moveset's `guard_broken` action (then `Staggered { cause: GuardBroken }`), else its `stagger`; `guard_broken_push: (scale, decel)` starts a push at `scale` times the body's current flat velocity. **The guard is decided before the hooks**, from the damage as the hit defines it: a hook that rescales damage must also change `outcome` and `guard_mult` if it wants Blocked versus GuardBroken decided again; the engine does not redo the guard after the hooks.
+- **Guard.** The cost of a block is `hit.guard_damage` (else the hit's damage) times `stamina_per_damage`. A perfect guard pays `perfect_cost_mult` of it (`Parried { stamina }`, journal `, -10 stamina` only when above 0); when it cannot pay, the guard breaks, perfect or not, and spends all the stamina. `parry_staggers: false` leaves the attacker alone: the game's `Parried` observer decides (poise through `poise_damage`, a recoil through `react`). A guard break lets `break_damage_mult` (else `damage_mult`) of the damage through, a block `damage_mult`; a block lets `status_mult` of the status buildup through, a break `break_status_mult` (0, the old rule, lets none). A break forces the moveset's `guard_broken` action (then `Staggered { cause: GuardBroken }`), else its `stagger`; `guard_broken_push: (scale, decel)` starts a push at `scale` times the body's current flat velocity. **The guard is decided before the hooks**, from the damage as the hit defines it: a hook that rescales damage must also change `outcome` and `guard_mult` if it wants Blocked versus GuardBroken decided again; the engine does not redo the guard after the hooks. **The guard's arc points where the run faces, and a run turns only by its `turn` spans** (see "Action timeline"): a guard action with no `turn` span keeps the arc it started with however the body turns afterwards. Give the guard a `turn` span to re-aim it, at the rate you want the guard to turn at.
 - **Perfect evade.** A hit that meets i-frames while a `perfect_iframes` span is also open is `Outcome::PerfectEvaded`: `Evaded`, then `PerfectEvaded`. Not for a hit with `NoPerfectEvade` (ground zones), nor for one that does no damage. The attacker's ledger marks the defender at the first detection, so it is once per swing. Every `perfect_iframes` span must lie inside the i-frames. **`perfect_iframes` and `armor` spans are sampled at the instant of the tick** (`start <= t <= end`), not over the tick: the roll's `Secs(0.105, 0.215)` is open in ticks 7 to 12 (6 ticks at 60 Hz), not 13. Content copied from a source that samples the same way keeps its literal numbers. (`iframes`, `hyper_armor`, guard and hit windows keep the older over-the-tick rule.)
 - **Stamina overdraft.** `cost.stamina_mode: Any` starts the action on any stamina above 0 and drains it to 0 at most; `Full` (the default) needs the whole cost. The refusal prints the action's real cost (`not enough stamina: 0/22`); `can_start` is the one rule, so the tools, the NPC planner and a client's prediction follow.
 
@@ -2955,6 +2960,7 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
    .journal_event::<Damaged>(|e, w| Some(format!("{} -> {} -{:.0}", label(w, e.source), label(w, e.target), e.amount)))
    .add_ai_tool("move_to", Scope::Player, move_to)   // action: journal and list of changes
    .add_ai_query("threats", Scope::Player, threats)  // read: no journal
+   .add_ai_tool_guard("move_to", |w, caller| /* Err(refusal) before another module's tool runs */ Ok(()))
    .add_ai_condition("boss_phase_2", |w| /* ... */)
    .add_ai_status("my_field", |w| /* serde_json::Value in ai/status */)
    .add_ai_invariant("health_in_range", |w| /* Some(text) if violated */)  // see "Invariants (E11)"
@@ -5492,7 +5498,7 @@ When a blow lands, the picture stands still for a beat (60-100 ms). It is what m
             (name: "hit", when: (event: Damaged), seconds: 0.06),
             (name: "block", when: (event: Blocked), seconds: 0.06),
             (name: "parry", when: (event: Parried), seconds: 0.10),
-            (name: "perfect dodge", when: (event: PerfectEvaded), seconds: 0.10),
+            (name: "perfect dodge", when: (event: PerfectEvaded, solo: true), seconds: 0.10),
         ],
     ),
 }
@@ -5503,12 +5509,13 @@ When a blow lands, the picture stands still for a beat (60-100 ms). It is what m
 | field | the event has it | matches |
 |---|---|---|
 | `event` | always | `Damaged`, `Blocked`, `Parried`, `PerfectEvaded`, `GuardBroken`, `Staggered` (left out: any event) |
-| `weight_at_least` | `Damaged`, `Blocked`, `GuardBroken` | the hit's `HitWeight` is at least this: `Light < Heavy < Counter < Break < Finisher` (the engine raises it to `Heavy` for a reaction of tier 2 or 3 and to `Break` for a broken poise; a game's hook sets `Counter` and `Finisher`) |
+| `weight_at_least` | `Damaged`, `Blocked`, `GuardBroken` | the hit's `HitWeight` is at least this: `Light < Heavy < Counter < Break < Finisher` (the engine raises it to `Heavy` for a reaction of tier 2 or 3 and to `Break` for a poise the blow really breaks: a blow that kills breaks nothing, so it keeps the weight it would have without the break, as the corpse takes no poise and no `Staggered` follows; a game's hook sets `Counter` and `Finisher`) |
 | `reaction_at_least` | `Damaged` | the reaction tier the hit asks of its target |
 | `cause` | `Staggered` | `PoiseBroken`, `Parried`, `GuardBroken`, `Dev` |
 | `action` | all but `Staggered` | the id of the action that hit |
 | `ignored` | `Damaged` | by default a rule matches only a hit that landed; `ignored: true` matches one that was ignored (god mode, i-frames) |
 | `involves_local` | all | `true`: only a blow the local player is in (attacker, target or defender) matches; a fight between two others, a hazard tick or a crowd far away then holds nothing. Put it on the rules of a game that should never stutter for the fights around the player (the sandbox does); the setting `hit_stop_local_only` does the same for every rule |
+| `solo` | all | `true`: only a machine that is **not in a co-op session** (`NetRole::Single`) matches. Hosting counts as co-op even before anyone has joined, and so does being a client: such a machine holds the pictures of the bodies and never the clock, and a picture hold in co-op is still a hold, so a rule for solo play only is how a game gives a hold to solo and none online (or, with a second rule after it, a shorter one). Off by default, and left out of the file at its default (a rule without it hashes as before; writing `solo: true` changes the content hash like any edit to a definition, so a co-op host and its clients need the same file). The sandbox's perfect dodge uses it. `hitstop_play` names the case when a rule is passed over for being solo-only. A rule with `solo` is shadowed by an earlier rule without it, not the other way round (the content check names that) |
 
 So "finisher, then poise break, then counter, then a heavy reaction, then the rest" is five rules in that order, and a game that wants a different order writes it. `max_seconds` (at most 0.5 s, the engine's own ceiling) bounds every hold whatever a rule says, and `cooldown` (s) keeps a flurry of hits from turning into a stutter: a hold does not start within that time after the last one ended. Holds that overlap **merge by the later end**: a hold asked for while one runs lasts as long as the longer of the two has left. The content check names what cannot work: a second table, a rule longer than `max_seconds`, a rule the ones before it cover (it can never match), a `weight_at_least` on a parry (it has no weight), a `reaction_at_least` or a `cause` on the wrong event.
 
