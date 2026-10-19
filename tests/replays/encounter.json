@@ -608,6 +608,7 @@
           "shards_action::machine::InputBuffer": {
             "queued": []
           },
+          "shards_action::objects::AimTarget": null,
           "shards_action::status::Statuses": [],
           "shards_core::intent::Intent": {
             "aim": null,
@@ -840,6 +841,7 @@
           "shards_action::machine::InputBuffer": {
             "queued": []
           },
+          "shards_action::objects::AimTarget": null,
           "shards_action::status::Statuses": [],
           "shards_core::intent::Intent": {
             "aim": null,
@@ -1072,6 +1074,7 @@
           "shards_action::machine::InputBuffer": {
             "queued": []
           },
+          "shards_action::objects::AimTarget": null,
           "shards_action::status::Statuses": [],
           "shards_core::intent::Intent": {
             "aim": null,
@@ -1498,6 +1501,7 @@
           "shards_action::machine::InputBuffer": {
             "queued": []
           },
+          "shards_action::objects::AimTarget": null,
           "shards_action::status::Statuses": [],
           "shards_core::intent::Intent": {
             "aim": null,
@@ -1796,6 +1800,7 @@
           "shards_action::machine::InputBuffer": {
             "queued": []
           },
+          "shards_action::objects::AimTarget": null,
           "shards_action::status::Statuses": [],
           "shards_core::intent::Intent": {
             "aim": null,

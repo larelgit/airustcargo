@@ -26,6 +26,13 @@ act lock_on off=true
 act god on=false
 step 150
 act heal id=e5
+act teleport id=e5 x=0 z=0.4 y=0
+# (a step south turns the player to face where the colossus will stand, whatever it faced before: the
+# lock-on below picks what is ahead, and the arena's skeletons are within its 30 m)
+session --agent bot --scope player
+act move dir=S meters=1
+session --agent scenario
+step 60
 act teleport id=e5 x=0 z=1.4 y=0
 act teleport id=e6 x=-14 z=-14 y=0
 act teleport id=e7 x=-16 z=8 y=0
@@ -48,6 +55,7 @@ expect result contains " off"
 session --agent bot --scope player
 act lock_on
 expect result contains "ok: locked on"
+expect result contains "(2.6m S)"
 session --agent scenario
 step 31
 

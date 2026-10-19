@@ -536,6 +536,56 @@ fn body_and_motion_state_that_does_not_belong_stops_the_game() {
 }
 
 #[test]
+fn body_parts_that_do_not_add_up_stop_the_game() {
+    use shards::action::{Part, PartHealth, SpawnedParts};
+    use shards::ai_core::AiKind;
+    /// A part of the player e5 that e5 lists among its parts, as `spawn_parts` leaves one.
+    fn listed(world: &mut World, part: Part) -> Entity {
+        let e = world.spawn((AiKind::new("Part"), part, Transform::default())).id();
+        let id = *world.get::<AiId>(e).unwrap();
+        let player = body(world, 5);
+        world.entity_mut(player).insert(SpawnedParts(vec![id]));
+        e
+    }
+    fn horn(body: u32) -> Part {
+        Part { body: AiId(body), id: "horn".into(), on: true, broken: false }
+    }
+
+    // A part whose body was never there.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        world.spawn((AiKind::new("Part"), Part { body: AiId(9999), id: "horn".into(), on: true, broken: false }));
+    });
+    let line = stops_on(&mut app, "action.parts_sane", 2);
+    assert!(line.contains("part horn of e9999, which is not in the world"), "{line}");
+
+    // A part of a body that does not list it.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        world.spawn((AiKind::new("Part"), Part { body: AiId(5), id: "horn".into(), on: true, broken: false }));
+    });
+    let line = stops_on(&mut app, "action.parts_sane", 2);
+    assert!(line.contains("part horn of e5, which does not list it"), "{line}");
+
+    // A broken part that still takes hits.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        listed(world, Part { broken: true, ..horn(5) });
+    });
+    let line = stops_on(&mut app, "action.parts_sane", 2);
+    assert!(line.contains("part horn is broken and on"), "{line}");
+
+    // A part's health above its maximum.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let part = listed(world, horn(5));
+        world.entity_mut(part).insert(PartHealth { current: 90.0, max: 80.0 });
+    });
+    let line = stops_on(&mut app, "action.parts_sane", 2);
+    assert!(line.contains("part horn health 90/80: 0 <= current <= max, max > 0"), "{line}");
+}
+
+#[test]
 fn combat_objects_that_do_not_add_up_stop_the_game() {
     use shards::action::{CombatObject, Projectile, ProjectileFlight};
     use shards::ai_core::AiKind;

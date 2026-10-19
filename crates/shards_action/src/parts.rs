@@ -24,9 +24,9 @@
 //!     "colossus": (
 //!         body_hurtbox: false,
 //!         parts: {
-//!             "horn": (shape: Sphere(radius: 0.6), at: (forward: 0.4, up: 5.6), health: Some(80)),
-//!             "leg_left": (shape: Capsule(half_height: 1.0, radius: 0.5), at: (up: 1.5, right: -0.9), poise: 2.0),
-//!             "core": (shape: Sphere(radius: 0.7), at: (up: 3.0), damage: 3.0, tags: ["weak"], enabled: false),
+//!             "core": (shape: Sphere(radius: 0.6), at: (forward: 0.9, up: 2.0), damage: 3.0, tags: ["weak"], enabled: false),
+//!             "hand": (shape: Sphere(radius: 0.5), at: (forward: 1.4, up: 1.2, right: 1.0), health: Some(60), to_body: 0.5),
+//!             "leg_left": (shape: Capsule(half_height: 0.8, radius: 0.45), at: (forward: 0.3, up: 1.2, right: -0.7), poise: 2.0),
 //!         },
 //!     ),
 //! }
@@ -311,12 +311,15 @@ pub(crate) fn spawn_parts(world: &mut World) {
 }
 
 /// `SimSet::Move`, after [`spawn_parts`]: every part, in `AiId` order, goes where its definition
-/// puts it on its body; a part whose body is gone (or no longer lists it) goes too. A part whose
-/// definition is gone (a hot reload took it out) stays where it was.
+/// puts it on its body; a part whose body is gone (or no longer lists it) goes too, on the machine that
+/// simulates (a co-op client leaves that to the host's state: a part can arrive before its body, or
+/// stay in view while the body is out of it). A part whose definition is gone (a hot reload took it
+/// out) stays where it was.
 #[allow(clippy::type_complexity, reason = "a Bevy query")]
 pub(crate) fn place_parts(
     index: Res<AiIndex>,
     db: Res<ContentDb>,
+    role: Option<Res<NetRole>>,
     bodies: Query<(&Transform, &BodyParts, Option<&SpawnedParts>), Without<Part>>,
     mut parts: Query<(Entity, &AiId, &Part, &mut Transform)>,
     mut commands: Commands,
@@ -330,7 +333,9 @@ pub(crate) fn place_parts(
         let Ok((_, _, part, mut tf)) = parts.get_mut(entity) else { continue };
         let body = index.get(part.body).and_then(|b| bodies.get(b).ok());
         let Some((body_tf, kind, _)) = body.filter(|(_, _, s)| s.is_some_and(|s| s.0.contains(&id))) else {
-            commands.entity(entity).despawn();
+            if role.as_ref().is_none_or(|r| r.simulates()) {
+                commands.entity(entity).despawn();
+            }
             continue;
         };
         let Some(def) = db.get::<PartsDef>(&kind.0).and_then(|d| d.parts.get(&part.id)) else { continue };
@@ -573,8 +578,12 @@ pub(crate) fn plugin(app: &mut App) {
         .add_content::<PartsDef>()
         .add_content_check::<PrefabDef>("parts", check_prefab);
     let world = app.world_mut();
+    // Registered up front: the rule `action.parts_sane` queries them through `with_query`, which
+    // sees nothing while a component in its query is unknown to the world.
     world.register_component::<BodyParts>();
+    world.register_component::<SpawnedParts>();
     world.register_component::<Part>();
+    world.register_component::<PartHealth>();
     app.add_systems(
         FixedUpdate,
         (spawn_parts, place_parts)

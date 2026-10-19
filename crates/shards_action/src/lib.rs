@@ -76,7 +76,8 @@
 //!                  ActionSystems::Machine   presses → buffer → start/advance → LocomotionInput
 //!                  ActionSystems::Objects   combat objects: delayed starts, their runs step (effects, telegraphs)
 //!                  ActionSystems::Effects   pairs start (start_pairs), heal, stamina, statuses, sounds, spawns, game effects
-//! SimSet::Move     (controller)             integrates LocomotionInput, external included; then projectiles fly
+//! SimSet::Move     (controller)             integrates LocomotionInput, external included; then projectiles fly;
+//!                                           then body parts spawn (a body's first tick) and follow their bodies
 //! SimSet::Resolve  ActionSystems::Hits      overlaps (a projectile sweeps its flight) → damage pipeline → events;
 //!                                           projectiles that met a target or a wall impact
 //!                  ActionSystems::Fighters  sprint drain, regeneration, cooldowns, memories age, pairs kept or lost,
@@ -87,7 +88,7 @@
 //! ```
 //!
 //! Tools: `light_attack`, `heavy_attack`, `block`, `parry`, `dodge`, `use_technique`,
-//! `use_item`, `lock_on`, `attack`, `interact` (player); `god`, `heal`, `stagger`, `react`, `remember`, `down`, `motion_bake` (dev);
+//! `use_item`, `lock_on`, `attack`, `interact` (player); `god`, `heal`, `stagger`, `react`, `remember`, `down`, `part`, `motion_bake` (dev);
 //! `combat_overlay` (dev, with the `render` feature). Queries: `combat_objects` (player).
 //!
 //! ## The render feature

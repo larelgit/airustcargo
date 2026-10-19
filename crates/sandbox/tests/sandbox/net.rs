@@ -734,6 +734,71 @@ fn objects_hit_the_same_on_host_and_client() {
     assert!(objects(&stand, HOST).is_empty());
 }
 
+/// A member's body parts (R1): `(part, its body, its id, on, broken, where it is to the cm)`, in id order.
+fn parts(stand: &Stand, member: usize) -> Vec<(String, String, String, bool, bool, [i32; 3])> {
+    let world = stand.world(member);
+    let Some(mut q) = world.try_query::<(&AiId, &shards::action::Part, &Transform)>() else { return Vec::new() };
+    let mut out: Vec<_> = q
+        .iter(world)
+        .map(|(id, p, tf)| {
+            let at = (tf.translation * 100.0).round();
+            (id.to_string(), p.body.to_string(), p.id.clone(), p.on, p.broken, [at.x as i32, at.y as i32, at.z as i32])
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// Body parts (R1) in co-op: the host spawns the colossus by c1's player; c1 is sent its parts
+/// with the host's ids, where the host has them (a client spawns none of its own), and c1's swings
+/// land on the host through the hand, which breaks there: c1 sees the same hits and the broken hand.
+/// The colossus gone, its parts go on both.
+#[test]
+fn parts_come_to_a_client_and_its_swings_land_through_them() {
+    let mut stand = stand_with(1, lossy());
+    for member in [HOST, C1] {
+        watch_hits(stand.world_mut(member));
+    }
+    let player = body(&stand, C1);
+    for id in ["e6", "e7", "e8", "e14"] {
+        assert!(stand.call(HOST, "npc_set_state", json!({"id": id, "state": "calm"})).ok);
+    }
+    for (id, x, z) in [(player.as_str(), 0.0, 1.4), (PLAYER, -15.0, 15.0)] {
+        assert!(stand.call(HOST, "teleport", json!({"id": id, "x": x, "z": z, "y": 0})).ok);
+    }
+    let spawned = stand.call(HOST, "spawn_prefab", json!({"id": "colossus", "x": 0, "z": 4, "y": 0}));
+    assert!(spawned.ok, "{}", spawned.result);
+    let colossus = spawned.result.as_str().and_then(|t| t.split_whitespace().nth(1)).unwrap().to_owned();
+    stand.run(40);
+    let host = parts(&stand, HOST);
+    assert_eq!(host.len(), 5, "{host:?}");
+    assert!(host.iter().all(|p| p.1 == colossus));
+    assert_eq!(parts(&stand, C1), host, "c1 has the host's parts, by id, where the host has them");
+
+    let locked = stand.call(C1, "lock_on", json!({"target": colossus}));
+    assert!(locked.ok, "{}", locked.result);
+    stand.run(40);
+    for _ in 0..3 {
+        let swung = stand.call(C1, "light_attack", json!({}));
+        assert!(swung.ok, "{}", swung.result);
+        stand.run(90);
+    }
+    let hits = stand.world(HOST).resource::<Hits>().0.clone();
+    assert_eq!(hits.len(), 3, "{hits:?}");
+    assert!(hits.iter().all(|h| h.0 == player && h.1 == colossus && h.3 == "10"), "each through the hand, half to the body: {hits:?}");
+    let hand = |member| parts(&stand, member).into_iter().find(|p| p.2 == "hand").unwrap();
+    assert!(!hand(HOST).3 && hand(HOST).4, "the hand broke on the host: {:?}", hand(HOST));
+    assert_eq!(hand(C1), hand(HOST), "and c1 has it broken");
+    assert_eq!(stand.world(C1).resource::<Hits>().0, hits, "c1 saw the host's hits");
+
+    assert!(stand.call(HOST, "despawn", json!({"id": colossus})).ok);
+    stand.run(40);
+    for member in [HOST, C1] {
+        assert!(parts(&stand, member).is_empty(), "member {member}: {:?}", parts(&stand, member));
+        assert_eq!(desyncs(&stand, member), 0);
+    }
+}
+
 /// The `ActionSound`s a member heard: `(actor, action, sound)`.
 #[derive(Resource, Default)]
 struct Sounds(Vec<(Entity, String, String)>);

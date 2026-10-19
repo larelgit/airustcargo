@@ -85,7 +85,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 210 definitions in 61 files
+cargo shards content check                 # ok: 213 definitions in 63 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -108,7 +108,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 210 definitions in 61 files
+# ok: 213 definitions in 63 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -598,7 +598,7 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 210 definitions in 61 files
+content: 213 definitions in 63 files
   action  70
   animset  1
   attack_plan  3
@@ -649,7 +649,7 @@ content: 210 definitions in 61 files
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 210 definitions in 61
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 213 definitions in 63
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -1814,6 +1814,83 @@ time is the downed pose's length, read from content. (8) The timers end within h
 drifted past `EPS` and lasted a tick longer). (9) `lethal` and `resume_stagger` are public. (10) The test
 `loaded_zero_health_body_stays_dead` is in the sandbox's `saves.rs`, where the save files are. (11) The encounter module
 registers the `downed` out rule itself (G9), and its tests' stand-in became a game's own rule, `benched`.
+
+### Body parts (R1)
+
+One body hit through several volumes, each with its own numbers and, when it has some, its own health that breaks it: the
+limbs, horn and weak spot of a giant whose own capsule is far bigger than any of them. The engine places the volumes, routes
+hits through them and breaks them; what a broken part means (a wound, debris, an attack the body no longer has, a phase) is
+the game's.
+
+**Content.** A body names its definition with the component `BodyParts` (`"BodyParts": ("colossus")` in a prefab; the
+prefab check refuses a name that is not in content). The kind `parts` (`*.parts.ron`) maps a definition's id to:
+
+```ron
+// content/combat/colossus.parts.ron
+{
+    "colossus": (
+        body_hurtbox: false,   // the body's own collider takes no hits: only its parts do (default true)
+        parts: {
+            "core": (shape: Sphere(radius: 0.6), at: (forward: 0.9, up: 2.0), damage: 3.0, tags: ["weak"], enabled: false),
+            "hand": (shape: Sphere(radius: 0.5), at: (forward: 1.4, up: 1.2, right: 1.0), health: Some(60), to_body: 0.5),
+            "leg_left": (shape: Capsule(half_height: 0.8, radius: 0.45), at: (forward: 0.3, up: 1.2, right: -0.7), poise: 2.0),
+        },
+    ),
+}
+```
+
+A part's fields: `shape` (a physics `Shape`: `Sphere`, `Capsule`, `Cuboid`, `Cylinder`, `Cone`), `at` (metres from the body's
+feet in its own frame: `forward`, `up`, `right`), `turn` (`pitch`, `yaw`, `roll` in degrees: a capsule pitched 90 lies along
+forward), `health` (none: the part never breaks), the factors `damage`, `to_body` and `poise` (1 each), `tags` (added to a hit
+through it) and `enabled` (true: whether it takes hits from the start). The check refuses a definition with no parts or more
+than 16, an id that is not letters, digits and `_`, a size that is not above 0, an `at` or `turn` that is not finite, a health
+that is not above 0, a factor that is not a finite number `>= 0`, and an empty tag. Fields at their defaults are not written.
+
+**Parts are entities.** On the first tick a `BodyParts` body is in the world, on the machine that simulates (`SimSet::Move`,
+after the controller and the projectiles, before the hits), the engine spawns one top-level entity per part, bodies in `AiId`
+order and parts in the definition's (by id): `AiKind` `Part`, `Part { body, id, on, broken }`, `PartHealth { current, max }`
+when it has health, a kinematic `Collider` on the hurtbox layer only (no character or world collides with it), and the body
+gets `SpawnedParts` with their ids. Every tick each part is put where its definition says on its body: `at` turned with the
+body, from its feet. A part has no bone: bones are posed only in a window, and the simulation gives the same hits without one.
+A part whose body is gone, or no longer lists it, goes on the next tick.
+
+**Hits.** A hit that overlaps a part that is on is a hit on its body: the body's guard, i-frames, armour, statuses and reactions
+apply, and one swing hits a body once (its per-run ledger), through the part nearest the middle of the hit among those it
+overlaps (half way up a cone's axis, which starts at the attacker's feet; the start of the segment a projectile flew this tick;
+ties to the lower `AiId`). With `body_hurtbox: false` the body's own collider takes nothing: a swing that reaches only the
+capsule of a giant misses it. `DamageCtx::part` is `Some(PartHit { entity, id, damage, to_body, poise })`: the part's `damage`
+and `poise` factors are already in the hit's damage and poise when the modifiers and the damage hooks see it, and its tags are
+in `ctx.tags` (a hook that doubles a hit tagged `weak` at the part `core` is a game's weak spot). The body loses `damage *
+to_body` and the part `damage` (a guarded hit's chip too); `Damaged::amount` is the body's loss and `Damaged::part` names the
+part. A part whose health runs out breaks after the hit's event: `PartBroken { body, part, id, by }` (`by`: the hit's credited
+attacker), and from then on it is off, takes no hits, and stays so.
+
+**API.** `part_of(world, body, id)` (the part entity, or an error that lists the body's parts), `parts_of(world, body)`,
+`set_part(world, body, id, on)` (a weak spot that opens and closes; a broken part refuses to come on) and `break_part(world,
+body, id, by)`.
+
+**What the AI sees.** Describe: `hand of e12 40/60 hp`, `core of e12 off`, `hand of e12 broken`. Journal: `e5 -> e12 light_1 at
+hand -10 (hp 1190)` and `e12 hand broken by e5` (`e12 horn broken` for a break with no breaker). The dev tool `part id= name=
+op=on|off|break` (without `id`: the body the caller is locked on) answers `e12 core on` and refuses a broken part's `on`, a
+part the body does not have (`e12 has no part tail; its parts: core, hand, horn, leg_left, leg_right`) and a body with none.
+The engine rule `action.parts_sane` (see "Invariants (E11)") stops the game on a part whose body is not there or does not list
+it, a broken part that is on, and a part health that is not `0 <= current <= max` with `max > 0`.
+
+**State and co-op.** `BodyParts`, `SpawnedParts`, `Part` and `PartHealth` are reflected components of `AiId` entities:
+snapshots, replay checks and co-op clients get them by the default rules, and a loaded body that lists its parts spawns none
+again. A co-op client spawns no parts and despawns none: the host's state brings them, with the host's ids (a part can arrive
+before its body, or stay in view while its body is out of it), and the hits through them are the host's.
+
+**The sandbox.** The prefab `colossus` (`characters/colossus.prefab.ron`: 1200 health, 200 poise, no brain, the locomotion
+`colossus`, 1.2 m wide and 6 m tall) and its parts `combat/colossus.parts.ron` (two legs that double poise, a hand with 60
+health that passes half of a hit to the body, a horn with 80 health out of a sword's reach, a core that starts closed and
+triples a hit). It is spawned only by the scenario `parts.scenario` (and its reference replay `parts.json`): the player breaks
+the hand in three swings, the fourth meets a leg, the core opened by `part` takes the fifth at three times the damage. It spawns
+the colossus as part of the yard region, so the `regen` that ends it takes the colossus away whatever id it had.
+
+**Limits, on purpose.** Parts follow the body's transform, not its animation: a part placed on a swinging arm stays where `at`
+puts it (per-action part poses would be a later slice). The body's guard arc and its hurtbox-based checks are the body's, not
+the part's. Locking on to a part, a part as ground to stand on and a camera for a body this big are R3, R2 and R4.
 
 
 ## Levels from Blender (E4.2)
@@ -3984,6 +4061,7 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `action.objects_capped` | no more combat objects are alive than `CombatTuning::max_objects`: `spawn_objects` lays down only the indices that fit (and warns in the journal), so more, in a tick that spawned objects, names a spawn that went around it (a cap lowered by a reload under the objects alive is no violation) |
 | `action.downed_sane` | every `Downed` body (B5) is not dead too, has no health left (`Health.current` is 0) and a bleed-out that is none or a finite time `>= 0`. `go_down` puts all three in, a revive or a death takes the mark off with them, so a violation names a writer that laid a body down by hand (a downed body with health would stand and take no hits for ever) |
 | `action.grace_sane` | every `Grace` (the hits ignored after a survive or a revive, B5) holds a finite `left >= 0`. `grant_grace` takes only finite times above 0 and the countdown floors at 0, so a NaN or an infinity names a writer that put it there by hand: it would shield its body for ever |
+| `action.parts_sane` | every body part (R1) belongs to a body that is in the world and lists it in `SpawnedParts` (a body that went this tick takes its parts on the next), a broken part is off, and a `PartHealth` is finite with `0 <= current <= max` and `max > 0`. The engine spawns, places, breaks and despawns parts so that this holds; a part that breaks it was written by hand |
 | `action.lock_on_valid` | with a `lock_on` definition, no body's `Intent.target` names an entity that no longer exists or is dead: the lock-on check (`LockSystems::Check`, after `CoreSystems::ClearPresses`) lets go of such a lock at the end of every tick, after the deaths and the engine's despawns of that tick, so a violation names a lock set later in the tick or a body taken away after the check (a game system in `SimSet::Cleanup` after the check: it belongs before it). Without a definition locks are not checked and the rule passes (C6) |
 | `action.pairs_match` | a `Pairing` (a paired action's hold, B3) belongs to the run its fighter is running (the same action and `instance`), its victim (when it still exists) carries `Paired` by that fighter, and every `Paired` whose holder still exists is named by the holder's `Pairing`. The two marks are put in and taken out together (`release_pair`), so one alone is a pair a system broke behind the engine's back |
 | `action.memory_sane` | every `Memory` (what a fighter remembers for a while, B3) is not empty, holds finite times above 0 and keys sorted and unique, and every `GuardArm`'s press is not after the current tick |
@@ -4013,7 +4091,7 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-34 rules, checked after every tick
+35 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
@@ -4035,6 +4113,7 @@ $ shards assert list
   action.objects_capped  engine rule  armed
   action.downed_sane  engine rule  armed
   action.grace_sane  engine rule  armed
+  action.parts_sane  engine rule  armed
   action.lock_on_valid  engine rule  armed
   npc.state_known  engine rule  armed
   npc.strike_spacing  engine rule  armed
@@ -6579,6 +6658,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 | `combat/warden.action.ron` | the guard's four attacks (`slash`, `slam`, `sweep`, `shockwave`), calm and enraged |
 | `combat/body.action.ron`, `combat/body.moveset.ron` | body and motion (B2c): `spar_leap` (a landing search toward the lock-on target, no landing in water over 1 m), `spar_spin` (walks while it spins), `burrow` (intangible, a ghost), `spar_stroke` (`afloat`), the movesets `mover` and `burrower`; net ids 126-129 |
 | `combat/objects.prefab.ron`, `combat/objects.action.ron`, `combat/caster.moveset.ron` | spawned combat objects (B4): the prefabs `bolt`, `bolt_homing` (`Projectile`) and `zone`; the `caster` moveset's volley (three bolts in a fan at the lock-on target, the middle one homing; each bursts where it stops and lays a chilling puddle that hits every 0.8 s), line (six zones ahead, landing one after another) and rings (eight lines of four zones, turned at random, landing from the inside out); net ids 170-185 |
+| `characters/colossus.prefab.ron`, `combat/colossus.parts.ron` | body parts (R1): the prefab `colossus` (6 m tall, 1200 health, no brain, the locomotion `colossus`) and its five parts (two legs that double poise, a hand with 60 health that passes half a hit on, a horn out of reach, a core that starts closed and triples a hit); only `parts.scenario` spawns it |
 | `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters; for the action timeline (B2a), `spar_heavy` (charges into `spar_heavy_full` when held 0.25 s; a light or a dodge pressed in its windup waits for its recovery), `spar_lunge` and `spar_lunge_far` (one `lunge` cooldown slot; the lunge turns at 360°/s within 45°, at most 0.4 m closer for the turning and not toward a target behind a wall, recovers 0.6 s longer on a whiff and keeps 40% of its cooldown when cut in its windup), `spar_channel` (`while_held`), `spar_roll_keep` (`face: Keep`), and the moveset `timeline` (a single slot by priority), which `timeline.scenario` lends to the player; for body state (B2b), `spar_ward` (a barrier of half the caster's health for 8 s), `spar_frost` and `spar_zap` (jabs that carry a full bar of chill or jolt), the moveset `bodystate`, and in `combat/sparring.status.ron` the statuses `spar_chill` (a 2 s proc gate, no cooling and a restart while active, a refused proc empties the bar) and `spar_jolt` (an instant status outside the cap), which `body_state.scenario` lends to the player |
 | `combat/skeleton.action.ron`, `combat/fighters.moveset.ron`, `combat/tuning.combat_tuning.ron` | the skeleton's claw, the movesets, the input buffer |
 | `npc/monsters.behavior.ron`, `monsters.perception.ron`, `monsters.director.ron`, `monsters.attack_plan.ron` | how the monsters think: the `skeleton` and `warden` state machines (with a `calm` state that the scenarios do not let the monster leave), sight, the `default` director (two tokens for one player) and the `boss` director (the guard strikes on its own), the guard's attack plans |
@@ -6611,6 +6691,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 - `timeline.scenario` (B2a) — the player borrows the `timeline` moveset (`combat/sparring.*.ron`) against a still skeleton: a heavy held from the press shows `charging, turns in 0.23s` (`step --until named:charging`) and turns into `spar_heavy_full` (-25), a tapped one stays `spar_heavy` (-12); a light pressed while the heavy winds up answers `ok: queued, light starts in 0.5…` and the jab lands with no `light rejected`; a lunge into nothing writes `e5 spar_lunge missed: +0.60s recovery` and shows `missed +0.60s`; a lunge staggered in its windup keeps 40% of its cooldown on the `lunge` slot, so its variant on `technique.2` answers `lunge is on cooldown (ready in 0.5…)`; a channel started with `hold=true` lasts while held and ends on `hold=false`; locked on the skeleton to the north, a roll east (`spar_roll_keep`, `face: Keep`) keeps the player `facing N`. At the end the player has its own moveset, no `RunExtras` and nothing queued;
 - `body_state.scenario` (B2b) — the player borrows the `bodystate` moveset and the skeleton the `sparring` one: a ward gives the player `barrier 50 (7.…)` and journals `e5 barrier 50 for 8.0s`; three slams of 15 come out of it (`e7 -> e5 spar_slam -15 (hp 100) [barrier -15]`, health whole, `barrier 35`, `20`, `5`) and the fourth hurts for 10 (`(hp 90) [barrier -5]`, no `Barrier` left); `damage_taken id=e7 key=core mult=2 seconds=1` doubles a jab (`-12`) and the next one a second later is `-6` again with no `DamageTaken`; a jab that chills procs `spar_chill`, shows `proc gate spar_chill`, a second inside 2 s is swallowed and empties the bar (`Statuses.0[0].buildup == 0`, the chill not restarted), one past the gate restarts it, and a jolt procs and expires in a tick with no slot. At the end both have their own movesets and no barrier, multiplier, proc gate or chill;
 - `objects.scenario` (B4) — the skeleton e8 borrows the `caster` moveset and volleys at the player: `e8 spawns 3 x bolt_fly`, `combat_objects` and `observe` show the bolts (`projectile of e8`), a side bolt stops at a pillar and lays a puddle at its foot, the middle one meets the player once (`e8 -> e5 bolt_fly -8`, credited to the caster) and its puddle hits from the next tick and then every 0.8 s, building up `spar_chill`; a roll toward the next volley's bolt evades it and the bolt is spent all the same; the line telegraphs its six zones from 0.35 s to 1.15 s and the rings their 32 from 0.50 s to 1.16 s, and every object is gone once its action is over; `objects.json` is its reference replay, and `stand/objects.scenario` plays the volley in co-op (both clients have the host's bolts, by id, and see the host's hits);
+- `parts.scenario` (R1) — a 6 m colossus spawned with the yard region, hit only through its parts: the player locks on (`lock_on` picks it; nothing in the file names its id), the first swing meets the hand (`light_1 at hand -10 (hp 1190)`: the hand loses 20, the body half), the third breaks it (`hand broken by e5`), the fourth meets a leg, the core opened by `part name=core op=on` takes the fifth at three times the damage (`light_1 at core -60`), a broken part refuses to come on, `part op=break` breaks the horn, and the `regen` that ends it takes the colossus and its parts away; `parts.json` is its reference replay;
 - `boss_schedule.scenario` (N8a2, N8b) — the warden on two plans with gated options (`angle`, `players`, `max_repeats`, `forbid_after`) that are tokenless and wait in a strafe of their own, on the same director as two skeletons (`sched_arena`: two tokens, strikes 0.7 s apart), all written with `content_apply`; the skeletons take the director's tokens (`e7 takes an attack token on e5`) and the warden none (`!journal "e6 takes an attack token"`), and `npc_state` shows its grant as `"counted": false`: `npc_schedule` explains each refusal (`angle: the target is 10 degrees off the facing; this option needs 95-180`, `players: 1 living, this option needs 2-3`), a 900-tick fight holds every gate under the engine rules (`npc.plan_sequence` among them), and a phase swap keeps the history and the cooldowns the two plans share by name; `boss_schedule.json` is its reference replay, and `stand/boss_schedule.scenario` counts the living players in co-op (three, then two when a client's body dies) and shows a client the host's plan history;
 - `boss_fight`, `dodge`, `errors` — the switch to phase 2, a roll to dodge a hit, errors that teach;
 - `npc_director.scenario` (E6) — three skeletons against one player in god mode, 30 s of combat: the sandbox condition `three_attacking`
@@ -6648,7 +6729,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
   generated`), the hash is `7bbfdc3b62623fbc` again, and `save_check` agrees.
 
 The scenarios start with `heal`/`teleport`/`set`/`npc_set_state … calm`, so they run on a fresh game and after other scenarios, in any order:
-CI runs them forward and then backward in one game. Sessions of eighteen of them are recorded as reference replays in `tests/replays/`
+CI runs them forward and then backward in one game. Sessions of nineteen of them are recorded as reference replays in `tests/replays/`
 (`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`; see "Replays").
 
 ## Tests and CI
