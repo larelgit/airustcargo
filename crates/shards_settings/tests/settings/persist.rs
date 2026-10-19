@@ -779,3 +779,17 @@ fn a_game_that_asked_for_nothing_never_reads_the_shared_controls_folder() {
     assert!(lines(&app, JournalKind::Event, "imported").is_empty());
     assert!(app.world().resource::<ControlSettings>().bindings.is_empty());
 }
+
+#[test]
+fn a_file_saved_before_hit_stop_existed_loads_and_takes_the_defaults_for_it() {
+    // A settings file from an older build: an accessibility table without `hit_stop` and
+    // `hit_stop_local_only`. The values it has are kept, the ones it lacks are the defaults.
+    let dir = TempDir::new("older_file");
+    std::fs::write(dir.file(), "[accessibility]\ncamera_shake = 0.3\nfov_deg = 95.0\n").unwrap();
+    let app = game_in(&dir);
+    let a = app.world().resource::<AccessibilitySettings>();
+    assert_eq!(a.camera_shake, 0.3);
+    assert_eq!(a.fov_deg, 95.0);
+    assert_eq!(a.hit_stop, AccessibilitySettings::default().hit_stop, "the missing hit_stop is the default");
+    assert_eq!(a.hit_stop_local_only, AccessibilitySettings::default().hit_stop_local_only);
+}

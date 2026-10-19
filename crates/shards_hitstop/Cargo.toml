@@ -1,0 +1,24 @@
+[package]
+name = "shards_hitstop"
+description = "Shards hit stop (C2): a brief hold of the picture, and of the real-time clock when playing alone, when a blow lands."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+shards_content.workspace = true
+shards_action.workspace = true
+shards_settings.workspace = true
+bevy = { workspace = true, features = ["std", "serialize", "bevy_asset"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+ron.workspace = true
+# Integration tests build apps the way a game does: the whole engine (`shards::testing`).
+shards = { workspace = true, features = ["render", "remote", "hot_reload"] }

@@ -279,11 +279,25 @@ pub struct AccessibilitySettings {
     /// Every held button (`block`, `sprint`, ...) works as a toggle: press once to hold, again
     /// to let go.
     pub hold_to_toggle: bool,
+    /// How long a hit stop (the brief hold of the picture, and of the clock when playing alone,
+    /// when a blow lands) lasts, as a share of what the game designed: 0 (never) to 1.
+    pub hit_stop: f64,
+    /// A hit stop only for the blows the local player takes part in, not for the fights around them.
+    pub hit_stop_local_only: bool,
 }
 
 impl Default for AccessibilitySettings {
     fn default() -> Self {
-        Self { camera_shake: 1.0, motion_blur: 0.5, flashes: "full".into(), text_scale: 1.0, fov_deg: 70.0, hold_to_toggle: false }
+        Self {
+            camera_shake: 1.0,
+            motion_blur: 0.5,
+            flashes: "full".into(),
+            text_scale: 1.0,
+            fov_deg: 70.0,
+            hold_to_toggle: false,
+            hit_stop: 1.0,
+            hit_stop_local_only: false,
+        }
     }
 }
 
@@ -291,6 +305,11 @@ impl AccessibilitySettings {
     /// `camera_shake` within 0..1.
     pub fn shake(&self) -> f32 {
         unit(self.camera_shake, 1.0)
+    }
+
+    /// `hit_stop` within 0..1 (0: no hit stop at all).
+    pub fn hit_stop_scale(&self) -> f32 {
+        unit(self.hit_stop, 1.0)
     }
 
     /// `motion_blur` within 0..1.
@@ -317,6 +336,7 @@ impl AccessibilitySettings {
     pub fn check(&self) -> Result<(), String> {
         range("accessibility.camera_shake", self.camera_shake, 0.0, 1.0)?;
         range("accessibility.motion_blur", self.motion_blur, 0.0, 1.0)?;
+        range("accessibility.hit_stop", self.hit_stop, 0.0, 1.0)?;
         range("accessibility.text_scale", self.text_scale, 0.5, 3.0)?;
         range("accessibility.fov_deg", self.fov_deg, 30.0, 120.0)?;
         if FlashLevel::parse(&self.flashes).is_none() {

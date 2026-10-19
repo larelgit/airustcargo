@@ -81,7 +81,9 @@ pub(crate) use window::plugin;
 mod window {
     use std::collections::{BTreeMap, VecDeque};
 
-    use ai_core::{sim, AiId, AiIndex};
+    use std::time::Duration;
+
+    use ai_core::{sim, AiId, AiIndex, PresentationHolds};
     use bevy::prelude::*;
     use bevy::transform::TransformSystems;
     use shards_core::{NetPrediction, Predicted};
@@ -173,15 +175,22 @@ mod window {
         let jitter = world.resource::<NetClient>().clock.target.saturating_sub(2).max(0) as f64;
         let overstep = world.get_resource::<Time<Fixed>>().map_or(0.0, |t| t.overstep_fraction_f64());
         let at = sim::tick(world) as f64 + overstep - offset - (def.send_every as f64 + jitter);
-        let moves: Vec<(Entity, GlobalTransform)> = {
+        let moves: Vec<(Entity, AiId, Transform)> = {
             let interp = world.resource::<NetInterpolation>();
             let index = world.resource::<AiIndex>();
-            interp
-                .tracks
-                .iter()
-                .filter_map(|(id, states)| Some((index.get(AiId(*id))?, GlobalTransform::from(sample(states, at)?))))
-                .collect()
+            interp.tracks.iter().filter_map(|(id, states)| Some((index.get(AiId(*id))?, AiId(*id), sample(states, at)?))).collect()
         };
+        // A picture hold (a hit stop) freezes the drawn pose and then catches up to the sampled
+        // one: the rule the local bodies' render interpolation follows (`shards_motion::interp`).
+        let now = world.get_resource::<Time<Real>>().map_or(Duration::ZERO, Time::elapsed);
+        let mut holds = world.get_resource_mut::<PresentationHolds>().filter(|h| !h.is_empty());
+        let moves: Vec<(Entity, GlobalTransform)> = moves
+            .into_iter()
+            .map(|(entity, id, live)| {
+                let drawn = holds.as_mut().map_or(live, |holds| holds.drawn(id, now, live));
+                (entity, GlobalTransform::from(drawn))
+            })
+            .collect();
         for (entity, shown) in moves {
             let Some(mut gt) = world.get_mut::<GlobalTransform>(entity) else { continue };
             if *gt == shown {

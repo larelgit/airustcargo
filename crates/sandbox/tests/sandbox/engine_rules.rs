@@ -549,3 +549,13 @@ fn the_rules_keep_their_query_states_in_the_world() {
     let again = sandbox::test_app(42);
     assert!(again.world().resource::<ai_core::RuleQueries>().is_empty(), "another app starts empty: nothing is shared");
 }
+
+#[test]
+fn a_tick_that_ran_inside_a_hit_stop_hold_stops_the_game() {
+    // The rule that keeps hit stop the picture's: the clock hold consumes zero ticks. Break it on purpose, the way
+    // a system that ran the fixed schedule while the clock was held would leave it.
+    let mut app = sandbox::test_app(42);
+    app.world_mut().resource_mut::<ai_core::ClockHold>().ticks_inside = 2;
+    let line = stops_on(&mut app, "hitstop.no_ticks_inside", 1);
+    assert!(line.contains("2 simulation tick(s) ran while the clock was held for a hit stop"), "{line}");
+}
