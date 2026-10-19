@@ -824,7 +824,7 @@ fn feet_on(stand: &Stand, member: usize, id: &str) -> Option<Vec3> {
 #[test]
 fn ground_laid_mid_play_comes_to_a_client_and_holds_its_body() {
     use shards::ai_core::AiKind;
-    use shards::motion::{Collider, Shape};
+    use shards::motion::{Body, Collider, Shape};
     let mut stand = stand_with(1, lossy());
     let player = body(&stand, C1);
     for id in ["e6", "e7", "e8", "e14"] {
@@ -833,7 +833,7 @@ fn ground_laid_mid_play_comes_to_a_client_and_holds_its_body() {
     stand.run(10);
     let slab = stand
         .world_mut(HOST)
-        .spawn((Name::new("Slab"), AiKind("Slab".into()), Collider::new(Shape::cuboid(Vec3::new(1.5, 0.5, 1.5))), Transform::from_xyz(0.0, 0.5, 4.0)))
+        .spawn((Name::new("Slab"), AiKind("Slab".into()), Collider::new(Shape::cuboid(Vec3::new(1.5, 0.5, 1.5))), Body::Static, Transform::from_xyz(0.0, 0.5, 4.0)))
         .id();
     let slab = stand.world(HOST).get::<AiId>(slab).unwrap().to_string();
     assert!(stand.call(HOST, "teleport", json!({"id": player, "x": 0, "z": 4, "y": 3})).ok);

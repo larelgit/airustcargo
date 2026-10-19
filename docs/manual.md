@@ -813,7 +813,8 @@ game despawns them. The rules:
 Tests:
 
 - `shards_motion` `tests/motion/ground.rs`: a slab laid from a system, static or kinematic, is landed on and walked along, and
-  is climbed like any ledge; when it goes, the body falls back to the floor.
+  is climbed like any ledge; when it goes, the body falls back to the floor. A kinematic slab that slides away
+  leaves the body where it stood.
 - The sandbox's `snapshots.rs` and `net.rs`: the same slab with `AiKind` survives a load and reaches a client, and its removal
   reaches both.
 

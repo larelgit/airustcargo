@@ -1,7 +1,8 @@
 //! Temporary ground (R2): a collider a game lays down in the middle of play, from a system inside
 //! the simulation, is ground and solid for a character from the next tick, and its going drops what
-//! stood on it. A game's toppled boss is such ground while it lies still (the manual's "Temporary
-//! ground (R2)"). Static or kinematic: the controller asks only for the `WORLD` layer.
+//! stood on it. A game's toppled boss is such ground while it lies still (the manual's "Ground laid
+//! in the middle of play (R2)"). Static or kinematic: the controller asks only for the `WORLD` layer;
+//! a kinematic one that moves does not carry what stands on it.
 
 use ai_core::SimSet;
 use bevy::prelude::*;
@@ -93,4 +94,37 @@ fn a_slab_laid_mid_play_is_climbed_like_any_ledge() {
     assert!(seen(&app).mantled.len() > before, "it mantled: {:?}", seen(&app).mantled);
     assert!(at.x > -2.0 && at.x < 2.0 && (at.y - 1.0).abs() < 0.02 && state(&app, walker).grounded, "stands on top: {at}");
     assert_clear(&app, walker);
+}
+
+/// How far (m) a game system moves the slab along +X each tick, after it is laid: a kinematic
+/// platform a game moves.
+#[derive(Resource, Default)]
+struct Slide(f32);
+
+fn slide(slide: Res<Slide>, plan: Res<Plan>, mut transforms: Query<&mut Transform>) {
+    if slide.0 != 0.0
+        && let Some(slab) = plan.slab
+        && let Ok(mut tf) = transforms.get_mut(slab)
+    {
+        tf.translation.x += slide.0;
+    }
+}
+
+#[test]
+fn a_kinematic_slab_that_moves_leaves_what_stands_on_it_behind() {
+    let (mut app, hero) = arena();
+    app.init_resource::<Slide>().add_systems(FixedUpdate, slide.in_set(SimSet::Act).after(lay_and_lift));
+    app.world_mut().resource_mut::<Plan>().lay = Some(Body::Kinematic);
+    step(&mut app, 90);
+    let x = feet(&app, hero).x;
+    assert!(ground_under(&app, hero).1, "stands on the slab");
+    // 3 m along +X a second: the slab slides out from under the body, which stays where it stood
+    // (no platform motion) and falls to the floor.
+    app.world_mut().resource_mut::<Slide>().0 = 0.05;
+    step(&mut app, 120);
+    let at = feet(&app, hero);
+    assert!((at.x - x).abs() < 0.05, "not carried: from x {x} to {at}");
+    let (y, grounded) = ground_under(&app, hero);
+    assert!(y.abs() < 0.02 && grounded, "fell to the floor: {at} (grounded {grounded})");
+    assert_eq!(seen(&app).landed.len(), 2);
 }
