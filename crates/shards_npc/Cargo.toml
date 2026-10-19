@@ -28,5 +28,6 @@ schemars.workspace = true
 ron.workspace = true
 
 [dev-dependencies]
+shards_rules.workspace = true
 # Test apps load their content through the asset server, like a game.
 bevy = { workspace = true, features = ["std", "serialize", "bevy_asset", "bevy_state", "multi_threaded"] }

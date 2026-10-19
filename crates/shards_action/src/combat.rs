@@ -126,8 +126,9 @@ pub struct DamageCtx {
     pub hit: usize,
     /// `HitDef::damage` as written (the motion value when a game applies its own formula).
     pub base: f32,
-    /// What the engine made of `base`: `base * taken * guard_mult`, then `Armor`. A hook that
-    /// rebuilds damage from `base` folds `taken` and `guard_mult` in itself.
+    /// What the engine made of `base`: `base * taken * guard_mult * rules`, then `Armor`. A hook that
+    /// rebuilds damage from `base` folds `taken`, `guard_mult` and `rules` in itself (never the
+    /// credit's outgoing factor: the engine applies that after the hooks).
     pub damage: f32,
     pub poise: f32,
     pub status: Vec<(String, f32)>,
@@ -151,6 +152,12 @@ pub struct DamageCtx {
     pub taken: f32,
     /// The guard multiplier applied to `damage` (a block's or a guard break's); `None` when unguarded.
     pub guard_mult: Option<f32>,
+    /// The target class's `incoming_damage` rule (`shards_rules`); 1 without rules, and for a hit
+    /// that never reaches the target's health (god mode, an evade, a parry). Already in `damage`,
+    /// like `taken`: a hook that rebuilds damage from `base` folds it in. It does not scale poise,
+    /// and the credited body's outgoing factor is not here: `resolve` applies it after the hooks, to
+    /// the health and poise damage of a hit, a block and a guard break, so no hook folds it.
+    pub rules: f32,
     /// Weight floor; the engine raises it (heavy reaction, break) when it applies the hit.
     pub weight: HitWeight,
     /// The hit is a paired action's strike on its victim, in the pair's state (B3): it will weigh
@@ -515,6 +522,7 @@ fn resolve(world: &mut World, d: Detected) {
         knockback: hit.knockback,
         taken: 1.0,
         guard_mult: None,
+        rules: 1.0,
         weight: if pair { def.weight.unwrap_or_default().max(HitWeight::Finisher) } else { def.weight.unwrap_or_default() },
         pair,
     };
@@ -522,6 +530,15 @@ fn resolve(world: &mut World, d: Detected) {
     let hooks = world.resource::<DamageHooks>().0.clone();
     for hook in hooks {
         hook(&mut ctx, world);
+    }
+    // The rules' outgoing factor of the credited body (its class's, times the session row's), after the hooks:
+    // the credit is final here, so it follows a combat object's owner however the owner was named.
+    if matches!(ctx.outcome, Outcome::Hit | Outcome::Blocked { .. } | Outcome::GuardBroken) {
+        let out = shards_rules::outgoing(world, ctx.credit);
+        if out != 1.0 {
+            ctx.damage *= out;
+            ctx.poise *= out;
+        }
     }
     // A hit that met the target (struck it, or its guard) is no miss for `miss_recovery`.
     if matches!(ctx.outcome, Outcome::Hit | Outcome::Blocked { .. } | Outcome::Parried { .. } | Outcome::GuardBroken)
@@ -597,6 +614,11 @@ pub fn modifiers(world: &World, ctx: &mut DamageCtx) {
     if let Some(taken) = world.get::<DamageTaken>(target) {
         ctx.taken = taken.product();
         ctx.damage *= ctx.taken;
+    }
+    // The target class's incoming rule, where `taken` sits: before `Armor`'s flat part.
+    ctx.rules = shards_rules::incoming(world, target);
+    if ctx.rules != 1.0 {
+        ctx.damage *= ctx.rules;
     }
     if let Some(armor) = world.get::<Armor>(target) {
         ctx.damage = armor.reduce(ctx.damage);
@@ -840,7 +862,9 @@ fn hurt(world: &mut World, target: Entity, damage: f32) -> (f32, f32) {
     (health.current, absorbed)
 }
 
-/// Damage that is not a hit: a status hook's burn, a hazard. Takes `amount` off `target`'s barrier,
+/// Damage that is not a hit: a status hook's burn, a hazard. It is never scaled by the rules
+/// (`shards_rules`): a pit or a kill volume that deals the target's health must kill in every mode; a
+/// game's damage over time that the rules should scale calls [`deal_ruled_damage`]. Takes `amount` off `target`'s barrier,
 /// then its health, and kills it when its health runs out (`Died`, with `credit` as the killer
 /// and no action). Returns the health left. Nothing is done to a dead or gone entity, to one in
 /// god mode ([`Invulnerable`]), or for an `amount` that is not a finite number above 0. It runs none of the hit
@@ -862,6 +886,15 @@ pub fn deal_damage(world: &mut World, target: Entity, amount: f32, credit: Optio
         kill_with(world, target, credit, None, None);
     }
     hp_left
+}
+
+/// [`deal_damage`] with `amount` times the target's incoming factor from the rules in play
+/// (`shards_rules::incoming`): a game's burn tick or chain damage. No outgoing factor is applied: a
+/// game that captures a source's power multiplies it by `shards_rules::outgoing` where it captures it.
+/// Without rules, or at a factor of 1, it is `deal_damage` with `amount` as it is.
+pub fn deal_ruled_damage(world: &mut World, target: Entity, amount: f32, credit: Option<Entity>) -> f32 {
+    let factor = shards_rules::incoming(world, target);
+    deal_damage(world, target, if factor != 1.0 { amount * factor } else { amount }, credit)
 }
 
 /// Whether `target`'s health has run out: what [`finish_if_dead`] kills on.

@@ -30,6 +30,7 @@ shards_core.workspace = true
 shards_content.workspace = true
 shards_settings.workspace = true
 shards_motion.workspace = true
+shards_rules.workspace = true
 bevy = { workspace = true, features = ["std", "serialize"] }
 serde.workspace = true
 serde_json.workspace = true

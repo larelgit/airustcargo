@@ -5467,6 +5467,7 @@ dependencies = [
  "shards_content",
  "shards_core",
  "shards_motion",
+ "shards_rules",
  "shards_settings",
 ]
 
@@ -5690,6 +5691,7 @@ dependencies = [
  "shards_core",
  "shards_level",
  "shards_motion",
+ "shards_rules",
  "shards_world",
 ]
 
