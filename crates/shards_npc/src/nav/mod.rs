@@ -709,11 +709,14 @@ fn keep_on_leash(vel: Vec3, here: Vec3, home: Vec3, leash: f32) -> Vec3 {
     if outward > 0.0 { vel - n * outward } else { vel }
 }
 
+/// What `drive_intents` reads and writes per NPC (`AimTarget` is optional: a body restored without it gets it).
+type DriveData = (Entity, &'static NpcBrain, &'static NavAgent, &'static mut NpcDrive, &'static mut Intent, Option<&'static mut AimTarget>);
+
 /// `NpcSystems::Drive`: what NPCs decided goes into their `Intent`, like a keyboard's: the
 /// movement, the point to face, the presses, the held inputs, and its brain's target for `AimTarget`. An NPC with orders of its own
 /// (an agent took it over with `move_to` or `attack`) follows those instead.
 pub(crate) fn drive_intents(
-    mut npcs: Query<(Entity, &NpcBrain, &NavAgent, &mut NpcDrive, &mut Intent, Option<&mut AimTarget>), With<Npc>>,
+    mut npcs: Query<DriveData, With<Npc>>,
     mut commands: Commands,
 ) {
     for (entity, brain, agent, mut drive, mut intent, aim_target) in &mut npcs {
