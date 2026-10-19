@@ -1,0 +1,4 @@
+// A caster of combat objects (tests/combat/objects.rs): a volley at its target, a chain of actions.
+{
+    "t_caster": (inputs: {"light": "t_volley", "heavy": "t_chain_a"}),
+}

@@ -495,6 +495,51 @@ fn body_and_motion_state_that_does_not_belong_stops_the_game() {
 }
 
 #[test]
+fn combat_objects_that_do_not_add_up_stop_the_game() {
+    use shards::action::{CombatObject, Projectile, ProjectileFlight};
+    use shards::ai_core::AiKind;
+    // A projectile that flies nowhere.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let object = CombatObject { owner: AiId(6), action: "bolt".into(), ..default() };
+        let flight = ProjectileFlight { dir: Vec3::NAN, ..default() };
+        world.spawn((AiKind::new("projectile"), object, Projectile { speed: 15.0, lifetime: 2.0, ..default() }, flight, Transform::default()));
+    });
+    let line = stops_on(&mut app, "action.objects_sane", 2);
+    assert!(line.contains("projectile dir = ") && line.contains("a unit vector, or zero once stopped"), "{line}");
+
+    // An object whose owner was never there.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        world.spawn((AiKind::new("zone"), CombatObject { owner: AiId(9999), stay: true, ..default() }, Transform::default()));
+    });
+    let line = stops_on(&mut app, "action.objects_sane", 2);
+    assert!(line.contains("combat object of e9999, which is not in the world"), "{line}");
+
+    // More objects than the cap, spawned around `spawn_objects`.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let spawned = ai_core::sim::tick(world);
+        for _ in 0..257 {
+            world.spawn((AiKind::new("zone"), CombatObject { owner: AiId(6), spawned, stay: true, ..default() }, Transform::default()));
+        }
+    });
+    let line = stops_on(&mut app, "action.objects_capped", 2);
+    assert!(line.contains("257 combat objects alive, over max_objects 256"), "{line}");
+
+    // The same count from an earlier tick is a cap lowered under the objects alive (a reload):
+    // they stay, and the game goes on.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        for _ in 0..257 {
+            world.spawn((AiKind::new("zone"), CombatObject { owner: AiId(6), spawned: 1, stay: true, ..default() }, Transform::default()));
+        }
+    });
+    let out = called(&mut app, "step", json!({"ticks": 20}));
+    assert!(out.halted.is_none(), "{}", text(&out));
+}
+
+#[test]
 fn an_npc_in_a_state_its_behavior_lacks_stops_the_game() {
     use shards::npc::NpcBrain;
     let mut app = sandbox::test_app(42);

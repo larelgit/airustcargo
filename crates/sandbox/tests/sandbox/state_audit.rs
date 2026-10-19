@@ -104,6 +104,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("shards_action::combat::DamageHooks", "the damage hooks, registered at build time"),
     ("shards_action::machine::ActionEffects", "the custom action effects, registered at build time"),
     ("shards_action::machine::PendingEffects", "effects queued and run inside one tick: empty between ticks"),
+    ("shards_action::objects::MetProjectiles", "projectiles that met a target this tick, taken in the same tick: empty between ticks"),
     ("shards_action::predict::ActionPredictor", "a co-op client's predicted actions; a host or a single player never uses it"),
     ("shards_action::render::", "animation graphs, the threat HUD and the combat overlay: the picture"),
     ("shards_action::status::StatusEffects", "the status effect hooks, registered at build time"),
@@ -116,6 +117,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("shards_content::db::ContentDb", "loaded content: the world is built around it, and snapshots check its hash"),
     ("shards_content::db::ContentKinds", "the content kinds, registered at build time"),
     ("shards_content::load::ContentLoading", "the content loader's progress"),
+    ("shards_content::prefab::PrefabCache", "prefabs built from content, kept until their definitions change: a cache, not simulation state"),
     // shards_core
     ("shards_core::EngineConfig", "the engine's configuration, set at start"),
     ("shards_core::EngineModules", "the engine modules, registered at build time"),

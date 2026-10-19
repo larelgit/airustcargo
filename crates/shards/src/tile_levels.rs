@@ -89,7 +89,21 @@ impl Plugin for TileLevelsPlugin {
             .add_content_check::<TileDef>("level file", check_tile_file)
             .set_level_spawner(LevelSpawner { spawn, request, status, check, forget, next_instance, restart_instances })
             .add_observer(retag_level_entity)
-            .add_observer(retag_level_marker);
+            .add_observer(retag_level_marker)
+            .add_observer(region_objects);
+    }
+}
+
+/// A combat object spawned while a region is loaded belongs to it: a region change takes it with
+/// the rest (its owner may be the player, who stays). A co-op client's come over with the tag.
+fn region_objects(
+    add: On<Add<shards_action::CombatObject>>,
+    region: Option<Res<shards_world::ActiveRegion>>,
+    role: Option<Res<shards_core::NetRole>>,
+    mut commands: Commands,
+) {
+    if region.is_some() && role.is_none_or(|r| r.simulates()) {
+        commands.entity(add.entity).try_insert(RegionPart);
     }
 }
 
