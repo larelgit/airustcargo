@@ -1,0 +1,5 @@
+// The fighter of the scheduler tests: three inputs, two actions (`turn` and `heavy` both swing the
+// smash, so a test can tell which option started by the action it sees).
+{
+    "sched": (inputs: {"light": "jab", "heavy": "smash", "turn": "smash"}, stagger: "grunt_stagger"),
+}
