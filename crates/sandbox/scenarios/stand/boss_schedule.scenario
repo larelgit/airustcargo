@@ -1,7 +1,8 @@
 # The boss scheduler in co-op (N8a2): the warden fights (its plan is gameplay state every member hashes), a host and two
 # clients on 100 ms links with 1% loss. `npc_schedule` counts the session's living players (three), the stand must not report a
 # desync, and when a client's body dies the host counts two. A co-op session refuses `content_apply`, so the gated plans of
-# the single-game scenario cannot be applied here: the check is the player count the `players` gate reads.
+# the single-game scenario cannot be applied here: the check is the player count the `players` gate reads. A client shows the
+# host's plan (history, no token) and refuses `npc_schedule`: the host owns NPC plans.
 #
 #   cargo sandbox --stand 2 --headless --paused --port 0 --port-file F &
 #   SHARDS_PORT_FILE=F cargo shards wait --peer all
@@ -42,6 +43,12 @@ step 600
 invariant !journal "desync"
 @c1 act npc_state id=e6
 expect result contains "\"id\": \"warden\""
+expect result contains "\"token\": null"
+# the client runs no planner: a history in its answer is the host's, replicated
+expect result !contains "\"history\": []"
+# and it does not answer for the host
+@c1 act? npc_schedule id=e6 target=e5
+expect result contains "the host owns NPC plans: ask the host"
 
 # --- a client's body falls: the host counts two
 @host act set id=e15 component=Health path=current value=0

@@ -40,12 +40,16 @@ invariant field e5 Health.current > 0
 
 # --- 1. the explanation: the same judge as the planner, against any angle and any player count
 # (nothing moves, and the distance is fixed so that the range decides nothing)
+# The plan starts clean, so no cooldown refuses what the checks below read.
+act set id=e6 component=NpcPlan value='{"history": [], "cooldowns": [], "rest": 0.5, "attacks": 0}'
 act npc_schedule id=e6 target=e5 distance=1.5 angle=150
 expect result contains "\"what_if\": true"
+expect result contains "\"eligible\": true"
 expect result !contains "angle:"
 act npc_schedule id=e6 target=e5 distance=1.5 angle=10
 expect result contains "angle: the target is 10 degrees off the facing; this option needs 95-180"
 act npc_schedule id=e6 target=e5 distance=1.5 players=2
+expect result contains "\"eligible\": true"
 expect result !contains "players: "
 act npc_schedule id=e6 target=e5 distance=1.5
 expect result contains "players: 1 living, this option needs 2-3"

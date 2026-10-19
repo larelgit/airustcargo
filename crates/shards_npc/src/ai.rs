@@ -188,7 +188,11 @@ pub struct NpcScheduleArgs {
     pub players: Option<u32>,
 }
 
-fn npc_schedule(In(call): In<Call<NpcScheduleArgs>>, p: ScheduleParams) -> ToolResult<Value> {
+fn npc_schedule(In(call): In<Call<NpcScheduleArgs>>, p: ScheduleParams, role: Option<Res<shards_core::NetRole>>) -> ToolResult<Value> {
+    // The grants, the targets and the think timers it reads are the host's; a client has none of them.
+    if role.is_some_and(|r| !r.simulates()) {
+        return Err("the host owns NPC plans: ask the host".to_owned());
+    }
     let args = &call.args;
     if let Some(angle) = args.angle
         && !(0.0..=180.0).contains(&angle)

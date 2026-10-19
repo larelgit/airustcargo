@@ -31,6 +31,11 @@
         in_range_only: true,
         rest: (0.1, 0.2),
     ),
+    // The same draw on decision ticks only, with the choice kept in between (not in_range_only).
+    "sched_decide": (
+        options: [(input: "light", weight: 3.0, max: Some(3.0)), (input: "heavy", weight: 1.0, max: Some(3.0)), (input: "turn", weight: 2.0, max: Some(3.0), angle: Some((0.0, 90.0)))],
+        rest: (0.1, 0.2),
+    ),
     // Every gate at once.
     "sched_all": (
         options: [

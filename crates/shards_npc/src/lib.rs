@@ -135,7 +135,7 @@ pub use nav::{
 };
 pub use overlay::NpcOverlay;
 pub use perception::{sees, sees_within, sight_clear, HeardAt, Noise, Perceived, Sensed, Sound};
-pub use planner::{banned, choose, pick_weighted, resolve, NpcOptions, NpcPlan, PastAttack, Resolved};
+pub use planner::{banned, choose, pick_weighted, resolve, NpcOptions, NpcPlan, PastAttack, PlanCooldown, Resolved};
 pub use schedule::{schedule_report, target_angle, OptionReport, PickReport, Refusal, ScheduleParams, ScheduleReport, WhatIf};
 pub use strike::{spacing_ticks, wait_of, NpcStrike};
 

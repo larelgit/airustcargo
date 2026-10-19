@@ -350,10 +350,14 @@ pub fn schedule_report(p: &ScheduleParams, entity: Entity, what_if: &WhatIf, dev
     let Some(target_id) = what_if.target.or(holds.map(|g| g.target)).or(f.brain.target) else {
         return Err(format!("{id} has no target: pass target=e5 to judge against one"));
     };
-    // Where the NPC perceives the target; a target it does not know (a what-if) where it stands.
+    // Where the NPC perceives the target; a what-if target it does not know is where it stands.
+    // An NPC does not cheat: its own target that it does not perceive is not judged (the planner skips it).
     let known = if what_if.target.is_none() { target_of(&p.index, &p.targets, f.perceived, target_id) } else { None };
     let (there, radius) = match known {
         Some(found) => found,
+        None if what_if.target.is_none() => {
+            return Err(format!("{id} does not perceive {target_id}: pass target={target_id} to judge as a what-if"));
+        }
         None => {
             let seen = p.index.get(target_id).and_then(|e| p.targets.get(e).ok());
             match seen {
@@ -393,7 +397,7 @@ pub fn schedule_report(p: &ScheduleParams, entity: Entity, what_if: &WhatIf, dev
         .map(|(i, o)| {
             let why = refusal(o, &inputs);
             let outside = !in_window(o, distance);
-            // The distance window sits between the cooldown and the angle, as Godot orders it.
+            // The distance window sits between the cooldown and the angle, the order the planner judges them in.
             let early = matches!(why, Some(Refusal::Weight | Refusal::Cooldown { .. }));
             let refused = match &why {
                 Some(r) if early => Some(refusal_text(r, spacing)),

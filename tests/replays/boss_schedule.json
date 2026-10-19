@@ -723,6 +723,25 @@
     },
     {
       "call": {
+        "at": 150,
+        "agent": "scenario",
+        "scope": "dev",
+        "subject": 5,
+        "tool": "set",
+        "args": {
+          "component": "NpcPlan",
+          "id": "e6",
+          "value": {
+            "attacks": 0,
+            "cooldowns": [],
+            "history": [],
+            "rest": 0.5
+          }
+        }
+      }
+    },
+    {
+      "call": {
         "at": 1050,
         "agent": "scenario",
         "scope": "dev",
@@ -1439,7 +1458,7 @@
     },
     {
       "tick": 180,
-      "hash": "8f4575dae82354ff",
+      "hash": "a5716b66ce8acd4e",
       "parts": {
         "entities": {
           "e1": {
@@ -1529,7 +1548,7 @@
             "Npc": "d89d663dee8e29f0",
             "NpcBrain": "12a62ccfcd929477",
             "NpcDrive": "79ce91c6366ab245",
-            "NpcPlan": "ff8b305cff2fb9af",
+            "NpcPlan": "59bef5067e50d9a6",
             "Perceived": "2bf95b97d3b5fc1c",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",
@@ -1669,7 +1688,7 @@
     },
     {
       "tick": 240,
-      "hash": "e62d6ff75c3f362e",
+      "hash": "b108731561f7390d",
       "parts": {
         "entities": {
           "e1": {
@@ -1759,7 +1778,7 @@
             "Npc": "d89d663dee8e29f0",
             "NpcBrain": "2ac3e22aa5535c43",
             "NpcDrive": "79ce91c6366ab245",
-            "NpcPlan": "ff8b305cff2fb9af",
+            "NpcPlan": "59bef5067e50d9a6",
             "Perceived": "2bf95b97d3b5fc1c",
             "Poise": "fd9e11bfbe548f9d",
             "Statuses": "3fb30d18ef67d4e2",

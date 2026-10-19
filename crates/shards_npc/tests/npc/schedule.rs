@@ -230,10 +230,16 @@ fn held_back(app: &mut App, e: Entity) {
 
 #[test]
 fn a_dev_caller_gets_the_draw_the_planner_makes_next() {
+    for (plan, least) in [("sched_draw", 1000), ("sched_decide", 50)] {
+        draw_matches(plan, least);
+    }
+}
+
+fn draw_matches(plan: &str, least: usize) {
     let mut matched = 0;
     for seed in 0..50u64 {
         let mut app = app_seeded(seed, record_starts);
-        let e = duel(&mut app, "sched_draw", "grunt");
+        let e = duel(&mut app, plan, "grunt");
         held_back(&mut app, e);
         let id = id(&app, e);
         step(&mut app, 3);
@@ -252,7 +258,7 @@ fn a_dev_caller_gets_the_draw_the_planner_makes_next() {
             matched += 1;
         }
     }
-    assert!(matched >= 1000, "{matched} draws compared");
+    assert!(matched >= least, "{plan}: {matched} draws compared");
 }
 
 /// `npc_schedule` as a Player-scope agent.
@@ -271,10 +277,15 @@ fn off_a_decision_tick_there_is_no_forecast() {
     held_back(&mut app, e);
     step(&mut app, 1);
     let id = id(&app, e);
-    let (mut with, mut without) = (0, 0);
+    let (mut with, mut without, mut between) = (0, 0, 0);
     for _ in 0..40 {
         let report = schedule(&mut app, json!({"id": id}));
         if report["pick"].is_null() {
+            let says = report["chooses"].as_str().unwrap();
+            if says.starts_with("between decisions") {
+                between += 1;
+            }
+            assert!(says.starts_with("between decisions") || says.starts_with("no grant") || says.starts_with("resting") || says.starts_with("running") || says.starts_with("holds"), "{report}");
             without += 1;
         } else {
             with += 1;
@@ -282,6 +293,7 @@ fn off_a_decision_tick_there_is_no_forecast() {
         step(&mut app, 1);
     }
     assert!(with >= 1 && without >= 1, "{with} with a pick, {without} without");
+    assert!(between >= 1, "the report never said it was between decisions");
 }
 
 #[test]
@@ -301,6 +313,15 @@ fn what_the_planner_chooses_is_what_the_report_called_eligible() {
             let facing = Quat::from_rotation_y((seed * 53 + u64::from(k) * 97) as f32 % 360.0 * std::f32::consts::PI / 180.0) * N;
             let e = npc(world, "sched", Npc::new("grunt", "grunt").with_plan("sched_all").with_director("loose"), at, facing);
             world.entity_mut(e).insert(CharacterParams { turn_speed_deg: 90.0, locked_turn_speed_deg: 90.0, ..default() });
+            // Histories and cooldowns that differ by seed, so the bans and the gates have something to judge.
+            let mut plan = NpcPlan::default();
+            if (seed + u64::from(k)) % 3 == 0 {
+                plan.history.push(shards_npc::PastAttack { name: "pair".into(), tags: vec!["zone_center".into()] });
+            }
+            if (seed + u64::from(k)) % 2 == 0 {
+                plan.cooldowns.push(shards_npc::PlanCooldown { name: "turn".into(), left: 0.5 * ((seed + u64::from(k)) % 5) as f32 });
+            }
+            world.entity_mut(e).insert(plan);
             npcs.push(e);
         }
         for _ in 0..500 {
