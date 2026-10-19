@@ -65,7 +65,7 @@ use shards_core::Predicted;
 use shards_motion::{MotionState, MoveModifiers};
 
 use crate::anim::{
-    crossed_cues, select_clip_in, select_layer_in, AnimSet, Animated, AnimationCue, BodyStatus, ClipChoice, ClipDef, LayerChoice,
+    crossed_cues, select_clip_in, select_layer_in, AnimSet, Animated, AnimationCue, BodyStatus, ClipChoice, LayerChoice,
     LayerDef, PropSwaps, MAX_LAYERS,
 };
 use crate::def::{ActionDef, MovesetDef};
@@ -119,7 +119,9 @@ impl Built {
 #[derive(Clone, Debug, PartialEq)]
 struct GraphShape {
     source: String,
-    clips: BTreeMap<String, ClipDef>,
+    /// Per clip: the glTF file and the animation's name in it, the only parts of a clip the graph is built from
+    /// (an edit of a speed, a blend or the cues is read in place each frame and keeps the graph).
+    clips: BTreeMap<String, (String, String)>,
     layers: BTreeMap<String, LayerDef>,
     /// (layer, clip) of every mapping that plays on a layer.
     layered: BTreeSet<(String, String)>,
@@ -133,7 +135,7 @@ impl GraphShape {
     fn of(set: &AnimSet) -> Self {
         Self {
             source: set.source.clone(),
-            clips: set.clips.clone(),
+            clips: set.clips.keys().map(|c| (c.clone(), (set.source_of(c).to_owned(), set.file_name(c).to_owned()))).collect(),
             layers: set.layers.clone(),
             layered: set
                 .actions
@@ -1032,6 +1034,21 @@ mod tests {
         let db = ContentDb::build(&kinds, &sources);
         assert_eq!(db.errors().count(), 0, "{:?}", db.errors().map(ToString::to_string).collect::<Vec<_>>());
         db
+    }
+
+    #[test]
+    fn a_clip_edit_that_the_graph_does_not_read_keeps_its_shape() {
+        let shape = |animsets: &str| GraphShape::of(db_from(animsets).get::<AnimSet>("humanoid").unwrap());
+        let base = shape(ANIMSETS);
+        let tuned = ANIMSETS
+            .replace(r#""walk": ()"#, r#""walk": (speed: 1.5, blend: 0.4)"#)
+            .replace(r#"cue: "breath""#, r#"cue: "sigh""#);
+        assert_ne!(tuned, ANIMSETS);
+        assert_eq!(shape(&tuned), base, "speed, blend and cues are read in place");
+        let renamed = ANIMSETS.replace(r#""hit": ()"#, r#""hit": (name: "Armature|Hit")"#);
+        assert_ne!(shape(&renamed), base, "another animation in the file rebuilds the graph");
+        let moved = ANIMSETS.replace(r#""hit": ()"#, r#""hit": (source: "models/other.glb")"#);
+        assert_ne!(shape(&moved), base, "another file rebuilds the graph");
     }
 
     fn clip(seconds: f32) -> AnimationClip {
