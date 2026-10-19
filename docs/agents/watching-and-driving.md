@@ -60,7 +60,7 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   `goto_tile`, `region_info`, `worldgen_report`, `spawn_level`, `level_info`, `level_reload`, and in a voxel region `sea_current_at` (player: the current
   of the water at a point, toward the middle of the grid) and `voxel_info` (dev: size, chunks, steps with versions, hash, water and sea boxes,
   wide volumes); **NPCs and navigation** —
-  `npc_state` (`nav.routes`: over the navmesh of which body class the NPC plans, or why it plans over the local grid), `npc_set_state`,
+  `npc_schedule` (why each option of an NPC's attack plan is eligible or refused now, by the director's and the planner's own judge; `angle=`, `players=`, `distance=`, `target=` ask what-ifs; a dev caller also gets the planner's next draw; the host answers, a client is refused), `npc_state` (`nav.routes`: over the navmesh of which body class the NPC plans, or why it plans over the local grid), `npc_set_state`,
   `nav_path` (`body=large` — over the navmesh of a body class), `nav_info` (`bodies` — the body classes and their navmeshes), `nav_bake`, the overlays
   `world_overlay` and `nav_overlay` (window),
   `npc_overlay` (a line on each NPC near the players: state, target, token, leash, what it sees and hears; in the window — F7); **rules** —

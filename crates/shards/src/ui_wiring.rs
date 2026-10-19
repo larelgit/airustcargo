@@ -51,6 +51,13 @@ impl Plugin for EngineUiPlugin {
             .add_ui_source("you.finisher", |w, _| {
                 viewer(w).map(|e| UiValue::Flag(w.get::<shards_action::ContextInputs>(e).is_some_and(|c| c.victim().is_some())))
             })
+            // The rules in play (`shards_rules`), for a HUD and a menu that lists the modes. Read through `peek`.
+            .add_ui_source("rules.mode", |w, _| {
+                w.get_resource::<shards_rules::ActiveRules>().filter(|r| !r.is_neutral()).map(|r| UiValue::Text(r.mode.clone()))
+            })
+            .add_ui_source("rules.name", |w, mode| rules_set(w, mode).and_then(|set| rules_text(w, &set.name)))
+            .add_ui_source("rules.summary", |w, mode| rules_set(w, mode).and_then(|set| rules_text(w, &set.summary)))
+            .add_ui_source("rules.blocked", rules_blocked)
             .add_ui_source("you.heading", heading)
             .add_ui_source("allies", allies)
             .add_ui_source(BINDINGS_SOURCE, bindings)
@@ -58,6 +65,34 @@ impl Plugin for EngineUiPlugin {
             .add_systems(PreUpdate, menu_controls.after(ControlSystems::Read));
     }
 }
+
+/// The text `value` names (`@rules-gentle`: that message in the language played), as a source's value; `None`
+/// when it is empty.
+fn rules_text(world: &World, value: &str) -> Option<UiValue> {
+    (!value.is_empty()).then(|| UiValue::Text(shards_locale::resolve(world, value)))
+}
+
+/// The rule set a `rules.name` or `rules.summary` source asks about: `arg` (`rules.name:gentle`), else the one
+/// in play. `None`: no such rule set, or no rules in play.
+fn rules_set<'w>(world: &'w World, arg: &str) -> Option<&'w shards_rules::RuleSetDef> {
+    let db = world.get_resource::<ContentDb>()?;
+    let mode = match arg.trim() {
+        "" => world.get_resource::<shards_rules::ActiveRules>().filter(|r| !r.is_neutral())?.mode.as_str(),
+        mode => mode,
+    };
+    db.peek::<shards_rules::RuleSetDef>(mode)
+}
+
+/// `rules.blocked`: on a co-op client what `host_only` says (the host chooses); while a guard holds what
+/// `blocked` says (the rules change out of combat); otherwise `None`. Empty texts give `None` too.
+fn rules_blocked(world: &World, _: &str) -> Option<UiValue> {
+    let def = shards_rules::read::peek_rules_def(world.get_resource::<ContentDb>()?)?;
+    if world.get_resource::<shards_core::NetRole>() == Some(&shards_core::NetRole::Client) {
+        return rules_text(world, &def.host_only);
+    }
+    shards_rules::can_change(world).err().and_then(|_| rules_text(world, &def.blocked))
+}
+
 
 fn ratio(value: f32, max: f32) -> UiValue {
     UiValue::Ratio { value, max }

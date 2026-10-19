@@ -10,8 +10,9 @@ use shards_action::combat::{
 };
 use shards_action::machine::{ActionRejected, ActionStarted, Healed, Telegraph};
 use shards_action::{ActionSound, BarrierGranted, PairEnded, PairStarted};
-use shards_net::{NetEventAppExt, NetHooks};
+use shards_net::{hooks::NetLeft, NetEventAppExt, NetHooks};
 use shards_npc::{AttackToken, NavAgent, NpcDrive, Perceived};
+use shards_rules::{RulesChanged, SessionFilter};
 use shards_world::ActiveRegion;
 
 /// Joins `shards_net` to the rest of the engine.
@@ -47,7 +48,11 @@ impl Plugin for EngineNetPlugin {
             .net_event::<PairEnded>()
             // An action's `Sound` effect runs on the host only (a client's prediction starts no effects):
             // the client plays the host's sound, like the host's hit sparks.
-            .net_event::<ActionSound>();
+            .net_event::<ActionSound>()
+            // The rules changed on the host: a guest's HUD shows the banner too (`shards_rules` does not see the net).
+            .net_event::<RulesChanged>();
+        // Who counts toward the session size: a player whose body waits for a rejoin (`NetLeft`) does not.
+        app.insert_resource(SessionFilter(|world, body| world.get::<NetLeft>(body).is_none()));
         let mut hooks = app.world_mut().get_resource_or_init::<NetHooks>();
         // Colliders a client makes itself are numbered apart from the host's.
         hooks.after_restore = |world| {
