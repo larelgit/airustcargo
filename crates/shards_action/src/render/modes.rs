@@ -208,7 +208,9 @@ impl ModeState {
                 None => self.left = None,
                 Some(rules) => {
                     if left.started.is_none() {
-                        let faded = self.switched.is_none_or(|(at, blend)| clock - at >= f64::from(blend));
+                        // The fade out of the mode's clip is the one of a clip change since the body left: a
+                        // change before it (a stroke clip back to the swim loop) is no fade out of anything.
+                        let faded = self.switched.is_some_and(|(at, blend)| at >= left.at && clock - at >= f64::from(blend));
                         if clock - left.at >= f64::from(rules.wait) || faded {
                             left.started = Some(clock);
                             out.fired = Some(left.mode);
@@ -377,6 +379,17 @@ mod tests {
         s.advance(&frame(&set, MotionMode::Ground, false, 1.0));
         assert!(s.advance(&frame(&set, MotionMode::Ground, false, 1.9)).fired.is_none());
         assert_eq!(s.advance(&frame(&set, MotionMode::Ground, false, 2.0)).fired, Some(MotionMode::Water), "after `wait` 1 s");
+    }
+
+    #[test]
+    fn a_clip_change_from_before_leaving_is_no_fade_out_of_the_mode_s_clip() {
+        let set = set();
+        let mut s = ModeState::default();
+        s.advance(&frame(&set, MotionMode::Water, false, 0.0));
+        s.note_switch(0.5, 0.1);
+        s.advance(&frame(&set, MotionMode::Ground, false, 1.0));
+        assert!(s.advance(&frame(&set, MotionMode::Ground, false, 1.5)).fired.is_none(), "no clip change since leaving: the wait is the wait");
+        assert_eq!(s.advance(&frame(&set, MotionMode::Ground, false, 2.0)).fired, Some(MotionMode::Water));
     }
 
     #[test]

@@ -252,8 +252,11 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
         if !layers_off.is_empty() {
             parts.push(format!("layers off: {}", layers_off.join(", ")));
         }
-        parts.extend(drop_text);
         out.push(format!("  mode: {}", parts.join(" · ")));
+        // The model's own offsets (the drop; later slices add the facing and the lunge).
+        if let Some(drop) = drop_text {
+            out.push(format!("  model: {drop}"));
+        }
     }
 
     // The props.
