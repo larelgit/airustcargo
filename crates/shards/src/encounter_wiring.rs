@@ -8,6 +8,7 @@
 
 use bevy::prelude::*;
 use ai_core::sim::SimSet;
+use ai_core::AiAppExt;
 use shards_content::{ContentAppExt, ContentDb, Refs};
 use shards_encounter::{
     EncounterCompleted, EncounterDef, EncounterMember, EncounterReset, EncounterResumed, EncounterRuns, EncounterStarted, EncounterWiped,
@@ -21,6 +22,11 @@ pub struct EngineEncounterPlugin;
 
 impl Plugin for EngineEncounterPlugin {
     fn build(&self, app: &mut App) {
+        // On entities with an `AiId`: snapshots save it (see `OurNetAlways`). Bookkeeping of whose
+        // `NetAlways` it is, not a fact about the world: a replay that differs here differs in
+        // `NetAlways`, which is checked, so replay checks (and replication) leave it out, and every
+        // recording made before it reflected still verifies.
+        app.register_type::<OurNetAlways>().replay_ignore::<OurNetAlways>();
         if app.is_plugin_added::<NetPlugin>() {
             app.net_event::<EncounterStarted>()
                 .net_event::<WaveWarned>()
@@ -53,7 +59,12 @@ fn encounter_join_gate(world: &World, _: &JoinRequest) -> Option<String> {
 }
 
 /// Marks a member whose `NetAlways` this module added, so that only this module's is taken off.
-#[derive(Component)]
+/// State on an entity with an `AiId`, so it reflects and snapshots save it: a game loaded in the
+/// middle of a fight must take off what the original put on (issue #72: without it, a heavy twin
+/// left `NetAlways` on the members the run let go). Replay checks and replication leave it out
+/// (`replay_ignore`): what it decides shows in `NetAlways`, which they check.
+#[derive(Component, Reflect, Default, Clone, Copy, Debug)]
+#[reflect(Component, Default)]
 struct OurNetAlways;
 
 /// Adds `NetAlways` to the members of every `net_always` run in a fighting state, and takes it
@@ -123,5 +134,33 @@ fn check_cues(def: &EncounterDef, _: &str, refs: &mut Refs) {
     }
     if !texts.is_empty() && refs.db().has_kind("locale") {
         shards_locale::check_messages(refs, texts);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ai_core::{snapshot, AiId, AiIndex, AiKind};
+
+    use super::*;
+
+    /// The marker sits on encounter members, entities with an `AiId`: a snapshot holds it and a load
+    /// puts it back. Otherwise a game loaded in the middle of a `net_always` fight never takes that
+    /// `NetAlways` off (issue #72: heavy mode stopped the nightly fuzz campaign on `left_out differs`).
+    #[test]
+    fn a_snapshot_holds_the_marker_and_a_load_puts_it_back() {
+        let mut app = crate::testing::test_app(|_| {}, |_| {});
+        let member = app.world_mut().spawn((AiKind::new("Member"), Transform::default(), NetAlways, OurNetAlways)).id();
+        let id = *app.world().get::<AiId>(member).expect("the engine gives it an id");
+        let saved = snapshot::capture(app.world()).unwrap();
+        assert!(saved.left_out.is_empty(), "the snapshot leaves out {:?}", saved.left_out);
+        let mut twin = crate::testing::test_app(|_| {}, |_| {});
+        let report = snapshot::restore(twin.world_mut(), &saved, false).unwrap();
+        assert!(report.exact(), "{:?}", report.differences);
+        let loaded = twin.world().resource::<AiIndex>().get(id).expect("the member is loaded");
+        assert!(twin.world().get::<NetAlways>(loaded).is_some(), "NetAlways is loaded");
+        assert!(twin.world().get::<OurNetAlways>(loaded).is_some(), "so is the mark that this module put it there");
+        // Bookkeeping: the replay checks hash NetAlways, not the mark, as before it reflected.
+        let hashing = twin.world().resource::<ai_core::replay::ReplayHashing>();
+        assert!(hashing.is_ignored(std::any::TypeId::of::<OurNetAlways>()) && !hashing.is_ignored(std::any::TypeId::of::<NetAlways>()));
     }
 }
