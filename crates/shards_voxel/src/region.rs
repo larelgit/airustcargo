@@ -28,8 +28,9 @@
 //!   same world, collider id for collider id. `SHARDS_VOXEL_CACHE=off` (or
 //!   [`VoxelSettings::cache`]) turns it off.
 //!
-//! Until the in-memory navigation bake exists, a voxel region has no navmesh: NPCs plan over the
-//! local grid, as the navigation module documents for a region without one.
+//! Its navigation is the NPC module's: when the region loads (on a machine that simulates) the chunks
+//! are baked in memory and stitched into the region's navmesh, from the field and the water this
+//! module spawned (`shards_npc::nav`, `bake_volume`).
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};

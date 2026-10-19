@@ -121,9 +121,8 @@ pub fn bake_region(world: &World) -> Result<(usize, std::time::Duration), String
     let manifest = &region.manifest;
     if manifest.layout == shards_world::manifest::Layout::Volume {
         return Err(format!(
-            "{} is a voxel volume: it has no tiles to bake, and its navigation is not baked yet ({}; NPCs plan on the local grid, see `nav_info`)",
-            manifest.title(),
-            super::VOXEL_NO_NAV
+            "{} is a voxel volume: it has no tiles to bake, and its navigation is baked in memory when it loads, not into files (`nav_info` says how it was baked)",
+            manifest.title()
         ));
     }
     let kind = if manifest.layout == shards_world::manifest::Layout::Rooms { super::tile::TileKind::Room } else { super::tile::TileKind::Tile };
@@ -157,9 +156,8 @@ fn nav_bake(In(call): In<Call<NavBakeArgs>>, world: &mut World) -> ToolResult {
     // The files are the tiles' and rooms'; a voxel region in the world is not made of them.
     if let Some(region) = world.get_resource::<shards_world::ActiveRegion>().filter(|_| super::region_is_volume(world)) {
         text.push_str(&format!(
-            "\nthe region in the world, {}, is a voxel volume: these files are not its navigation ({}; NPCs plan on the local grid)",
-            region.manifest.title(),
-            super::VOXEL_NO_NAV
+            "\nthe region in the world, {}, is a voxel volume: these files are not its navigation (it is baked in memory when it loads; see `nav_info`)",
+            region.manifest.title()
         ));
     }
     if report.ok() { Ok(text) } else { Err(text) }
@@ -195,11 +193,13 @@ fn nav_overlay(In(call): In<Call<NavOverlayArgs>>, world: &mut World) -> ToolRes
 /// (`bodies`: each class's body and navmesh). Read-only.
 fn nav_info(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
     refresh(world);
-    if let Some(region) = world.get_resource::<shards_world::ActiveRegion>().filter(|_| super::region_is_volume(world)) {
+    let unplanned = world.get_resource::<NavRegion>().is_none() && super::region_is_volume(world) && !super::simulates(world);
+    if let Some(region) = world.get_resource::<shards_world::ActiveRegion>().filter(|_| unplanned) {
         return Ok(json!({
             "region": region.manifest.title(),
             "navmesh": "none",
-            "why": format!("{}: NPCs and `move_to path=true` plan on the local grid", super::VOXEL_NO_NAV),
+            "bake": super::VOXEL_NOT_SIMULATED,
+            "why": "NPCs are the host's: this machine receives their positions and plans no routes",
         }));
     }
     let Some(nav) = world.get_resource::<NavRegion>() else {
@@ -223,11 +223,12 @@ fn nav_info(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
         .collect();
     // Meters to the centimeter, printed as written (`1.2`, not `1.2000000476837158`).
     let cm = |v: f32| (f64::from(v) * 100.0).round() / 100.0;
+    let timed = world.get_resource::<ai_core::perf::AiPerf>().is_some_and(|p| p.report);
     let r = &nav.report;
     let bodies: Vec<Value> = nav
         .classes()
         .map(|c| {
-            json!({
+            let mut body = json!({
                 "body": c.body,
                 "radius": cm(c.agent_radius),
                 "height": cm(c.agent_height),
@@ -235,10 +236,14 @@ fn nav_info(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
                 "summary": c.summary(),
                 "baked_while_loading": c.report.missing.iter().chain(&c.report.stale).collect::<Vec<_>>(),
                 "failed": c.report.failed.iter().map(|(t, why)| format!("{t}: {why}")).collect::<Vec<_>>(),
-            })
+            });
+            if let Some(voxel) = &c.voxel {
+                body["bake"] = json!(voxel.describe(timed));
+            }
+            body
         })
         .collect();
-    Ok(json!({
+    let mut info = json!({
         "region": nav.title,
         "summary": nav.summary(),
         "cell": nav.cell,
@@ -250,5 +255,11 @@ fn nav_info(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
         "carved_cells": r.carved,
         "navlinks": links,
         "bodies": bodies,
-    }))
+    });
+    if let Some(voxel) = &nav.voxel {
+        // `in memory, 16 chunks, baked in 123 ms`: the loaded machine's time, not state, so shown
+        // only where timing is reported (as `voxel_info` does).
+        info["bake"] = json!(voxel.describe(timed));
+    }
+    Ok(info)
 }

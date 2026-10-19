@@ -255,7 +255,7 @@ fn a_voxel_region_is_generated_built_and_answered_for_like_a_region_of_tiles() {
     assert_eq!(info["steps"], json!(["noise_hills v1", "plaza v1", "fill_water v1"]));
     assert!(info["wide_volumes"].as_u64().unwrap() >= 2, "the north and south sea boxes are wider than the broad phase's widest cell: {info}");
     assert!(info["blocks"]["water"].as_u64().unwrap() > 0 && info["blocks"]["grass"].as_u64().unwrap() > 0, "{info}");
-    assert!(info["nav"].as_str().unwrap().contains("nav not baked yet"), "{info}");
+    assert!(info["nav"].as_str().unwrap().contains("baked in memory"), "{info}");
 
     // The current: nothing on the plaza, half 3.75 m in, full near the edge and in the sea;
     // toward the middle.
@@ -280,16 +280,16 @@ fn a_voxel_region_is_generated_built_and_answered_for_like_a_region_of_tiles() {
     assert!(holds(&app, "in_current") && holds(&app, "in_water"), "in the moat near the edge");
     app.world_mut().get_mut::<Transform>(hero).unwrap().translation = Vec3::new(300.5, 1.0, 300.5);
 
-    // Navigation: no navmesh yet, said plainly.
+    // Navigation: baked in memory, chunk by chunk, when the region loaded.
     let nav = ok(&mut app, "nav_info", json!({}));
-    assert_eq!(nav["navmesh"], "none", "{nav}");
-    assert!(nav["why"].as_str().unwrap().contains("voxel region, nav not baked yet"), "{nav}");
-    let refused = err(&mut app, "nav_path", json!({"to": {"x": 290.0, "z": 290.0}}));
-    assert!(refused.contains("no navmesh for this region (voxel region, nav not baked yet)") && refused.contains("use path_to"), "{refused}");
+    assert!(nav["summary"].as_str().unwrap().starts_with("4 chunks, "), "{nav}");
+    assert!(nav["bake"].as_str().unwrap().starts_with("in memory, 4 chunks"), "{nav}");
+    let route = ok(&mut app, "nav_path", json!({"to": {"x": 290.0, "z": 290.0}}));
+    assert_eq!(route["provider"], "navmesh", "{route}");
     let bake = testing::call(&mut app, "nav_bake", json!({}));
-    assert!(bake.result.to_string().contains("voxel region, nav not baked yet"), "{}", bake.result);
+    assert!(bake.result.to_string().contains("baked in memory when it loads"), "{}", bake.result);
     let story = journal(app.world());
-    assert_eq!(lines(&story, "navmesh: none for this region: voxel region, nav not baked yet").len(), 1, "{story:#?}");
+    assert_eq!(lines(&story, "navmesh: isle seed 7 v1 (4 chunks, ").len(), 1, "{story:#?}");
 
     // An unknown region names the voxel ones too.
     let unknown = err(&mut app, "worldgen_report", json!({"region": "nowhere"}));
@@ -630,14 +630,14 @@ fn the_region_api_answers_with_the_same_types_on_tiles_and_on_a_volume() {
         let to = spawn + Vec3::new(2.0, 0.0, 0.0);
         let route = ok(&mut app, "path_to", json!({"target": {"x": to.x, "z": to.z}}));
         assert!(route["provider"].is_string() && route["path"].is_string(), "{region}: {route}");
-        // The navmesh tools answer on both (a volume has none yet, and says why).
+        // The navmesh tools answer on both (a volume's is baked in memory).
         let nav = testing::call(&mut app, "nav_info", json!({}));
         let nav_path = testing::call(&mut app, "nav_path", json!({"to": {"x": to.x, "z": to.z}}));
         assert!(!nav.result.is_null() && !nav_path.result.is_null(), "{region}");
         if region == "isle" {
-            assert_eq!(nav.result["navmesh"], "none", "{}", nav.result);
-            assert!(!nav_path.ok && nav_path.result.to_string().contains("use path_to"), "{}", nav_path.result);
-            assert_eq!(route["provider"], "local grid", "{route}");
+            assert!(nav.result["bake"].as_str().is_some_and(|b| b.starts_with("in memory, 4 chunks")), "{}", nav.result);
+            assert!(nav_path.ok, "{}", nav_path.result);
+            assert_eq!(route["provider"], "navmesh", "{route}");
         }
         // The `region` save section: saved and loaded the same way, into a game with no region.
         ok(&mut app, "save_game", json!({"what": "world", "slot": region}));
@@ -778,6 +778,17 @@ fn a_client_that_makes_another_volume_or_none_cannot_take_the_hosts_world() {
     let hash = same.world(0).resource::<VoxelTerrain>().hash;
     assert_eq!(same.world(1).get_resource::<VoxelTerrain>().map(|t| t.hash), Some(hash), "the client built the same island: {story:#?}");
     assert_eq!(lines(&story, "net: the host's world again (region isle)").len(), 1, "{story:#?}");
+    // The navmesh is the host's: it baked the chunks (and plans its NPCs' routes on them); the client does not
+    // simulate, bakes nothing and says so (a bake it would not use is a second it would not wait).
+    let host_nav = same.call(0, "nav_info", json!({}));
+    assert!(host_nav.ok && host_nav.result["bake"].as_str().is_some_and(|b| b.starts_with("in memory, 4 chunks")), "{}", host_nav.result);
+    let client_nav = same.call(1, "nav_info", json!({}));
+    assert!(client_nav.ok && client_nav.result["bake"] == "not baked: this machine does not simulate", "{}", client_nav.result);
+    assert!(same.world(1).get_resource::<shards::npc::NavRegion>().is_none(), "the client holds no navmesh");
+    // The client's journal can also carry the host's own `navmesh:` line (not traced why), so the proof that it did not bake is
+    // the missing `NavRegion` and its own `not baked` line, not the absence of the host's.
+    assert!(!lines(&story, "navmesh: not baked: this machine does not simulate").is_empty(), "{story:#?}");
+    assert!(same.world(0).get_resource::<shards::npc::NavRegion>().is_some_and(|nav| nav.instances.len() == 4), "the host has its navmesh");
     same.run(130);
     assert_eq!(same.world(0).resource::<NetHost>().desyncs, 0, "{:#?}", journal(same.world(0)));
 

@@ -26,9 +26,10 @@
 //!   world. Tools: `sea_current_at`, `voxel_info`; conditions `in_water`, `in_current`,
 //!   `near_grid_edge` (they read physics and the region API, so they answer in any region).
 //!
-//! What is not here yet: navigation and meshing (later PRs of the design). The module costs
-//! nothing in a game without a voxel region: it registers content kinds, a registry, a region
-//! kind and its tools, and adds no system.
+//! What is not here yet: meshing (a later PR of the design). The region's navigation is the NPC
+//! module's: it bakes the chunks in memory when the region loads. The module costs nothing in a
+//! game without a voxel region: it registers content kinds, a registry, a region kind and its
+//! tools, and adds no system.
 //!
 //! **The rule for games:** the volume's own types ([`VoxelVolume`], [`VoxelGen`], the palette's
 //! cells) are for generation steps. Gameplay reads a voxel region through the region API of the

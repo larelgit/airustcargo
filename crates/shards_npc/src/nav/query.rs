@@ -144,9 +144,10 @@ impl NavRegion {
         let tile = |n: NodeId| self.instances[self.split(n).0 as usize].cell;
         if self.component(start) != self.component(goal) {
             let (a, b) = (tile(start), tile(goal));
+            // A voxel region is cut into chunks, whose edges are all open; a region of tiles has sockets.
+            let (noun, between) = if self.voxel.is_some() { ("chunk", "walls, cliffs or water") } else { ("tile", "walls, cliffs, water or tile edges whose sockets do not connect") };
             return Err(NavError::NoRoute(format!(
-                "the goal {} is on ground the start cannot reach at all (tile ({}, {}) from tile ({}, {})): walls, cliffs, \
-                 water or tile edges whose sockets do not connect lie between; aim for a point on the start's side",
+                "the goal {} is on ground the start cannot reach at all ({noun} ({}, {}) from {noun} ({}, {})): {between} lie between; aim for a point on the start's side",
                 fmt_pos(query.to),
                 b[0],
                 b[1],
@@ -156,7 +157,7 @@ impl NavRegion {
         }
         let corridor = self.corridor(start, goal);
         let found = match &corridor {
-            Some(tiles) => self.search(start, goal, Some(tiles), usize::MAX),
+            Some(tiles) => self.search(start, goal, Some(&self.widened(tiles)), usize::MAX),
             None => None,
         };
         let found = found.or_else(|| (self.node_count() as usize <= 4 * FULL_BUDGET).then(|| self.search(start, goal, None, FULL_BUDGET)).flatten());
@@ -168,6 +169,23 @@ impl NavRegion {
             )));
         };
         Ok(self.finish(physics, query, start, goal, hops, explored))
+    }
+
+    /// Whether the tile graph has an edge between the graph nodes of `a` and `b` (the two ends
+    /// of a stitch, a hop or a navlink). A check that the graph and the components agree.
+    #[doc(hidden)]
+    pub fn tile_graph_joins(&self, a: NodeId, b: NodeId) -> bool {
+        let at = |n: NodeId| self.graph.nodes.iter().position(|g| g.node == Some(n) && g.portal.is_none());
+        let Some((a, b)) = at(a).zip(at(b)) else { return false };
+        self.graph.edges[self.graph.first[a] as usize..self.graph.first[a + 1] as usize].iter().any(|e| e.0 as usize == b)
+    }
+
+    /// The tile graph as one text row per node: equal for equal graphs.
+    #[doc(hidden)]
+    pub fn tile_graph_digest(&self) -> String {
+        let g = &self.graph;
+        let rows = (0..g.nodes.len()).map(|n| (g.nodes[n].node, g.nodes[n].portal, &g.edges[g.first[n] as usize..g.first[n + 1] as usize]));
+        rows.map(|row| format!("{row:?}")).collect::<Vec<_>>().join("\n")
     }
 
     /// Whether a body walks from `query.from` straight to `query.to` on the navmesh: every
@@ -318,6 +336,32 @@ impl NavRegion {
             }
         }
         dist
+    }
+
+    /// The corridor with the chunks around it, in a voxel region: the tile graph measures from
+    /// each portal's middle node, so the corridor it picks may leave out the chunk a cheaper
+    /// crossing of a seam is in, and a chunk is only a seam in the ground, not a place a route
+    /// has a reason to stay in. A region of tiles keeps the corridor as it is: its tiles are
+    /// separate places. Sorted, once each.
+    fn widened(&self, tiles: &[u32]) -> Vec<u32> {
+        if self.voxel.is_none() {
+            return tiles.to_vec();
+        }
+        let mut out = tiles.to_vec();
+        for &t in tiles {
+            let [cx, cz] = self.instances[t as usize].cell;
+            for dz in -1..=1 {
+                for dx in -1..=1 {
+                    let (x, z) = (cx + dx, cz + dz);
+                    if x >= 0 && z >= 0 && (x as u32) < self.size[0] && (z as u32) < self.size[1] {
+                        out.extend(self.instance_at([x * self.per as i32, z * self.per as i32]));
+                    }
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 
     /// The tiles a route goes through, by A* over the tile graph; `None`: the graph knows no way.

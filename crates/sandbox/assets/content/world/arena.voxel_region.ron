@@ -2,7 +2,7 @@
 // -528..-272), the arena's floor at y 0 and its middle at (0.5, 0, -399.5). Hills fall to a sea
 // at the rim; a lake, trees, and a flat arena with steps, a ledge, a pool, an overhang and a cave
 // (the sandbox's steps, `src/gameplay/terrain.rs`). `regen region=voxel_arena seed=7` goes
-// there. No navmesh yet: NPCs plan over the local grid.
+// there. Its navmesh is baked in memory when it loads (16 chunks of 64 m).
 {
     "voxel_arena": (
         size: (256, 32, 256),

@@ -16,4 +16,5 @@ mod replay;
 mod schedule;
 mod snapshot;
 mod tools;
+mod voxel_nav;
 mod warden;
