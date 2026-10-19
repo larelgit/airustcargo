@@ -2,12 +2,14 @@
 
 use serde_json::{json, Map, Value};
 
-/// One JSON object, or `key=value` pairs where values are JSON if they parse as JSON.
+/// One JSON object, or `key=value` pairs where values are JSON if they parse as JSON. One JSON
+/// array or string is taken as it is too: arguments that are not an object, which a tool refuses,
+/// as a fuzz run sends them and its regression scenario writes them back (`act? attack '"x"'`).
 pub fn parse_args(args: &[String]) -> Result<Value, String> {
     if args.is_empty() {
         return Ok(json!({}));
     }
-    if args.len() == 1 && args[0].trim_start().starts_with('{') {
+    if args.len() == 1 && args[0].trim_start().starts_with(['{', '[', '"']) {
         return serde_json::from_str(&args[0]).map_err(|e| format!("arguments are not valid JSON: {e}"));
     }
     let mut map = Map::new();
@@ -33,6 +35,9 @@ mod tests {
         assert_eq!(parse_args(&["dir=W".into()]).unwrap(), json!({"dir": "W"}));
         assert_eq!(parse_args(&[r#"{"target":{"x":1,"z":2}}"#.into()]).unwrap(), json!({"target": {"x": 1, "z": 2}}));
         assert_eq!(parse_args(&[]).unwrap(), json!({}));
+        // Arguments that are not an object, which the tool refuses (a fuzz run's malformed call).
+        assert_eq!(parse_args(&[r#""not an object""#.into()]).unwrap(), json!("not an object"));
+        assert_eq!(parse_args(&["[1,2]".into()]).unwrap(), json!([1, 2]));
     }
 
     #[test]
