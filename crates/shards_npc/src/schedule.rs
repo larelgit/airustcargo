@@ -42,8 +42,10 @@ use crate::strike::{chain_note, note_list, pool, spacing_ticks, strike_pressed, 
 
 /// Why an attack option may not be chosen now, distance aside: the first rule that refuses it,
 /// in the order of this list. The boss scheduler's next slices add rules in their places in the
-/// order (the angle, the players, repeats, `forbid_after`, live tags), each a new variant.
+/// order (the angle, the players, repeats, `forbid_after`, live tags), each a new variant:
+/// a game's `match` needs a `_` arm, so a new variant does not break it.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum Refusal {
     /// Its weight is 0: a chain link, never chosen.
     Weight,
