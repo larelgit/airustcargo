@@ -1001,7 +1001,7 @@ leaves its effect on). Two systems that want the same field must be combined by 
 | `weights.view` | `0.5` | the angle on the ground between where the one locking looks and the candidate, from the one locking, per half turn |
 | `weights.danger` | `0.5` | taken off for a candidate whose attack would land on the one locking now (its hit zone, `zones_threatening`) |
 | `weights.current` | `0.3` | taken off for the current target, so a pick made while locked keeps it unless another is clearly better |
-| `aim_height` / `eye_height` | `0.6` / `0.9` | the target's aim point and the locker's eye, as fractions of the body's collider from its bottom (1.8 m without one): one lock point per body |
+| `aim_height` / `eye_height` | `0.6` / `0.9` | the target's aim point and the locker's eye, as fractions of the body's collider from its bottom (1.8 m without one); a lock point (a body part, R3) is aimed at its centre |
 | `obstruction_s` | `Some(2.0)` | a target hidden behind the world (a `WORLD` ray from the eye to the aim point, both bodies left out) this long in a row is lost; counted in ticks (120 at 60 Hz); `None`: never |
 | `switch_dead_band` | `0.05` | rad: a switch takes only a candidate past this angle on the side asked for |
 | `switch_min_distance` | `0.1` | m on the ground: nearer than this to the locker, a candidate has no direction and is never switched to |
@@ -1012,7 +1012,7 @@ leaves its effect on). Two systems that want the same field must be combined by 
 - *Switch* (`switch_lock`, `switch_target`): measured from the locker, not the camera: the signed angle around up from the direction to the current target to each candidate's (left positive); `right` takes those past `-switch_dead_band`, `left` past `+switch_dead_band`; the nearest angle wins, then the lower `AiId`; only what the locker's eye sees. It is the press `lock_switch` (`input_names::LOCK_SWITCH`, `dir.x` the side: `+1` right), used up by `LockSystems::Switch` (`SimSet::Act`, before `MotionSystems::Intent`, so the body faces the new target on that tick; it works without a definition too, by the defaults with `CombatTuning::lock_on_range`). The camera sends it for a look flick (C7's flick thresholds and cooldown; only when the rule finds somebody on that side) and for the mouse wheel (toward the player is right; one switch per turn of the wheel: after a switch the wheel must stand still for a frame, so a touchpad's long or coasting scroll is one switch; the cooldown holds it too); the tool is `lock_on side=left|right`. `lock_switch` is read as an axis: bind it to `MouseWheel()`, `KeyAxis(neg: KeyQ, pos: KeyE)`, a `GamepadAxis` or a `Stick`. A button bound to it is refused with an error that names these: by `InputMap::rebind` (the `rebind` tool), by the controls settings (`settings_set`, a saved file) and by the content check of an `input_map` (`Binding::refused_for`); a keyboard "next target" action is a later addition if a game asks. The standard map binds the wheel to it in every game; without a definition the camera does not read it, so the wheel does nothing there.
 - *Check* (`LockSystems::Check`, `SimSet::Cleanup` after `CoreSystems::ClearPresses`, so after the tick's deaths and the engine's despawns, such as the co-op body whose rejoin grace is over, in `AiId` order): every body's `Intent.target` is checked, the player's and every agent-driven body's alike (an NPC brain keeps its own target and does not write `Intent.target`), so an agent that steers a monster through `lock_on` loses that lock to a wall too. A lock is lost when its target is gone, dead (`Dead`), beyond `range` or hidden for `obstruction_s`, and let go of (`e5 lock released: e6`) when its target stops being something the locker may lock on to by the pick's own rule (`LockHooks::lockable`: an ally, a body that is neither a fighter of another team nor a `LockOnTarget`), so an ally a co-op client sends as its target, or a game system sets, does not stay: the host checks it like any other body's. A `lock_on` definition with errors is not in force (the game runs as without one until the content is fixed). A game system that despawns a body that may be locked on to runs before the check (`.before(LockSystems::Check)`, or before `ClearPresses`), so the lock goes on that tick; one after it leaves a lock on nobody, and `action.lock_on_valid` stops the game; `LockSight { target, ticks, secs }` is on the locker only while its target is hidden (it is in the replay and the snapshot), and a tick in sight takes it away, so the count starts again. The camera lets go of a lock only when the player cancels it.
 - *Journal*: `e5 lock lost: e6 dead` (`gone`, `out of range (31.0m > 30.0m)`, `obstructed 2.0s`); `e5 locks e6` from the `lock_on` tool and `e5 lock released: e6` from its `off` (from the camera, the same texts as `local` lines: a replay sets the target from the recorded input, without the camera); `e5 locks e7 (switched right from e6)`. *`observe` and `inspect`*: `lock e6`, and `lock e6 (obstructed 0.8s)` while hidden.
-- *The tool*: with a definition, `lock_on target=eN` is refused for what the check would take away at once (a dead target, one beyond `range`) and for what the pick would never name (yourself, an ally or anything else that is neither a fighter of another team nor a `LockOnTarget`, a body with no position). Without one an id is taken as before.
+- *The tool*: with a definition, `lock_on target=eN` is refused for what the check would take away at once (a dead target, one beyond `range`) and for what the pick would never name (yourself, an ally or anything else that is neither a fighter of another team nor a `LockOnTarget`, a body with no position). Without one an id is taken as before. `lock_on point=NAME` takes a lock point of a big body (see "Lock points (R3)").
 - *The rule* `action.lock_on_valid`: with a definition, no body's `Intent.target` names a missing or dead entity after a tick (a game system after `LockSystems::Check` that sets one, or that despawns a body that is locked on to, breaks it).
 - *Co-op*: `Intent.target` and the `lock_switch` press are input; the check and the switch run where the simulation runs, never in a client's prediction. A client takes over a lock its host changed (lost, switched, taken by an attack order) once the host has every held state it sent (`InputCapture::adopt_target`): otherwise its next state would put the old target back. Stand scenario `crates/sandbox/scenarios/stand/lock_on.scenario`; single-game scenario `crates/sandbox/scenarios/lock_on.scenario`.
 **Render interpolation (C8).** The simulation steps at 60 Hz and a body's `Transform` is the value of the last tick, so on a 144 Hz display a body would move in 60 Hz steps and the follow camera would inherit them. `shards_motion::interp` draws bodies between their last two ticks. It is presentation only: it never writes a body's `Transform` (physics reads it), and it adds nothing to a simulated entity.
@@ -1182,7 +1182,7 @@ A new curve changes gameplay (the lunge, the roll): replays recorded with the ol
 **What the AI sees.** In describe: `windup slam 0.78s (zone circle 4.5m) hyper-armor`, `stam 75/100`, `poise broken 0.8s`, `bleed 60%`, `queued light 0.13s`, `roll roll 0.33s i-frames`. Under the `YOU` line, the hint `ALERT in hit zone of e6 shockwave (lands in 0.50s): move 1.3m E to leave it`. In the journal: `e2 winds up slam (0.80s) ⚠
 circle 4.5m`, `e1 -> e2 heavy -45 (hp 55)`, `e1 blocked e2 swipe: -2 hp, -15 stamina (hp 98)`, `e2 staggered (parried)`.
 
-**Tools** (for the player, only through `Intent`): `light_attack`, `heavy_attack`, `block on=…`, `parry`, `dodge dir=…|away_from=…`, `use_technique slot=1`, `use_item item=flask`, `lock_on target=…|side=left|right|off=true` (with a `lock_on` definition: the scored pick; a dead, too far or unlockable target is refused, see "Lock-on rules (C6)"), `attack target=… input=… repeat=true`. For the developer: `god`, `heal`, `stagger`, `react id=… tier=1..3`, `combat_overlay`. One-shot tools answer by `can_start`:
+**Tools** (for the player, only through `Intent`): `light_attack`, `heavy_attack`, `block on=…`, `parry`, `dodge dir=…|away_from=…`, `use_technique slot=1`, `use_item item=flask`, `lock_on target=…|point=…|side=left|right|off=true` (with a `lock_on` definition: the scored pick; a dead, too far or unlockable target is refused, see "Lock-on rules (C6)"; `point` names a lock point of a big body, "Lock points (R3)"), `attack target=… input=… repeat=true`. For the developer: `god`, `heal`, `stagger`, `react id=… tier=1..3`, `combat_overlay`. One-shot tools answer by `can_start`:
 
 ```text
 $ shards act dodge
@@ -1830,10 +1830,11 @@ prefab check refuses a name that is not in content). The kind `parts` (`*.parts.
 {
     "colossus": (
         body_hurtbox: false,   // the body's own collider takes no hits: only its parts do (default true)
+        lock_body: false,      // the lock-on takes only its lock points, never the body (default true; R3)
         parts: {
-            "core": (shape: Sphere(radius: 0.6), at: (forward: 0.9, up: 2.0), damage: 3.0, tags: ["weak"], enabled: false),
-            "hand": (shape: Sphere(radius: 0.5), at: (forward: 1.4, up: 1.2, right: 1.0), health: Some(60), to_body: 0.5),
-            "leg_left": (shape: Capsule(half_height: 0.8, radius: 0.45), at: (forward: 0.3, up: 1.2, right: -0.7), poise: 2.0),
+            "core": (shape: Sphere(radius: 0.6), at: (forward: 0.9, up: 2.0), damage: 3.0, tags: ["weak"], enabled: false, lock: true),
+            "hand": (shape: Sphere(radius: 0.5), at: (forward: 1.4, up: 1.2, right: 1.0), health: Some(60), to_body: 0.5, lock: true),
+            "leg_left": (shape: Capsule(half_height: 0.8, radius: 0.45), at: (forward: 0.3, up: 1.2, right: -0.7), poise: 2.0, lock: true),
         },
     ),
 }
@@ -1842,9 +1843,11 @@ prefab check refuses a name that is not in content). The kind `parts` (`*.parts.
 A part's fields: `shape` (a physics `Shape`: `Sphere`, `Capsule`, `Cuboid`, `Cylinder`, `Cone`), `at` (metres from the body's
 feet in its own frame: `forward`, `up`, `right`), `turn` (`pitch`, `yaw`, `roll` in degrees: a capsule pitched 90 lies along
 forward), `health` (none: the part never breaks), the factors `damage`, `to_body` and `poise` (1 each), `tags` (added to a hit
-through it) and `enabled` (true: whether it takes hits from the start). The check refuses a definition with no parts or more
+through it), `enabled` (true: whether it takes hits from the start) and `lock` (false: whether it is a lock point, see "Lock
+points (R3)"). The check refuses a definition with no parts or more
 than 16, an id that is not letters, digits and `_`, a size that is not above 0, an `at` or `turn` that is not finite, a health
-that is not above 0, a factor that is not a finite number `>= 0`, and an empty tag. Fields at their defaults are not written.
+that is not above 0, a factor that is not a finite number `>= 0`, an empty tag, and `lock_body: false` with no part that has
+`lock: true`. Fields at their defaults are not written.
 
 **Parts are entities.** On the first tick a `BodyParts` body is in the world, on the machine that simulates (`SimSet::Move`,
 after the controller and the projectiles, before the hits), the engine spawns one top-level entity per part, bodies in `AiId`
@@ -1857,7 +1860,7 @@ A part whose body is gone, or no longer lists it, goes on the next tick.
 **Hits.** A hit that overlaps a part that is on is a hit on its body: the body's guard, i-frames, armour, statuses and reactions
 apply, and one swing hits a body once (its per-run ledger), through the part nearest the middle of the hit among those it
 overlaps (half way up a cone's axis, which starts at the attacker's feet; the start of the segment a projectile flew this tick;
-ties to the lower `AiId`). With `body_hurtbox: false` the body's own collider takes nothing: a swing that reaches only the
+ties to the lower `AiId`; the part the attacker is locked on to, when the hit overlaps it, before any). With `body_hurtbox: false` the body's own collider takes nothing: a swing that reaches only the
 capsule of a giant misses it. `DamageCtx::part` is `Some(PartHit { entity, id, damage, to_body, poise })`: the part's `damage`
 and `poise` factors are already in the hit's damage and poise when the modifiers and the damage hooks see it, and its tags are
 in `ctx.tags` (a hook that doubles a hit tagged `weak` at the part `core` is a game's weak spot). The body loses `damage *
@@ -1871,7 +1874,8 @@ body, id, by)`.
 
 **What the AI sees.** Describe: `hand of e12 40/60 hp`, `core of e12 off`, `hand of e12 broken`. Journal: `e5 -> e12 light_1 at
 hand -10 (hp 1190)` and `e12 hand broken by e5` (`e12 horn broken` for a break with no breaker). The dev tool `part id= name=
-op=on|off|break` (without `id`: the body the caller is locked on) answers `e12 core on` and refuses a broken part's `on`, a
+op=on|off|break` (without `id`: the body the caller is locked on, or the body of the lock point it is locked on; an `id` that
+names a part stands for its body) answers `e12 core on` and refuses a broken part's `on`, a
 part the body does not have (`e12 has no part tail; its parts: core, hand, horn, leg_left, leg_right`) and a body with none.
 The engine rule `action.parts_sane` (see "Invariants (E11)") stops the game on a part whose body is not there or does not list
 it, a broken part that is on, and a part health that is not `0 <= current <= max` with `max > 0`.
@@ -1884,13 +1888,50 @@ before its body, or stay in view while its body is out of it), and the hits thro
 **The sandbox.** The prefab `colossus` (`characters/colossus.prefab.ron`: 1200 health, 200 poise, no brain, the locomotion
 `colossus`, 1.2 m wide and 6 m tall) and its parts `combat/colossus.parts.ron` (two legs that double poise, a hand with 60
 health that passes half of a hit to the body, a horn with 80 health out of a sword's reach, a core that starts closed and
-triples a hit). It is spawned only by the scenario `parts.scenario` (and its reference replay `parts.json`): the player breaks
-the hand in three swings, the fourth meets a leg, the core opened by `part` takes the fifth at three times the damage. It spawns
-the colossus as part of the yard region, so the `regen` that ends it takes the colossus away whatever id it had.
+triples a hit), all five lock points with `lock_body: false` (the prefab carries no `LockOnTarget`). It is spawned only by the
+scenario `parts.scenario` (and its reference replay `parts.json`): the player locks on to a point, then the hand by name, and
+breaks the hand in three swings (the lock on it is let go of); locked on the left leg, the fourth meets it; the core opened by
+`part` and locked on takes the fifth at three times the damage, and a flick to the right moves the lock to the left leg. It
+spawns the colossus as part of the yard region, so the `regen` that ends it takes the colossus away whatever id it had.
 
 **Limits, on purpose.** Parts follow the body's transform, not its animation: a part placed on a swinging arm stays where `at`
 puts it (per-action part poses would be a later slice). The body's guard arc and its hurtbox-based checks are the body's, not
-the part's. Locking on to a part, a part as ground to stand on and a camera for a body this big are R3, R2 and R4.
+the part's. A part as ground to stand on and a camera for a body this big are R2 and R4.
+
+### Lock points (R3)
+
+A big body is locked on to at its parts: the hand, a leg, the core, not a point in the middle of a 6 m capsule. A part with
+`lock: true` is a lock point: the engine puts `LockOnTarget` and motion's `LockPoint` on its entity. With `lock_body: false`
+the body itself is never taken, only its points (its prefab then carries no `LockOnTarget`: the prefab check refuses the
+pair, and the parts check refuses `lock_body: false` with no lock point).
+
+- *Who may lock on to a point* (`lockable`, the action module's hook): the point is not broken (a break takes its markers
+  away), and its body stands (not dead, not down), is not the locker and is not a fighter of the locker's team: a point is a
+  mark on its body. A part that is off is still a point (a closed weak spot can be locked on to and opened).
+- *Pick, switch, check*: points are candidates like bodies, aimed at their centre (`aim_of`, `lock_candidates`), so the scored
+  pick, a flick and `lock_on side=` move between the points of one body and other bodies; a body's danger counts for its
+  points. A lock on a point is lost when its body dies or goes (`e5 lock lost: e17 (hand of e15) dead`) and let go of when
+  the point breaks (`e5 lock released: e17 (hand of e15)`); `action.lock_on_valid` counts a point of a dead body as dead.
+- *The tool*: `lock_on point=NAME` takes the point of `target` (a body, or a part standing for its body), else of the body
+  the caller is locked on to, else of the body the pick would take. `lock_on target=eN` on a `lock_body: false` body takes
+  the best of its points the caller sees by the score. Refused: a part that is not a lock point or is broken (the error lists
+  the points), a part the body lacks (the error lists the parts), and the body itself (`may_lock_on` names its points).
+  Answers, `observe`/`inspect` and the journal name a point with its body: `ok: locked on e17 (hand of e15)`, `lock e17 (hand
+  of e15)`, `e5 locks e18 (leg_left of e15) (switched right from e16 (core of e15))`.
+- *What a lock on a point does*: the locker faces the point; a swing that overlaps it goes through it, before a part nearer the
+  middle of the hit; the camera frames it at its centre, not at a chest a metre above it, and the legacy pick and the aim
+  assist aim there too. What fights, dies and pairs is the body (`body_of`): an attack order on the body keeps a lock on one
+  of its points; a finisher's victim and the pair facing take the body; a leap lands by the body (the host's machine and a
+  client's prediction alike); a spawn pattern laid `AtTarget` goes around the body's feet, while a projectile aimed
+  (`Target`) or homing at a point flies at its centre, not `height` or `aim_height` above it, and stops homing when the body
+  falls.
+- *Without a `lock_on` definition* none of this is checked, as for every lock: `lock_on target=` takes any id, the body of a
+  `lock_body: false` definition too.
+- *Co-op*: a client's lock on a point is its input; the host checks it like any lock, and the markers come with the part.
+
+**Limits, on purpose.** Points are where their parts are: they follow the body's transform, not its animation. The flick is
+horizontal only (a point straight above another, a horn over the core, is reached by name); a vertical flick belongs to the
+big-body camera (R4).
 
 
 ## Levels from Blender (E4.2)
@@ -6658,7 +6699,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 | `combat/warden.action.ron` | the guard's four attacks (`slash`, `slam`, `sweep`, `shockwave`), calm and enraged |
 | `combat/body.action.ron`, `combat/body.moveset.ron` | body and motion (B2c): `spar_leap` (a landing search toward the lock-on target, no landing in water over 1 m), `spar_spin` (walks while it spins), `burrow` (intangible, a ghost), `spar_stroke` (`afloat`), the movesets `mover` and `burrower`; net ids 126-129 |
 | `combat/objects.prefab.ron`, `combat/objects.action.ron`, `combat/caster.moveset.ron` | spawned combat objects (B4): the prefabs `bolt`, `bolt_homing` (`Projectile`) and `zone`; the `caster` moveset's volley (three bolts in a fan at the lock-on target, the middle one homing; each bursts where it stops and lays a chilling puddle that hits every 0.8 s), line (six zones ahead, landing one after another) and rings (eight lines of four zones, turned at random, landing from the inside out); net ids 170-185 |
-| `characters/colossus.prefab.ron`, `combat/colossus.parts.ron` | body parts (R1): the prefab `colossus` (6 m tall, 1200 health, no brain, the locomotion `colossus`) and its five parts (two legs that double poise, a hand with 60 health that passes half a hit on, a horn out of reach, a core that starts closed and triples a hit); only `parts.scenario` spawns it |
+| `characters/colossus.prefab.ron`, `combat/colossus.parts.ron` | body parts (R1): the prefab `colossus` (6 m tall, 1200 health, no brain, the locomotion `colossus`) and its five parts (two legs that double poise, a hand with 60 health that passes half a hit on, a horn out of reach, a core that starts closed and triples a hit), all five lock points (R3) and the body none; only `parts.scenario` spawns it |
 | `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters; for the action timeline (B2a), `spar_heavy` (charges into `spar_heavy_full` when held 0.25 s; a light or a dodge pressed in its windup waits for its recovery), `spar_lunge` and `spar_lunge_far` (one `lunge` cooldown slot; the lunge turns at 360°/s within 45°, at most 0.4 m closer for the turning and not toward a target behind a wall, recovers 0.6 s longer on a whiff and keeps 40% of its cooldown when cut in its windup), `spar_channel` (`while_held`), `spar_roll_keep` (`face: Keep`), and the moveset `timeline` (a single slot by priority), which `timeline.scenario` lends to the player; for body state (B2b), `spar_ward` (a barrier of half the caster's health for 8 s), `spar_frost` and `spar_zap` (jabs that carry a full bar of chill or jolt), the moveset `bodystate`, and in `combat/sparring.status.ron` the statuses `spar_chill` (a 2 s proc gate, no cooling and a restart while active, a refused proc empties the bar) and `spar_jolt` (an instant status outside the cap), which `body_state.scenario` lends to the player |
 | `combat/skeleton.action.ron`, `combat/fighters.moveset.ron`, `combat/tuning.combat_tuning.ron` | the skeleton's claw, the movesets, the input buffer |
 | `npc/monsters.behavior.ron`, `monsters.perception.ron`, `monsters.director.ron`, `monsters.attack_plan.ron` | how the monsters think: the `skeleton` and `warden` state machines (with a `calm` state that the scenarios do not let the monster leave), sight, the `default` director (two tokens for one player) and the `boss` director (the guard strikes on its own), the guard's attack plans |
@@ -6691,7 +6732,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 - `timeline.scenario` (B2a) — the player borrows the `timeline` moveset (`combat/sparring.*.ron`) against a still skeleton: a heavy held from the press shows `charging, turns in 0.23s` (`step --until named:charging`) and turns into `spar_heavy_full` (-25), a tapped one stays `spar_heavy` (-12); a light pressed while the heavy winds up answers `ok: queued, light starts in 0.5…` and the jab lands with no `light rejected`; a lunge into nothing writes `e5 spar_lunge missed: +0.60s recovery` and shows `missed +0.60s`; a lunge staggered in its windup keeps 40% of its cooldown on the `lunge` slot, so its variant on `technique.2` answers `lunge is on cooldown (ready in 0.5…)`; a channel started with `hold=true` lasts while held and ends on `hold=false`; locked on the skeleton to the north, a roll east (`spar_roll_keep`, `face: Keep`) keeps the player `facing N`. At the end the player has its own moveset, no `RunExtras` and nothing queued;
 - `body_state.scenario` (B2b) — the player borrows the `bodystate` moveset and the skeleton the `sparring` one: a ward gives the player `barrier 50 (7.…)` and journals `e5 barrier 50 for 8.0s`; three slams of 15 come out of it (`e7 -> e5 spar_slam -15 (hp 100) [barrier -15]`, health whole, `barrier 35`, `20`, `5`) and the fourth hurts for 10 (`(hp 90) [barrier -5]`, no `Barrier` left); `damage_taken id=e7 key=core mult=2 seconds=1` doubles a jab (`-12`) and the next one a second later is `-6` again with no `DamageTaken`; a jab that chills procs `spar_chill`, shows `proc gate spar_chill`, a second inside 2 s is swallowed and empties the bar (`Statuses.0[0].buildup == 0`, the chill not restarted), one past the gate restarts it, and a jolt procs and expires in a tick with no slot. At the end both have their own movesets and no barrier, multiplier, proc gate or chill;
 - `objects.scenario` (B4) — the skeleton e8 borrows the `caster` moveset and volleys at the player: `e8 spawns 3 x bolt_fly`, `combat_objects` and `observe` show the bolts (`projectile of e8`), a side bolt stops at a pillar and lays a puddle at its foot, the middle one meets the player once (`e8 -> e5 bolt_fly -8`, credited to the caster) and its puddle hits from the next tick and then every 0.8 s, building up `spar_chill`; a roll toward the next volley's bolt evades it and the bolt is spent all the same; the line telegraphs its six zones from 0.35 s to 1.15 s and the rings their 32 from 0.50 s to 1.16 s, and every object is gone once its action is over; `objects.json` is its reference replay, and `stand/objects.scenario` plays the volley in co-op (both clients have the host's bolts, by id, and see the host's hits);
-- `parts.scenario` (R1) — a 6 m colossus spawned with the yard region, hit only through its parts: the player locks on (`lock_on` picks it; nothing in the file names its id), the first swing meets the hand (`light_1 at hand -10 (hp 1190)`: the hand loses 20, the body half), the third breaks it (`hand broken by e5`), the fourth meets a leg, the core opened by `part name=core op=on` takes the fifth at three times the damage (`light_1 at core -60`), a broken part refuses to come on, `part op=break` breaks the horn, and the `regen` that ends it takes the colossus and its parts away; `parts.json` is its reference replay;
+- `parts.scenario` (R1, R3) — a 6 m colossus spawned with the yard region, hit only through its parts and locked on to only through them: the player locks on (`lock_on` picks a point; nothing in the file names an id), then on the hand by name (`lock_on point=hand`: `(hand of e…)`), the first swing meets it (`light_1 at hand -10 (hp 1190)`: the hand loses 20, the body half), the third breaks it (`hand broken by e5`, and the lock on it is let go of), `lock_on point=hand` is refused as broken, the fourth swing, locked on the left leg, meets it, the core opened by `part name=core op=on` and locked on takes the fifth at three times the damage (`light_1 at core -60`), a flick to the right moves the lock to the left leg, a broken part refuses to come on, `part op=break` breaks the horn (no lock point after), and the `regen` that ends it takes the colossus and its parts away; `parts.json` is its reference replay;
 - `boss_schedule.scenario` (N8a2, N8b) — the warden on two plans with gated options (`angle`, `players`, `max_repeats`, `forbid_after`) that are tokenless and wait in a strafe of their own, on the same director as two skeletons (`sched_arena`: two tokens, strikes 0.7 s apart), all written with `content_apply`; the skeletons take the director's tokens (`e7 takes an attack token on e5`) and the warden none (`!journal "e6 takes an attack token"`), and `npc_state` shows its grant as `"counted": false`: `npc_schedule` explains each refusal (`angle: the target is 10 degrees off the facing; this option needs 95-180`, `players: 1 living, this option needs 2-3`), a 900-tick fight holds every gate under the engine rules (`npc.plan_sequence` among them), and a phase swap keeps the history and the cooldowns the two plans share by name; `boss_schedule.json` is its reference replay, and `stand/boss_schedule.scenario` counts the living players in co-op (three, then two when a client's body dies) and shows a client the host's plan history;
 - `boss_fight`, `dodge`, `errors` — the switch to phase 2, a roll to dodge a hit, errors that teach;
 - `npc_director.scenario` (E6) — three skeletons against one player in god mode, 30 s of combat: the sandbox condition `three_attacking`

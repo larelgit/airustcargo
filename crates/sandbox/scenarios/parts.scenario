@@ -1,12 +1,15 @@
-# Body parts (R1): a 6 m colossus (`content/characters/colossus.prefab.ron`) hit only through its parts
-# (`content/combat/colossus.parts.ron`), never through its own capsule. The player's sword reaches the
-# hand (60 hp of its own; the body loses half of what it takes), the legs (no health; twice the poise)
-# and the core once it is open (three times the damage), never the horn on its head.
+# Body parts (R1) and their lock points (R3): a 6 m colossus (`content/characters/colossus.prefab.ron`)
+# hit only through its parts (`content/combat/colossus.parts.ron`), never through its own capsule, and
+# locked on to only through them. The player's sword reaches the hand (60 hp of its own; the body loses
+# half of what it takes), the legs (no health; twice the poise) and the core once it is open (three times
+# the damage), never the horn on its head. A swing that overlaps the part its body is locked on to goes
+# through it; a broken part is a lock point no more.
 #
 # The colossus is spawned as part of the yard region (`RegionPart`), so the `regen` that ends the
 # scenario takes it and its parts away, whatever ids they had: ids of spawned bodies depend on what ran
-# before. For the same reason nothing here names it: the player locks on to it (`lock_on` picks it),
-# `part` without `id` acts on the body its caller is locked on, and the journal is matched without ids.
+# before. For the same reason nothing here names it: the player locks on to its points (`lock_on` picks
+# one, `lock_on point=` names one), `part` without `id` acts on the body of the point its caller is
+# locked on, and the journal is matched without ids.
 
 seed 42
 
@@ -55,11 +58,19 @@ expect result contains " off"
 session --agent bot --scope player
 act lock_on
 expect result contains "ok: locked on"
-expect result contains "(2.6m S)"
+expect result contains " of e"
+act lock_on point=hand
+expect result contains "(hand of e"
+expect result contains "(1.6m SE +1.2m up)"
+act? lock_on point=tail
+expect result contains "no part `tail`; its parts: core, hand, horn, leg_left, leg_right"
 session --agent scenario
+observe
+expect result contains "lock e"
+expect result contains "(hand of e"
 step 31
 
-# --- 1. a swing meets the hand, the part nearest the sword: the hand loses 20, the body half of that
+# --- 1. a swing meets the hand, the part locked on: the hand loses 20, the body half of that
 mark
 session --agent bot
 act light_attack
@@ -70,7 +81,8 @@ observe
 expect result contains "40/60 hp"
 step 60
 
-# --- 2. two more and the hand breaks: it takes no more hits, the next swing meets a leg (twice the poise)
+# --- 2. two more and the hand breaks: it takes no more hits and the lock on it is let go of; a lock on a
+# leg sends the next swing through the leg (twice the poise)
 mark
 session --agent bot
 act light_attack
@@ -82,7 +94,16 @@ session --agent scenario
 step 60 --until "journal:hand broken"
 expect journal "hand broken by e5"
 expect journal "at hand -10 (hp 1170)"
+expect journal "lock released: e"
+expect journal "(hand of e"
 step 60
+session --agent bot
+act? lock_on point=hand
+expect result contains "is broken; its lock points: core, horn, leg_left, leg_right"
+act lock_on point=leg_left
+expect result contains "(leg_left of e"
+session --agent scenario
+step 31
 mark
 session --agent bot
 act light_attack
@@ -92,11 +113,17 @@ expect journal "light_1 at leg_left -20 (hp 1150)"
 expect !journal "at hand"
 step 60
 
-# --- 3. the core opens (dev): the next swing goes through it, three times the damage
+# --- 3. the core opens (dev, on the body of the point the player is locked on): a lock on it sends the
+# next swing through it, three times the damage
 act part name=core op=on
 expect result contains "core on"
 observe
 expect result !contains " off"
+session --agent bot
+act lock_on point=core
+expect result contains "(core of e"
+session --agent scenario
+step 31
 mark
 session --agent bot
 act light_attack
@@ -105,7 +132,16 @@ step 60 --until "journal:at core"
 expect journal "light_1 at core -60"
 step 60
 
-# --- 4. a broken part stays off; the horn, out of reach, breaks only when a dev says so
+# --- 4. a flick moves the lock to the next point on that side
+session --agent bot
+act lock_on side=right
+expect result contains "(leg_left of e"
+expect result contains "switched right from e"
+expect result contains "(core of e"
+session --agent scenario
+
+# --- 5. a broken part stays off; the horn, out of reach, breaks only when a dev says so, and is no lock
+# point after
 act part name=core op=off
 expect result contains "core off"
 act? part name=hand op=on
@@ -115,6 +151,10 @@ expect result contains "horn broken"
 expect journal "horn broken"
 act? part name=tail op=on
 expect result contains "no part `tail`; its parts: core, hand, horn, leg_left, leg_right"
+session --agent bot
+act? lock_on point=horn
+expect result contains "is broken; its lock points: core, leg_left, leg_right"
+session --agent scenario
 
 # --- the world as it was: the lock let go, the yard again takes the colossus and its parts with it
 session --agent bot

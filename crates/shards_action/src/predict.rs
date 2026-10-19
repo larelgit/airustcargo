@@ -49,7 +49,7 @@ use crate::combat::{Died, Downed, Revived, WentDown};
 use crate::context::{arm_idle, fresh_press, guard_press, step_arm, ContextInputs, GuardArm, Pairing, RunHalted};
 use crate::def::{ActionDef, BufferMode, CombatTuning, MovesetDef, EPS};
 use crate::fighter::{sprint_rule, Charges, Cooldowns, Dead, Fighter, Stamina};
-use crate::leap::{plan_leap, radius_of, LeapSite};
+use crate::leap::{plan_leap, LeapSite};
 use crate::machine::{
     advance, body_height, buffer_press, cap_queue, charge_due, choose_in, free_sprint, gate_perfect, in_sight, launch_due, press_life, start_facing,
     pair_victim_of, steer_locomotion, step_run, tracked, understands, ActionRejected, ActionStarted, ActionState, FighterView, LeapRun, Queued, RunExtras,
@@ -180,6 +180,7 @@ pub(crate) fn predict_actions(
     physics: Res<PhysicsWorld>,
     mut commands: Commands,
     positions: Query<(&Transform, Option<&CharacterParams>, Option<&Collider>)>,
+    parts: Query<&crate::parts::Part>,
     fallen: Query<(Has<Dead>, Has<Downed>)>,
     mut bodies: Query<PredictedBody, With<Predicted>>,
 ) {
@@ -389,7 +390,7 @@ pub(crate) fn predict_actions(
     let here = b.transform.translation;
     let forward = *b.transform.forward();
     let locked = b.intent.target.and_then(|id| index.get(id)).and_then(|e| positions.get(e).ok().map(|p| (e, p)));
-    let target_body = locked.map(|(_, (t, _, collider))| (t.translation, radius_of(collider)));
+    let target_body = crate::machine::leap_target(b.intent.target, &index, &parts, &positions);
     // A running paired action aims at its victim, lock-on or not, as the host's machine does (and, as there, not at one
     // that fell: the replicated `Dead` and `Downed` say so).
     let victim = pair_victim_of(&db, b.pairing, shown.as_ref().map(|s| &s.run), |id| {

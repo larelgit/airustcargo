@@ -194,7 +194,8 @@ pub use objects::{
     Repeats, SpawnAim, SpawnDef, SpawnPattern,
 };
 pub use parts::{
-    break_part, part_of, parts_of, set_part, BodyParts, Part, PartBroken, PartDef, PartHealth, PartHit, PartTurn, PartsDef, SpawnedParts,
+    body_of, body_takes_lock, break_part, lock_points_of, part_of, parts_of, set_part, BodyParts, Part, PartBroken, PartDef, PartHealth,
+    PartHit, PartTurn, PartsDef, SpawnedParts,
 };
 pub use zone::{action_zones, hit_zones, threat_indicators, HitZone, Indicator, WorldShape};
 

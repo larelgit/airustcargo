@@ -25,8 +25,9 @@
 //!
 //! Without a definition the check does nothing at all: no component, no journal line, no lock
 //! taken away (a game keeps what it had). The hooks that tell motion's lock-on who may be
-//! locked on to (alive, and a `LockOnTarget` or a hostile fighter) and who is dangerous (an
-//! attack whose hit zone would land on the locker) are this module's ([`LockHooks`]).
+//! locked on to (alive, and a `LockOnTarget` or a hostile fighter; a body part's lock point while its
+//! body stands, R3) and who is dangerous (an attack whose hit zone would land on the locker) are this
+//! module's ([`LockHooks`]).
 
 use ai_core::prelude::*;
 use ai_core::{with_query, AiIndex, Offenders};
@@ -41,6 +42,7 @@ use shards_motion::{LockOnTarget, MotionSystems, PhysicsWorld};
 use crate::def::CombatTuning;
 use crate::combat::Downed;
 use crate::fighter::{hostile, Dead, Fighter, Team};
+use crate::parts::{body_of, body_takes_lock, lock_points_of, parts_of, Part};
 use crate::zone::{body_radius, zones_threatening};
 
 /// The lock-on systems, for ordering.
@@ -137,13 +139,13 @@ pub(crate) fn plugin(app: &mut App) {
             ),
         )
         .add_systems(FixedUpdate, (switch_locks.in_set(LockSystems::Switch), check_locks.in_set(LockSystems::Check)))
-        .journal_event::<LockTaken>(|e, w| Some(format!("{} locks {}", label(w, e.entity), e.target)))
-        .journal_event::<LockReleased>(|e, w| Some(format!("{} lock released: {}", label(w, e.entity), e.target)))
-        .journal_event::<LockLost>(|e, w| Some(format!("{} lock lost: {} {}", label(w, e.entity), e.target, e.reason)))
+        .journal_event::<LockTaken>(|e, w| Some(format!("{} locks {}", label(w, e.entity), target_name(w, e.target))))
+        .journal_event::<LockReleased>(|e, w| Some(format!("{} lock released: {}", label(w, e.entity), target_name(w, e.target))))
+        .journal_event::<LockLost>(|e, w| Some(format!("{} lock lost: {} {}", label(w, e.entity), target_name(w, e.target), e.reason)))
         .journal_event::<LockSwitched>(|e, w| {
-            Some(format!("{} locks {} (switched {} from {})", label(w, e.entity), e.to, e.side.name(), e.from))
+            Some(format!("{} locks {} (switched {} from {})", label(w, e.entity), target_name(w, e.to), e.side.name(), target_name(w, e.from)))
         })
-        .register_ai_describer("lock", describe_lock)
+        .register_ai_world_describer("lock", describe_lock)
         .add_engine_invariant("action.lock_on_valid", lock_on_valid);
     app.world_mut().register_component::<LockSight>();
 }
@@ -156,24 +158,46 @@ pub fn may_lock(viewer: Option<&Team>, marked: bool, fighter: bool, dead: bool, 
 }
 
 /// [`LockHooks::lockable`]: [`may_lock`] read from the world.
+///
+/// A body whose parts say `lock_body: false` is never taken itself, only its lock points. A
+/// lock point (a [`Part`] with `lock: true`, R3) is taken while it is not broken (breaking takes
+/// its [`LockOnTarget`] away) and its body is standing, is not the viewer and is not a fighter
+/// of the viewer's team: it is a mark on its body, so a point on an ally is no target.
 pub fn lockable(world: &World, viewer: Entity, candidate: Entity) -> bool {
-    viewer != candidate
+    if viewer == candidate {
+        return false;
+    }
+    let down = |e: Entity| world.get::<Dead>(e).is_some() || world.get::<Downed>(e).is_some();
+    if let Some(part) = world.get::<Part>(candidate) {
+        let Some(body) = world.get_resource::<AiIndex>().and_then(|index| index.get(part.body)) else { return false };
+        let ally = world.get::<Fighter>(body).is_some() && !hostile(world.get::<Team>(viewer), world.get::<Team>(body));
+        return world.get::<LockOnTarget>(candidate).is_some() && body != viewer && !down(body) && !ally;
+    }
+    body_takes_lock(world, candidate)
         && may_lock(
             world.get::<Team>(viewer),
             world.get::<LockOnTarget>(candidate).is_some(),
             world.get::<Fighter>(candidate).is_some(),
-            world.get::<Dead>(candidate).is_some() || world.get::<Downed>(candidate).is_some(),
+            down(candidate),
             world.get::<Team>(candidate),
         )
 }
 
 /// [`LockHooks::danger`]: whoever has a hit zone that would land on `viewer` now (a telegraphed
-/// windup or an active swing), at 1.
+/// windup or an active swing), at 1, and the lock points of each (a part is as dangerous as its
+/// body).
 pub fn danger(world: &World, viewer: Entity) -> Vec<(Entity, f32)> {
     let Some(here) = world.get::<Transform>(viewer).map(|t| t.translation) else { return Vec::new() };
     let mut out: Vec<(Entity, f32)> =
         zones_threatening(world, viewer, here, body_radius(world, viewer)).into_iter().map(|(z, _)| (z.attacker, 1.0)).collect();
     out.dedup_by_key(|(e, _)| *e);
+    let points: Vec<(Entity, f32)> = out
+        .iter()
+        .flat_map(|(body, _)| parts_of(world, *body))
+        .filter(|p| world.get::<LockOnTarget>(*p).is_some())
+        .map(|p| (p, 1.0))
+        .collect();
+    out.extend(points);
     out
 }
 
@@ -207,11 +231,22 @@ pub fn switch_lock_of(world: &mut World, entity: Entity, side: Side, rules: &Loc
 /// on to, within range and seen from its eye, distance and look measured from its feet along
 /// its facing.
 pub fn pick_for_body(world: &World, me: Entity, def: &LockOnDef) -> Option<AiId> {
+    pick_among(world, me, def, |_| true)
+}
+
+/// [`pick_for_body`] among the lock points of `body` (R3): the one a lock on a body that is
+/// taken only through its points goes to.
+pub fn pick_point_of(world: &World, me: Entity, body: Entity, def: &LockOnDef) -> Option<AiId> {
+    pick_among(world, me, def, |e| e != body && body_of(world, e) == body)
+}
+
+fn pick_among(world: &World, me: Entity, def: &LockOnDef, keep: impl Fn(Entity) -> bool) -> Option<AiId> {
     let tf = world.get::<Transform>(me)?;
     let eye = eye_of(world, me, def)?;
     let physics = world.get_resource::<PhysicsWorld>();
     let candidates: Vec<_> = lock_candidates(world, me, def)
         .into_iter()
+        .filter(|(e, _)| keep(*e))
         .filter(|(e, c)| physics.is_none_or(|p| sight_clear(p, eye, c.aim, &[me, *e])))
         .map(|(_, c)| c)
         .collect();
@@ -289,11 +324,16 @@ pub fn check_locks(world: &mut World, bodies: &mut QueryState<(Entity, &'static 
             lose(world, entity, target, LockLoss::Gone);
             continue;
         };
-        let verdict = match world.get::<Transform>(target_entity).map(|t| t.translation) {
+        // A lock point (a part, R3) goes and dies with its body.
+        let body = match world.get::<Part>(target_entity) {
+            Some(part) => world.resource::<AiIndex>().get(part.body),
+            None => Some(target_entity),
+        };
+        let verdict = match world.get::<Transform>(target_entity).map(|t| t.translation).zip(body) {
             None => Verdict::Lost(LockLoss::Gone),
-            Some(_) if world.get::<Dead>(target_entity).is_some() => Verdict::Lost(LockLoss::Dead),
+            Some((_, body)) if world.get::<Dead>(body).is_some() => Verdict::Lost(LockLoss::Dead),
             Some(_) if !(hooks.lockable)(world, entity, target_entity) => Verdict::Released,
-            Some(there) if there.distance(here) > def.range => Verdict::Lost(LockLoss::OutOfRange(there.distance(here), def.range)),
+            Some((there, _)) if there.distance(here) > def.range => Verdict::Lost(LockLoss::OutOfRange(there.distance(here), def.range)),
             Some(_) => {
                 let hidden = match (eye_of(world, entity, &def), aim_of(world, target_entity, &def), world.get_resource::<PhysicsWorld>()) {
                     (Some(eye), Some(aim), Some(physics)) => !sight_clear(physics, eye, aim, &[entity, target_entity]),
@@ -337,12 +377,24 @@ fn lose(world: &mut World, entity: Entity, target: AiId, reason: LockLoss) {
 }
 
 /// `lock e6`, and how long it has been hidden: `lock e6 (obstructed 0.8s)`.
-pub fn describe_lock(entity: EntityRef) -> Option<String> {
+/// A lock point (R3) is named with its body: `lock e17 (hand of e15)`.
+pub fn describe_lock(world: &World, entity: Entity) -> Option<String> {
+    let entity = world.get_entity(entity).ok()?;
     let target = entity.get::<Intent>()?.target?;
+    let name = target_name(world, target);
     Some(match entity.get::<LockSight>().filter(|s| s.target == target && s.ticks > 0) {
-        Some(sight) => format!("lock {target} (obstructed {:.1}s)", sight.secs),
-        None => format!("lock {target}"),
+        Some(sight) => format!("lock {name} (obstructed {:.1}s)", sight.secs),
+        None => format!("lock {name}"),
     })
+}
+
+/// How a lock-on target is named: `e6`, or a lock point with its body, `e17 (hand of e15)`.
+pub fn target_name(world: &World, target: AiId) -> String {
+    let part = world.get_resource::<AiIndex>().and_then(|index| index.get(target)).and_then(|e| world.get::<Part>(e));
+    match part {
+        Some(part) => format!("{target} ({} of {})", part.id, part.body),
+        None => target.to_string(),
+    }
 }
 
 /// The engine rule `action.lock_on_valid`: with a `lock_on` definition, no body's lock-on target
@@ -364,7 +416,7 @@ pub fn lock_on_valid(world: &World) -> Option<String> {
             let Some(target) = intent.target else { continue };
             match index.get(target) {
                 None => bad.note(*id, || format!("Intent.target = {target}, which no longer exists")),
-                Some(e) if world.get::<Dead>(e).is_some() => bad.note(*id, || format!("Intent.target = {target}, which is dead")),
+                Some(e) if world.get::<Dead>(body_of(world, e)).is_some() => bad.note(*id, || format!("Intent.target = {target}, which is dead")),
                 Some(_) => {}
             }
         }
@@ -407,11 +459,27 @@ pub fn release_lock(world: &mut World, entity: Entity) -> Option<AiId> {
 /// something that is neither a fighter of another team nor a `LockOnTarget`, a body with no
 /// position) are refused.
 pub fn may_lock_on(world: &World, me: Entity, target: Entity, id: AiId, def: &LockOnDef) -> Result<(), String> {
-    if world.get::<Dead>(target).is_some() {
+    let body = body_of(world, target);
+    if world.get::<Dead>(body).is_some() {
         return Err(format!("{id} is dead; lock on to a living target"));
     }
-    if world.get::<Downed>(target).is_some() {
+    if world.get::<Downed>(body).is_some() {
         return Err(format!("{id} is down: no target; lock on to a standing one"));
+    }
+    if let Some(part) = world.get::<Part>(target) {
+        let points = lock_points_of(world, body);
+        let what = if part.broken { "broken" } else { "not a lock point" };
+        if world.get::<LockOnTarget>(target).is_none() {
+            return Err(match points.is_empty() {
+                true => format!("{id} ({} of {}) is {what}, and {} has no lock points left", part.id, part.body, part.body),
+                false => format!("{id} ({} of {}) is {what}; its lock points: {} (`lock_on target={} point=NAME`)", part.id, part.body, points.join(", "), part.body),
+            });
+        }
+    } else if !body_takes_lock(world, target) {
+        return Err(format!(
+            "{id} is locked on to through its lock points: {} (`lock_on target={id} point=NAME`)",
+            lock_points_of(world, target).join(", ")
+        ));
     }
     let (Some(here), Some(there)) = (world.get::<Transform>(me), world.get::<Transform>(target)) else {
         return Err(format!("{id} has no position to lock on to; lock on to a body in the world"));

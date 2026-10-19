@@ -16,7 +16,7 @@ use shards_core::{CoreSystems, Intent};
 use crate::common::*;
 
 /// The test content plus a `lock_on` definition: the rules are on.
-fn with_rules(app: &mut App, def: &str) {
+pub fn with_rules(app: &mut App, def: &str) {
     let kinds = app.world().resource::<ContentKinds>().clone();
     let mut sources = read_dir(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/combat/assets"))).unwrap();
     sources.push(Source { path: "content/lock.lock_on.ron".into(), text: format!("{{ \"default\": {def} }}") });

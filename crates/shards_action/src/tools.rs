@@ -19,7 +19,8 @@ use crate::combat::{react, revive, revive_downed, stagger, Downed, Reaction, Sta
 use crate::context::{forget, remember, resolve as resolve_context};
 use crate::def::{ActionDef, BufferMode, CombatTuning, MovesetDef, Steer, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Invulnerable, Poise, Stamina, Team};
-use crate::lock::{may_lock_on, pick_for_body, release_lock, switch_lock_of, switch_rules, take_lock};
+use crate::lock::{may_lock_on, pick_for_body, pick_point_of, release_lock, switch_lock_of, switch_rules, take_lock, target_name};
+use crate::parts::{body_of, body_takes_lock, lock_points_of, part_of, Part};
 use crate::machine::{
     buffer_press, can_start, fits_buffer, press_life, understands, ActionState, FighterView, Healed, InputBuffer, Queued,
 };
@@ -410,9 +411,14 @@ fn require_input(world: &World, me: Entity, input: &str, prefix: &str, what: &st
 
 /// Lock on to a target (your attacks and facing follow it), or to the best one you can see,
 /// or let go with `off`; `side` moves the lock you hold to the next target on that side.
+/// A big body may have lock points (its parts): `point` names one; a body taken only through
+/// its points sends a lock on it to the best of them.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct LockOnArgs {
     pub target: Option<Id>,
+    /// A lock point (a part, by name) of `target`, or without `target` of the body you are
+    /// locked on to (else of the best one you can see): `lock_on point=hand`.
+    pub point: Option<String>,
     /// Release the lock-on.
     #[serde(default)]
     pub off: bool,
@@ -435,31 +441,55 @@ fn lock_on(In(call): In<Call<LockOnArgs>>, world: &mut World) -> ToolResult {
     // range, and any target asked for by id (as before the lock-on rules).
     let rules = LockOnDef::active(world.get_resource::<ContentDb>()).cloned();
     if let Some(side) = call.args.side {
-        if call.args.target.is_some() {
-            return Err("pass `target` or `side`, not both: `side` moves the lock you hold".into());
+        if call.args.target.is_some() || call.args.point.is_some() {
+            return Err("pass `target`/`point` or `side`, not both: `side` moves the lock you hold".into());
         }
         let switch = switch_rules(world);
         return match switch_lock_of(world, me, side, &switch) {
-            Ok((from, to)) => Ok(format!("ok: locked on {to} (switched {} from {from}){}", side.name(), where_is(world, here, to))),
+            Ok((from, to)) => {
+                let (to_name, from_name) = (target_name(world, to), target_name(world, from));
+                Ok(format!("ok: locked on {to_name} (switched {} from {from_name}){}", side.name(), where_is(world, here, to)))
+            }
             Err(None) => Err(format!("you hold no lock to move {}; lock on first (`lock_on`, or `lock_on target=eN`)", side.name())),
-            Err(Some(from)) => Err(format!(
-                "nobody you can see to the {} of {from} within {:.0}m; the lock stays on {from}",
-                side.name(),
-                switch.range
-            )),
+            Err(Some(from)) => {
+                let from = target_name(world, from);
+                Err(format!("nobody you can see to the {} of {from} within {:.0}m; the lock stays on {from}", side.name(), switch.range))
+            }
         };
     }
     let target = match (call.args.target, &rules) {
+        _ if call.args.point.is_some() => lock_point(world, me, here, call.args.target, call.args.point.as_deref().unwrap_or_default(), rules.as_ref())?,
         (Some(id), rules) => {
             let e = id.entity(world)?;
             if e == me {
                 return Err("you cannot lock on to yourself".into());
             }
-            if let Some(def) = rules {
+            match rules {
+                // A body taken only through its lock points (R3): the best of them you can see.
+                Some(def) if world.get::<Part>(e).is_none() && !body_takes_lock(world, e) => match pick_point_of(world, me, e, def) {
+                    Some(point) => point,
+                    None => {
+                        if world.get::<Dead>(e).is_some() || world.get::<Downed>(e).is_some() {
+                            may_lock_on(world, me, e, id.0, def)?;
+                        }
+                        let points = lock_points_of(world, e);
+                        return Err(match points.is_empty() {
+                            true => format!("{id} is taken only through its lock points, and none is left (broken)"),
+                            false => format!(
+                                "none of {id}'s lock points ({}) is in sight within {:.0}m; come closer, or pass `point`",
+                                points.join(", "),
+                                def.range
+                            ),
+                        });
+                    }
+                },
                 // What the check would take away at once, and what the pick would never name.
-                may_lock_on(world, me, e, id.0, def)?;
+                Some(def) => {
+                    may_lock_on(world, me, e, id.0, def)?;
+                    id.0
+                }
+                None => id.0,
             }
-            id.0
         }
         (None, Some(def)) => pick_for_body(world, me, def)
             .ok_or_else(|| format!("nothing you can see within {:.0}m to lock on to; pass `target`", def.range))?,
@@ -470,7 +500,33 @@ fn lock_on(In(call): In<Call<LockOnArgs>>, world: &mut World) -> ToolResult {
         }
     };
     take_lock(world, me, target);
-    Ok(format!("ok: locked on {target}{}", where_is(world, here, target)))
+    Ok(format!("ok: locked on {}{}", target_name(world, target), where_is(world, here, target)))
+}
+
+/// The lock point `point` of a body (`lock_on point=`): of `target` (the body of the part it
+/// names), else of the body you are locked on to, else of the one you would lock on to now.
+fn lock_point(world: &World, me: Entity, here: Vec3, target: Option<Id>, point: &str, rules: Option<&LockOnDef>) -> Result<AiId, String> {
+    let held = world.get::<Intent>(me).and_then(|i| i.target);
+    let body = match target.or(held.map(Id)) {
+        Some(id) => body_of(world, id.entity(world)?),
+        None => {
+            let pick = match rules {
+                Some(def) => pick_for_body(world, me, def),
+                None => nearest_enemy(world, me, here, CombatTuning::of(world.resource::<ContentDb>()).lock_on_range),
+            };
+            let pick = pick.ok_or("nothing to lock on to in sight; pass `target` with `point`")?;
+            body_of(world, world.resource::<AiIndex>().get(pick).ok_or("the pick is gone")?)
+        }
+    };
+    if body == me {
+        return Err("you cannot lock on to yourself".into());
+    }
+    let part = part_of(world, body, point)?;
+    let id = *world.get::<AiId>(part).ok_or("the part has no id")?;
+    if let Some(def) = rules {
+        may_lock_on(world, me, part, id, def)?;
+    }
+    Ok(id)
 }
 
 /// ` (6.2m N)`: where `target` is from `here`, or nothing when it has no position.

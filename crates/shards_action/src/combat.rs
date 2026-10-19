@@ -31,11 +31,11 @@
 //! wants Blocked versus GuardBroken decided again: the engine does not redo the guard after
 //! the hooks.
 
-use ai_core::{AiId, SimTick};
+use ai_core::{AiId, AiIndex, SimTick};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_content::ContentDb;
-use shards_core::{flat, NetRole};
+use shards_core::{flat, Intent, NetRole};
 use shards_motion::{
     Collider, ColliderId, LayerMask, MotionState, PhysicsWorld, QueryFilter, Shape,
 };
@@ -486,8 +486,10 @@ fn detect(world: &mut World) -> Vec<Detected> {
             // A part stands for its body (one entry per body, through its nearest part): nearest the
             // middle of the shape (a cone's is half way up its axis, not the feet it starts from), or the
             // start of a flight's segment (the first part along the way).
+            // A swing that overlaps the part its body is locked on to (a lock point, R3) goes through it.
             let near = start.unwrap_or_else(|| shape.physics().1);
-            let mut targets: Vec<((u32, u32), Entity, Option<Entity>)> = crate::parts::hit_bodies(world, overlapping, near)
+            let prefer = world.get::<Intent>(attacker).and_then(|i| i.target).and_then(|id| world.resource::<AiIndex>().get(id));
+            let mut targets: Vec<((u32, u32), Entity, Option<Entity>)> = crate::parts::hit_bodies(world, overlapping, near, prefer)
                 .into_iter()
                 .filter(|(t, _)| world.get::<Health>(*t).is_some() && world.get::<Dead>(*t).is_none())
                 .filter(|(t, _)| Some(*t) != owner)

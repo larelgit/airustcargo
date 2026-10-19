@@ -41,6 +41,7 @@ use crate::def::{ActionDef, CombatTuning, Local, EPS};
 use crate::combat::Downed;
 use crate::fighter::{report_once, Dead, Fighter, Team};
 use crate::machine::{crossed, force_action, step_run, telegraph, ActionEnd, ActionEnded, ActionState, PendingEffects};
+use crate::parts::{body_of, Part};
 use crate::zone::{hit_zones, yaw};
 
 fn is_zero(v: &f32) -> bool {
@@ -304,6 +305,25 @@ fn owner_of(world: &World, spawner: Entity) -> Option<AiId> {
     }
 }
 
+/// Where a homing projectile steers for `id`, and whether that has fallen: a body's aim point
+/// (`aim_height` above its feet), or a lock point's centre (a part, R3), fallen with its body.
+#[allow(clippy::type_complexity, reason = "a Bevy query")]
+fn homing_at(
+    index: &AiIndex,
+    bodies: &Query<(&Transform, Has<Dead>, Has<Downed>, Option<&Part>), Without<ProjectileFlight>>,
+    id: AiId,
+    aim_height: f32,
+) -> Option<(Vec3, bool)> {
+    let (tf, dead, down, part) = bodies.get(index.get(id)?).ok()?;
+    match part {
+        Some(part) => {
+            let (_, dead, down, _) = bodies.get(index.get(part.body)?).ok()?;
+            Some((tf.translation, dead || down))
+        }
+        None => Some((tf.translation + Vec3::Y * aim_height, dead || down)),
+    }
+}
+
 /// The target a body that does not lock on aims its spawned objects at (`SpawnAim::Target`, `AtTarget`), read after
 /// [`Intent::target`] (the lock-on) and before a flight's. An NPC's drive mirrors its brain's current target into it
 /// every tick (`shards_npc`), so a spawn pressed by a brain finds its target with no `lock_on`. Derived state, never input:
@@ -317,8 +337,10 @@ pub struct AimTarget(pub Option<AiId>);
 /// target on a body that fell is let go a tick later (the lock check, the brain's perception); a spawn in between passes
 /// over it to the next one, and with none it is skipped.
 fn target_of(world: &World, spawner: Entity) -> Option<AiId> {
+    // A lock point (a part, R3) stands while its body does.
     let stands = |id: &AiId| {
-        world.resource::<AiIndex>().get(*id).is_some_and(|e| world.get::<Dead>(e).is_none() && world.get::<Downed>(e).is_none())
+        let body = world.resource::<AiIndex>().get(*id).map(|e| crate::parts::body_of(world, e));
+        body.is_some_and(|e| world.get::<Dead>(e).is_none() && world.get::<Downed>(e).is_none())
     };
     world
         .get::<Intent>(spawner)
@@ -368,7 +390,12 @@ pub fn spawn_objects(world: &mut World, spawner: Entity, action: &str, def: &Spa
     };
     let mut facing = flat(facing).try_normalize().unwrap_or(Vec3::NEG_Z);
     let target = target_of(world, spawner);
-    let target_feet = target.and_then(|id| world.resource::<AiIndex>().get(id)).and_then(|e| world.get::<Transform>(e)).map(|t| t.translation);
+    let aimed = target.and_then(|id| world.resource::<AiIndex>().get(id));
+    let target_feet = aimed.and_then(|e| world.get::<Transform>(e)).map(|t| t.translation);
+    // A lock point (a part, R3): a projectile aims at the point itself, at its centre (its position), and
+    // a pattern laid at the target goes around its body's feet.
+    let point = aimed.is_some_and(|e| world.get::<Part>(e).is_some());
+    let body_feet = aimed.map(|e| body_of(world, e)).and_then(|e| world.get::<Transform>(e)).map(|t| t.translation);
     let tuning = CombatTuning::of(world.resource::<ContentDb>());
     let (live, mine) = count_objects(world, owner);
     let fit = (tuning.max_objects as usize).saturating_sub(live).min((tuning.max_objects_per_owner as usize).saturating_sub(mine));
@@ -385,7 +412,7 @@ pub fn spawn_objects(world: &mut World, spawner: Entity, action: &str, def: &Spa
                 facing = to;
             }
         }
-        SpawnAim::AtTarget => center = target_feet.unwrap_or(base),
+        SpawnAim::AtTarget => center = body_feet.unwrap_or(base),
     }
     if def.random_turn {
         let (seed, tick) = (world.resource::<SimSeed>().0, world.resource::<SimTick>().0);
@@ -396,8 +423,8 @@ pub fn spawn_objects(world: &mut World, spawner: Entity, action: &str, def: &Spa
     }
     let center = center + yaw(facing) * def.at.to_vec3();
     // The 3D direction a projectile of the pattern's axis flies.
-    let aim3 = |point: Vec3, axis: Vec3| match (def.aim, target_feet) {
-        (SpawnAim::Target { height }, Some(feet)) => (feet + Vec3::Y * height - point).try_normalize().unwrap_or(axis),
+    let aim3 = |at: Vec3, axis: Vec3| match (def.aim, target_feet) {
+        (SpawnAim::Target { height }, Some(feet)) => (feet + Vec3::Y * if point { 0.0 } else { height } - at).try_normalize().unwrap_or(axis),
         _ => axis,
     };
     // No more than fit are kept (content can ask for 255 x 255): the rest is the cap's to journal.
@@ -665,7 +692,7 @@ pub(crate) fn move_projectiles(
     index: Res<AiIndex>,
     physics: Res<PhysicsWorld>,
     mut projectiles: Query<(Entity, &AiId, &CombatObject, &Projectile, &mut ProjectileFlight, &mut Transform, &mut ActionState)>,
-    bodies: Query<(&Transform, Has<Dead>, Has<Downed>), Without<ProjectileFlight>>,
+    bodies: Query<(&Transform, Has<Dead>, Has<Downed>, Option<&Part>), Without<ProjectileFlight>>,
     mut commands: Commands,
 ) {
     if projectiles.is_empty() {
@@ -695,9 +722,9 @@ pub(crate) fn move_projectiles(
             continue;
         }
         if p.homing > 0.0
-            && let Some((there, false)) = flight.target.and_then(|id| index.get(id)).and_then(|e| bodies.get(e).ok()).map(|(t, dead, down)| (t.translation, dead || down))
+            && let Some((there, false)) = flight.target.and_then(|id| homing_at(&index, &bodies, id, p.aim_height))
         {
-            let want = there + Vec3::Y * p.aim_height - pos;
+            let want = there - pos;
             if want.length_squared() > 0.01 {
                 flight.dir = blend(flight.dir, want.normalize(), (p.homing * dt).clamp(0.0, 1.0));
             }
@@ -814,11 +841,13 @@ fn describe_projectile(world: &World, entity: Entity) -> Option<String> {
         line.push_str(&format!(" {:.1}m/s", p.speed));
         let here = e.get::<Transform>()?.translation;
         if let Some(id) = flight.target
-            && let Some(there) = world.resource::<AiIndex>().get(id).and_then(|t| world.get::<Transform>(t))
+            && let Some(t) = world.resource::<AiIndex>().get(id)
+            && let Some(there) = world.get::<Transform>(t)
         {
             line.push_str(&format!(" -> {id}"));
             if p.speed > 0.0 {
-                line.push_str(&format!(" {:.2}s", (there.translation + Vec3::Y * p.aim_height - here).length() / p.speed));
+                let aim = if world.get::<Part>(t).is_some() { 0.0 } else { p.aim_height };
+                line.push_str(&format!(" {:.2}s", (there.translation + Vec3::Y * aim - here).length() / p.speed));
             }
         }
     }

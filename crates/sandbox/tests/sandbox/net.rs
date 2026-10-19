@@ -775,9 +775,19 @@ fn parts_come_to_a_client_and_its_swings_land_through_them() {
     assert!(host.iter().all(|p| p.1 == colossus));
     assert_eq!(parts(&stand, C1), host, "c1 has the host's parts, by id, where the host has them");
 
-    let locked = stand.call(C1, "lock_on", json!({"target": colossus}));
+    // The colossus is locked on to through its lock points (R3): c1 takes the hand, and the host keeps
+    // that lock (c1's input) through its check.
+    let locked = stand.call(C1, "lock_on", json!({"target": colossus, "point": "hand"}));
     assert!(locked.ok, "{}", locked.result);
+    assert!(locked.result.as_str().is_some_and(|t| t.contains(&format!("(hand of {colossus})"))), "{}", locked.result);
+    let hand_id = parts(&stand, HOST).into_iter().find(|p| p.2 == "hand").unwrap().0;
     stand.run(40);
+    let lock = |stand: &Stand, member| {
+        let world = stand.world(member);
+        let mut q = world.try_query::<(&AiId, &Intent)>().unwrap();
+        q.iter(world).find(|(id, _)| id.to_string() == player).and_then(|(_, i)| i.target).map(|t| t.to_string())
+    };
+    assert_eq!(lock(&stand, HOST), Some(hand_id.clone()), "the host holds c1's lock on the hand");
     for _ in 0..3 {
         let swung = stand.call(C1, "light_attack", json!({}));
         assert!(swung.ok, "{}", swung.result);
@@ -789,6 +799,7 @@ fn parts_come_to_a_client_and_its_swings_land_through_them() {
     let hand = |member| parts(&stand, member).into_iter().find(|p| p.2 == "hand").unwrap();
     assert!(!hand(HOST).3 && hand(HOST).4, "the hand broke on the host: {:?}", hand(HOST));
     assert_eq!(hand(C1), hand(HOST), "and c1 has it broken");
+    assert_eq!((lock(&stand, HOST), lock(&stand, C1)), (None, None), "the broken hand is no lock point: let go of on both");
     assert_eq!(stand.world(C1).resource::<Hits>().0, hits, "c1 saw the host's hits");
 
     assert!(stand.call(HOST, "despawn", json!({"id": colossus})).ok);
