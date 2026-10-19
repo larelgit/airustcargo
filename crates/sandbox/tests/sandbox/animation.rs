@@ -27,6 +27,18 @@ fn a_set_is_previewed_on_a_body_that_has_no_animated() {
 }
 
 #[test]
+fn a_dead_body_with_nothing_running_says_its_clip_plays_once() {
+    let mut app = sandbox::test_app(42);
+    let boss = app.world().resource::<shards::ai_core::AiIndex>().get(shards::ai_core::AiId::parse(BOSS).unwrap()).unwrap();
+    shards::action::kill(app.world_mut(), boss, None, None);
+    step(&mut app, 600);
+    let said = text(&ok(&mut app, "animation", json!({"id": BOSS, "animset": "humanoid"}))).to_owned();
+    let body = said.lines().nth(1).unwrap_or_default();
+    assert!(body.contains(" played once at x") && (body.ends_with("(dead)") || body.contains("(dead) ·")), "{said}");
+    assert!(!body.contains("looping"), "{said}");
+}
+
+#[test]
 fn a_drink_puts_the_sword_on_the_hip_while_it_lasts() {
     let mut app = sandbox::test_app(42);
     assert_eq!(text(&ok(&mut app, "use_item", json!({"item": "flask"}))), "ok: drink");

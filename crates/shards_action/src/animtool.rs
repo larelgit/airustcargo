@@ -168,6 +168,10 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
                     clock_of(r),
                     r.phase
                 ),
+                // A mantle is seeked too, by its own progress.
+                (None, Some(p)) => format!(" seeked to {:.0} % (mantle)", p * 100.0),
+                // A clip that plays once and holds (a dead body with no action running).
+                _ if !choice.looping => format!(" played once at x{:.2}{}", choice.speed, if status.dead { " (dead)" } else { "" }),
                 _ => format!(" looping at x{:.2} ({})", choice.speed, crate::anim::locomotion_state_at(motion, &set.speeds, status.pace).name()),
             };
             format!("  body: {clip}{why}")
