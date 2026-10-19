@@ -22,7 +22,8 @@ use shards_core::Predicted;
 use shards_motion::{MotionState, MoveModifiers};
 
 use crate::anim::{
-    mount_places, select_clip_in, select_layer_in, AnimSet, Animated, BodyStatus, MountView, Place, PropSwaps,
+    mode_name, mount_places, select_clip_in, select_layer_in, AnimSet, Animated, BodyStatus, MountView, Place, PropSwaps, LEFT_KEY,
+    MODE_KEY,
 };
 use crate::def::{ActionDef, MovesetDef};
 use crate::fighter::{Dead, Fighter};
@@ -207,6 +208,54 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
         out.push(format!("  layers: {}", layers.join(" · ")));
     }
 
+    // The motion mode: what hangs on it (mode rules, the draw after leaving, a layer off, a drop).
+    let mode = motion.mode;
+    let (mode_rules, left_rules) = (set.mode_rules(mode), set.left_rules(mode));
+    let layers_off: Vec<&str> = set.layers.keys().map(String::as_str).filter(|l| set.layer_off(l, mode)).collect();
+    let drop = set.drops.get(mode_name(mode));
+    let has_modes = set.mounts.keys().any(|k| k.starts_with(MODE_KEY) || k.starts_with(LEFT_KEY))
+        || !set.drops.is_empty()
+        || set.layers.values().any(|l| !l.off_in.is_empty());
+    if has_modes {
+        let mut parts = vec![format!("{} ({})", mode_name(mode), if preview { "as the controller says" } else { "drawn" })];
+        // The preview cannot know how long ago an action ended: a running one makes the rules step aside.
+        let yields = mode_rules.is_some_and(|r| r.yield_after > 0.0 && run.is_some());
+        #[allow(unused_mut, reason = "the drawn side replaces it")]
+        let mut rules_text = match (mode_rules, yields) {
+            (Some(r), true) => format!("@mode:{} steps aside (an action runs, yield_after {} s)", mode_name(mode), r.yield_after),
+            (Some(_), false) => format!("@mode:{} applies", mode_name(mode)),
+            (None, _) => "no @mode rules".to_owned(),
+        };
+        #[allow(unused_mut, reason = "the drawn side adds the drop")]
+        let mut drop_text = drop.map(|d| format!("drop {:.2} m over {:.2} s when an action runs", d.down, d.seconds));
+        #[cfg(feature = "render")]
+        if let Some(b) = bound {
+            let clock = world.get_resource::<Time<Fixed>>().map_or(0.0, |t| t.elapsed_secs_f64() + t.overstep().as_secs_f64());
+            if let Some(rules) = mode_rules {
+                rules_text = if b.modes.yielding() {
+                    let ago = b.modes.acted_ago(clock).map_or(String::new(), |a| format!(", an action {a:.2} s ago"));
+                    format!("@mode:{} steps aside (yield_after {} s{ago})", mode_name(mode), rules.yield_after)
+                } else {
+                    format!("@mode:{} applies", mode_name(mode))
+                };
+            }
+            if let Some((left, waiting)) = b.modes.left() {
+                let wait = set.left_rules(left).map_or(0.0, |r| r.wait);
+                parts.push(format!("left {} {} (wait {wait} s)", mode_name(left), if waiting { "waiting" } else { "drawing" }));
+            }
+            drop_text = drop.map(|d| format!("drop {:.2}/{:.2} m", b.drop_depth(), d.down));
+        }
+        parts.push(rules_text);
+        if left_rules.is_some() && !parts.iter().any(|p| p.starts_with("left ")) {
+            parts.push(format!("@left:{} rules wait {} s after leaving", mode_name(mode), left_rules.map_or(0.0, |r| r.wait)));
+        }
+        if !layers_off.is_empty() {
+            parts.push(format!("layers off: {}", layers_off.join(", ")));
+        }
+        parts.extend(drop_text);
+        out.push(format!("  mode: {}", parts.join(" · ")));
+    }
+
     // The props.
     let swaps = world.get::<PropSwaps>(body);
     let carried: Vec<(String, String)> = set.carried(moveset).iter().map(|c| (c.prop.clone(), c.socket.clone())).collect();
@@ -242,7 +291,7 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
             equip = b.mounts_equip(set, clock);
         }
         #[allow(unused_mut, reason = "the drawn side replaces it")]
-        let mut places = mount_places(&MountView { carried: &carried, previous: &[], run: rules, equip, cut: &[] });
+        let mut places = mount_places(&MountView { carried: &carried, previous: &[], run: rules, equip, mode: mode_rules.filter(|r| !(r.yield_after > 0.0 && run.is_some())).map(|r| (r, 0.0)), left: None, cut: &[] });
         // Drawn: what the bridge computed (it also knows the previous moveset's props and the cut hold).
         #[cfg(feature = "render")]
         // Its placements, hidden props and props on missing sockets included.

@@ -12,12 +12,12 @@ const MOVESETS: &str = r#"{
     "hero": (inputs: {"light": "light_1", "dodge": "roll", "use_item": "drink"}),
     "greatsword": (inputs: {"light": "light_1"}),
 }"#;
-const PROPS: &str = r#"{
+pub(super) const PROPS: &str = r#"{
     "sword": (size: (0.05, 0.9, 0.02), grip: (0.0, 0.3, 0.0)),
     "great": (size: (0.1, 1.4, 0.04)),
     "flask": (size: (0.06, 0.1, 0.06)),
 }"#;
-const SET: &str = r#"{ "h": (
+pub(super) const SET: &str = r#"{ "h": (
     source: "models/h.glb",
     clips: {"idle": (), "walk": (), "swing_1": (), "g_idle": (), "g_walk": (), "g_swing": (), "drink": (), "roll": ()},
     locomotion: {"idle": "idle", "walk": "walk"},
@@ -63,11 +63,11 @@ fn sources(props: &str, animsets: &str) -> [shards_content::db::Source; 4] {
     ]
 }
 
-fn errors_of(props: &str, animsets: &str) -> Vec<String> {
+pub(super) fn errors_of(props: &str, animsets: &str) -> Vec<String> {
     ContentDb::build(&kinds(), &sources(props, animsets)).errors().map(ToString::to_string).collect()
 }
 
-fn kit() -> AnimSet {
+pub(super) fn kit() -> AnimSet {
     let db = ContentDb::build(&kinds(), &sources(PROPS, SET));
     assert_eq!(db.errors().count(), 0, "{:?}", db.errors().map(ToString::to_string).collect::<Vec<_>>());
     db.get::<AnimSet>("h").unwrap().clone()
@@ -141,7 +141,7 @@ fn a_mappings_ends_equip_is_written_only_when_it_differs_from_its_default() {
 fn a_misspelt_field_of_the_new_types_is_a_parse_error() {
     for (bad, field) in [
         (SET.replace(r#"(bone: "hand.R")"#, r#"(bone: "hand.R", ofset: (1.0, 0.0, 0.0))"#), "ofset"),
-        (SET.replace(r#"ended_by: ["blocked", "parried"]"#, r#"ended_by: [], yield_after: 1.2"#), "yield_after"),
+        (SET.replace(r#"ended_by: ["blocked", "parried"]"#, r#"ended_by: [], yeild_after: 1.2"#), "yeild_after"),
         (SET.replace(r#"(prop: "great", socket: "hand_r")"#, r#"(prop: "great", socket: "hand_r", slot: 2)"#), "slot"),
     ] {
         let errors = errors_of(PROPS, &bad);
@@ -212,15 +212,15 @@ fn mounts_are_checked() {
         ]
     );
     let more = SET
-        .replace(r#""drink": (moves"#, r#""@mode:water": (), "typo": (moves: [(prop: "sword", to: None, span: Secs(0.0, 1.0))]), "drink": (moves"#)
+        .replace(r#""drink": (moves"#, r#""@weather:rain": (), "typo": (moves: [(prop: "sword", to: None, span: Secs(0.0, 1.0))]), "drink": (moves"#)
         .replace(r#"moves: [(prop: "sword", to: Some("back")"#, r#"on_cut: {"sword": 0.1}, moves: [(prop: "boat", to: None, span: Secs(0.0, 1.0)), (prop: "sword", to: Some("back")"#);
     assert_eq!(
         errors_of(PROPS, &more),
         [
-            "content/h.animset.ron: animset `h`: mounts.@mode:water: the only rules key that starts with `@` is `@moveset` \
-             (a motion mode's keys come with a later slice); name an action, an `anim` or a tag",
             "content/h.animset.ron: animset `h`: mounts.@moveset.moves[0].prop `boat` is never carried (no `carry` entry has it); the move does nothing",
             "content/h.animset.ron: animset `h`: mounts.@moveset.on_cut belongs under an action's key: it is what a cut run holds",
+            "content/h.animset.ron: animset `h`: mounts.@weather:rain: the only rules keys that start with `@` are `@moveset`, \
+             `@mode:<mode>` and `@left:<mode>`; name an action, an `anim` or a tag",
             "content/h.animset.ron: animset `h`: mounts.typo names no action, `anim` or tag; the rules are looked up by an action's id, its `anim` or one of its tags",
         ]
     );
@@ -313,7 +313,7 @@ fn rules_are_found_by_id_then_anim_then_tag() {
     assert!(set.carried(None).is_empty());
 }
 
-fn carried(list: &[(&str, &str)]) -> Vec<(String, String)> {
+pub(super) fn carried(list: &[(&str, &str)]) -> Vec<(String, String)> {
     list.iter().map(|(p, s)| ((*p).to_owned(), (*s).to_owned())).collect()
 }
 
@@ -322,7 +322,7 @@ fn places(set: &AnimSet, view: &MountView) -> Vec<(String, Place)> {
     mount_places(view)
 }
 
-fn at(socket: &str) -> Place {
+pub(super) fn at(socket: &str) -> Place {
     Place::Socket(socket.to_owned())
 }
 
@@ -336,6 +336,8 @@ fn a_carried_prop_sits_in_its_carry_socket_until_a_rule_moves_it() {
         carried: &own,
         previous: &[],
         run: Some((set.mounts.get("drink").unwrap(), drink, t)),
+        mode: None,
+        left: None,
         equip: None,
         cut: &[],
     };
@@ -371,6 +373,8 @@ fn the_cut_hold_beats_the_running_action_and_the_action_beats_the_equip() {
         previous: &[],
         run: Some((&rules, roll, 0.01)),
         equip: Some((equip, 0.15)),
+        mode: None,
+        left: None,
         cut: &held,
     };
     assert_eq!(mount_places(&view), [("sword".into(), at("back"))], "the cut hold first");
@@ -386,7 +390,7 @@ fn the_previous_props_show_inside_the_previous_span_and_the_new_ones_after() {
     let equip = set.equip_rules().unwrap();
     let new = carried(&[("great", "hand_r")]);
     let old = carried(&[("sword", "hand_r"), ("flask", "hip")]);
-    let view = |since: f32| MountView { carried: &new, previous: &old, run: None, equip: Some((equip, since)), cut: &[] };
+    let view = |since: f32| MountView { carried: &new, previous: &old, run: None, equip: Some((equip, since)), mode: None, left: None, cut: &[] };
     // 0 - 0.12 s: the old kit shows (the sword is on the back from 0.1 s); the new weapon is hidden.
     assert_eq!(
         mount_places(&view(0.05)),
@@ -443,7 +447,7 @@ fn the_actions_previous_span_decides_over_the_equips() {
     // The action has a `previous` span of its own, and it is closed at 0.05 s: the equip's (0 - 0.1 s)
     // does not show the old props in its place.
     let rules = MountRules { previous: Some(Span::Secs(0.5, 0.6)), ..MountRules::default() };
-    let view = MountView { carried: &new, previous: &old, run: Some((&rules, roll, 0.05)), equip: Some((equip, 0.05)), cut: &[] };
+    let view = MountView { carried: &new, previous: &old, run: Some((&rules, roll, 0.05)), equip: Some((equip, 0.05)), mode: None, left: None, cut: &[] };
     assert_eq!(mount_places(&view), [("great".into(), Place::Hidden), ("sword".into(), Place::Hidden)]);
     // An action whose rules have none leaves it to the equip.
     let bare = MountRules::default();
@@ -458,4 +462,9 @@ fn a_model_path_stays_inside_the_assets_folder() {
     assert_eq!(one("../assets/a.glb"), [want("../assets/a.glb")]);
     assert_eq!(one("/etc/a.glb"), [want("/etc/a.glb")]);
     assert_eq!(one("models/a.glb"), Vec::<String>::new());
+}
+
+/// The kit's `drink` action, for a run's phases.
+pub(super) fn drink() -> ActionDef {
+    ContentDb::build(&kinds(), &sources(PROPS, SET)).get::<ActionDef>("drink").unwrap().clone()
 }

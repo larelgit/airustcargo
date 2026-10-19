@@ -114,6 +114,19 @@
 //! that end it). `by_moveset` renames clips per moveset (a clip family). [`mount_places`] is the
 //! pure decision; the bridge spawns the props under the bone, without `AiId`.
 //!
+//! ## Motion modes
+//!
+//! What a body shows can depend on the motion mode it is drawn in (`MotionState::mode`: `ground`,
+//! `air`, `water`, `glide`, `mantle`; [`MODES`]). `mounts["@mode:water"]` holds the rules while the
+//! body swims (`yield_after`: they step aside while an action runs in the mode and for that many
+//! seconds after it, a blade swung afloat stays in the hand); `mounts["@left:water"]` holds the rules
+//! after the body left it (`wait`: the moves are read at time 0 for up to that many seconds, or until
+//! the body's fade out of its clip is done; then they run, and the bridge fires [`ModeLeft`]).
+//! `LayerDef::off_in` switches a layer off in a mode, and `drops` lowers the model for the seconds an
+//! action runs in a mode (a swing afloat). [`mount_places`] decides the props (the order: a cut hold,
+//! the running action, `@mode`, `@left`, `@moveset`, the carry socket); the clocks are the
+//! simulation's, kept per body by the bridge.
+//!
 //! ## Cues
 //!
 //! A clip can carry timed [`CueDef`]s; when the animation passes one, an [`AnimationCue`]
@@ -235,6 +248,57 @@ pub const MAX_LAYERS: usize = 64;
 pub struct LayerDef {
     /// The bone (a node name of the glTF) the layer starts at: that bone and all below it.
     pub root: String,
+    /// Motion modes ([`mode_name`]) in which nothing plays on this layer: `["water"]`, where the
+    /// strokes own both arms. A play already under way fades out over the locomotion clip's blend.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub off_in: Vec<String>,
+}
+
+impl LayerDef {
+    /// A layer from `root` that is on in every mode.
+    pub fn at(root: impl Into<String>) -> Self {
+        Self { root: root.into(), off_in: Vec::new() }
+    }
+}
+
+/// The name content gives a motion mode: `ground`, `air`, `water`, `glide`, `mantle`.
+pub const MODES: [&str; 5] = ["ground", "air", "water", "glide", "mantle"];
+
+/// The content name of `mode` (see [`MODES`]).
+pub fn mode_name(mode: MotionMode) -> &'static str {
+    match mode {
+        MotionMode::Ground => "ground",
+        MotionMode::Air => "air",
+        MotionMode::Water => "water",
+        MotionMode::Glide => "glide",
+        MotionMode::Mantle => "mantle",
+    }
+}
+
+/// The motion mode content calls `name`.
+pub fn parse_mode(name: &str) -> Option<MotionMode> {
+    [MotionMode::Ground, MotionMode::Air, MotionMode::Water, MotionMode::Glide, MotionMode::Mantle]
+        .into_iter()
+        .find(|m| mode_name(*m) == name)
+}
+
+/// The model goes `down` metres lower, at a constant rate that reaches it in `seconds`, while an
+/// action runs in the mode this is the entry of (`drops: {"water": (down: 0.15, seconds: 0.22)}`),
+/// and comes back the same way when the action ends or the mode changes.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DropDef {
+    /// Metres, in the world.
+    pub down: f32,
+    /// Seconds to go all the way down (or up).
+    pub seconds: f32,
+}
+
+impl DropDef {
+    /// Metres a second.
+    pub fn rate(&self) -> f32 {
+        self.down / self.seconds
+    }
 }
 
 /// What an action shows (a value of an animset's `actions` or `tags`): a clip of the library,
@@ -372,14 +436,23 @@ pub struct AnimSet {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub carry: BTreeMap<String, Vec<Carry>>,
     /// Where carried props go: by action key (an id, an `anim` name or a tag, looked up on their
-    /// own, see [`AnimSet::mount_rules`]) and `"@moveset"` (for the seconds after a weapon
-    /// switch).
+    /// own, see [`AnimSet::mount_rules`]), `"@moveset"` (for the seconds after a weapon switch),
+    /// `"@mode:<mode>"` (while the drawn motion mode is `<mode>`) and `"@left:<mode>"` (after the
+    /// body left `<mode>`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub mounts: BTreeMap<String, MountRules>,
+    /// The model lowered while an action runs in a motion mode: mode name ([`MODES`]) -> drop (a
+    /// swing afloat). Written on the `root_motion` bone, so the set needs one.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub drops: BTreeMap<String, DropDef>,
 }
 
 fn is_zero(v: &Vec3) -> bool {
     *v == Vec3::ZERO
+}
+
+fn is_zero_f32(v: &f32) -> bool {
+    *v == 0.0
 }
 
 fn is_one(v: &f32) -> bool {
@@ -442,6 +515,15 @@ pub struct MountRules {
     /// (the drink: the bottle 0.025, the blade 0.055). Applies to reactions, staggers and death too.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub on_cut: BTreeMap<String, f32>,
+    /// `"@mode:<mode>"` only: the rules step aside while an action runs in the mode and for this many
+    /// seconds after it ends (the blade stays in hand 1.2 s after a swing afloat). 0: they never do.
+    #[serde(skip_serializing_if = "is_zero_f32")]
+    pub yield_after: f32,
+    /// `"@left:<mode>"` only: the moves' clock (and the `left:<mode>` event, [`ModeLeft`]) waits up to
+    /// this many seconds after the body left the mode, less once the body's fade out of the mode's
+    /// clip is done. While it waits the moves are read at time 0.
+    #[serde(skip_serializing_if = "is_zero_f32")]
+    pub wait: f32,
 }
 
 /// One move of a prop: while `span` is open it sits in socket `to`, or is hidden (`to: None`).
@@ -719,6 +801,21 @@ impl AnimSet {
         self.mounts.get(EQUIP_KEY)
     }
 
+    /// The rules for the motion mode `mode` (`mounts["@mode:water"]`).
+    pub fn mode_rules(&self, mode: MotionMode) -> Option<&MountRules> {
+        self.mounts.get(&format!("{MODE_KEY}{}", mode_name(mode)))
+    }
+
+    /// The rules for after the body left `mode` (`mounts["@left:water"]`).
+    pub fn left_rules(&self, mode: MotionMode) -> Option<&MountRules> {
+        self.mounts.get(&format!("{LEFT_KEY}{}", mode_name(mode)))
+    }
+
+    /// Whether layer `layer` plays nothing while the drawn motion mode is `mode` (`off_in`).
+    pub fn layer_off(&self, layer: &str, mode: MotionMode) -> bool {
+        self.layers.get(layer).is_some_and(|l| l.off_in.iter().any(|m| m == mode_name(mode)))
+    }
+
     /// What a body of moveset `moveset` carries: the set's `carry` for it, else for `"*"`.
     pub fn carried(&self, moveset: Option<&str>) -> &[Carry] {
         moveset
@@ -730,6 +827,32 @@ impl AnimSet {
 
 /// The key of `mounts` whose rules hold for the seconds after a weapon switch.
 pub const EQUIP_KEY: &str = "@moveset";
+
+/// The start of the key of `mounts` whose rules hold while the drawn motion mode is the one that
+/// follows (`"@mode:water"`).
+pub const MODE_KEY: &str = "@mode:";
+
+/// The start of the key of `mounts` whose rules hold after the body left the mode that follows
+/// (`"@left:water"`).
+pub const LEFT_KEY: &str = "@left:";
+
+/// A presentation event: the bridge fires it for an animated body when the wait of its
+/// `"@left:<mode>"` rules ends (the body left `<mode>`, and has stood out of it long enough, or its
+/// fade out of the mode's clip is done). The event the overlay `left:<mode>` is named after; a game
+/// can observe it. Not gameplay: it is not journaled, forwarded or replayed.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct ModeLeft {
+    pub entity: Entity,
+    /// The mode left: `water` (see [`MODES`]).
+    pub mode: String,
+}
+
+impl ModeLeft {
+    /// The overlay event's name: `left:water`.
+    pub fn name(&self) -> String {
+        format!("left:{}", self.mode)
+    }
+}
 
 /// The engine events whose arrival can end an equip (`MountRules::ended_by`): the names of the
 /// combat and pair events.
@@ -773,6 +896,12 @@ pub struct MountView<'a> {
     pub run: Option<(&'a MountRules, &'a ActionDef, f32)>,
     /// The weapon switch's rules and the seconds since it; `None` after the equip has ended.
     pub equip: Option<(&'a MountRules, f32)>,
+    /// The `"@mode:<mode>"` rules of the motion mode the body is in, while they apply (not while they
+    /// yield), and the seconds since they began to apply.
+    pub mode: Option<(&'a MountRules, f32)>,
+    /// The `"@left:<mode>"` rules of the mode the body left, and the seconds on their clock: 0 while
+    /// they wait.
+    pub left: Option<(&'a MountRules, f32)>,
     /// Props a cut run holds where they were: (prop, where).
     pub cut: &'a [(String, Place)],
 }
@@ -798,7 +927,7 @@ fn open_in(span: &Span, def: Option<&ActionDef>, t: f32) -> bool {
 /// The props the body shows (the previous moveset's while `previous` is open, else the carried
 /// ones) and where each sits now; the others of `carried` and `previous` are `Hidden`. In the
 /// order of 8.7 of the design, first that applies: a cut hold, the running action's rules, the
-/// weapon switch's rules, the carry socket.
+/// motion mode's, the rules after leaving a mode, the weapon switch's rules, the carry socket.
 pub fn mount_places(view: &MountView) -> Vec<(String, Place)> {
     // The action's `previous` span when its rules have one, else the weapon switch's.
     let previous_open = match view.run.and_then(|(rules, def, t)| rules.previous.as_ref().map(|s| open_in(s, Some(def), t))) {
@@ -819,6 +948,14 @@ pub fn mount_places(view: &MountView) -> Vec<(String, Place)> {
             .or_else(|| {
                 let (rules, def, t) = view.run?;
                 last_open(rules, prop, |span| open_in(span, Some(def), t))
+            })
+            .or_else(|| {
+                let (rules, since) = view.mode?;
+                last_open(rules, prop, |span| open_in(span, None, since))
+            })
+            .or_else(|| {
+                let (rules, since) = view.left?;
+                last_open(rules, prop, |span| open_in(span, None, since))
             })
             .or_else(|| {
                 let (rules, since) = view.equip?;
@@ -1192,6 +1329,11 @@ impl AnimSet {
 }
 
 /// `field -> unknown clip `x` (did you mean `y`?); clips: a, b`.
+/// ` (did you mean `water`?)` for a misspelt motion mode, or nothing.
+fn mode_hint(mode: &str) -> String {
+    shards_content::db::closest(mode, MODES.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default()
+}
+
 fn unknown_clip(refs: &mut Refs, names: &[&str], field: &str, clip: &str) {
     let hint = shards_content::db::closest(clip, names.iter().copied())
         .map(|c| format!(" (did you mean `{c}`?)"))
@@ -1290,6 +1432,11 @@ impl ContentDef for AnimSet {
                     "layers.{name}.root is empty; name the bone the layer starts at, e.g. `layers: {{\"{name}\": (root: \"spine\")}}`"
                 ));
             }
+            for mode in &layer.off_in {
+                if parse_mode(mode).is_none() {
+                    refs.error(format!("layers.{name}.off_in names an unknown motion mode `{mode}`{}; modes: {}", mode_hint(mode), MODES.join(", ")));
+                }
+            }
         }
         for (action, mapping) in &self.actions {
             refs.require::<ActionDef>(action, "actions");
@@ -1339,6 +1486,21 @@ impl AnimSet {
     /// `by_moveset`, `sockets`, `carry` and `mounts`: what they name exists, and the numbers make
     /// sense.
     fn check_mounting(&self, refs: &mut Refs) {
+        for (mode, drop) in &self.drops {
+            if parse_mode(mode).is_none() {
+                refs.error(format!("drops has an unknown motion mode `{mode}`{}; modes: {}", mode_hint(mode), MODES.join(", ")));
+            }
+            for (field, v) in [("down", drop.down), ("seconds", drop.seconds)] {
+                if !(v > 0.0 && v.is_finite()) {
+                    refs.error(format!("drops.{mode}.{field} must be > 0 (is {v})"));
+                }
+            }
+        }
+        if !self.drops.is_empty() && self.root_motion.is_none() {
+            refs.error(
+                "`drops` needs `root_motion`: the drop is written on that bone; name the root bone, e.g. `root_motion: \"root\"`",
+            );
+        }
         let clip_names: Vec<&str> = self.clips.keys().map(String::as_str).collect();
         for (moveset, table) in &self.by_moveset {
             refs.require::<MovesetDef>(moveset, "by_moveset");
@@ -1408,12 +1570,20 @@ impl AnimSet {
 
     fn check_rules(&self, refs: &mut Refs, key: &str, rules: &MountRules, sockets: &[&str], carried: &BTreeSet<&str>) {
         let equip = key == EQUIP_KEY;
-        if key.starts_with('@') && !equip {
+        let (in_mode, in_left) = (key.starts_with(MODE_KEY), key.starts_with(LEFT_KEY));
+        let special = key.starts_with('@');
+        if special && !(equip || in_mode || in_left) {
             refs.error(format!(
-                "mounts.{key}: the only rules key that starts with `@` is `{EQUIP_KEY}` (a motion mode's keys come \
-                 with a later slice); name an action, an `anim` or a tag"
+                "mounts.{key}: the only rules keys that start with `@` are `{EQUIP_KEY}`, `{MODE_KEY}<mode>` and \
+                 `{LEFT_KEY}<mode>`; name an action, an `anim` or a tag"
             ));
             return;
+        }
+        if in_mode || in_left {
+            let mode = &key[if in_mode { MODE_KEY.len() } else { LEFT_KEY.len() }..];
+            if parse_mode(mode).is_none() {
+                refs.error(format!("mounts.{key} names an unknown motion mode `{mode}`{}; modes: {}", mode_hint(mode), MODES.join(", ")));
+            }
         }
         // The actions this key looks up: by id, by `anim` or by tag.
         let actions: Vec<&ActionDef> = refs
@@ -1421,7 +1591,7 @@ impl AnimSet {
             .filter(|(id, def)| *id == key || def.anim.as_deref() == Some(key) || def.tags.iter().any(|t| t == key))
             .map(|(_, def)| def)
             .collect();
-        if !equip && actions.is_empty() && refs.iter::<ActionDef>().next().is_some() {
+        if !special && actions.is_empty() && refs.iter::<ActionDef>().next().is_some() {
             refs.error(format!(
                 "mounts.{key} names no action, `anim` or tag; the rules are looked up by an action's id, its `anim` or \
                  one of its tags"
@@ -1436,9 +1606,16 @@ impl AnimSet {
                         refs.error(format!("{field} `Secs({a}, {b})` must satisfy 0 <= from <= to"));
                     }
                 }
-                _ if equip => refs.error(format!(
-                    "{field}: under `{EQUIP_KEY}` a span is `Secs(from, to)`, counted from the weapon switch (it has no phases)"
-                )),
+                _ if special => {
+                    let from = if equip {
+                        "the weapon switch"
+                    } else if in_mode {
+                        "the moment the rules begin to apply"
+                    } else {
+                        "the moment the wait ends"
+                    };
+                    refs.error(format!("{field}: under `{key}` a span is `Secs(from, to)`, counted from {from} (it has no phases)"));
+                }
                 Span::Phase(p) if lacks(p) => {
                     refs.error(format!("{field} names phase `{p}`, which no action looked up by `{key}` has"));
                 }
@@ -1481,8 +1658,28 @@ impl AnimSet {
                 ));
             }
         }
-        if !rules.on_cut.is_empty() && equip {
+        if !rules.on_cut.is_empty() && special {
             refs.error(format!("mounts.{key}.on_cut belongs under an action's key: it is what a cut run holds"));
+        }
+        if rules.previous.is_some() && (in_mode || in_left) {
+            refs.error(format!(
+                "mounts.{key}.previous belongs under an action's key or `{EQUIP_KEY}`: a mode's rules show the props the body carries"
+            ));
+        }
+        if rules.yield_after != 0.0 && !in_mode {
+            refs.error(format!(
+                "mounts.{key}.yield_after belongs under `{MODE_KEY}<mode>`: it is how long the rules step aside after an action in the mode"
+            ));
+        }
+        if rules.wait != 0.0 && !in_left {
+            refs.error(format!(
+                "mounts.{key}.wait belongs under `{LEFT_KEY}<mode>`: it is how long the moves wait after the body left the mode"
+            ));
+        }
+        for (field, v) in [("yield_after", rules.yield_after), ("wait", rules.wait)] {
+            if !(v >= 0.0 && v.is_finite()) {
+                refs.error(format!("mounts.{key}.{field} must be >= 0 (is {v})"));
+            }
         }
         for (prop, secs) in &rules.on_cut {
             if !carried.contains(prop.as_str()) {
@@ -1901,7 +2098,7 @@ mod tests {
     fn layered() -> AnimSet {
         let mut set = set();
         set.clips.insert("drink".into(), ClipDef { blend: Some(0.3), ..default() });
-        set.layers.insert("upper".into(), LayerDef { root: "spine".into() });
+        set.layers.insert("upper".into(), LayerDef::at("spine"));
         set.actions.insert("drink".into(), ActionClip::on("drink", "upper"));
         set.tags.insert("heal".into(), ActionClip::on("generic_attack", "upper"));
         set
@@ -2073,5 +2270,7 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod modes;
 #[cfg(test)]
 mod mounting;
