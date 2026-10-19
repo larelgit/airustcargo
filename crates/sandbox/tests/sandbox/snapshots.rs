@@ -1230,6 +1230,46 @@ fn a_downed_body_and_a_revive_come_back() {
     });
 }
 
+/// Body parts (R1): taken mid-swing at the colossus with its hand broken and its core open. The
+/// parts come back with their ids, health and switches, the loaded body spawns none again (it lists
+/// them), and the swing lands through the core in both games.
+#[test]
+fn a_body_with_parts_comes_back_mid_swing() {
+    use shards::action::{Part, PartHealth, SpawnedParts};
+    let mut app = sandbox::test_app(42);
+    calm_skeletons(&mut app);
+    calm_warden(&mut app);
+    ok(&mut app, "teleport", json!({"id": PLAYER, "x": 0, "z": 1.4, "y": 0}));
+    let spawned = ok(&mut app, "spawn_prefab", json!({"id": "colossus", "x": 0, "z": 4, "y": 0}));
+    // "spawned e15 colossus at (0.0, 4.0)"
+    let colossus = spawned.result.as_str().and_then(|t| t.split_whitespace().nth(1)).unwrap().to_owned();
+    step(&mut app, 2);
+    ok(&mut app, "lock_on", json!({"target": colossus}));
+    step(&mut app, 31);
+    ok(&mut app, "part", json!({"name": "hand", "op": "break"}));
+    ok(&mut app, "part", json!({"name": "core", "op": "on"}));
+    ok(&mut app, "light_attack", json!({}));
+    step(&mut app, 6);
+    let parts: Vec<(String, bool, bool, Option<f32>)> = {
+        let world = app.world_mut();
+        let mut q = world.query::<(&Part, Option<&PartHealth>)>();
+        let mut v: Vec<_> = q.iter(world).map(|(p, h)| (p.id.clone(), p.on, p.broken, h.map(|h| h.current))).collect();
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        v
+    };
+    assert_eq!(parts.len(), 5, "{parts:?}");
+    assert!(parts.contains(&("hand".into(), false, true, Some(0.0))) && parts.contains(&("core".into(), true, false, None)), "{parts:?}");
+    assert_eq!(app.world_mut().query::<&SpawnedParts>().iter(app.world()).map(|s| s.0.len()).sum::<usize>(), 5);
+    assert_continues_alike("a body with parts, mid-swing", app, |app| {
+        ok(app, "step", json!({"ticks": 60, "until": [{"journal": "at core"}]}));
+        step(app, 2);
+        let parts = app.world_mut().query::<&Part>().iter(app.world()).count();
+        assert_eq!(parts, 5, "no part spawned twice");
+        let hits: Vec<String> = story_after(app, 0).into_iter().filter(|l| l.contains("light_1 at core -60")).collect();
+        assert_eq!(hits.len(), 1, "{hits:?}");
+    });
+}
+
 #[test]
 fn a_barrier_a_timed_multiplier_and_a_proc_gate_come_back() {
     use shards::action::{Barrier, DamageTaken, ProcGates};

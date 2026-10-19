@@ -26,3 +26,9 @@ Read this when you drive a fight through `dodge`, `light_attack`, `block`, `use_
   (`ok: spar_revive`, then `e7 revived by e5`); letting go, moving away or being hit ends it. Wait with
   `step --until "journal:revived"` or `--until named:downed`. A dev agent's `heal` stands a body up at once and `down id= bleed=`
   lays one down.
+- Body parts (R1): a big body (the sandbox's `colossus`) is hit through its parts (`crates/shards_action/src/parts.rs`;
+  manual, "Body parts (R1)"). `observe` lists them (`hand of e19 40/60 hp`, `core of e19 off`, `hand of e19 broken`); a hit
+  names the part it went through (`e5 -> e19 light_1 at hand -10 (hp 1190)`, the body's loss) and a break is
+  `e19 hand broken by e5`. A swing meets the part nearest the middle of its cone, so stand where the part you want is the
+  nearest one; a body whose definition says `body_hurtbox: false` takes nothing through its own capsule. A dev agent opens or
+  closes a part with `part name=core op=on|off` (without `id`: the body you are locked on) and breaks one with `op=break`.

@@ -470,10 +470,11 @@ fn the_new_events_survive_the_net_encoding() {
         reaction: Some(2),
         absorbed: 3.0,
         source: Some(a),
+        part: Some(b),
     };
     let back = decode_value(world, "shards_action::combat::Damaged", &encode_value(world, &damaged).unwrap()).unwrap();
     assert_eq!(Damaged::from_reflect(&*back).unwrap(), damaged);
-    let plain = Damaged { ignore_reason: None, reaction: None, source: None, ..damaged.clone() };
+    let plain = Damaged { ignore_reason: None, reaction: None, source: None, part: None, ..damaged.clone() };
     let back = decode_value(world, "shards_action::combat::Damaged", &encode_value(world, &plain).unwrap()).unwrap();
     assert_eq!(Damaged::from_reflect(&*back).unwrap(), plain);
     let reacted = Reacted { entity: b, attacker: Some(a), tier: 3, action: "r_react_down".into() };

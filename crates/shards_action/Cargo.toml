@@ -38,6 +38,8 @@ bevy = { workspace = true, features = ["std", "serialize"] }
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
+# Reads a prefab's `BodyParts` for its content check.
+ron.workspace = true
 # Reads glTF clips for content checks and the displacement bake (not public API).
 gltf = { workspace = true, features = ["utils"] }
 

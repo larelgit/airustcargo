@@ -41,4 +41,16 @@
         step_height: 0.4,
         turn_speed_deg: 300.0,
     ),
+    // The colossus (`colossus.prefab.ron`): 6 m tall, slower still.
+    "colossus": (
+        radius: 1.2,
+        height: 6.0,
+        walk_speed: 1.2,
+        run_speed: 2.4,
+        sprint_speed: 2.4,
+        acceleration: 12.0,
+        deceleration: 20.0,
+        step_height: 0.5,
+        turn_speed_deg: 120.0,
+    ),
 }

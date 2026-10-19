@@ -71,9 +71,11 @@ pub(crate) fn register(app: &mut App) {
         })
         .journal_event::<Damaged>(|e, w| {
             let (a, t) = (label(w, e.attacker), label(w, e.target));
+            // Through a body part: `e5 -> e12 light_1 at arm -20 (hp 80)`.
+            let at = e.part.and_then(|p| w.get::<crate::parts::Part>(p)).map_or_else(String::new, |p| format!(" at {}", p.id));
             Some(match e.invulnerable {
-                true => format!("{a} -> {t} {} -0 (hp {:.0}, {})", e.action, e.hp_left, e.ignore_reason.map_or("ignored", IgnoreReason::describe)),
-                false => format!("{a} -> {t} {} -{:.0} (hp {:.0}){}", e.action, e.amount, e.hp_left, absorbed(e.absorbed)),
+                true => format!("{a} -> {t} {}{at} -0 (hp {:.0}, {})", e.action, e.hp_left, e.ignore_reason.map_or("ignored", IgnoreReason::describe)),
+                false => format!("{a} -> {t} {}{at} -{:.0} (hp {:.0}){}", e.action, e.amount, e.hp_left, absorbed(e.absorbed)),
             })
         })
         .journal_event::<Blocked>(|e, w| {

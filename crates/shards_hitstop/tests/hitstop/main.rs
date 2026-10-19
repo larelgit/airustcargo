@@ -186,6 +186,7 @@ pub fn damaged(attacker: Entity, target: Entity, weight: HitWeight, reaction: Op
         reaction,
         absorbed: 0.0,
         source: None,
+        part: None,
     }
 }
 

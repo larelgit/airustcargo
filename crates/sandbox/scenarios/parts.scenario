@@ -1,0 +1,137 @@
+# Body parts (R1): a 6 m colossus (`content/characters/colossus.prefab.ron`) hit only through its parts
+# (`content/combat/colossus.parts.ron`), never through its own capsule. The player's sword reaches the
+# hand (60 hp of its own; the body loses half of what it takes), the legs (no health; twice the poise)
+# and the core once it is open (three times the damage), never the horn on its head.
+#
+# The colossus is spawned as part of the yard region (`RegionPart`), so the `regen` that ends the
+# scenario takes it and its parts away, whatever ids they had: ids of spawned bodies depend on what ran
+# before. For the same reason nothing here names it: the player locks on to it (`lock_on` picks it),
+# `part` without `id` acts on the body its caller is locked on, and the journal is matched without ids.
+
+seed 42
+
+# --- setup (dev): the yard loaded (east of the arena: the colossus belongs to it), everyone stands
+# down, the player 2.6 m north of where the colossus stands, facing it
+act regen region=yard seed=1
+expect result contains "ok: yard seed 1"
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+# (a dead player is brought back first: its own controls refuse a dead body)
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god on=false
+step 150
+act heal id=e5
+act teleport id=e5 x=0 z=0.4 y=0
+# (a step south turns the player to face where the colossus will stand, whatever it faced before: the
+# lock-on below picks what is ahead, and the arena's skeletons are within its 30 m)
+session --agent bot --scope player
+act move dir=S meters=1
+session --agent scenario
+step 60
+act teleport id=e5 x=0 z=1.4 y=0
+act teleport id=e6 x=-14 z=-14 y=0
+act teleport id=e7 x=-16 z=8 y=0
+act teleport id=e8 x=14 z=-14 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+act spawn_prefab id=colossus x=0 z=4 y=0 overrides='{"RegionPart": {}}'
+expect result contains "colossus at (0.0, 4.0)"
+step 2
+invariant field e5 Health.current > 0
+# Its five parts are there from its first tick: the core closed, the hand and the horn with their health.
+observe
+expect result contains "Colossus  hp 1200/1200  poise 200/200"
+expect result contains 'Part "hand"'
+expect result contains "60/60 hp"
+expect result contains "80/80 hp"
+expect result contains 'Part "leg_left"'
+expect result contains 'Part "leg_right"'
+expect result contains " off"
+
+session --agent bot --scope player
+act lock_on
+expect result contains "ok: locked on"
+expect result contains "(2.6m S)"
+session --agent scenario
+step 31
+
+# --- 1. a swing meets the hand, the part nearest the sword: the hand loses 20, the body half of that
+mark
+session --agent bot
+act light_attack
+session --agent scenario
+step 60 --until "journal:at hand"
+expect journal "light_1 at hand -10 (hp 1190)"
+observe
+expect result contains "40/60 hp"
+step 60
+
+# --- 2. two more and the hand breaks: it takes no more hits, the next swing meets a leg (twice the poise)
+mark
+session --agent bot
+act light_attack
+session --agent scenario
+step 120
+session --agent bot
+act light_attack
+session --agent scenario
+step 60 --until "journal:hand broken"
+expect journal "hand broken by e5"
+expect journal "at hand -10 (hp 1170)"
+step 60
+mark
+session --agent bot
+act light_attack
+session --agent scenario
+step 60 --until "journal:light_1 at leg_"
+expect journal "light_1 at leg_left -20 (hp 1150)"
+expect !journal "at hand"
+step 60
+
+# --- 3. the core opens (dev): the next swing goes through it, three times the damage
+act part name=core op=on
+expect result contains "core on"
+observe
+expect result !contains " off"
+mark
+session --agent bot
+act light_attack
+session --agent scenario
+step 60 --until "journal:at core"
+expect journal "light_1 at core -60"
+step 60
+
+# --- 4. a broken part stays off; the horn, out of reach, breaks only when a dev says so
+act part name=core op=off
+expect result contains "core off"
+act? part name=hand op=on
+expect result contains "broken"
+act part name=horn op=break
+expect result contains "horn broken"
+expect journal "horn broken"
+act? part name=tail op=on
+expect result contains "no part `tail`; its parts: core, hand, horn, leg_left, leg_right"
+
+# --- the world as it was: the lock let go, the yard again takes the colossus and its parts with it
+session --agent bot
+act lock_on off=true
+session --agent scenario
+act regen region=yard seed=1
+expect result contains "ok: yard seed 1"
+step 2
+act? part name=core op=on
+expect result contains "locked on to nothing"
+act heal id=e5
+act teleport id=e5 x=0 z=12 y=0
+act teleport id=e7 x=-12 z=2 y=0
+act teleport id=e6 x=0 z=-6 y=0
+act teleport id=e8 x=12 z=-2 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+step 2
+observe
+expect result !contains "Colossus"
+expect result !contains 'Part "'
