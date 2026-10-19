@@ -112,7 +112,7 @@ pub const ACTIONS: &str = r#"{
 }"#;
 
 pub const MOVESETS: &str = r#"{
-    "hero": (inputs: {"light": "light_1", "dodge": "roll", "block": "block", "drink": "drink"}),
+    "hero": (inputs: {"light": "light_1", "dodge": "roll", "block": "block", "drink": "drink"}, stagger: Some("roll"), hit: Some("roll"), death: Some("roll")),
     "brute": (inputs: {"light": "slam"}),
 }"#;
 

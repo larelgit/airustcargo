@@ -126,6 +126,11 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
         format!("{who} · animset {animset} · built without the `render` feature: nothing is drawn · what the bridge would show")
     };
 
+    let head = match (own, named) {
+        (Some(o), Some(n)) if o != n => format!("{head} · animset={n} ignored: this body has its own `Animated`"),
+        _ => head,
+    };
+
     // The running action, as the bridge reads it.
     let predicted = world.get::<Predicted>(body).is_some();
     let run: Option<&Running> = if predicted {
@@ -226,7 +231,15 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
             let clock = world.get_resource::<Time<Fixed>>().map_or(0.0, |t| t.elapsed_secs_f64() + t.overstep().as_secs_f64());
             equip = b.mounts_equip(set, clock);
         }
-        let places = mount_places(&MountView { carried: &carried, previous: &[], run: rules, equip, cut: &[] });
+        #[allow(unused_mut, reason = "the drawn side replaces it")]
+        let mut places = mount_places(&MountView { carried: &carried, previous: &[], run: rules, equip, cut: &[] });
+        // Drawn: what the bridge computed (it also knows the previous moveset's props and the cut hold).
+        #[cfg(feature = "render")]
+        if let Some(b) = bound
+            && b.props().next().is_some()
+        {
+            places = b.places().map(|(p, place)| (p.to_owned(), place.clone())).collect();
+        }
         let text: Vec<String> = places
             .iter()
             .map(|(prop, place)| match place {

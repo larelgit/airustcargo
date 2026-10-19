@@ -197,7 +197,7 @@ fn a_parried_hit_ends_the_equip() {
     assert!(!bound(&app, hero).equipping(), "the equip ended at once, at the switch's first moment");
     let great = drawn(&mut app, hero, "great");
     assert_eq!(hangs_from(&app, great), "hand.R");
-    // An event the rules do not list leaves it be.
+    // Another switch opens the equip again, and the listed event ends that one too.
     app.world_mut().get_mut::<Fighter>(hero).unwrap().moveset = "hero".into();
     app.update();
     assert!(bound(&app, hero).equipping());
@@ -362,4 +362,103 @@ fn a_missing_socket_bone_is_warned_once_and_skipped() {
     assert!(bound(&app, hero).prop("sword").is_none(), "no bone, no sword: skipped");
     assert_eq!(prop_count(&mut app), 0);
     assert!(app.world().get::<Animated>(hero).is_some(), "the body goes on animating");
+}
+
+/// The drink cut by something other than a roll: the sword stays on the hip for the cut hold
+/// whenever the cutter is a whole-body run of its own.
+fn drink_cut_by(name: &str, cut: impl FnOnce(&mut App, Entity)) {
+    let (mut app, hero) = kit_app(name);
+    let sword = drawn(&mut app, hero, "sword");
+    app.world_mut().get_mut::<Intent>(hero).unwrap().press("drink");
+    frames(&mut app, 18);
+    assert_eq!(hangs_from(&app, sword), "hips", "{name}: the drink put it on the hip");
+    cut(&mut app, hero);
+    app.update();
+    assert!(progress(&app, hero).is_some(), "{name}: the cutter runs");
+    assert_eq!(hangs_from(&app, sword), "hips", "{name}: held at the cut");
+    frames(&mut app, 9); // 0.15 s later: the hold (0.1 s) is over
+    assert_ne!(hangs_from(&app, sword), "hips", "{name}: the hold is over");
+}
+
+#[test]
+fn a_drink_cut_by_a_reaction_a_stagger_or_death_holds_the_sword_too() {
+    use shards::action::{kill, react, stagger, Reaction, StaggerCause};
+    drink_cut_by("sockets_cut_react", |app, hero| {
+        let r = Reaction { tier: 1, from: None, dir: Vec3::X, knockback: 0.0, ignore_immunity: true, ignore_armor: true, armor: None, sets_immunity: false };
+        assert!(react(app.world_mut(), hero, r), "the flinch");
+    });
+    drink_cut_by("sockets_cut_stagger", |app, hero| {
+        assert!(stagger(app.world_mut(), hero, StaggerCause::Dev));
+    });
+    drink_cut_by("sockets_cut_death", |app, hero| kill(app.world_mut(), hero, None, None));
+}
+
+#[test]
+fn an_event_the_rules_do_not_list_leaves_the_equip_open() {
+    use shards::action::{Blocked, HitWeight};
+    let (mut app, hero) = kit_app("sockets_unlisted");
+    drawn(&mut app, hero, "sword");
+    app.world_mut().get_mut::<Fighter>(hero).unwrap().moveset = "brute".into();
+    app.update();
+    assert!(bound(&app, hero).equipping());
+    // The kit lists only `parried`: a block of another fighter's hit is not one of them.
+    let stranger = app.world_mut().spawn_empty().id();
+    app.world_mut().trigger(Blocked {
+        attacker: stranger,
+        defender: hero,
+        action: "light_1".into(),
+        amount: 0.0,
+        stamina: 0.0,
+        hp_left: 100.0,
+        weight: HitWeight::Light,
+        absorbed: 0.0,
+        source: None,
+    });
+    app.update();
+    assert!(bound(&app, hero).equipping(), "an unlisted event leaves the equip open");
+    // The same event aimed at someone else changes nothing either.
+    app.world_mut().trigger(Parried { attacker: hero, defender: stranger, action: "light_1".into(), stamina: 0.0, source: None });
+    app.update();
+    assert!(bound(&app, hero).equipping(), "a parry of another body is no event of this one");
+}
+
+#[test]
+fn a_moveset_that_shows_up_late_is_the_baseline_not_a_switch() {
+    let (mut app, hero) = kit_app("sockets_late");
+    drawn(&mut app, hero, "sword");
+    // A body whose fighter comes a frame after `Animated` shows no equip.
+    let late = spawn_model(&mut app, Vec3::new(3.0, 0.0, 0.0), HUMANOID);
+    app.world_mut().entity_mut(late).remove::<Fighter>();
+    update_until(&mut app, "bound", |app| app.world().get::<AnimationBound>(late).is_some());
+    app.update();
+    assert!(!bound(&app, late).equipping());
+    let fighter = app.world().get::<Fighter>(hero).unwrap().clone();
+    app.world_mut().entity_mut(late).insert(fighter);
+    app.update();
+    app.update();
+    assert!(!bound(&app, late).equipping(), "the first moveset is the baseline");
+    drawn(&mut app, late, "sword");
+}
+
+#[test]
+fn the_tool_shows_what_the_bridge_drew_through_a_cut_hold_and_an_equip() {
+    let (mut app, hero) = kit_app("sockets_tool");
+    drawn(&mut app, hero, "sword");
+    let said = |app: &mut App| ok(app, "animation", json!({"id": format!("e{}", app.world().get::<AiId>(hero).unwrap().0)})).result.to_string();
+    app.world_mut().get_mut::<Intent>(hero).unwrap().press("drink");
+    frames(&mut app, 18);
+    assert!(force_action(app.world_mut(), hero, "roll"));
+    app.update();
+    // The roll's rules say the hand, the cut hold says the hip: the tool says what is drawn.
+    assert_eq!(hangs_from(&app, bound(&app, hero).prop("sword").unwrap()), "hips");
+    let text = said(&mut app);
+    assert!(text.contains("sword at hip"), "{text}");
+    frames(&mut app, 12);
+    let text = said(&mut app);
+    assert!(text.contains("sword at hand_r"), "{text}");
+    // An equip: the old weapon shows during `previous`.
+    app.world_mut().get_mut::<Fighter>(hero).unwrap().moveset = "brute".into();
+    app.update();
+    let text = said(&mut app);
+    assert!(text.contains("sword at hand_r") && text.contains("equip: open"), "{text}");
 }

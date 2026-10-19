@@ -262,7 +262,8 @@ pub(crate) fn step(env: &mut MountEnv, frame: &MountFrame, state: &mut MountStat
         state.previous = std::mem::take(&mut state.carried);
         state.since = Some(frame.clock);
     }
-    state.seen_moveset = true;
+    // The first moveset a body shows is its baseline, however late it appears.
+    state.seen_moveset |= frame.moveset.is_some();
     if state.moveset.as_deref() != frame.moveset {
         state.moveset = frame.moveset.map(str::to_owned);
     }

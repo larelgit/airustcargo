@@ -431,3 +431,31 @@ fn a_cut_holds_the_props_that_sat_away_from_home() {
     assert_eq!(cut_holds(rules, &own, &shown), [("sword".to_owned(), Place::Hidden, 0.05)], "hidden is away too");
     assert!(cut_holds(rules, &carried(&[("flask", "hip")]), &shown).is_empty(), "a prop that is not carried");
 }
+
+#[test]
+fn the_actions_previous_span_decides_over_the_equips() {
+    let set = kit();
+    let db = ContentDb::build(&kinds(), &sources(PROPS, SET));
+    let roll = db.get::<ActionDef>("roll").unwrap();
+    let equip = set.equip_rules().unwrap();
+    let new = carried(&[("great", "hand_r")]);
+    let old = carried(&[("sword", "hand_r")]);
+    // The action has a `previous` span of its own, and it is closed at 0.05 s: the equip's (0 - 0.1 s)
+    // does not show the old props in its place.
+    let rules = MountRules { previous: Some(Span::Secs(0.5, 0.6)), ..MountRules::default() };
+    let view = MountView { carried: &new, previous: &old, run: Some((&rules, roll, 0.05)), equip: Some((equip, 0.05)), cut: &[] };
+    assert_eq!(mount_places(&view), [("great".into(), Place::Hidden), ("sword".into(), Place::Hidden)]);
+    // An action whose rules have none leaves it to the equip.
+    let bare = MountRules::default();
+    let view = MountView { run: Some((&bare, roll, 0.05)), ..view };
+    assert_eq!(mount_places(&view), [("great".into(), Place::Hidden), ("sword".into(), at("hand_r"))]);
+}
+
+#[test]
+fn a_model_path_stays_inside_the_assets_folder() {
+    let one = |model: &str| errors_of(&format!(r#"{{ "sword": (model: "{model}"), "great": (size: (1.0, 1.0, 1.0)), "flask": (size: (1.0, 1.0, 1.0)) }}"#), SET);
+    let want = |m: &str| format!("content/p.prop.ron: prop `sword`: model `{m}` must be a path inside the assets folder, without `..` or a leading `/`");
+    assert_eq!(one("../assets/a.glb"), [want("../assets/a.glb")]);
+    assert_eq!(one("/etc/a.glb"), [want("/etc/a.glb")]);
+    assert_eq!(one("models/a.glb"), Vec::<String>::new());
+}

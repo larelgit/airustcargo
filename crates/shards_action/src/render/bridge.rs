@@ -114,7 +114,7 @@ impl Built {
     }
 }
 
-/// What of a set shapes its graph: an edit of anything else (sockets, carried props, mounts,
+/// What of a set shapes its graph (or its binding): an edit of anything else (sockets, carried props, mounts,
 /// speeds, blends) is read from the set in place each frame and rebuilds nothing.
 #[derive(Clone, Debug, PartialEq)]
 struct GraphShape {
@@ -125,6 +125,8 @@ struct GraphShape {
     layered: BTreeSet<(String, String)>,
     /// A layered clip's family renames need nodes of their own.
     by_moveset: BTreeMap<String, BTreeMap<String, String>>,
+    /// The bone held in place is found once per binding, so an edit of it rebinds.
+    root_motion: Option<String>,
 }
 
 impl GraphShape {
@@ -140,6 +142,7 @@ impl GraphShape {
                 .filter_map(|m| Some((m.layer.clone()?, m.clip.clone())))
                 .collect(),
             by_moveset: set.by_moveset.clone(),
+            root_motion: set.root_motion.clone(),
         }
     }
 }
@@ -248,6 +251,11 @@ impl AnimationBound {
     /// Where prop `prop` sat at the last frame.
     pub fn place(&self, prop: &str) -> Option<&crate::anim::Place> {
         self.mounts.places.get(prop)
+    }
+
+    /// Where every prop sat at the last frame, in prop id order.
+    pub(crate) fn places(&self) -> impl Iterator<Item = (&str, &crate::anim::Place)> {
+        self.mounts.places.iter().map(|(p, place)| (p.as_str(), place))
     }
 
     /// Whether the equip of a weapon switch is open: the props of the moveset the body had before
@@ -687,6 +695,9 @@ pub fn drive(
             }
         }
         if held {
+            // Still drawn: the status counts it.
+            bound_bodies += 1;
+            props_drawn += bound.mounts.drawn().count();
             continue;
         }
 
@@ -954,7 +965,7 @@ pub fn retarget_on_ready(
         .flat_map(|scenes| scenes.iter())
         .flat_map(|scene| children.get(scene).into_iter().flat_map(|nodes| nodes.iter()))
         .filter(|e| names.contains(*e))
-        .max_by_key(|e| children.iter_descendants(*e).count())
+        .max_by_key(|e| skeleton(*e, &children, &props).len())
     else {
         return;
     };
@@ -965,7 +976,7 @@ pub fn retarget_on_ready(
         path.push(name.clone());
         commands.entity(entity).insert((AnimationTargetId::from_names(path.iter()), AnimatedBy(skeleton)));
         if let Ok(kids) = children.get(entity) {
-            stack.extend(kids.iter().map(|k| (k, path.clone())));
+            stack.extend(kids.iter().filter(|k| !props.contains(*k)).map(|k| (k, path.clone())));
         }
     }
 }

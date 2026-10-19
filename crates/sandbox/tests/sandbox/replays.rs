@@ -784,8 +784,12 @@ fn a_replay_verifies_with_animated_bodies_and_the_picture_does_work() {
     let end = replay.end.tick;
     replay::play(app.world_mut(), replay).unwrap();
     app.update();
-    let (mut props, mut bound) = (0, 0);
-    let mut sample = |app: &App| {
+    let (mut props, mut bound, mut on_hip) = (0, 0, false);
+    let mut sample = |app: &mut App| {
+        let world = app.world_mut();
+        let mut q = world.query::<&shards::action::render::AnimationBound>();
+        on_hip |= q.iter(world).any(|b| b.place("sword") == Some(&shards::action::Place::Socket("hip".into())));
+        let app = &*app;
         let anim = shards::ai_core::status::status(app.world())["anim"].clone();
         props = props.max(anim["props"].as_u64().unwrap());
         bound = bound.max(anim["bound"].as_u64().unwrap());
@@ -794,13 +798,14 @@ fn a_replay_verifies_with_animated_bodies_and_the_picture_does_work() {
         ok(&mut app, "step", json!({"ticks": 10}));
         app.update();
         std::thread::sleep(std::time::Duration::from_millis(2));
-        sample(&app);
+        sample(&mut app);
     }
     ok(&mut app, "step", json!({"ticks": end % 10}));
     app.update();
-    sample(&app);
+    sample(&mut app);
     assert!(report(&app).identical(), "{}", report(&app));
     assert_eq!(replay::state_hash(app.world()), want, "the picture changed the game");
     assert!(bound > 0, "no body was bound");
     assert!(props > 0, "no prop was drawn: the test proves nothing");
+    assert!(on_hip, "no sword was ever on the hip: the drink's mount never ran");
 }

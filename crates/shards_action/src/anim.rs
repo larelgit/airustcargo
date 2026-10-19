@@ -800,14 +800,11 @@ fn open_in(span: &Span, def: Option<&ActionDef>, t: f32) -> bool {
 /// order of 8.7 of the design, first that applies: a cut hold, the running action's rules, the
 /// weapon switch's rules, the carry socket.
 pub fn mount_places(view: &MountView) -> Vec<(String, Place)> {
-    let previous_open = view
-        .run
-        .and_then(|(rules, def, t)| rules.previous.as_ref().filter(|s| open_in(s, Some(def), t)))
-        .is_some()
-        || view
-            .equip
-            .and_then(|(rules, since)| rules.previous.as_ref().filter(|s| open_in(s, None, since)))
-            .is_some();
+    // The action's `previous` span when its rules have one, else the weapon switch's.
+    let previous_open = match view.run.and_then(|(rules, def, t)| rules.previous.as_ref().map(|s| open_in(s, Some(def), t))) {
+        Some(open) => open,
+        None => view.equip.and_then(|(rules, since)| rules.previous.as_ref().map(|s| open_in(s, None, since))).unwrap_or(false),
+    };
     let shown = if previous_open { view.previous } else { view.carried };
     let mut places: BTreeMap<&str, Place> = BTreeMap::new();
     for (prop, _) in view.carried.iter().chain(view.previous) {
@@ -1514,7 +1511,9 @@ impl ContentDef for PropDef {
             _ => {}
         }
         if let Some(model) = &self.model {
-            if !is_gltf(model) {
+            if std::path::Path::new(model).components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+                refs.error(format!("model `{model}` must be a path inside the assets folder, without `..` or a leading `/`"));
+            } else if !is_gltf(model) {
                 refs.error(format!("model `{model}` is not a glTF file (.gltf or .glb)"));
             } else if let Some(root) = refs.asset_root()
                 && !root.join(model).is_file()
