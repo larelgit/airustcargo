@@ -60,7 +60,7 @@ fn app(config: EngineConfig) -> App {
 }
 
 fn test_config() -> EngineConfig {
-    EngineConfig { headless: true, port: None, paused: true, crash_replays: false, testing: true, ..default() }
+    EngineConfig { headless: true, port: None, paused: true, crash_replays: false, report_perf: false, testing: true, ..default() }
 }
 
 fn act(app: &mut App, tool: &str, args: Value) -> CallOutcome {

@@ -53,6 +53,7 @@ fn my_intent<'a>(
 /// Walk to an entity or a point. Replaces your current orders unless `queue` is set. The
 /// game steers every tick; check progress with `observe` or `step`. By default it walks in
 /// a straight line; `path` plans a route around walls and cliffs first (see `path_to`).
+/// An order whose body gets no closer to the goal for 2 s (0.1 m) ends as `blocked` (journal, `observe`).
 #[derive(Deserialize, JsonSchema)]
 pub struct MoveToArgs {
     pub target: TargetArg,
@@ -177,7 +178,8 @@ fn move_to(
 /// the planner checked.
 const WAYPOINT_WITHIN: f32 = 0.45;
 
-/// Walk a distance in a compass direction (N = -Z, E = +X) in a straight line.
+/// Walk a distance in a compass direction (N = -Z, E = +X) in a straight line. An order that gets no closer for 2 s
+/// (a wall) ends as `blocked`.
 #[derive(Deserialize, JsonSchema)]
 pub struct MoveArgs {
     /// N, NE, E, SE, S, SW, W or NW.

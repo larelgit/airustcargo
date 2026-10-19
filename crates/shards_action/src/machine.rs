@@ -81,6 +81,12 @@ pub struct Running {
     pub zone: Option<String>,
     pub zone_until: f32,
     pub anim: Option<String>,
+    /// Seconds a `hold` loop has kept this run raised (a block held by a loop); 0 when it is not
+    /// looping. Display only, like the fields above: `observe` says `held 1.20s` instead of the
+    /// loop phase's remaining time. Hidden from reflection (so from snapshots, replay checks and
+    /// the network): it is counted again from the first tick after a load, and nothing reads it.
+    #[reflect(ignore)]
+    pub held: f32,
 }
 
 /// The defensive windows open in the last tick.
@@ -216,6 +222,7 @@ impl Running {
             zone: def.telegraph_zone().map(|(shape, _)| shape.to_string()),
             zone_until: zone_until(def),
             anim: def.anim.clone(),
+            held: 0.0,
         };
         run.refresh(def, 0.0);
         run
@@ -289,7 +296,11 @@ fn displays_as(value: &impl std::fmt::Display, text: &str) -> bool {
 /// when free.
 pub fn describe_action(s: &ActionState) -> String {
     let Some(r) = &s.current else { return String::new() };
-    let mut out = format!("{} {} {:.2}s", r.phase, r.action, (r.phase_end - r.t).max(0.0));
+    // A run held by a loop never reaches the end of its phase: say that, and for how long.
+    let mut out = match r.held > 0.0 {
+        true => format!("{} {} held {:.2}s", r.phase, r.action, r.held),
+        false => format!("{} {} {:.2}s", r.phase, r.action, (r.phase_end - r.t).max(0.0)),
+    };
     if let Some(zone) = &r.zone
         && r.t < r.zone_until - EPS
     {
@@ -1766,6 +1777,12 @@ pub(crate) fn advance(run: &mut Running, def: &ActionDef, dt: f32, holding: bool
     let prev = run.t;
     let next = prev + dt;
     let loop_span = def.hold.as_ref().filter(|_| holding).and_then(|h| def.span(&h.span)).filter(|(a, b)| b - a > EPS);
+    // Held: the loop's input is down and the run has reached its span.
+    match loop_span {
+        Some((a, b)) if prev >= a - EPS && prev < b + EPS => run.held += dt,
+        Some(_) => {}
+        None => run.held = 0.0,
+    }
     match loop_span {
         Some((a, b)) if prev < b - EPS && next >= b - EPS => {
             // `next` may sit a hair short of `b` (sums of tick lengths): a negative

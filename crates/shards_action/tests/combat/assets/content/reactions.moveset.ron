@@ -29,6 +29,12 @@
         guard_broken: "r_guard_broken",
         guard_broken_push: (0.2, 10.0),
     ),
+    // A victim whose guard lets the blow through.
+    "r_leaky": (
+        inputs: {"block": "r_guard_leaky"},
+        stagger: "r_stagger",
+        hit: "r_flinch",
+    ),
     // The old kit: no reactions, a flinch and a stagger.
     "r_plain": (
         inputs: {"block": "r_guard", "light": "r_armored"},

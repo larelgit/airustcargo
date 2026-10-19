@@ -145,9 +145,22 @@ pub struct AiTools {
     tools: BTreeMap<String, Arc<AiTool>>,
     /// Set on a client of a networked game: where [`NetRoute::Host`] calls go.
     forwarder: Option<Forwarder>,
+    /// Refusals a module adds to a tool it does not own ([`AiAppExt::add_ai_tool_guard`](crate::AiAppExt)).
+    guards: BTreeMap<String, Vec<ToolGuard>>,
 }
 
+/// A check run before an action tool: `Err` is the refusal, and the tool does not run.
+pub type ToolGuard = fn(&World, &Caller) -> Result<(), String>;
+
 impl AiTools {
+    /// Adds `guard` to tool `name` (see [`AiAppExt::add_ai_tool_guard`](crate::AiAppExt)).
+    pub fn add_guard(&mut self, name: &str, guard: ToolGuard) {
+        let guards = self.guards.entry(name.to_owned()).or_default();
+        if !guards.iter().any(|g| std::ptr::fn_addr_eq(*g, guard)) {
+            guards.push(guard);
+        }
+    }
+
     pub fn get(&self, name: &str) -> Option<Arc<AiTool>> {
         self.tools.get(name).cloned()
     }
@@ -444,7 +457,15 @@ pub fn call_tool(world: &mut World, agent: &str, tool: &str, args: Value) -> Cal
     // An action is the simulation's work, live between ticks as replayed inside one: what it reads
     // counts the same in both ([`SimScope`](crate::SimScope)). The digests around it only describe.
     let opened = if is_action { crate::scope::open(world) } else { None };
-    let result = (entry.run)(world, caller, args);
+    let refusal = world
+        .resource::<AiTools>()
+        .guards
+        .get(tool)
+        .and_then(|guards| guards.iter().find_map(|guard| guard(world, &caller).err()));
+    let result = match refusal {
+        Some(why) => Err(why),
+        None => (entry.run)(world, caller, args),
+    };
     drop(opened);
     if is_action {
         crate::replay::end_action(world);
