@@ -45,7 +45,7 @@ Read this when you choose how to verify a change: tests, CI and nextest, scenari
   (`ok`, `OVER`, `-`) and exits with code 0, 1 (a budget is exceeded or the game did not reach the measurement) or 2 (no such definition, or `--offscreen`
   has no GPU). A debug build gives no verdict.
 - The reference replays `tests/replays/*.json` (obstacle course, combat prototype, token director, guard on the navmesh, region changes,
-  a replay from a snapshot, a replay of the sandbox's saves, the hit-outcome sparring and the voxel arena) are checked by `cargo test` (and by nextest). After a deliberate change to gameplay, or to a definition they read (by id, or a kind
+  a replay from a snapshot, a replay of the sandbox's saves, the hit-outcome sparring, the voxel arena, the context and body-state replays, the encounter and the spawned combat objects (`objects.json`): 15 files in all) are checked by `cargo test` (and by nextest). After a deliberate change to gameplay, or to a definition they read (by id, or a kind
   they read whole: `check_parts.content` in the file lists them), record them again; content they never read, and kinds outside the
   simulation (looks, sounds, effects, animation sets, screens' themes), do not make them diverge:
   `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays` (for the template —

@@ -65,6 +65,14 @@ impl AiId {
 #[require(AiId)]
 pub struct AiVisible;
 
+/// This entity leaves no tombstone when it goes: short-lived, many at a time (a spell's bolts and
+/// zones), whose ids would push the ones worth remembering out of the graveyard ("e57 died at tick
+/// 1530"). An unknown id of one is reported as never seen. It follows from the component that
+/// requires it; it is reflected so a snapshot or the network carries it like any marker.
+#[derive(Component, Reflect, Default, Clone, Copy, Debug)]
+#[reflect(Component, Default)]
+pub struct NoTombstone;
+
 /// Extra weight for sorting observations ("by threat"): bosses high, props low.
 #[derive(Component, Reflect, Default, Clone, Copy, Debug)]
 #[reflect(Component, Default)]
@@ -338,6 +346,7 @@ fn on_remove_ai_id(mut world: DeferredWorld, ctx: HookContext) {
     };
     let label = tombstone_label(&world, ctx.entity);
     let tick = world.get_resource::<SimTick>().map_or(0, |t| t.0);
+    let forget = world.get::<NoTombstone>(ctx.entity).is_some();
     let Some(mut index) = world.get_resource_mut::<AiIndex>() else {
         return;
     };
@@ -345,7 +354,7 @@ fn on_remove_ai_id(mut world: DeferredWorld, ctx: HookContext) {
     if index.live.get(&id) == Some(&ctx.entity) {
         index.live.remove(&id);
     }
-    if id.0 != 0 {
+    if id.0 != 0 && !forget {
         index.bury(Tombstone { id, label, tick, renumbered_to: None, note: None });
     }
 }
