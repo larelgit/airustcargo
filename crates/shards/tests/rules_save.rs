@@ -374,6 +374,8 @@ fn the_ui_sources_read_the_rules() {
     }
 }
 
+/// A registration check only: that the event is sent by a host and triggered on a guest is the machinery of
+/// `net_event` (its own tests); a stand with the rules comes with C3.6.
 #[test]
 fn rules_changed_travels_to_a_guest() {
     let folders = Folders::new("net", true);
