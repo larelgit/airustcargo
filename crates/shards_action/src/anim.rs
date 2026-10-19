@@ -90,6 +90,30 @@
 //! its body. A content check with the asset folder reads the files: a clip the file lacks, a
 //! root bone it lacks, a baked curve that no longer matches its clip are errors.
 //!
+//! ## Sockets and props
+//!
+//! A character can carry things: a sword in the hand, a flask on the hip. A *socket* is a place on
+//! a bone; a *prop* (content kind `prop`) is the thing; `carry` says what a moveset carries and in
+//! which socket, `mounts` where it goes while an action runs (or just after a weapon switch).
+//!
+//! ```ron
+//! // content/anim/props.prop.ron
+//! { "sword": (size: (0.05, 0.9, 0.02), grip: (0.0, 0.3, 0.0)) }
+//! // inside an animset:
+//! //     sockets: {"hand_r": (bone: "hand.R"), "hip": (bone: "hips", offset: (0.1, 0.0, 0.0))},
+//! //     carry: {"player": [(prop: "sword", socket: "hand_r")]},
+//! //     mounts: {"drink": (moves: [(prop: "sword", to: Some("hip"), span: Secs(0.1, 0.9))],
+//! //                        on_cut: {"sword": 0.05})},
+//! ```
+//!
+//! Where a prop sits is a state, read every frame from the action's time (a [`Span`], as an
+//! action's windows are), never an edge: it is right after a join in the middle of an action, a
+//! snapshot load or a hold. `on_cut`: a whole-body action that cuts a run leaves the props where
+//! they were for a moment. `mounts["@moveset"]` holds the rules for the seconds after the body's
+//! moveset changed (`previous` shows the old moveset's props meanwhile, `ended_by` lists the events
+//! that end it). `by_moveset` renames clips per moveset (a clip family). [`mount_places`] is the
+//! pure decision; the bridge spawns the props under the bone, without `AiId`.
+//!
 //! ## Cues
 //!
 //! A clip can carry timed [`CueDef`]s; when the animation passes one, an [`AnimationCue`]
@@ -97,7 +121,7 @@
 //! spark), never for gameplay: hits, i-frames and cancels come from the action's own
 //! timeline.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -105,7 +129,7 @@ use shards_content::{ContentDef, Refs};
 use shards_motion::{MotionMode, MotionState};
 
 use crate::clipfile::ClipFile;
-use crate::def::{ActionDef, EPS};
+use crate::def::{ActionDef, MovesetDef, Span, EPS};
 
 /// Marks a character the animation bridge drives: `animset` is the id of its
 /// [`AnimSet`]. The glTF scene is a child entity. Presentation only: replays ignore it, so
@@ -122,6 +146,13 @@ impl Animated {
         Self { animset: animset.into() }
     }
 }
+
+/// Which prop definition a body shows in place of a carried one: prop id -> the prop shown (a
+/// variant of the same weapon). A picture marker like [`Animated`]: a game puts it on a body only
+/// where something is drawn, from state every machine has, and replays and co-op ignore it.
+#[derive(Component, Reflect, Clone, Debug, Default, PartialEq, Eq)]
+#[reflect(Component, Default)]
+pub struct PropSwaps(pub BTreeMap<String, String>);
 
 /// The animation passed a cue of its clip: for effects and sound only (VFX, SFX). Never
 /// drive gameplay from it.
@@ -215,17 +246,21 @@ pub struct ActionClip {
     pub clip: String,
     /// The layer it plays on (a key of the set's `layers`); `None`: the whole body.
     pub layer: Option<String>,
+    /// The run ends a weapon switch's equip (the props are the new moveset's, in their carry
+    /// sockets). Default: true for a whole-body mapping, false for a layered one; written only
+    /// when it differs from that default.
+    pub ends_equip: bool,
 }
 
 impl ActionClip {
     /// `clip` on the whole body.
     pub fn body(clip: impl Into<String>) -> Self {
-        Self { clip: clip.into(), layer: None }
+        Self { clip: clip.into(), layer: None, ends_equip: true }
     }
 
     /// `clip` on `layer`.
     pub fn on(clip: impl Into<String>, layer: impl Into<String>) -> Self {
-        Self { clip: clip.into(), layer: Some(layer.into()) }
+        Self { clip: clip.into(), layer: Some(layer.into()), ends_equip: false }
     }
 }
 
@@ -238,12 +273,19 @@ impl From<&str> for ActionClip {
 impl Serialize for ActionClip {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
+        let default_ends = self.layer.is_none();
         match &self.layer {
-            None => serializer.serialize_str(&self.clip),
-            Some(layer) => {
-                let mut s = serializer.serialize_struct("ActionClip", 2)?;
+            None if self.ends_equip == default_ends => serializer.serialize_str(&self.clip),
+            layer => {
+                let extra = self.ends_equip != default_ends;
+                let mut s = serializer.serialize_struct("ActionClip", 1 + usize::from(layer.is_some()) + usize::from(extra))?;
                 s.serialize_field("clip", &self.clip)?;
-                s.serialize_field("layer", layer)?;
+                if let Some(layer) = layer {
+                    s.serialize_field("layer", layer)?;
+                }
+                if extra {
+                    s.serialize_field("ends_equip", &self.ends_equip)?;
+                }
                 s.end()
             }
         }
@@ -267,15 +309,17 @@ impl<'de> Deserialize<'de> for ActionClip {
             }
 
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<ActionClip, A::Error> {
-                let (mut clip, mut layer): (Option<String>, Option<String>) = (None, None);
+                let (mut clip, mut layer, mut ends_equip): (Option<String>, Option<String>, Option<bool>) = (None, None, None);
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "clip" => clip = Some(map.next_value()?),
                         "layer" => layer = map.next_value()?,
-                        other => return Err(A::Error::unknown_field(other, &["clip", "layer"])),
+                        "ends_equip" => ends_equip = Some(map.next_value()?),
+                        other => return Err(A::Error::unknown_field(other, &["clip", "layer", "ends_equip"])),
                     }
                 }
-                Ok(ActionClip { clip: clip.ok_or_else(|| A::Error::missing_field("clip"))?, layer })
+                let ends_equip = ends_equip.unwrap_or(layer.is_none());
+                Ok(ActionClip { clip: clip.ok_or_else(|| A::Error::missing_field("clip"))?, layer, ends_equip })
             }
         }
         deserializer.deserialize_any(Reader)
@@ -317,6 +361,144 @@ pub struct AnimSet {
     /// `--bake-motion` reads off this bone ([`crate::bake`]). `None`: the clips move nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_motion: Option<String>,
+    /// Clip families: moveset id -> (clip -> the clip shown in its place). Applied to every pick:
+    /// locomotion, action clips, layer plays. A moveset not listed shows the clips as named.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub by_moveset: BTreeMap<String, BTreeMap<String, String>>,
+    /// Places on the skeleton a prop can sit: socket name -> bone and offset.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sockets: BTreeMap<String, SocketDef>,
+    /// What a body carries, by its moveset (`Fighter::moveset`); `"*"`: any moveset not listed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub carry: BTreeMap<String, Vec<Carry>>,
+    /// Where carried props go: by action key (an id, an `anim` name or a tag, looked up on their
+    /// own, see [`AnimSet::mount_rules`]) and `"@moveset"` (for the seconds after a weapon
+    /// switch).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub mounts: BTreeMap<String, MountRules>,
+}
+
+fn is_zero(v: &Vec3) -> bool {
+    *v == Vec3::ZERO
+}
+
+fn is_one(v: &f32) -> bool {
+    *v == 1.0
+}
+
+/// A place on the skeleton (an animset's `sockets`): a bone, and where on it a prop is held.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SocketDef {
+    /// The bone (a node name of the model) the socket rides.
+    pub bone: String,
+    /// Offset from the bone, in the bone's own axes and the rig's units at scale 1.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub offset: Vec3,
+    /// Turn from the bone, in degrees, applied as `EulerRot::XYZ`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub turn: Vec3,
+}
+
+impl SocketDef {
+    /// The socket's place on its bone.
+    pub fn transform(&self) -> Transform {
+        Transform { translation: self.offset, rotation: euler_degrees(self.turn), scale: Vec3::ONE }
+    }
+}
+
+/// Degrees about X, Y and Z, composed as Bevy's `EulerRot::XYZ`.
+pub fn euler_degrees(turn: Vec3) -> Quat {
+    Quat::from_euler(EulerRot::XYZ, turn.x.to_radians(), turn.y.to_radians(), turn.z.to_radians())
+}
+
+/// A prop a body carries in a socket: `(prop: "sword", socket: "hand_r")`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Carry {
+    /// A `prop` id.
+    pub prop: String,
+    /// A key of the set's `sockets`.
+    pub socket: String,
+}
+
+/// Where carried props go under one key of `mounts`.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct MountRules {
+    /// Each move: while `span` is open, `prop` (if carried) sits in `to`; `to: None` hides it.
+    /// The last open move of a prop wins.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub moves: Vec<MountMove>,
+    /// While this span is open, the body shows the props of the moveset it carried before its
+    /// moveset last changed (a weapon swap shows the old weapon until the hand reaches the back).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous: Option<Span>,
+    /// `"@moveset"` only: engine events that end the equip at once (Godot: a blocked hit).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ended_by: Vec<String>,
+    /// An action key only: when a whole-body action cuts this run, each listed prop that sat away
+    /// from its carry socket at the cut stays where it was for these seconds of the new action
+    /// (the drink: the bottle 0.025, the blade 0.055). Applies to reactions, staggers and death too.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub on_cut: BTreeMap<String, f32>,
+}
+
+/// One move of a prop: while `span` is open it sits in socket `to`, or is hidden (`to: None`).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MountMove {
+    pub prop: String,
+    #[serde(default)]
+    pub to: Option<String>,
+    /// On the action's own timeline: `Secs(0.055, 0.745)`, `Phase("drink")`, `Phases("raise",
+    /// "hold")`. Under `"@moveset"`, only `Secs`, counted from the weapon switch.
+    pub span: Span,
+}
+
+/// A thing a body can carry (content kind `prop`, `*.prop.ron`): a glTF model or a plain box, and
+/// how it sits in a socket. Presentation only: the engine spawns it under the socket's bone where
+/// something is drawn.
+///
+/// ```ron
+/// { "sword": (size: (0.05, 0.9, 0.02), grip: (0.0, 0.3, 0.0)) }
+/// ```
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct PropDef {
+    /// A glTF scene (`models/sword.glb`; its first scene). Exactly one of `model` and `size`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// A box of this size (rig units at scale 1), drawn as a mesh with a `StandardMaterial`, so
+    /// `shards_look` styles it like any mesh.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<Vec3>,
+    /// Its look (`shards_look`); default: the look of what it hangs from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub look: Option<String>,
+    /// Where it sits from its socket: moved by this, in the socket's axes and the rig's units.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub grip: Vec3,
+    /// Turned by this from the socket, in degrees (`EulerRot::XYZ`).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub turn: Vec3,
+    #[serde(skip_serializing_if = "is_one")]
+    pub scale: f32,
+}
+
+impl Default for PropDef {
+    fn default() -> Self {
+        Self { model: None, size: None, look: None, grip: Vec3::ZERO, turn: Vec3::ZERO, scale: 1.0 }
+    }
+}
+
+impl PropDef {
+    /// Where the prop sits in a socket: the socket's place, then the prop's (`grip`, `turn`,
+    /// `scale`).
+    pub fn in_socket(&self, socket: &SocketDef) -> Transform {
+        socket.transform()
+            * Transform { translation: self.grip, rotation: euler_degrees(self.turn), scale: Vec3::splat(self.scale) }
+    }
 }
 
 fn default_blend() -> f32 {
@@ -498,6 +680,194 @@ impl AnimSet {
     fn clip_speed(&self, clip: &str) -> f32 {
         self.clips.get(clip).map_or(1.0, |c| c.speed)
     }
+
+    /// The clip shown in place of `clip` for a body whose moveset is `moveset`: the set's
+    /// `by_moveset` table for that moveset, when it renames `clip` to a clip of the library;
+    /// `clip` itself otherwise.
+    pub fn family<'a>(&'a self, moveset: Option<&str>, clip: &'a str) -> &'a str {
+        moveset
+            .and_then(|m| self.by_moveset.get(m))
+            .and_then(|table| table.get(clip))
+            .and_then(|renamed| self.known(renamed))
+            .unwrap_or(clip)
+    }
+
+    /// Whether the run of the action looked up by `key` ends a weapon switch's equip: its
+    /// mapping's `ends_equip`; an action the set maps to nothing is a whole-body action and ends it.
+    pub fn ends_equip(&self, key: &str) -> bool {
+        self.actions
+            .get(key)
+            .or_else(|| self.tags.get(key))
+            .map_or_else(|| !self.is_layered(key), |mapping| mapping.ends_equip)
+    }
+
+    /// The mount rules of an action: `mounts[id]`, else `mounts[anim]`, else the first of the
+    /// action's tags that has rules. (Not through [`action_key`](Self::action_key): that returns a
+    /// tag only when `tags` maps it to a clip.)
+    pub fn mount_rules(&self, id: &str, anim: Option<&str>, tags: &[String]) -> Option<&MountRules> {
+        self.mount_key(id, anim, tags).and_then(|key| self.mounts.get(key))
+    }
+
+    /// The key of `mounts` whose rules an action has: see [`mount_rules`](Self::mount_rules).
+    pub fn mount_key(&self, id: &str, anim: Option<&str>, tags: &[String]) -> Option<&str> {
+        let has = |key: &str| self.mounts.get_key_value(key).map(|(k, _)| k.as_str());
+        has(id).or_else(|| anim.and_then(has)).or_else(|| tags.iter().find_map(|t| has(t)))
+    }
+
+    /// The rules for the seconds after a weapon switch (`mounts["@moveset"]`).
+    pub fn equip_rules(&self) -> Option<&MountRules> {
+        self.mounts.get(EQUIP_KEY)
+    }
+
+    /// What a body of moveset `moveset` carries: the set's `carry` for it, else for `"*"`.
+    pub fn carried(&self, moveset: Option<&str>) -> &[Carry] {
+        moveset
+            .and_then(|m| self.carry.get(m))
+            .or_else(|| self.carry.get("*"))
+            .map_or(&[], Vec::as_slice)
+    }
+}
+
+/// The key of `mounts` whose rules hold for the seconds after a weapon switch.
+pub const EQUIP_KEY: &str = "@moveset";
+
+/// The engine events whose arrival can end an equip (`MountRules::ended_by`): the names of the
+/// combat and pair events.
+pub const EQUIP_EVENTS: [&str; 11] = [
+    "blocked",
+    "parried",
+    "damaged",
+    "reacted",
+    "guard_broken",
+    "staggered",
+    "evaded",
+    "perfect_evaded",
+    "pair_started",
+    "pair_ended",
+    "landed",
+];
+
+/// Where a carried prop sits now.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Place {
+    /// In this socket (a key of the set's `sockets`).
+    Socket(String),
+    /// Not drawn.
+    Hidden,
+}
+
+impl Place {
+    /// The place a move asks for: its `to`.
+    fn of(to: Option<&String>) -> Self {
+        to.map_or(Place::Hidden, |socket| Place::Socket(socket.clone()))
+    }
+}
+
+/// What the mounts are told of the body, per frame.
+#[derive(Clone, Copy, Debug)]
+pub struct MountView<'a> {
+    /// What the body carries (prop, socket), and what it carried before its moveset changed.
+    pub carried: &'a [(String, String)],
+    pub previous: &'a [(String, String)],
+    /// The running action: its rules, its definition (for phase names) and its time.
+    pub run: Option<(&'a MountRules, &'a ActionDef, f32)>,
+    /// The weapon switch's rules and the seconds since it; `None` after the equip has ended.
+    pub equip: Option<(&'a MountRules, f32)>,
+    /// Props a cut run holds where they were: (prop, where).
+    pub cut: &'a [(String, Place)],
+}
+
+/// The span `(from, to)` in seconds of an equip's move (`Secs` only; any other is ignored).
+fn secs_of(span: &Span) -> Option<(f32, f32)> {
+    match span {
+        Span::Secs(from, to) => Some((*from, *to)),
+        _ => None,
+    }
+}
+
+/// Whether `t` is in `(from, to)` of `span` on the timeline of `def` (half open, `[from, to)`).
+fn open_in(span: &Span, def: Option<&ActionDef>, t: f32) -> bool {
+    let range = match (span, def) {
+        (Span::Secs(from, to), _) => Some((*from, *to)),
+        (_, Some(def)) => def.span(span),
+        _ => None,
+    };
+    range.is_some_and(|(from, to)| t >= from - EPS && t < to - EPS)
+}
+
+/// The props the body shows (the previous moveset's while `previous` is open, else the carried
+/// ones) and where each sits now; the others of `carried` and `previous` are `Hidden`. In the
+/// order of 8.7 of the design, first that applies: a cut hold, the running action's rules, the
+/// weapon switch's rules, the carry socket.
+pub fn mount_places(view: &MountView) -> Vec<(String, Place)> {
+    let previous_open = view
+        .run
+        .and_then(|(rules, def, t)| rules.previous.as_ref().filter(|s| open_in(s, Some(def), t)))
+        .is_some()
+        || view
+            .equip
+            .and_then(|(rules, since)| rules.previous.as_ref().filter(|s| open_in(s, None, since)))
+            .is_some();
+    let shown = if previous_open { view.previous } else { view.carried };
+    let mut places: BTreeMap<&str, Place> = BTreeMap::new();
+    for (prop, _) in view.carried.iter().chain(view.previous) {
+        places.insert(prop, Place::Hidden);
+    }
+    for (prop, socket) in shown {
+        let place = view
+            .cut
+            .iter()
+            .find(|(p, _)| p == prop)
+            .map(|(_, place)| place.clone())
+            .or_else(|| {
+                let (rules, def, t) = view.run?;
+                last_open(rules, prop, |span| open_in(span, Some(def), t))
+            })
+            .or_else(|| {
+                let (rules, since) = view.equip?;
+                last_open(rules, prop, |span| open_in(span, None, since))
+            })
+            .unwrap_or_else(|| Place::Socket(socket.clone()));
+        places.insert(prop, place);
+    }
+    places.into_iter().map(|(prop, place)| (prop.to_owned(), place)).collect()
+}
+
+/// Where the last of `rules`' moves for `prop` whose span is open puts it.
+fn last_open(rules: &MountRules, prop: &str, open: impl Fn(&Span) -> bool) -> Option<Place> {
+    rules.moves.iter().rfind(|m| m.prop == prop && open(&m.span)).map(|m| Place::of(m.to.as_ref()))
+}
+
+/// Whether the equip of a weapon switch still has something to show `since` seconds after it: a
+/// move or the `previous` span that has not ended.
+pub fn equip_open(rules: &MountRules, since: f32) -> bool {
+    let last = rules
+        .moves
+        .iter()
+        .filter_map(|m| secs_of(&m.span))
+        .chain(rules.previous.as_ref().and_then(secs_of))
+        .map(|(_, to)| to)
+        .fold(0.0f32, f32::max);
+    since < last
+}
+
+/// The props a cut holds: when a run with `rules` is cut by a whole-body action, each prop in its
+/// `on_cut` that sat away from its carry socket (`places` against `carried`) stays there, for the
+/// seconds `on_cut` says.
+pub fn cut_holds(
+    rules: &MountRules,
+    carried: &[(String, String)],
+    places: &BTreeMap<String, Place>,
+) -> Vec<(String, Place, f32)> {
+    rules
+        .on_cut
+        .iter()
+        .filter_map(|(prop, secs)| {
+            let socket = carried.iter().find(|(p, _)| p == prop).map(|(_, s)| s)?;
+            let place = places.get(prop)?;
+            (*place != Place::Socket(socket.clone())).then(|| (prop.clone(), place.clone(), *secs))
+        })
+        .collect()
 }
 
 /// What to play now. `clip` is our name for it; the bridge maps it to a node of the graph.
@@ -624,33 +994,49 @@ pub fn select_clip_for<'a>(
     status: BodyStatus,
     set: &'a AnimSet,
 ) -> ClipChoice<'a> {
+    select_clip_in(action, motion, status, set, None)
+}
+
+/// [`select_clip_for`] for a body whose moveset is `moveset`: every clip it picks goes through the
+/// set's `by_moveset` table for that moveset (the clip family), blend and speed included.
+pub fn select_clip_in<'a>(
+    action: Option<(&str, f32, f32)>,
+    motion: &MotionState,
+    status: BodyStatus,
+    set: &'a AnimSet,
+    moveset: Option<&str>,
+) -> ClipChoice<'a> {
     let action = action.filter(|(id, ..)| !set.is_layered(id));
     let progress = action.map(|(_, t, len)| if len > EPS { (t / len).clamp(0.0, 1.0) } else { 1.0 });
     if let Some((id, ..)) = action
         && let Some(clip) = set.action_clip(id)
     {
-        return ClipChoice::seeked(set, clip, progress.unwrap_or(0.0), true);
+        return ClipChoice::seeked(set, set.family(moveset, clip), progress.unwrap_or(0.0), true);
     }
     if status.dead {
         return match (set.exact(Locomotion::Dead), progress) {
-            (Some(clip), Some(p)) => ClipChoice::seeked(set, clip, p, true),
-            (Some(clip), None) => ClipChoice {
-                clip: Some(clip),
-                seek_to: None,
-                speed: set.clip_speed(clip),
-                blend: set.blend_into(clip, false),
-                looping: false,
-            },
+            (Some(clip), Some(p)) => ClipChoice::seeked(set, set.family(moveset, clip), p, true),
+            (Some(clip), None) => {
+                let clip = set.family(moveset, clip);
+                ClipChoice {
+                    clip: Some(clip),
+                    seek_to: None,
+                    speed: set.clip_speed(clip),
+                    blend: set.blend_into(clip, false),
+                    looping: false,
+                }
+            }
             (None, _) => ClipChoice::none(set),
         };
     }
     if status.staggered
         && let (Some(clip), Some(p)) = (set.exact(Locomotion::Stagger), progress)
     {
-        return ClipChoice::seeked(set, clip, p, true);
+        return ClipChoice::seeked(set, set.family(moveset, clip), p, true);
     }
     let state = locomotion_state_at(motion, &set.speeds, status.pace);
     let Some((resolved, clip)) = set.locomotion_clip(state) else { return ClipChoice::none(set) };
+    let clip = set.family(moveset, clip);
     if resolved == Locomotion::Mantle
         && let Some(mantle) = &motion.mantle
     {
@@ -678,13 +1064,23 @@ pub struct LayerChoice<'a> {
 /// running action as for [`select_clip_for`]. A dead body or a staggering one shows nothing on
 /// a layer: its whole body is the clip's.
 pub fn select_layer<'a>(action: Option<(&str, f32, f32)>, status: BodyStatus, set: &'a AnimSet) -> Option<LayerChoice<'a>> {
+    select_layer_in(action, status, set, None)
+}
+
+/// [`select_layer`] for a body whose moveset is `moveset` (the clip goes through `by_moveset`).
+pub fn select_layer_in<'a>(
+    action: Option<(&str, f32, f32)>,
+    status: BodyStatus,
+    set: &'a AnimSet,
+    moveset: Option<&str>,
+) -> Option<LayerChoice<'a>> {
     if status.dead || status.staggered {
         return None;
     }
     let (id, t, len) = action?;
     let (clip, Some(layer)) = set.action_shown(id)? else { return None };
     let progress = if len > EPS { (t / len).clamp(0.0, 1.0) } else { 1.0 };
-    Some(LayerChoice { layer, choice: ClipChoice::seeked(set, clip, progress, true) })
+    Some(LayerChoice { layer, choice: ClipChoice::seeked(set, set.family(moveset, clip), progress, true) })
 }
 
 /// The cues the animation passed going from `prev` to `now` (seconds on the clip's
@@ -755,6 +1151,14 @@ impl AnimSet {
                     refs.error(format!(
                         "root_motion `{bone}` sits under node `{parent}` of `{source}`, which turns it or scales it unevenly: \
                          its moves are not in the model's axes; export the armature unturned"
+                    ));
+                }
+            }
+            for (name, socket) in &self.sockets {
+                if !socket.bone.is_empty() && !file.has_node(&socket.bone) {
+                    refs.error(format!(
+                        "sockets.{name}.bone -> `{source}` has no node `{}`; name a bone of the model",
+                        socket.bone
                     ));
                 }
             }
@@ -914,6 +1318,7 @@ impl ContentDef for AnimSet {
         if self.root_motion.as_deref().is_some_and(str::is_empty) {
             refs.error("root_motion is empty; name the root bone (`root_motion: \"root\"`) or leave it out");
         }
+        self.check_mounting(refs);
         self.check_files(refs);
         let s = &self.speeds;
         for (field, v) in [("walk", s.walk), ("run", s.run), ("sprint", s.sprint)] {
@@ -929,6 +1334,209 @@ impl ContentDef for AnimSet {
                 "speeds.min_scale and max_scale must satisfy 0 < min_scale <= max_scale (are {} and {})",
                 s.min_scale, s.max_scale
             ));
+        }
+    }
+}
+
+impl AnimSet {
+    /// `by_moveset`, `sockets`, `carry` and `mounts`: what they name exists, and the numbers make
+    /// sense.
+    fn check_mounting(&self, refs: &mut Refs) {
+        let clip_names: Vec<&str> = self.clips.keys().map(String::as_str).collect();
+        for (moveset, table) in &self.by_moveset {
+            refs.require::<MovesetDef>(moveset, "by_moveset");
+            for (from, to) in table {
+                if !self.clips.contains_key(from) {
+                    unknown_clip(refs, &clip_names, &format!("by_moveset.{moveset}"), from);
+                }
+                if !self.clips.contains_key(to) {
+                    unknown_clip(refs, &clip_names, &format!("by_moveset.{moveset}.{from}"), to);
+                }
+            }
+        }
+        for (name, socket) in &self.sockets {
+            if socket.bone.is_empty() {
+                refs.error(format!(
+                    "sockets.{name}.bone is empty; name the bone the socket rides, e.g. `sockets: {{\"{name}\": (bone: \"hand.R\")}}`"
+                ));
+            }
+            for (field, v) in [("offset", socket.offset), ("turn", socket.turn)] {
+                if !v.is_finite() {
+                    refs.error(format!("sockets.{name}.{field} must be finite (is {v})"));
+                }
+            }
+        }
+        let socket_names: Vec<&str> = self.sockets.keys().map(String::as_str).collect();
+        let mut carried_props: BTreeSet<&str> = BTreeSet::new();
+        for (moveset, list) in &self.carry {
+            if moveset != "*" {
+                refs.require::<MovesetDef>(moveset, "carry");
+            }
+            let mut seen: BTreeSet<&str> = BTreeSet::new();
+            for (i, carry) in list.iter().enumerate() {
+                let field = format!("carry.{moveset}[{i}]");
+                refs.require::<PropDef>(&carry.prop, &format!("{field}.prop"));
+                self.check_socket(refs, &socket_names, &format!("{field}.socket"), &carry.socket);
+                if !seen.insert(&carry.prop) {
+                    refs.error(format!(
+                        "{field}.prop `{}` is carried twice by `{moveset}`; a prop sits in one socket",
+                        carry.prop
+                    ));
+                }
+                carried_props.insert(&carry.prop);
+            }
+        }
+        for (key, rules) in &self.mounts {
+            self.check_rules(refs, key, rules, &socket_names, &carried_props);
+        }
+    }
+
+    /// `field -> unknown socket `x` (did you mean `y`?); sockets: a, b`.
+    fn check_socket(&self, refs: &mut Refs, names: &[&str], field: &str, socket: &str) {
+        if self.sockets.contains_key(socket) {
+            return;
+        }
+        if names.is_empty() {
+            refs.error(format!(
+                "{field} -> unknown socket `{socket}`; the set has no sockets: name one in `sockets`, \
+                 e.g. `sockets: {{\"{socket}\": (bone: \"hand.R\")}}`"
+            ));
+            return;
+        }
+        let hint = shards_content::db::closest(socket, names.iter().copied())
+            .map(|c| format!(" (did you mean `{c}`?)"))
+            .unwrap_or_default();
+        refs.error(format!("{field} -> unknown socket `{socket}`{hint}; sockets: {}", names.join(", ")));
+    }
+
+    fn check_rules(&self, refs: &mut Refs, key: &str, rules: &MountRules, sockets: &[&str], carried: &BTreeSet<&str>) {
+        let equip = key == EQUIP_KEY;
+        if key.starts_with('@') && !equip {
+            refs.error(format!(
+                "mounts.{key}: the only rules key that starts with `@` is `{EQUIP_KEY}` (a motion mode's keys come \
+                 with a later slice); name an action, an `anim` or a tag"
+            ));
+            return;
+        }
+        // The actions this key looks up: by id, by `anim` or by tag.
+        let actions: Vec<&ActionDef> = refs
+            .iter::<ActionDef>()
+            .filter(|(id, def)| *id == key || def.anim.as_deref() == Some(key) || def.tags.iter().any(|t| t == key))
+            .map(|(_, def)| def)
+            .collect();
+        if !equip && actions.is_empty() && refs.iter::<ActionDef>().next().is_some() {
+            refs.error(format!(
+                "mounts.{key} names no action, `anim` or tag; the rules are looked up by an action's id, its `anim` or \
+                 one of its tags"
+            ));
+        }
+        let check_span = |refs: &mut Refs, field: &str, span: &Span| {
+            let bad = |v: f32| !(v >= 0.0 && v.is_finite());
+            let lacks = |p: &str| !actions.is_empty() && !actions.iter().any(|a| a.phase_span(p).is_some());
+            match span {
+                Span::Secs(a, b) => {
+                    if bad(*a) || bad(*b) || b < a {
+                        refs.error(format!("{field} `Secs({a}, {b})` must satisfy 0 <= from <= to"));
+                    }
+                }
+                _ if equip => refs.error(format!(
+                    "{field}: under `{EQUIP_KEY}` a span is `Secs(from, to)`, counted from the weapon switch (it has no phases)"
+                )),
+                Span::Phase(p) if lacks(p) => {
+                    refs.error(format!("{field} names phase `{p}`, which no action looked up by `{key}` has"));
+                }
+                Span::Phases(a, b) => {
+                    for p in [a, b] {
+                        if lacks(p) {
+                            refs.error(format!("{field} names phase `{p}`, which no action looked up by `{key}` has"));
+                        }
+                    }
+                }
+                Span::Phase(_) => {}
+            }
+        };
+        for (i, mv) in rules.moves.iter().enumerate() {
+            let field = format!("mounts.{key}.moves[{i}]");
+            if !carried.contains(mv.prop.as_str()) {
+                refs.error(format!(
+                    "{field}.prop `{}` is never carried (no `carry` entry has it); the move does nothing",
+                    mv.prop
+                ));
+            }
+            if let Some(to) = &mv.to {
+                self.check_socket(refs, sockets, &format!("{field}.to"), to);
+            }
+            check_span(refs, &format!("{field}.span"), &mv.span);
+        }
+        if let Some(span) = &rules.previous {
+            check_span(refs, &format!("mounts.{key}.previous"), span);
+        }
+        if !rules.ended_by.is_empty() && !equip {
+            refs.error(format!(
+                "mounts.{key}.ended_by belongs under `{EQUIP_KEY}`: only a weapon switch's equip ends by an event"
+            ));
+        }
+        for event in &rules.ended_by {
+            if equip && !EQUIP_EVENTS.contains(&event.as_str()) {
+                refs.error(format!(
+                    "mounts.{key}.ended_by has an unknown event `{event}`; events: {}",
+                    EQUIP_EVENTS.join(", ")
+                ));
+            }
+        }
+        if !rules.on_cut.is_empty() && equip {
+            refs.error(format!("mounts.{key}.on_cut belongs under an action's key: it is what a cut run holds"));
+        }
+        for (prop, secs) in &rules.on_cut {
+            if !carried.contains(prop.as_str()) {
+                refs.error(format!(
+                    "mounts.{key}.on_cut.{prop} names a prop that is never carried (no `carry` entry has it)"
+                ));
+            }
+            if !(*secs >= 0.0 && secs.is_finite()) {
+                refs.error(format!("mounts.{key}.on_cut.{prop} must be >= 0 (is {secs})"));
+            }
+        }
+    }
+}
+
+impl ContentDef for PropDef {
+    const KIND: &'static str = "prop";
+    // A picture: never in the replay check.
+    const SIMULATION: bool = false;
+
+    fn validate(&self, _id: &str, refs: &mut Refs) {
+        match (&self.model, &self.size) {
+            (None, None) => {
+                refs.error("a prop needs a `model` (a glTF) or a `size` (a box), e.g. `size: (0.05, 0.9, 0.02)`");
+            }
+            (Some(_), Some(_)) => refs.error("a prop has a `model` or a `size`, not both; leave one out"),
+            _ => {}
+        }
+        if let Some(model) = &self.model {
+            if !is_gltf(model) {
+                refs.error(format!("model `{model}` is not a glTF file (.gltf or .glb)"));
+            } else if let Some(root) = refs.asset_root()
+                && !root.join(model).is_file()
+            {
+                refs.error(format!("model `{model}` does not exist under the assets folder; check the path"));
+            }
+        }
+        if let Some(size) = self.size
+            && !(size.x > 0.0 && size.y > 0.0 && size.z > 0.0 && size.is_finite())
+        {
+            refs.error(format!("size must be positive on every axis (is {size})"));
+        }
+        if !(self.scale > 0.0 && self.scale.is_finite()) {
+            refs.error(format!("scale must be > 0 (is {})", self.scale));
+        }
+        for (field, v) in [("grip", self.grip), ("turn", self.turn)] {
+            if !v.is_finite() {
+                refs.error(format!("{field} must be finite (is {v})"));
+            }
+        }
+        if let Some(look) = &self.look {
+            refs.require::<shards_look::LookDef>(look, "look");
         }
     }
 }
@@ -1430,7 +2038,7 @@ mod tests {
         };
         let errors = build_with(TWO_ACTIONS, &set(r#"(clip: "idle", lyer: "upper")"#));
         assert_eq!(errors.len(), 1, "{errors:#?}");
-        assert!(errors[0].contains("Unexpected field named `lyer`") && errors[0].contains("expected either `clip` or `layer`"), "{errors:#?}");
+        assert!(errors[0].contains("Unexpected field named `lyer`") && errors[0].contains("expected one of `clip`, `layer`, or `ends_equip`"), "{errors:#?}");
         let errors = build_with(TWO_ACTIONS, &set(r#"(layer: "upper")"#));
         assert!(errors.len() == 1 && errors[0].contains("missing field named `clip`"), "{errors:#?}");
         let errors = build_with(TWO_ACTIONS, &set("7"));
@@ -1465,3 +2073,6 @@ mod tests {
         assert!(sets["humanoid"].is_layered("drink"), "the example puts the drink on a layer");
     }
 }
+
+#[cfg(test)]
+mod mounting;

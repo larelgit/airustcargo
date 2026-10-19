@@ -106,6 +106,7 @@
 
 pub mod ai;
 pub mod anim;
+mod animtool;
 mod coverage;
 pub mod bake;
 pub mod body;
@@ -136,8 +137,10 @@ use shards_core::{CoreSystems, EngineAppExt, NetSet, Predicted};
 use shards_motion::{ControllerSystems, ModifierSystems, MotionPlugin, MotionSystems};
 
 pub use anim::{
-    crossed_cues, locomotion_state, locomotion_state_at, select_clip, select_clip_for, select_layer, ActionClip, AnimSet, Animated,
-    AnimationCue, BodyStatus, ClipChoice, ClipDef, CueDef, GroundSpeeds, LayerChoice, LayerDef, Locomotion, MAX_LAYERS,
+    crossed_cues, cut_holds, equip_open, euler_degrees, locomotion_state, locomotion_state_at, mount_places, select_clip,
+    select_clip_for, select_clip_in, select_layer, select_layer_in, ActionClip, AnimSet, Animated, AnimationCue, BodyStatus,
+    Carry, ClipChoice, ClipDef, CueDef, GroundSpeeds, LayerChoice, LayerDef, Locomotion, MountMove, MountRules, MountView, Place,
+    PropDef, PropSwaps, SocketDef, EQUIP_EVENTS, EQUIP_KEY, MAX_LAYERS,
 };
 pub use combat::{
     deal_damage, end_break, kill, kill_with, poise_damage, react, reset_poise, revive, stagger, Blocked, DamageCtx, DamageHook, DamageHooks, Damaged, Died,
@@ -322,6 +325,7 @@ impl Plugin for ActionPlugin {
             .register_type::<PairEnded>()
             .register_type::<LeapRun>()
             .register_type::<Animated>()
+            .register_type::<PropSwaps>()
             .register_type::<ActionMissed>()
             // Typed for the network layer, which forwards them to clients.
             .register_type::<ActionStarted>()
@@ -351,6 +355,7 @@ impl Plugin for ActionPlugin {
             .add_content::<StatusDef>()
             .add_content::<CombatTuning>()
             .add_content::<AnimSet>()
+            .add_content::<PropDef>()
             .init_resource::<DamageHooks>()
             .init_resource::<StatusEffects>()
             .init_resource::<ActionEffects>()
@@ -424,12 +429,15 @@ impl Plugin for ActionPlugin {
             .add_observer(fighter::hurtbox_on_collider)
             .add_observer(fighter::protect_after_reaction)
             // Cosmetic: a game may add it in a window only, and replays must not care.
-            .replay_ignore::<Animated>();
+            .replay_ignore::<Animated>()
+            .replay_ignore::<PropSwaps>()
+            .net_ignore::<PropSwaps>();
         context::plugin(app);
         predict::plugin(app);
         lock::plugin(app);
         ai::register(app);
         tools::register(app);
+        animtool::register(app);
         bake::register(app);
         cue::plugin(app);
         #[cfg(feature = "render")]

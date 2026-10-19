@@ -65,13 +65,14 @@ use shards_core::Predicted;
 use shards_motion::{MotionState, MoveModifiers};
 
 use crate::anim::{
-    crossed_cues, select_clip_for, select_layer, AnimSet, Animated, AnimationCue, BodyStatus, ClipChoice, LayerChoice,
-    MAX_LAYERS,
+    crossed_cues, select_clip_in, select_layer_in, AnimSet, Animated, AnimationCue, BodyStatus, ClipChoice, ClipDef, LayerChoice,
+    LayerDef, PropSwaps, MAX_LAYERS,
 };
 use crate::def::{ActionDef, MovesetDef};
 use crate::fighter::{Dead, Fighter};
 use crate::machine::ActionState;
 use crate::predict::PredictedAction;
+use crate::render::props::{self, skeleton, MountEnv, MountFrame, MountState, PropOf, RunView};
 
 /// A seeked clip stops this far (seconds) before its end: Bevy's player wraps a time at the
 /// duration back to zero, which would show the first pose in place of the last.
@@ -113,10 +114,56 @@ impl Built {
     }
 }
 
+/// What of a set shapes its graph: an edit of anything else (sockets, carried props, mounts,
+/// speeds, blends) is read from the set in place each frame and rebuilds nothing.
+#[derive(Clone, Debug, PartialEq)]
+struct GraphShape {
+    source: String,
+    clips: BTreeMap<String, ClipDef>,
+    layers: BTreeMap<String, LayerDef>,
+    /// (layer, clip) of every mapping that plays on a layer.
+    layered: BTreeSet<(String, String)>,
+    /// A layered clip's family renames need nodes of their own.
+    by_moveset: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+impl GraphShape {
+    fn of(set: &AnimSet) -> Self {
+        Self {
+            source: set.source.clone(),
+            clips: set.clips.clone(),
+            layers: set.layers.clone(),
+            layered: set
+                .actions
+                .values()
+                .chain(set.tags.values())
+                .filter_map(|m| Some((m.layer.clone()?, m.clip.clone())))
+                .collect(),
+            by_moveset: set.by_moveset.clone(),
+        }
+    }
+}
+
 struct SetGraph {
-    /// The definition the graph was built from: an edit rebuilds it.
-    def: AnimSet,
+    /// What the graph was built from: an edit of it rebuilds the graph.
+    shape: GraphShape,
     built: Option<Built>,
+}
+
+/// What the bridge's own stages cost last frame (`ai/status` -> `anim.ms`).
+#[derive(Resource, Default, Debug)]
+pub struct AnimStats {
+    /// Bodies with `Animated`, and those the bridge has bound to a player.
+    pub animated: usize,
+    pub bound: usize,
+    /// Props drawn, and clips playing on layers.
+    pub props: usize,
+    pub plays: usize,
+    /// Overlays started and feet solved last frame (later slices of the animation lane fill these).
+    pub overlays_started: usize,
+    pub feet_solved: usize,
+    /// Milliseconds the bridge's own stages of all bodies took last frame.
+    pub ms: f32,
 }
 
 /// The animation graphs of the animsets in use, and the glTF libraries they come from.
@@ -165,6 +212,10 @@ pub struct AnimationBound {
     overlays: BTreeMap<String, Overlay>,
     /// The character's animation is paused by a [`PresentationHolds`] hold (a hit stop in co-op).
     held: bool,
+    /// The simulation clock when that hold began.
+    held_since: Option<f64>,
+    /// The props it carries and what it remembers of them.
+    pub(crate) mounts: MountState,
 }
 
 impl AnimationBound {
@@ -182,6 +233,44 @@ impl AnimationBound {
     /// How much of `layer`'s bones the action's clip has, 0 to 1: the fade in and out.
     pub fn layer_share(&self, layer: &str) -> f32 {
         self.overlays.get(layer).map_or(0.0, Overlay::share)
+    }
+
+    /// The entity showing prop `prop` (a key of the set's `carry`), once it is drawn.
+    pub fn prop(&self, prop: &str) -> Option<Entity> {
+        self.mounts.entity(prop)
+    }
+
+    /// The props drawn now: prop id and entity, in prop id order.
+    pub fn props(&self) -> impl Iterator<Item = (&str, Entity)> {
+        self.mounts.drawn()
+    }
+
+    /// Where prop `prop` sat at the last frame.
+    pub fn place(&self, prop: &str) -> Option<&crate::anim::Place> {
+        self.mounts.places.get(prop)
+    }
+
+    /// Whether the equip of a weapon switch is open: the props of the moveset the body had before
+    /// still count, and the switch's moves apply.
+    pub fn equipping(&self) -> bool {
+        self.mounts.since.is_some()
+    }
+
+    /// Whether a co-op picture hold has this body standing still now.
+    pub fn held(&self) -> bool {
+        self.held
+    }
+
+    /// The weapon-switch rules and the seconds since the switch, while its equip is open.
+    pub(crate) fn mounts_equip<'a>(&self, set: &'a AnimSet, clock: f64) -> Option<(&'a crate::anim::MountRules, f32)> {
+        let since = self.mounts.since(clock)?;
+        let rules = set.equip_rules()?;
+        crate::anim::equip_open(rules, since).then_some((rules, since))
+    }
+
+    /// The bone socket `socket` rides, once the bridge has found it in the model.
+    pub fn socket_bone(&self, socket: &str) -> Option<Entity> {
+        self.mounts.bones.get(socket).map(|(_, bone)| *bone)
     }
 }
 
@@ -331,11 +420,15 @@ pub fn build_graph(set: &AnimSet, mut find: impl FnMut(&str, &str) -> Option<Han
     for mapping in set.actions.values().chain(set.tags.values()) {
         let Some(layer) = mapping.layer.as_deref() else { continue };
         let Some(index) = set.layer_index(layer).filter(|i| *i < MAX_LAYERS) else { continue };
-        let Some((_, handle)) = nodes.get(&mapping.clip) else { continue };
-        let on_layer = layered.entry(layer.to_owned()).or_default();
-        if !on_layer.contains_key(&mapping.clip) {
-            let node = graph.add_clip_with_mask(handle.clone(), 1 << index, 1.0, graph.root);
-            on_layer.insert(mapping.clip.clone(), (node, handle.clone()));
+        // The clip, and the clips the families show in its place.
+        let renamed = set.by_moveset.values().filter_map(|table| table.get(&mapping.clip));
+        for clip in std::iter::once(&mapping.clip).chain(renamed) {
+            let Some((_, handle)) = nodes.get(clip) else { continue };
+            let on_layer = layered.entry(layer.to_owned()).or_default();
+            if !on_layer.contains_key(clip) {
+                let node = graph.add_clip_with_mask(handle.clone(), 1 << index, 1.0, graph.root);
+                on_layer.insert(clip.clone(), (node, handle.clone()));
+            }
         }
     }
     GraphBuild { graph, nodes, layered, missing }
@@ -343,7 +436,9 @@ pub fn build_graph(set: &AnimSet, mut find: impl FnMut(&str, &str) -> Option<Han
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<AnimGraphs>()
+        .init_resource::<AnimStats>()
         .add_observer(retarget_on_ready)
+        .add_plugins(props::plugin)
         .add_systems(Update, (build_graphs, bind_players, drive).chain())
         .add_systems(
             PostUpdate,
@@ -371,9 +466,9 @@ pub fn build_graphs(
             );
             continue;
         };
-        let changed = state.sets.get(id).is_none_or(|s| s.def != *set);
-        if changed {
-            state.sets.insert(id.to_owned(), SetGraph { def: set.clone(), built: None });
+        let shape = GraphShape::of(set);
+        if state.sets.get(id).is_none_or(|s| s.shape != shape) {
+            state.sets.insert(id.to_owned(), SetGraph { shape, built: None });
         }
         if state.sets.get(id).is_some_and(|s| s.built.is_some()) {
             continue;
@@ -435,6 +530,7 @@ pub fn bind_players(
     mut players: Query<&mut AnimationPlayer>,
     names: Query<&Name>,
     targets: Query<&AnimationTargetId>,
+    props: Query<(), With<PropOf>>,
 ) {
     for (entity, set, bound) in &animated {
         let Some(built) = graphs.built(&set.animset) else { continue };
@@ -443,7 +539,7 @@ pub fn bind_players(
         if bound.is_some_and(|b| b.graph == built.graph.id() && players.contains(b.player)) {
             continue;
         }
-        let found = std::iter::once(entity).chain(children.iter_descendants(entity)).find(|e| players.contains(*e));
+        let found = skeleton(entity, &children, &props).into_iter().find(|e| players.contains(*e));
         let Some(player) = found else { continue };
         let graph = built.graph.clone();
         if let Ok(mut p) = players.get_mut(player) {
@@ -452,7 +548,7 @@ pub fn bind_players(
         let mut ready = BTreeSet::new();
         let layers = db.as_ref().and_then(|db| db.get::<AnimSet>(&set.animset)).map(|s| &s.layers);
         for (index, (layer, def)) in layers.into_iter().flatten().enumerate().take(MAX_LAYERS) {
-            if mask_layer(index, &def.root, player, &graph, &mut graph_assets, &children, &names, &targets) {
+            if mask_layer(index, &def.root, player, &graph, &mut graph_assets, &children, &names, &targets, &props) {
                 ready.insert(layer.clone());
             } else {
                 graphs.warn_once(
@@ -475,6 +571,10 @@ pub fn bind_players(
             ready,
             overlays: BTreeMap::new(),
             held: false,
+            held_since: None,
+            // The props and the equip go over to the new binding: a rebind neither forgets an
+            // equip nor leaves a second set of props under the bones.
+            mounts: bound.map(|b| b.mounts.taken_over()).unwrap_or_default(),
         });
     }
 }
@@ -492,12 +592,13 @@ fn mask_layer(
     children: &Query<&Children>,
     names: &Query<&Name>,
     targets: &Query<&AnimationTargetId>,
+    props: &Query<(), With<PropOf>>,
 ) -> bool {
-    let bones: Vec<Entity> = std::iter::once(player).chain(children.iter_descendants(player)).collect();
+    let bones: Vec<Entity> = skeleton(player, children, props);
     let Some(top) = bones.iter().copied().find(|e| names.get(*e).is_ok_and(|n| n.as_str() == root)) else {
         return false;
     };
-    let inside: HashSet<Entity> = std::iter::once(top).chain(children.iter_descendants(top)).collect();
+    let inside: HashSet<Entity> = skeleton(top, children, props).into_iter().collect();
     let outside: Vec<AnimationTargetId> =
         bones.iter().filter(|e| !inside.contains(*e)).filter_map(|e| targets.get(*e).ok().copied()).collect();
     let bit = 1u64 << index;
@@ -529,6 +630,7 @@ pub struct Driven {
     modifiers: Option<&'static MoveModifiers>,
     fighter: Option<&'static Fighter>,
     dead: Has<Dead>,
+    swaps: Option<&'static PropSwaps>,
 }
 
 /// `Update`: the clip each character shows, applied to its player. See the module docs.
@@ -544,13 +646,22 @@ pub fn drive(
     clips: Res<Assets<AnimationClip>>,
     mut animated: Query<Driven>,
     mut players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
+    mut mounting: MountEnv,
+    all: Query<(), With<Animated>>,
+    stats: Option<ResMut<AnimStats>>,
 ) {
     let Some(db) = db else { return };
     let overstep = fixed.overstep().as_secs_f32();
+    // The simulation's clock, between ticks too: a pause freezes the props' clocks, a `step` moves them.
+    let clock = fixed.elapsed_secs_f64() + f64::from(overstep);
+    let mut spent = std::time::Duration::ZERO;
+    let (mut bound_bodies, mut props_drawn, mut plays) = (0usize, 0usize, 0usize);
     let now = real.elapsed();
     let frozen = time.delta_secs() <= 0.0;
     let standing = MotionState::default();
-    for DrivenItem { entity, animated: set_ref, mut bound, state, shown, predicted, id, motion, modifiers, fighter, dead } in &mut animated {
+    for DrivenItem { entity, animated: set_ref, mut bound, state, shown, predicted, id, motion, modifiers, fighter, dead, swaps } in
+        &mut animated
+    {
         let (Some(set), Some(built)) = (db.get::<AnimSet>(&set_ref.animset), graphs.built(&set_ref.animset)) else {
             continue;
         };
@@ -566,8 +677,13 @@ pub fn drive(
             bound.held = held;
             if held {
                 player.pause_all();
+                bound.held_since = Some(clock);
             } else {
                 player.resume_all();
+                // The clocks of the props resume where they stopped.
+                if let Some(since) = bound.held_since.take() {
+                    bound.mounts.shift(clock - since);
+                }
             }
         }
         if held {
@@ -589,17 +705,45 @@ pub fn drive(
             .zip(run)
             .is_some_and(|(stagger, r)| r.forced && r.action == stagger);
         let status = BodyStatus { dead, staggered: staggers, pace: modifiers.map_or(1.0, MoveModifiers::pace) };
-        let choice = select_clip_for(action, motion.unwrap_or(&standing), status, set);
+        let moveset = fighter.map(|f| f.moveset.as_str());
+        let choice = select_clip_in(action, motion.unwrap_or(&standing), status, set, moveset);
         drive_body(&mut commands, entity, set, built, &clips, &mut bound, &mut player, &mut transitions, &choice, frozen);
         if !built.layered.is_empty() || !bound.overlays.is_empty() {
             let frame = LayerFrame {
-                wanted: select_layer(action, status, set),
+                wanted: select_layer_in(action, status, set, moveset),
                 back_blend: choice.blend,
                 dt: time.delta_secs(),
                 frozen,
             };
             drive_layers(&mut commands, entity, set, built, &clips, &mut bound, &mut player, &frame);
         }
+
+        // The props: where they sit now.
+        bound_bodies += 1;
+        let player_entity = bound.player;
+        let frame = MountFrame {
+            body: entity,
+            player: player_entity,
+            animset: &set_ref.animset,
+            set,
+            db: &db,
+            moveset,
+            swaps,
+            run: run.zip(action).map(|(run, (key, t, _))| RunView { run, def, key, t }),
+            clock,
+        };
+        let began = std::time::Instant::now();
+        props::step(&mut mounting, &frame, &mut bound.mounts);
+        spent += began.elapsed();
+        props_drawn += bound.mounts.drawn().count();
+        plays += bound.overlays.values().filter(|o| o.main.is_some()).count();
+    }
+    if let Some(mut stats) = stats {
+        stats.animated = all.iter().count();
+        stats.bound = bound_bodies;
+        stats.props = props_drawn;
+        stats.plays = plays;
+        stats.ms = if bound_bodies > 0 { spent.as_secs_f32() * 1000.0 } else { 0.0 };
     }
 }
 
@@ -744,6 +888,7 @@ pub fn hold_root_motion(
     mut animated: Query<(&Animated, &mut AnimationBound)>,
     children: Query<&Children>,
     names: Query<&Name>,
+    props: Query<(), With<PropOf>>,
     mut transforms: Query<&mut Transform>,
 ) {
     let Some(db) = db else { return };
@@ -753,8 +898,8 @@ pub fn hold_root_motion(
         };
         let (set, bone) = bone;
         if bound.root.is_none_or(|(e, _)| !transforms.contains(e)) {
-            let found = std::iter::once(bound.player)
-                .chain(children.iter_descendants(bound.player))
+            let found = skeleton(bound.player, &children, &props)
+                .into_iter()
                 .find(|e| names.get(*e).is_ok_and(|n| n.as_str() == bone));
             let rest = graphs
                 .libraries
@@ -779,20 +924,26 @@ pub fn hold_root_motion(
 /// would have: the player on the skeleton's root (the top-level node of the glTF scene with
 /// the most nodes below it), and every named node below it the target id of its path of names
 /// from that root. Clips of another file then find their bones if the **names match**.
+#[allow(clippy::too_many_arguments, reason = "an observer: one parameter per thing it reads")]
 pub fn retarget_on_ready(
     ready: On<WorldInstanceReady>,
     mut commands: Commands,
     parents: Query<&ChildOf>,
     animated: Query<(), With<Animated>>,
+    props: Query<(), With<PropOf>>,
     children: Query<&Children>,
     players: Query<(), With<AnimationPlayer>>,
     names: Query<&Name>,
 ) {
     let root = ready.entity;
+    // A prop's model is not a rig: it gets no player and no animation targets.
+    if std::iter::once(root).chain(parents.iter_ancestors(root)).any(|e| props.contains(e)) {
+        return;
+    }
     if !std::iter::once(root).chain(parents.iter_ancestors(root)).any(|e| animated.contains(e)) {
         return;
     }
-    if std::iter::once(root).chain(children.iter_descendants(root)).any(|e| players.contains(e)) {
+    if skeleton(root, &children, &props).into_iter().any(|e| players.contains(e)) {
         return;
     }
     // A glTF scene spawns as `root > SceneN > top-level nodes`: the nodes are what the

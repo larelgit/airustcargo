@@ -191,3 +191,45 @@ pub fn assets(name: &str) -> PathBuf {
     }
     dir
 }
+
+/// The props of the sockets tests: a sword, a greatsword, a variant of the sword and a flask,
+/// plain boxes.
+pub const KIT_PROPS: &str = r#"{
+    "sword": (size: (0.05, 0.9, 0.02), grip: (0.0, 0.3, 0.0)),
+    "gilded_sword": (size: (0.06, 0.95, 0.03)),
+    "great": (size: (0.1, 1.4, 0.04)),
+}"#;
+
+/// The humanoid with sockets: the hero carries a sword in the right hand (the brute a greatsword),
+/// the drink puts it on the hip for a while, and a weapon switch is an equip of a tenth of a second.
+pub const KIT: &str = r#"{ "humanoid": (
+    source: "models/humanoid.glb",
+    clips: {"idle": (), "walk": (), "light_1": (), "roll": (), "drink": (source: "models/humanoid_gestures.glb")},
+    locomotion: {"idle": "idle", "walk": "walk"},
+    layers: {"upper": (root: "spine")},
+    actions: {"light_1": "light_1", "roll": "roll", "drink": (clip: "drink", layer: "upper")},
+    by_moveset: {"brute": {"idle": "walk"}},
+    sockets: {
+        "hand_r": (bone: "hand.R"),
+        "hip": (bone: "hips", offset: (0.25, 0.0, 0.0), turn: (0.0, 90.0, 0.0)),
+        "back": (bone: "spine"),
+    },
+    carry: {"hero": [(prop: "sword", socket: "hand_r")], "brute": [(prop: "great", socket: "hand_r")]},
+    mounts: {
+        "drink": (moves: [(prop: "sword", to: Some("hip"), span: Secs(0.2, 0.8))], on_cut: {"sword": 0.1}),
+        "@moveset": (
+            moves: [(prop: "sword", to: Some("back"), span: Secs(0.05, 0.1))],
+            previous: Some(Secs(0.0, 0.1)),
+            ended_by: ["parried"],
+        ),
+    },
+    root_motion: "root",
+) }"#;
+
+/// [`humanoid_assets_with`] with the props file too.
+pub fn kit_assets(name: &str, animsets: &str) -> PathBuf {
+    let dir = humanoid_assets_with(name, animsets);
+    std::fs::create_dir_all(dir.join("content/anim")).unwrap();
+    std::fs::write(dir.join("content/anim/props.prop.ron"), KIT_PROPS).unwrap();
+    dir
+}
