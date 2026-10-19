@@ -68,6 +68,8 @@ pub fn app_in_with(dir: &str, seed: u64, before: impl FnOnce(&mut App), setup: i
         paused: true,
         port: None,
         crash_replays: false,
+        // Tick timing is wall-clock: a journal compared between two runs must not hold it.
+        report_perf: false,
         hot_reload: false,
         seed,
         asset_dir: dir.clone(),

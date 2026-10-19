@@ -75,6 +75,8 @@ pub fn app_with(dir: &Path, setup: impl FnOnce(&mut App)) -> App {
         paused: true,
         port: None,
         crash_replays: false,
+        // Tick timing is wall-clock: a journal compared between two runs must not hold it.
+        report_perf: false,
         hot_reload: false,
         seed: 7,
         asset_dir: dir.clone(),
