@@ -1697,8 +1697,8 @@ is gone, dead, already down or without `Health`. While a body is down:
   passes over it;
 - it is no target: perception does not see it (`Standing = (Without<Dead>, Without<Downed>)` is the one filter for "can be
   fought"), the director counts only standing players for its token limit and takes back a token on it (`target gone`),
-  lock-on drops it and will not take it, an attack order on it ends, a hostile pair selection skips it, and an NPC that is
-  down is inactive (its brain passes it through, as for the dormant and the dead);
+  lock-on drops it and will not take it, an attack order on it ends, a hostile pair selection skips it, a homing projectile
+  (B4) stops following it and flies on straight, and an NPC that is down is inactive (its brain passes it through, as for the dormant and the dead);
 - `check_deaths` passes over it (it has no health and would die at once), and an encounter counts it out (the module's own
   out rule `downed`), so a wipe counts every incapacitated player.
 
@@ -1742,7 +1742,8 @@ still broken goes back into its stagger for exactly the rest of its break (`resu
 not ended early (13a, "B3 as built"). A pair whose victim goes down is `lost`, unless the pair takes downed bodies.
 
 **Solo, co-op and the game's choice.** The engine does not know what "solo" is (ledger WN05): a game that lays a body down
-only with a partner asks `NetHost::connected()` (`shards::net`: "no connected peer") or counts its own player bodies. The
+only with a partner asks the host whether a peer is connected (`shards::net::NetHost`: solo is
+`connected().next().is_none()`, "no connected peer") or counts its own player bodies. The
 sandbox's hook, `spare` in `src/gameplay/fate.rs`, answers `Down { bleed: <the downed pose's length> }` for
 `LethalCause::Hit` on a fighter whose moveset has a `downed` pose while another player body stands (health above 0, neither
 dead nor down), and `Die` otherwise; it reads the bodies, not the network, so a replay and a client agree with the host. The
