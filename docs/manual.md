@@ -4751,8 +4751,8 @@ language=ru` shows all the messages of a language with their text. `text id= arg
 ```text
 $ shards act locale
 playing: en
-en English: 48 messages
-ru Русский → en: 47 messages; lacks 1: settings-fov
+en English: 50 messages
+ru Русский → en: 49 messages; lacks 1: settings-fov
 # switch: settings_set group=locale key=language value=<id>; `locale language=<id>` lists one language's text
 $ shards act text id=defeated 'args={"count": 3}' language=ru
 Повержено 3 врага
