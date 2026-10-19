@@ -892,6 +892,9 @@ fn quit(cli: &Cli, client: &Client) -> Result<ExitCode, String> {
 /// while it shuts down proves nothing: it is asked again. `Ok(false)`: it answers no more, and
 /// whether its process is gone is unknown (no pid, or no way to look here). `Err`: what it still
 /// does when `limit` is up. No call outlasts the time left, an unanswered one included.
+/// A call given less time than this is not taken as the game falling silent.
+const SHORT_CALL: Duration = Duration::from_millis(50);
+
 fn until_ended(client: &Client, pid: Option<u32>, limit: Duration, every: Duration) -> Result<bool, &'static str> {
     let started = Instant::now();
     let left = || limit.saturating_sub(started.elapsed());
@@ -900,10 +903,15 @@ fn until_ended(client: &Client, pid: Option<u32>, limit: Duration, every: Durati
         if left().is_zero() {
             return Err(if silent { "still holds its port, but answers nothing" } else { "still answers" });
         }
-        match client.try_call_within("ai/status", Value::Null, Some(left())) {
+        let window = left();
+        match client.try_call_within("ai/status", Value::Null, Some(window)) {
             Err(CallError::Unreachable(_) | CallError::Unauthorized(_)) => break,
             outcome => {
-                silent = matches!(outcome, Err(CallError::Silent(_)));
+                let quiet = matches!(outcome, Err(CallError::Silent(_)));
+                // The last call before the limit gets only what is left of it: its silence proves nothing.
+                if !quiet || window >= SHORT_CALL {
+                    silent = quiet;
+                }
                 std::thread::sleep(every.min(left()));
             }
         }
@@ -1454,7 +1462,9 @@ mod tests {
         child.wait().unwrap();
         assert_eq!(stays, Err("answers no more, but its process still runs"));
         let answering = serve(|_, _| Some(reply(json!({"instance": {"pid": 4242}}))));
-        assert_eq!(until_ended(&Client::new(answering, None), None, Duration::from_millis(100), every), Err("still answers"));
+        // A game that answers is told apart from a silent one even when the call the limit cuts short goes unanswered
+        // (and a slow first connection under load still has time to answer).
+        assert_eq!(until_ended(&Client::new(answering, None), None, Duration::from_secs(1), every), Err("still answers"));
         // Something that takes the connection and never answers holds a call no longer than the time left.
         let silent = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = silent.local_addr().unwrap().port();

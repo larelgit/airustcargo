@@ -1,0 +1,22 @@
+// Encounters of the invariant, persistence and hot-reload tests (their own file, so a test can replace it).
+{
+    // The ring's lock without its trigger: one wave, a lock; started by the tool.
+    "ring_lock": (
+        radius: 20.0,
+        start: Manual,
+        waves: [
+            (delay: 0.5, members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, -6.0)]))]),
+            (delay: 0.5, members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, -6.0)]))]),
+            (delay: 0.5, members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, -6.0)]))]),
+        ],
+        resume_after: 2.0,
+        lock: Some("barrier"),
+    ),
+    // Won once, remembered by its key.
+    "once_one": (
+        radius: 20.0,
+        start: Manual,
+        waves: [(delay: 0.5, members: [(prefab: "grunt", at: Offsets([(0.0, 0.0, -6.0)]))])],
+        once: true,
+    ),
+}

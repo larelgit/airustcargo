@@ -46,6 +46,7 @@ settings-text-size = Размер текста
 settings-flashes = Вспышки
 settings-shake = Тряска камеры
 settings-blur = Размытие движения
+settings-hit-stop = Задержка при ударе
 # settings-fov is left to English: the check of content still passes, and the journal says once
 # that Russian lacks it.
 

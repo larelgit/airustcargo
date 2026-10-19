@@ -313,3 +313,17 @@ fn likely_mistakes_in_the_new_params_are_errors() {
         assert!(err.contains(word), "{err}");
     }
 }
+
+#[test]
+fn the_auto_climb_out_height_takes_the_mantle_slack() {
+    // The deck is 0.3 m above the water: a push climbs it with the limit exactly there, and not
+    // with the limit more than the slack (1 mm) below it.
+    for (auto, pushes) in [(0.3, true), (0.3 - 0.0005, true), (0.3 - 0.003, false)] {
+        let mut app = modded();
+        let e = pond(&mut app, CharacterParams { climb_out_auto_height: Some(auto), ..default() });
+        app.world_mut().get_mut::<Transform>(e).unwrap().translation.x = 3.4;
+        set_input(app.world_mut(), e, LocomotionInput { move_dir: Vec3::X, ..default() });
+        step(&mut app, 90);
+        assert_eq!(!seen(&app).mantled.is_empty(), pushes, "auto {auto}: pushing");
+    }
+}

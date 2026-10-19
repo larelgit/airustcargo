@@ -5347,7 +5347,9 @@ dependencies = [
  "shards_content",
  "shards_core",
  "shards_dev",
+ "shards_encounter",
  "shards_fx",
+ "shards_hitstop",
  "shards_level",
  "shards_locale",
  "shards_look",
@@ -5436,6 +5438,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "shards_encounter"
+version = "0.4.0"
+dependencies = [
+ "ai_core",
+ "bevy",
+ "ron",
+ "schemars",
+ "serde",
+ "serde_json",
+ "shards_action",
+ "shards_content",
+ "shards_core",
+ "shards_level",
+ "shards_motion",
+ "shards_npc",
+ "shards_world",
+]
+
+[[package]]
 name = "shards_fx"
 version = "0.4.0"
 dependencies = [
@@ -5448,6 +5469,21 @@ dependencies = [
  "shards_content",
  "shards_core",
  "shards_motion",
+]
+
+[[package]]
+name = "shards_hitstop"
+version = "0.4.0"
+dependencies = [
+ "ai_core",
+ "bevy",
+ "schemars",
+ "serde",
+ "serde_json",
+ "shards_action",
+ "shards_content",
+ "shards_core",
+ "shards_settings",
 ]
 
 [[package]]

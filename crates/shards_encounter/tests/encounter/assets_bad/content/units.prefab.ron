@@ -1,0 +1,21 @@
+// The prefabs of the bad-content tests (one role each, one without).
+{
+    "grunt": (
+        components: {
+            "Name": "Grunt",
+            "AiKind": ("Grunt"),
+            "Health": (current: 20.0, max: 20.0),
+            "Home": (pos: None, leash: 15.0),
+            "EncounterRole": (cost: 1, tags: ["weak", "melee"]),
+        },
+    ),
+    "archer": (extends: "grunt", components: { "EncounterRole": (cost: 2, tags: ["ranged"]) }),
+    "brute": (extends: "grunt", components: { "EncounterRole": (cost: 3, tags: ["heavy"]) }),
+    "binder": (extends: "grunt", components: { "EncounterRole": (cost: 1, tags: ["controller"]) }),
+    "priest": (extends: "grunt", components: { "EncounterRole": (cost: 1, tags: ["support"]) }),
+    "plain": (components: { "Name": "Plain", "AiKind": ("Plain"), "Health": (current: 5.0, max: 5.0) }),
+    "walker": (extends: "grunt", components: { "Npc": (behavior: "walker", perception: "walker", plan: None, director: "") }),
+    "once_anchor": (components: { "EncounterAnchor": (encounter: "once_fight") }),
+    "lost_anchor": (components: { "EncounterAnchor": (encounter: "once_figth", key: Some("x")) }),
+    "good_anchor": (components: { "EncounterAnchor": (encounter: "once_fight", key: Some("x")) }),
+}

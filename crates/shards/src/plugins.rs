@@ -12,7 +12,9 @@ use shards_audio::AudioPlugin as ShardsAudioPlugin;
 use shards_content::ContentPlugin;
 use shards_core::{CorePlugin, EngineConfig};
 use shards_dev::DevPlugin;
+use shards_encounter::EncounterPlugin;
 use shards_fx::FxPlugin;
+use shards_hitstop::HitstopPlugin;
 use shards_level::LevelPlugin;
 use shards_look::LookPlugin;
 use shards_motion::MotionPlugin;
@@ -28,6 +30,7 @@ use shards_world::WorldPlugin;
 
 use crate::audio_wiring::EngineAudioPlugin;
 use crate::coop::CoopPlugin;
+use crate::encounter_wiring::EngineEncounterPlugin;
 use crate::net_wiring::EngineNetPlugin;
 use crate::save_sections::EngineSavePlugin;
 use crate::ui_wiring::EngineUiPlugin;
@@ -120,6 +123,8 @@ impl PluginGroup for EnginePlugins {
             // Level files as the geometry of tiles: joins the two above.
             .add(TileLevelsPlugin)
             .add(NpcPlugin)
+            // Waves of enemies at a place: anchors, runs, wipes and resets (needs the NPC and world modules).
+            .add(EncounterPlugin)
             // Co-op: roles, join, inputs, replication; then what it needs of the modules above.
             .add(NetPlugin)
             .add(EngineNetPlugin)
@@ -143,7 +148,11 @@ impl PluginGroup for EnginePlugins {
             // Voxel terrain (core): the palette content kind and the registry of generation steps.
             .add(VoxelPlugin)
             // Effects: particles from content in pools, the telegraphs on the ground as decals.
-            .add(FxPlugin);
+            .add(FxPlugin)
+            // Where encounters meet the net, effects, sound, messages and saves.
+            .add(EngineEncounterPlugin)
+            // Hit stop: a brief hold of the picture (and of the real-time clock when alone) when a blow lands.
+            .add(HitstopPlugin);
         // Steam (feature `steam`): lobbies, the relay as a transport, achievements, cloud saves.
         #[cfg(feature = "steam")]
         let group = group.add(shards_steam::SteamPlugin);
@@ -170,6 +179,7 @@ fn leave_out(mut group: PluginGroupBuilder, without: &[&str]) -> PluginGroupBuil
             "level" => off::<TileLevelsPlugin>(off::<LevelPlugin>(group)),
             "world" => off::<TileLevelsPlugin>(off::<WorldPlugin>(group)),
             "npc" => off::<NpcPlugin>(group),
+            "encounter" => off::<EngineEncounterPlugin>(off::<EncounterPlugin>(group)),
             "net" => off::<EngineNetPlugin>(off::<NetPlugin>(group)),
             "save" => off::<EngineSavePlugin>(off::<SavePlugin>(group)),
             "coop" => off::<CoopPlugin>(group),
@@ -180,6 +190,7 @@ fn leave_out(mut group: PluginGroupBuilder, without: &[&str]) -> PluginGroupBuil
             "scatter" => off::<ScatterPlugin>(group),
             "voxel" => off::<VoxelPlugin>(group),
             "fx" => off::<FxPlugin>(group),
+            "hitstop" => off::<HitstopPlugin>(group),
             #[cfg(feature = "steam")]
             "steam" => off::<shards_steam::SteamClientPlugin>(off::<shards_steam::SteamPlugin>(group)),
             "dev" => off::<DevPlugin>(group),

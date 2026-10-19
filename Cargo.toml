@@ -18,7 +18,9 @@ members = [
     "crates/shards_scatter",
     "crates/shards_voxel",
     "crates/shards_fx",
+    "crates/shards_hitstop",
     "crates/shards_npc",
+    "crates/shards_encounter",
     "crates/shards_world",
     "crates/shards_net",
     "crates/shards_steam",
@@ -124,6 +126,7 @@ shards_motion = { path = "crates/shards_motion" }
 shards_action = { path = "crates/shards_action" }
 shards_level = { path = "crates/shards_level" }
 shards_npc = { path = "crates/shards_npc" }
+shards_encounter = { path = "crates/shards_encounter" }
 shards_save = { path = "crates/shards_save" }
 shards_settings = { path = "crates/shards_settings" }
 shards_locale = { path = "crates/shards_locale" }
@@ -134,6 +137,7 @@ shards_look = { path = "crates/shards_look" }
 shards_scatter = { path = "crates/shards_scatter" }
 shards_voxel = { path = "crates/shards_voxel" }
 shards_fx = { path = "crates/shards_fx" }
+shards_hitstop = { path = "crates/shards_hitstop" }
 shards_world = { path = "crates/shards_world" }
 shards_net = { path = "crates/shards_net" }
 shards_steam = { path = "crates/shards_steam" }

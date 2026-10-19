@@ -65,6 +65,7 @@ shards_motion.workspace = true
 shards_action.workspace = true
 shards_level.workspace = true
 shards_npc.workspace = true
+shards_encounter.workspace = true
 shards_world.workspace = true
 shards_save.workspace = true
 shards_net.workspace = true
@@ -78,6 +79,7 @@ shards_look.workspace = true
 shards_scatter.workspace = true
 shards_voxel.workspace = true
 shards_fx.workspace = true
+shards_hitstop.workspace = true
 shards_steam = { workspace = true, optional = true }
 bevy = { workspace = true, features = ["default_app", "std", "multi_threaded", "serialize"] }
 serde.workspace = true

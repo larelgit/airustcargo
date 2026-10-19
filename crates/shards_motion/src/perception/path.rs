@@ -27,7 +27,7 @@ use ai_core::spatial::compass;
 use bevy::prelude::*;
 use serde_json::{json, Value};
 
-use super::terrain::{Block, Probe, Terrain};
+use super::terrain::{Block, Probe, Terrain, FLOOR_NOISE};
 use crate::controller::CharacterParams;
 use crate::physics::PhysicsWorld;
 
@@ -263,7 +263,7 @@ pub fn step_onto(terrain: &Terrain, from: Stance, (x, z): (f32, f32), probe: Pro
             let dy = y - from.pos.y;
             let up = normal.y;
             let allowance = terrain.slope_rise(dist, from.up, up);
-            let walkable_up = p.step_height + allowance;
+            let walkable_up = p.step_height + allowance + FLOOR_NOISE;
             let pos = Vec3::new(x, y, z);
             let base = (dist * UNIT) as u32;
             let floor = |kind, cost, rise| Some(Step { pos, swimming: false, up, kind, cost, rise });
@@ -271,9 +271,9 @@ pub fn step_onto(terrain: &Terrain, from: Stance, (x, z): (f32, f32), probe: Pro
                 // Only what the controller climbs, and with room to go up the face first.
                 let climbable = p.can_climb(dy, from.swimming) && terrain.room_for(from.pos.x, from.pos.z, from.pos.y + dy);
                 if climbable { floor(StepKind::Mantle, base + ((MANTLE_COST + dy * 0.5) * UNIT) as u32, dy) } else { None }
-            } else if dy < -safe_drop {
+            } else if dy < -safe_drop.max(FLOOR_NOISE) {
                 None
-            } else if dy < -(p.step_height + allowance) {
+            } else if dy < -(p.step_height + allowance + FLOOR_NOISE) {
                 floor(StepKind::Drop, base + (-dy * DROP_COST * UNIT) as u32, -dy)
             } else {
                 floor(StepKind::Walk, base, 0.0)
@@ -647,7 +647,7 @@ impl<'a> Planner<'a> {
             }
             Probe::Blocked(Block::Steep(angle)) => format!("a slope of {angle:.0}° (the limit is {:.0}°)", p.max_slope_deg),
             Probe::Void => "a drop with no floor in reach".to_owned(),
-            Probe::Floor { y, .. } if y - here.y < -req.safe_drop => {
+            Probe::Floor { y, .. } if y - here.y < -req.safe_drop.max(FLOOR_NOISE) => {
                 format!("a cliff {:.1}m deep (the limit for a drop is {:.1}m)", here.y - y, req.safe_drop)
             }
             Probe::Floor { y, .. } if !p.can_climb(y - here.y, swimming) => {

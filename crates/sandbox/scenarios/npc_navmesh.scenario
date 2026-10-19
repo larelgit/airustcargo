@@ -8,6 +8,13 @@
 #
 # The hall is fixed by the region's content at cell (5, 5): its colonnade runs x 19..29 at
 # z 135..137, the den is at (24, 140), south of it.
+#
+# Every wait below waits on the event it means, not on a tick count, so the scenario does not
+# lean on the tick it starts at (the NPC dice are keyed by tick). Measured live and in-process
+# from 100+ start ticks (0 to 65537, also after the whole scenarios folder and twice in a row):
+# the detour is planned 2 ticks after the mark, the claw lands 330 ticks later, "fight → home"
+# 29 ticks after the walk-off and "home → idle" 258 ticks after that, the same from every start
+# tick. The budgets (600, 900, 600, 900) are at least 2.7 times the measured worst case.
 
 seed 42
 
@@ -57,7 +64,9 @@ expect result contains "ok: move_to"
 session --agent scenario
 step 600 --until "journal:fight → home e5" --until named:npc_beyond_leash
 expect stopped "fight → home e5"
-step 900 --until named:npc_beyond_leash
+# it is home and idle again, still inside its zone the whole way back, and it stays there
+step 900 --until "journal:home → idle" --until named:npc_beyond_leash
+expect stopped "home → idle"
+step 600 --until named:npc_beyond_leash
 expect result contains "no condition met"
-expect journal "home → idle"
 act god on=false
