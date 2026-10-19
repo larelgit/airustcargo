@@ -676,3 +676,35 @@ fn a_revive_lets_go_of_an_ally_that_stood_up_another_way() {
     assert!(lines(&app, &format!("{m} revived by {h}")).is_empty(), "{:#?}", journal(&app));
     assert_eq!(hp(&app, mate), hp_after_heal);
 }
+
+fn quiet(_: &mut World, _: Entity) {}
+
+/// The game's end of a status kills its bearer.
+fn fatal_end(world: &mut World, e: Entity) {
+    kill(world, e, None, None);
+}
+
+#[test]
+fn a_status_hook_that_kills_the_falling_body_leaves_it_dead_not_down() {
+    // Going down clears the statuses, and the bleed's `on_expire` kills the body inside the fall.
+    let mut app = app_with(|app| {
+        app.add_status_effect("bleed", quiet, quiet, fatal_end);
+    });
+    let hero = hero(app.world_mut(), "l_hero", Vec3::ZERO, N);
+    step(&mut app, 2);
+    app.world_mut().entity_mut(hero).insert(Statuses(vec![shards_action::status::StatusEntry {
+        id: "bleed".into(),
+        buildup: 0.0,
+        threshold: 100.0,
+        active: 5.0,
+        stacks: 1,
+    }]));
+    let downs = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let into = downs.clone();
+    app.world_mut().add_observer(move |e: On<shards_action::WentDown>| into.lock().unwrap().push(e.event().entity));
+    assert!(go_down(app.world_mut(), hero, None, None), "it fell; the hook decided what became of it");
+    step(&mut app, 1);
+    assert!(app.world().get::<Dead>(hero).is_some() && downed(&app, hero).is_none());
+    assert!(downs.lock().unwrap().is_empty(), "no `WentDown` for a body that is not down");
+    assert_eq!(action(&app, hero), "l_death", "the downed pose does not replace the death");
+}

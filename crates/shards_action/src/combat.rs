@@ -1196,7 +1196,9 @@ pub fn go_down(world: &mut World, entity: Entity, bleed: Option<f32>, killer: Op
     }
     drop_orders(world, entity);
     clear_statuses(world, entity);
-    if world.get_entity(entity).is_err() {
+    // An `on_expire` hook may have despawned, killed or revived the body: then it is not down,
+    // and neither `WentDown` nor the downed pose follow.
+    if world.get_entity(entity).is_err() || world.get::<Downed>(entity).is_none() {
         return true;
     }
     world.trigger(WentDown { entity, killer, bleed });
