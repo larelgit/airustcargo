@@ -345,6 +345,11 @@ pub trait AiAppExt {
         O: Serialize + 'static,
         S: IntoSystem<In<Call<A>>, ToolResult<O>, M> + Clone + Send + Sync + 'static;
 
+    /// A refusal for the action tool `tool` that another module owns (the action module refusing
+    /// the movement tools for a dead body): `guard` runs inside the journaled call, before the
+    /// tool, and its `Err` is the tool's answer. Works whichever module registers the tool first.
+    fn add_ai_tool_guard(&mut self, tool: &str, guard: tools::ToolGuard) -> &mut Self;
+
     /// Writes a journal line whenever event `E` is triggered. `None` skips it.
     fn journal_event<E: Event>(&mut self, format: journal::EventFormatter<E>) -> &mut Self;
 
@@ -534,6 +539,11 @@ impl AiAppExt for App {
         S: IntoSystem<In<Call<A>>, ToolResult<O>, M> + Clone + Send + Sync + 'static,
     {
         tools::register_tool(self.world_mut(), name, scope, ToolKind::Query, system);
+        self
+    }
+
+    fn add_ai_tool_guard(&mut self, tool: &str, guard: tools::ToolGuard) -> &mut Self {
+        self.world_mut().get_resource_or_init::<tools::AiTools>().add_guard(tool, guard);
         self
     }
 

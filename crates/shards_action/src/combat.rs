@@ -1102,6 +1102,15 @@ pub fn kill_with(
     }
     world.entity_mut(entity).insert(Dead);
     world.entity_mut(entity).remove::<Knockback>();
+    // What the body was ordered to do dies with it: nothing runs after a `heal`. The steering goes
+    // with the orders (an order is what keeps `move_dir` set between ticks); a body with none keeps
+    // its `Intent` as it is, which whoever writes it (the keyboard, a brain) rewrites every tick.
+    if let Some(mut intent) = world.get_mut::<shards_core::Intent>(entity)
+        && !intent.orders.is_empty()
+    {
+        intent.orders.clear();
+        intent.move_dir = Vec3::ZERO;
+    }
     if let Some(mut h) = world.get_mut::<Health>(entity) {
         h.current = 0.0;
     }

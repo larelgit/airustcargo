@@ -36,6 +36,9 @@ pub(crate) fn register(app: &mut App) {
         .add_ai_tool("use_item", Scope::Player, use_item)
         .add_ai_tool("lock_on", Scope::Player, lock_on)
         .add_ai_tool("attack", Scope::Player, attack)
+        // The movement tools belong to the motion module, which does not know death.
+        .add_ai_tool_guard("move", dead_refusal)
+        .add_ai_tool_guard("move_to", dead_refusal)
         .add_ai_tool("god", Scope::Dev, god)
         .add_ai_tool("heal", Scope::Dev, heal)
         .add_ai_tool("barrier", Scope::Dev, barrier)
@@ -54,6 +57,16 @@ fn god_line(world: &World, caller: &Caller) -> Result<String, String> {
     Ok(ai_core::dev::toggle_line("god", world.get::<Invulnerable>(me).is_some()))
 }
 
+const DEAD: &str = "you are dead; a dev agent can `heal` you";
+
+/// The refusal every action tool gives a dead body ([`me`]), for the movement tools too.
+fn dead_refusal(world: &World, caller: &Caller) -> Result<(), String> {
+    match caller.subject {
+        Some(me) if world.get::<Dead>(me).is_some() => Err(DEAD.into()),
+        _ => Ok(()),
+    }
+}
+
 /// Your body, if it is a fighter you can control.
 fn me(world: &World, caller: &Caller) -> Result<Entity, String> {
     let me = caller.require_subject()?;
@@ -64,7 +77,7 @@ fn me(world: &World, caller: &Caller) -> Result<Entity, String> {
         return Err("your body cannot be controlled (it has no Intent)".into());
     }
     if world.get::<Dead>(me).is_some() {
-        return Err("you are dead; a dev agent can `heal` you".into());
+        return Err(DEAD.into());
     }
     Ok(me)
 }

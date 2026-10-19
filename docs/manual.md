@@ -1024,7 +1024,7 @@ leaves its effect on). Two systems that want the same field must be combined by 
 | tool | what it does |
 |---|---|
 | `move_to` | walk to an entity or to a point `{x, z}`; `within`, `queue`; `path=true` follows the route from `path_to` |
-| `move`, `stop` | walk N metres by compass (N = −Z, E = +X); stop |
+| `move`, `stop` | walk N metres by compass (N = −Z, E = +X); stop. `move` and `move_to` refuse a dead body with the text every action tool gives (`you are dead; a dev agent can `heal` you`), and a death drops the orders the body held (`Intent.orders`, and the `move_dir` they set; a body with no orders keeps its `Intent`, which its keyboard or brain rewrites every tick), so nothing runs after a `heal` |
 | `jump`, `sprint`, `glide` | jump (out of water, onto the shore); sprint and glide as a state that is on (`on=false` turns it off) |
 | `clearance` | query: how far in the eight directions, and what will stop you |
 | `move_info` | query: what modifies a character's movement (slow, caps, root, stance, rates, sprint cost), the walk, run, sprint and swim speeds they leave, and the wading depth |
@@ -2828,6 +2828,7 @@ app.register_ai_component::<Health>(|h| format!("hp {:.0}/{:.0}", h.current, h.m
    .journal_event::<Damaged>(|e, w| Some(format!("{} -> {} -{:.0}", label(w, e.source), label(w, e.target), e.amount)))
    .add_ai_tool("move_to", Scope::Player, move_to)   // action: journal and list of changes
    .add_ai_query("threats", Scope::Player, threats)  // read: no journal
+   .add_ai_tool_guard("move_to", |w, caller| /* Err(refusal) before another module's tool runs */ Ok(()))
    .add_ai_condition("boss_phase_2", |w| /* ... */)
    .add_ai_status("my_field", |w| /* serde_json::Value in ai/status */)
    .add_ai_invariant("health_in_range", |w| /* Some(text) if violated */)  // see "Invariants (E11)"

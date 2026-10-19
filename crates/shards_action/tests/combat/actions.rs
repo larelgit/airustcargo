@@ -227,6 +227,30 @@ fn errors_teach_the_fix() {
     assert!(none.contains("e99"), "{none}");
 }
 
+#[test]
+fn a_dead_body_is_refused_the_movement_tools_and_loses_its_orders() {
+    let mut app = app();
+    let world = app.world_mut();
+    let hero = hero(world, "hero", Vec3::ZERO, N);
+    let dead = "you are dead; a dev agent can `heal` you";
+    // Alive: the order is taken, and a death drops it.
+    ok(&mut app, "move_to", json!({"target": {"x": 5.0, "z": 0.0}}));
+    assert_eq!(app.world().get::<Intent>(hero).unwrap().orders.len(), 1);
+    shards_action::kill(app.world_mut(), hero, None, None);
+    let intent = app.world().get::<Intent>(hero).unwrap();
+    assert!(intent.orders.is_empty() && intent.move_dir == Vec3::ZERO, "a death drops the orders: {intent:?}");
+    // Dead: both tools refuse the way every other action tool does, and leave no order.
+    assert_eq!(fails(&mut app, "move_to", json!({"target": {"x": 5.0, "z": 0.0}})), dead);
+    assert_eq!(fails(&mut app, "move", json!({"dir": "E", "meters": 3})), dead);
+    assert!(app.world().get::<Intent>(hero).unwrap().orders.is_empty());
+    // After the heal nothing runs on its own; the tools work again.
+    ok(&mut app, "heal", json!({}));
+    step(&mut app, 10);
+    assert!(app.world().get::<Transform>(hero).unwrap().translation.x.abs() < 1e-3, "nothing ran after the heal");
+    ok(&mut app, "move", json!({"dir": "E", "meters": 3}));
+    assert_eq!(app.world().get::<Intent>(hero).unwrap().orders.len(), 1);
+}
+
 /// The `ActionSound`s the app heard: `(tick, actor, action, sound)`.
 #[derive(Resource, Default)]
 struct Said(Vec<(u64, Entity, String, String)>);
