@@ -264,6 +264,7 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
 
 ### Changed
 
+- Docs: the manual says that the guard's arc points where the run faces and a run turns only by its `turn` spans, so a guard action without a `turn` span keeps the arc it started with (give it one to re-aim it).
 - The status line of an action held by its `hold` loop (a raised block) reads `hold block held 1.20s guard`, the seconds it has been held, not the loop phase's remaining time (`hold block 0.01s guard`, which was one tick of a phase that never ends while the input is down). A phase that is running out reads as before. The count is a display field of `Running` (`held`, hidden from reflection: not in snapshots, replay checks or the network). Test `a_held_block_says_how_long_it_has_been_held_not_the_loops_remaining_time`.
 - Breaking: `ai_core::DescribeFn` takes the world too (`Fn(&World, EntityRef) -> Option<String>`); `register_ai_component` and `register_ai_describer` are unchanged. `FighterView` gained `context` (a struct literal needs `context: None`), `DamageCtx` gained `pair` (a hit that is a paired action's strike; a literal needs `pair: false`), `ActionSystems` gained `Context` (first in the chain, before `Machine`), and `HitWeight` is `Serialize`/`Deserialize`. `HitWeight::Counter` and `Finisher` are no longer only a game hook's: an action's `weight` sets the first, a paired action's strike the second (B3).
 - The engine rule `voxel.body_in_solid` is on by default (it was off, behind `--engine-invariant`): 50 runs of `shards fuzz
