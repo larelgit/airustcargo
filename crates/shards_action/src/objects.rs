@@ -299,11 +299,11 @@ struct Placed {
 
 /// Spawns `def`'s objects for `spawner`'s owner (`action`: the spawning action, for messages), at
 /// `origin` (a point and a facing) or where the spawner stands and faces. Returns the objects
-/// spawned, in index order (radial: line by line). Nothing when the aim needs a target and there is
-/// none, when this machine does not simulate (a co-op client: the host's objects come over), or for
-/// the indices past a cap ([`CombatTuning::max_objects`], `max_objects_per_owner`; a journal warning
-/// `{owner} spawn capped` says so). The objects whose `start_in` is 0 start their action at once
-/// ([`force_action`]); they act from the next tick.
+/// spawned, in index order (radial: line by line). Nothing when the owner is dead or gone, when the
+/// aim needs a target and there is none, when this machine does not simulate (a co-op client: the
+/// host's objects come over), or for the indices past a cap ([`CombatTuning::max_objects`],
+/// `max_objects_per_owner`; a journal warning `{owner} spawn capped` says so). The objects whose
+/// `start_in` is 0 start their action at once ([`force_action`]); they act from the next tick.
 pub fn spawn_objects(world: &mut World, spawner: Entity, action: &str, def: &SpawnDef, origin: Option<(Vec3, Vec3)>) -> Vec<Entity> {
     if !world.get_resource::<NetRole>().is_none_or(|r| r.simulates()) {
         return Vec::new();

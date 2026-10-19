@@ -552,6 +552,8 @@ fn dead_owner_clears_them() {
     step(&mut app, 3);
     assert!(hit_ticks(&app, brute).is_empty());
     assert!(!alive(&app, puddle));
+    // And a dead owner lays nothing down.
+    assert!(spawn_at(&mut app, hero, r#"(prefab: ["t_zone"], action: ["t_once"])"#, Vec3::ZERO, N).is_empty(), "a dead owner spawns nothing");
 }
 
 #[test]

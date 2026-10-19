@@ -668,21 +668,24 @@ fn objects(stand: &Stand, member: usize) -> Vec<String> {
     ids.into_iter().map(|id| id.to_string()).collect()
 }
 
-/// Spawned combat objects (B4): the host's caster volleys at the client's player and the bolt
-/// that meets it lays a puddle there. The client is sent the objects with the host's ids, and the
-/// hits it sees are the host's, in order, but for `source`: an object that is gone by the time an
-/// event reaches the client comes as no entity (the comparison modulo `source` is the test's).
+/// Spawned combat objects (B4) on a stand of two: the host's caster volleys at c1's player and the
+/// bolt that meets it lays a puddle there, while c2's player watches from the side. Both clients
+/// are sent the objects with the host's ids, and the hits they see are the host's, in order, but
+/// for `source`: an object that is gone by the time an event reaches a client comes as no entity
+/// (the comparison modulo `source` is the test's).
 #[test]
 fn objects_hit_the_same_on_host_and_client() {
     use shards::ai_core::{call_tool, AgentSessions, Scope};
-    let mut stand = stand_with(1, lossy());
-    watch_hits(stand.world_mut(HOST));
-    watch_hits(stand.world_mut(C1));
-    let target = body(&stand, C1);
+    let mut stand = stand_with(2, lossy());
+    for member in [HOST, C1, C2] {
+        watch_hits(stand.world_mut(member));
+    }
+    let (target, watcher) = (body(&stand, C1), body(&stand, C2));
     for id in ["e6", "e7", "e8", "e14"] {
         assert!(stand.call(HOST, "npc_set_state", json!({"id": id, "state": "calm"})).ok);
     }
-    for (id, x, z) in [(target.as_str(), 5.0, 0.0), ("e8", 5.0, -15.0), (PLAYER, -15.0, 15.0)] {
+    let places = [(target.as_str(), 5.0, 0.0), (watcher.as_str(), -15.0, 12.0), ("e8", 5.0, -15.0), (PLAYER, -15.0, 15.0)];
+    for (id, x, z) in places {
         assert!(stand.call(HOST, "teleport", json!({"id": id, "x": x, "z": z, "y": 0})).ok);
     }
     let caster = json!({"id": "e8", "component": "Fighter", "path": "moveset", "value": "caster"});
@@ -695,26 +698,31 @@ fn objects_hit_the_same_on_host_and_client() {
     }
     // The volley is out at 1 s: three bolts in the air. A side bolt bursts at the pillar 0.43 s
     // later, the middle one at the player 0.92 s later, the last at the south wall 2.3 s later; from
-    // then on the three puddles are the only objects for 1.5 s, and the client has them too.
+    // then on the three puddles are the only objects for 1.5 s, and both clients have them too.
     stand.run(80);
     let flying = objects(&stand, HOST);
     assert_eq!(flying.len(), 3, "three bolts on the host: {flying:?}");
     stand.run(180);
     let puddles = objects(&stand, HOST);
     assert_eq!(puddles.len(), 3, "three puddles on the host: {puddles:?}");
-    assert_eq!(objects(&stand, C1), puddles, "the client has the host's objects, by id");
+    for member in [C1, C2] {
+        assert_eq!(objects(&stand, member), puddles, "member {member} has the host's objects, by id");
+    }
     // The bolt met the player, its burst laid a puddle, and the puddle hit again.
     stand.run(100);
-    let (host, client) = (stand.world(HOST).resource::<Hits>(), stand.world(C1).resource::<Hits>());
+    let host = &stand.world(HOST).resource::<Hits>();
     let bolt = host.0.iter().filter(|h| h.1 == target && h.2 == "bolt_fly").count();
     let puddle = host.0.iter().filter(|h| h.1 == target && h.2 == "chill_puddle").count();
-    assert_eq!(bolt, 1, "one bolt meets the client's player: {:?}", host.0);
+    assert_eq!(bolt, 1, "one bolt meets c1's player: {:?}", host.0);
     assert!(puddle >= 2, "the puddle hits every 0.8 s: {:?}", host.0);
-    assert!(host.0.iter().all(|h| h.0 == "e8"), "every hit is credited to the caster: {:?}", host.0);
+    assert!(host.0.iter().all(|h| h.0 == "e8" && h.1 == target), "every hit is the caster's, on c1's player: {:?}", host.0);
     assert!(host.1.iter().all(Option::is_some), "each names its object: {:?}", host.1);
-    assert!(!client.0.is_empty());
-    assert_eq!(&host.0[..client.0.len()], &client.0[..], "the host's hits, in its order, modulo source");
-    assert_eq!(desyncs(&stand, C1), 0);
+    for member in [C1, C2] {
+        let seen = &stand.world(member).resource::<Hits>().0;
+        assert!(!seen.is_empty(), "member {member} saw no hit");
+        assert_eq!(&host.0[..seen.len()], &seen[..], "member {member}: the host's hits, in its order, modulo source");
+        assert_eq!(desyncs(&stand, member), 0);
+    }
 }
 
 /// The `ActionSound`s a member heard: `(actor, action, sound)`.
