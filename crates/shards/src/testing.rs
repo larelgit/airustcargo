@@ -484,7 +484,8 @@ const HOST_MEMBER: &str = shards_script::HOST;
 #[derive(Clone, Debug)]
 pub struct Finding {
     pub stop: shards_script::stop::Stop,
-    /// The game's own words for it: the halt reason, or the refused call and its answer.
+    /// The game's own words for it: the halt reason, or the refused call and its answer. A heavy
+    /// check adds what differed below its headline, a line each (`left_out differs: … vs …`).
     pub text: String,
     /// The rounds as played.
     pub before: Vec<shards_script::fuzz::Round>,
@@ -550,11 +551,20 @@ pub fn fuzz_and_shrink(
     let Some(stop) = Stop::of(&report.ended) else {
         return Ok(Fuzzed { report, finding: None, coverage });
     };
-    let text = match &report.ended {
+    let mut text = match &report.ended {
         fuzz::Ended::Halted { reason, .. } => reason.clone(),
         fuzz::Ended::ChaosBroke { call, why } => format!("{call} was refused: {why}"),
         _ => String::new(),
     };
+    // A heavy check's halt reason is its headline: what differed, a line each, comes after it.
+    if matches!(stop, Stop::Heavy { .. })
+        && let Some(failure) = app.world().get_resource::<ai_core::heavy::AiHeavy>().and_then(|h| h.failures().last())
+    {
+        for line in &failure.differences {
+            text.push('\n');
+            text.push_str(line);
+        }
+    }
     let began = Instant::now();
     let timed_out = std::cell::Cell::new(false);
     let mut attempt = |rounds: &[fuzz::Round]| {

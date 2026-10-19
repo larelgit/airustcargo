@@ -187,6 +187,9 @@ step 12
             round(&[("say", json!({"text": "it's \"odd\" \\ ok"})), ("stop", json!({})), ("heal", Value::Null)], 4),
             round(&[], 0),
             round(&[("move_to", json!({"target": "e6", "path": true}))], 30),
+            // A fuzz run's malformed call: arguments that are not an object (issue #72: its
+            // scenario did not parse).
+            round(&[("attack", json!("not an object"))], 3),
         ];
         let header = Header { seed: 42, stop: "panic", stop_kind: "panic", before: &rounds, ..Header::default() };
         let text = scenario_text(&header, &rounds);
@@ -198,6 +201,8 @@ step 12
             let args = crate::parse_args(&words[2..]).unwrap();
             assert_eq!(args, json!({"text": "it's \"odd\" \\ ok"}));
         }
+        let line = text.lines().find(|l| l.starts_with("act? attack")).unwrap();
+        assert_eq!(crate::parse_args(&split_words(line).unwrap().words[2..]).unwrap(), json!("not an object"), "{line}");
     }
 
     #[test]
