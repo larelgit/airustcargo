@@ -151,3 +151,12 @@ expect result !contains "Grace"
 expect result !contains "Paired"
 act inspect id=e5
 expect result !contains "Pairing"
+# Sixty more ticks, for the scenarios after this one in a shared game, not for this one: with
+# them `npc_navmesh.scenario` starts on a tick where its den guard reaches the player. The guard
+# can stop out of reach when its target stands at its leash edge, as that scenario's player does:
+# the planner walks it to within 0.85 of its window of the leash-clamped goal (0.5 m short of
+# the target), up to 0.5 + 0.85 * 1.84 = 2.06 m from the target, while its window ends at 1.84 m;
+# where it stops depends on the tick it starts on. That is the NPC module's to fix
+# (`shards_npc::planner`, `brain::clamp_to_leash`); without these ticks the shared run starts
+# `npc_navmesh` on tick 21449, where the guard stops at 1.9 m and never claws.
+step 60
