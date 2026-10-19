@@ -344,7 +344,7 @@ pub(crate) fn step(env: &mut MountEnv, frame: &MountFrame, state: &mut MountStat
     let gone: Vec<String> = state.props.keys().filter(|p| !listed.contains(p.as_str())).cloned().collect();
     for prop in gone {
         if let Some(old) = state.props.remove(&prop) {
-            env.commands.entity(old.entity).despawn();
+            env.commands.entity(old.entity).try_despawn();
         }
     }
     for (prop, place) in placed {
@@ -362,7 +362,7 @@ pub(crate) fn step(env: &mut MountEnv, frame: &MountFrame, state: &mut MountStat
             s.shown_as != shown_as || s.def != *def || !env.parts.contains(s.entity)
         });
         if stale && let Some(old) = state.props.remove(&prop) {
-            env.commands.entity(old.entity).despawn();
+            env.commands.entity(old.entity).try_despawn();
         }
         let target = match &place {
             Place::Socket(socket) => env.bone(state, frame, socket).zip(set.sockets.get(socket)),
