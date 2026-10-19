@@ -22,6 +22,8 @@ render = [
     "bevy/bevy_ui",
     "bevy/bevy_world_serialization",
     "bevy/gltf_animation",
+    "bevy/3d_bevy_render",
+    "bevy/bevy_pbr",
 ]
 
 [dependencies]
@@ -30,6 +32,7 @@ shards_core.workspace = true
 shards_content.workspace = true
 shards_settings.workspace = true
 shards_motion.workspace = true
+shards_look.workspace = true
 bevy = { workspace = true, features = ["std", "serialize"] }
 serde.workspace = true
 serde_json.workspace = true
