@@ -26,6 +26,13 @@
             (input: "technique.2", action: "c_counter", when: [Condition("brave")]),
         ],
     ),
+    // In water only strokes (`afloat`) start: the finisher binding is refused there and the input falls to the stroke.
+    "c_swimmer": (
+        inputs: {"light": "c_stroke"},
+        stagger: "c_stagger",
+        only_in: [(Water, ["afloat"])],
+        context: [(input: "light", action: "c_finisher", when: [Pair])],
+    ),
     "c_foe": (
         inputs: {"light": "c_slash", "technique.1": "c_grab"},
         stagger: "c_stagger",

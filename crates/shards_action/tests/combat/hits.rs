@@ -405,3 +405,71 @@ fn combat_events_reflect_for_the_network_layer() {
     let copy = telegraph.reflect_clone().unwrap().take::<Telegraph>().unwrap();
     assert_eq!(copy, telegraph);
 }
+
+#[derive(Resource, Default)]
+struct Sources {
+    hook: Vec<Option<ai_core::AiId>>,
+    event: Vec<Option<ai_core::AiId>>,
+}
+
+fn remember_source(world: &mut World, _: Entity) {
+    let source = world.resource::<shards_action::StatusSource>().0;
+    world.resource_mut::<Sources>().hook.push(source);
+}
+
+fn nothing(_: &mut World, _: Entity) {}
+
+#[test]
+fn a_status_knows_who_built_it_up() {
+    let (mut app, hero, brute) = duel_with("hero", |app| {
+        app.init_resource::<Sources>();
+        app.add_status_effect("bleed", remember_source, nothing, nothing);
+        app.add_observer(|e: On<shards_action::StatusApplied>, mut s: ResMut<Sources>| s.event.push(e.event().source));
+    });
+    let b = *app.world().get::<ai_core::AiId>(brute).unwrap();
+    app.world_mut().entity_mut(hero).insert((Poise::new(1000.0, 0.0, 1.0), Health::new(500.0)));
+    // Two slams of 60 bleed each: the second one tips it over, and the hook and the event see the brute.
+    for _ in 0..2 {
+        press(&mut app, brute, "heavy");
+        step(&mut app, 108);
+    }
+    assert_eq!(app.world().resource::<Sources>().event, [Some(b)]);
+    assert_eq!(app.world().resource::<Sources>().hook, [Some(b)]);
+    assert_eq!(app.world().resource::<shards_action::StatusSource>().0, None, "set for the hook's call only");
+    // A call with no source: `None` in both.
+    shards_action::add_status_buildup(app.world_mut(), brute, "bleed", 100.0);
+    assert_eq!(app.world().resource::<Sources>().event, [Some(b), None]);
+    assert_eq!(app.world().resource::<Sources>().hook, [Some(b), None]);
+    // A call with a source carries it as given.
+    let other = ai_core::AiId(77);
+    app.world_mut().entity_mut(hero).remove::<shards_action::ProcGates>();
+    app.world_mut().entity_mut(hero).insert(Statuses::default());
+    shards_action::add_status_buildup_from(app.world_mut(), hero, "bleed", 100.0, Some(other));
+    assert_eq!(app.world().resource::<Sources>().event.last(), Some(&Some(other)));
+}
+
+fn nest_and_read(world: &mut World, e: Entity) {
+    // The hook of the outer status builds another one up on someone else (its hook runs inside),
+    // then reads its own source again.
+    let outer = world.resource::<shards_action::StatusSource>().0;
+    world.resource_mut::<Sources>().hook.push(outer);
+    let other = world.query_filtered::<Entity, With<Fighter>>().iter(world).find(|x| *x != e).unwrap();
+    if outer == Some(ai_core::AiId(1)) {
+        shards_action::add_status_buildup_from(world, other, "bleed", 100.0, Some(ai_core::AiId(2)));
+    }
+    let again = world.resource::<shards_action::StatusSource>().0;
+    world.resource_mut::<Sources>().hook.push(again);
+}
+
+#[test]
+fn a_nested_status_hook_leaves_the_outer_source_alone() {
+    let (mut app, hero, _brute) = duel_with("hero", |app| {
+        app.init_resource::<Sources>();
+        app.add_status_effect("bleed", nest_and_read, nothing, nothing);
+    });
+    shards_action::add_status_buildup_from(app.world_mut(), hero, "bleed", 100.0, Some(ai_core::AiId(1)));
+    // Outer reads 1, inner reads 2 twice (inner reads itself, then its own end), outer reads 1 again.
+    let hook = &app.world().resource::<Sources>().hook;
+    assert_eq!(hook, &[Some(ai_core::AiId(1)), Some(ai_core::AiId(2)), Some(ai_core::AiId(2)), Some(ai_core::AiId(1))]);
+    assert_eq!(app.world().resource::<shards_action::StatusSource>().0, None);
+}

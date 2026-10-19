@@ -45,7 +45,7 @@ use crate::fighter::{
     grant_protection, hostile, set_reaction_immunity, Armor, Dead, Fighter, Health, Invulnerable, Knockback, Poise, Protection, Stamina, Team,
 };
 use crate::machine::{force_action, intangible, interrupted, ActionEnd, ActionEnded, ActionState, InputBuffer, RunExtras};
-use crate::status::add_status_buildup;
+use crate::status::add_status_buildup_from;
 use crate::zone::WorldShape;
 
 /// What became of a hit. Damage hooks may change it.
@@ -748,7 +748,7 @@ fn apply(world: &mut World, mut ctx: DamageCtx) {
                 source,
             });
             if !finish_if_dead(world, target, credit, &action, source) {
-                apply_statuses(world, target, &ctx.status);
+                apply_statuses(world, target, credit, &ctx.status);
                 take_poise(world, target, ctx.poise);
             }
         }
@@ -769,7 +769,7 @@ fn apply(world: &mut World, mut ctx: DamageCtx) {
                 source,
             });
             if !finish_if_dead(world, target, credit, &action, source) {
-                apply_statuses(world, target, &ctx.status);
+                apply_statuses(world, target, credit, &ctx.status);
                 guard_break(world, target);
             }
         }
@@ -799,7 +799,7 @@ fn apply(world: &mut World, mut ctx: DamageCtx) {
                 }
                 return;
             }
-            apply_statuses(world, target, &ctx.status);
+            apply_statuses(world, target, credit, &ctx.status);
             match ctx.reaction {
                 // The old rule, line for line.
                 None => {
@@ -828,12 +828,13 @@ fn parry_staggers(world: &World, defender: Entity) -> bool {
         .unwrap_or(true)
 }
 
-fn apply_statuses(world: &mut World, target: Entity, status: &[(String, f32)]) {
+fn apply_statuses(world: &mut World, target: Entity, credit: Entity, status: &[(String, f32)]) {
+    let source = world.get::<AiId>(credit).copied();
     for (id, amount) in status {
         if world.get::<Dead>(target).is_some() {
             return;
         }
-        add_status_buildup(world, target, id, *amount);
+        add_status_buildup_from(world, target, id, *amount, source);
     }
 }
 

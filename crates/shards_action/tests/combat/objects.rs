@@ -896,7 +896,33 @@ fn an_aimed_spawn_with_no_target_says_so() {
     assert!(spawned.is_empty());
     let lines: Vec<String> = app.world().resource::<ai_core::AiJournal>().after(0).0.map(|e| e.text.clone()).collect();
     assert!(
-        lines.iter().any(|l| l.contains("spawn of test skipped: it aims at the lock-on target and there is none (lock_on first)")),
+        lines.iter().any(|l| l.contains("spawn of test skipped: it aims at a target and there is none (provide a target or lock_on first)")),
         "{lines:?}"
     );
+}
+
+#[derive(Resource, Default)]
+struct BleedSources(Vec<Option<AiId>>);
+
+fn note_bleed_source(world: &mut World, _: Entity) {
+    let source = world.resource::<shards_action::StatusSource>().0;
+    world.resource_mut::<BleedSources>().0.push(source);
+}
+
+fn nothing(_: &mut World, _: Entity) {}
+
+#[test]
+fn a_status_built_up_by_an_object_names_its_owner() {
+    use shards_action::ActionAppExt as _;
+    let mut app = app_with(|app| {
+        record(app);
+        app.init_resource::<BleedSources>();
+        app.add_status_effect("bleed", note_bleed_source, nothing, nothing);
+    });
+    let hero = hero(app.world_mut(), "hero", Vec3::ZERO, N);
+    let brute = brute(app.world_mut(), Vec3::new(0.0, 0.0, -3.0), S);
+    spawn(&mut app, hero, r#"(prefab: ["t_bolt"], action: ["t_fly_bleed"], at: (forward: 0.5, up: 1))"#);
+    step(&mut app, 20);
+    let _ = brute;
+    assert_eq!(app.world().resource::<BleedSources>().0, [Some(ai_id(&app, hero))], "the owner, not the bolt");
 }

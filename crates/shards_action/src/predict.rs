@@ -46,13 +46,13 @@ use shards_motion::{
 };
 
 use crate::combat::Died;
-use crate::context::{arm_idle, fresh_press, guard_press, step_arm, ContextInputs, GuardArm, RunHalted};
+use crate::context::{arm_idle, fresh_press, guard_press, step_arm, ContextInputs, GuardArm, Pairing, RunHalted};
 use crate::def::{ActionDef, BufferMode, CombatTuning, MovesetDef, EPS};
 use crate::fighter::{sprint_rule, Charges, Cooldowns, Dead, Fighter, Stamina};
 use crate::leap::{plan_leap, radius_of, LeapSite};
 use crate::machine::{
     advance, body_height, buffer_press, cap_queue, charge_due, choose_in, free_sprint, gate_perfect, in_sight, launch_due, press_life, start_facing,
-    steer_locomotion, step_run, tracked, understands, ActionRejected, ActionStarted, ActionState, FighterView, LeapRun, Queued, RunExtras,
+    pair_victim_of, steer_locomotion, step_run, tracked, understands, ActionRejected, ActionStarted, ActionState, FighterView, LeapRun, Queued, RunExtras,
     Running,
 };
 
@@ -156,10 +156,11 @@ pub(crate) struct PredictedBody {
     ghost: Has<Ghost>,
     shown: Option<&'static mut PredictedAction>,
     dead: Has<Dead>,
-    /// The host's, replicated: what this tick binds, the guard press, a halted run.
+    /// The host's, replicated: what this tick binds, the guard press, a halted run, the pair a run belongs to.
     context: Option<&'static ContextInputs>,
     arm: Option<&'static GuardArm>,
     halted: Option<&'static RunHalted>,
+    pairing: Option<&'static Pairing>,
 }
 
 /// `NetSet::Predict`, after `MotionSystems::PredictIntent`, before the controller: see the
@@ -383,8 +384,11 @@ pub(crate) fn predict_actions(
     let here = b.transform.translation;
     let forward = *b.transform.forward();
     let locked = b.intent.target.and_then(|id| index.get(id)).and_then(|e| positions.get(e).ok().map(|p| (e, p)));
-    let target = locked.map(|(_, (t, _, _))| t.translation);
     let target_body = locked.map(|(_, (t, _, collider))| (t.translation, radius_of(collider)));
+    // A running paired action aims at its victim, lock-on or not, as the host's machine does.
+    let victim = pair_victim_of(b.pairing, shown.as_ref().map(|s| &s.run));
+    let locked = victim.and_then(|id| index.get(id)).and_then(|e| positions.get(e).ok().map(|p| (e, p))).or(locked);
+    let target = locked.map(|(_, (t, _, _))| t.translation);
     // The machine's sight check for an assist that needs it.
     let mine = body_height(b.body.and_then(|(_, p)| p));
     let sees = || {

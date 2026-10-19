@@ -1,0 +1,4 @@
+// A layer's one attack lays a zone under its target.
+{
+    "layer": (options: [(input: "light", max: Some(8.0))], rest: (0.2, 0.4)),
+}
