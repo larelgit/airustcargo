@@ -5373,7 +5373,7 @@ When a blow lands, the picture stands still for a beat (60-100 ms). It is what m
 | field | the event has it | matches |
 |---|---|---|
 | `event` | always | `Damaged`, `Blocked`, `Parried`, `PerfectEvaded`, `GuardBroken`, `Staggered` (left out: any event) |
-| `weight_at_least` | `Damaged`, `Blocked`, `GuardBroken` | the hit's `HitWeight` is at least this: `Light < Heavy < Counter < Break < Finisher` (the engine raises it to `Heavy` for a reaction of tier 2 or 3 and to `Break` for a broken poise; a game's hook sets `Counter` and `Finisher`) |
+| `weight_at_least` | `Damaged`, `Blocked`, `GuardBroken` | the hit's `HitWeight` is at least this: `Light < Heavy < Counter < Break < Finisher` (the engine raises it to `Heavy` for a reaction of tier 2 or 3 and to `Break` for a poise the blow really breaks: a blow that kills breaks nothing, so it keeps the weight it would have without the break, as the corpse takes no poise and no `Staggered` follows; a game's hook sets `Counter` and `Finisher`) |
 | `reaction_at_least` | `Damaged` | the reaction tier the hit asks of its target |
 | `cause` | `Staggered` | `PoiseBroken`, `Parried`, `GuardBroken`, `Dev` |
 | `action` | all but `Staggered` | the id of the action that hit |

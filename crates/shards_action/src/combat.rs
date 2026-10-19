@@ -546,6 +546,9 @@ fn plan(world: &World, ctx: &DamageCtx, strike: Option<&Strike>) -> Plan {
 }
 
 /// The weight an event reports: the context's floor, raised by a heavy reaction and by a break.
+/// `breaks` is whether the poise really breaks. A blow that kills does not break it (a corpse takes
+/// no poise: `apply` returns before `take_poise`), so the caller passes `false` for it and the
+/// weight is the one it would have without the break.
 fn weight_of(ctx: &DamageCtx, breaks: bool) -> HitWeight {
     let mut weight = ctx.weight;
     if ctx.reaction >= Some(2) {
@@ -614,6 +617,8 @@ fn apply(world: &mut World, mut ctx: DamageCtx) {
                 s.spend(stamina);
             }
             let (hp_left, absorbed) = hurt(world, target, ctx.damage);
+            // A blow that kills breaks nothing: a corpse takes no poise (see `weight_of`).
+            let weight = weight_of(&ctx, plan.breaks && !out_of_health(world, target));
             world.trigger(Blocked {
                 attacker: credit,
                 defender: target,
@@ -653,6 +658,7 @@ fn apply(world: &mut World, mut ctx: DamageCtx) {
         }
         Outcome::Hit => {
             let (hp_left, absorbed) = hurt(world, target, ctx.damage);
+            let weight = weight_of(&ctx, plan.breaks && !out_of_health(world, target));
             world.trigger(Damaged {
                 attacker: credit,
                 target,
@@ -764,9 +770,14 @@ pub fn deal_damage(world: &mut World, target: Entity, amount: f32, credit: Optio
     hp_left
 }
 
+/// Whether `target`'s health has run out: what [`finish_if_dead`] kills on.
+fn out_of_health(world: &World, target: Entity) -> bool {
+    world.get::<Health>(target).is_some_and(|h| h.current <= EPS)
+}
+
 /// Kills `target` if its health ran out; `true` if it is dead now.
 fn finish_if_dead(world: &mut World, target: Entity, killer: Entity, action: &str, source: Option<Entity>) -> bool {
-    if world.get::<Health>(target).is_some_and(|h| h.current <= EPS) {
+    if out_of_health(world, target) {
         kill_with(world, target, Some(killer), Some(action.to_owned()), source);
         return true;
     }
