@@ -793,3 +793,28 @@ fn pair_victim_exists(app: &App, e: Entity) -> bool {
     let select = db.get::<ActionDef>("c_finisher").and_then(|d| d.pair.as_ref()).map(|p| p.select.clone()).unwrap();
     pair_victim(app.world(), e, &select).is_some()
 }
+
+#[test]
+fn a_paired_run_aims_at_its_victim_not_at_the_lock() {
+    // The lock is on a foe to the east that is not broken; the victim is the broken foe to the north.
+    let (mut app, hero, victim) = arena();
+    let other = foe_at(&mut app, Vec3::new(2.5, 0.0, 0.0));
+    let other_id = *app.world().get::<AiId>(other).unwrap();
+    app.world_mut().get_mut::<Intent>(hero).unwrap().target = Some(other_id);
+    finisher(&mut app, hero, victim);
+    let (h, v) = (id(&app, hero), id(&app, victim));
+    assert_eq!(app.world().get::<Pairing>(hero).map(|p| p.victim), app.world().get::<AiId>(victim).copied(), "the lock is not the victim");
+    step(&mut app, 30);
+    assert_eq!(lines(&app, &format!("{h} -> {v} c_finisher -20")).len(), 1, "the blow lands on the victim: {:#?}", journal(&app));
+    assert_eq!(hp(&app, victim), 80.0);
+    assert_eq!(hp(&app, other), 100.0, "the locked foe is not what it turned to");
+    // The run faced the victim all along (north), not the lock (east).
+    let facing = app.world().get::<Transform>(hero).unwrap().forward();
+    assert!(facing.dot(Vec3::NEG_Z) > 0.9, "{facing:?}");
+    // An action that is not paired still follows the lock.
+    step(&mut app, 60);
+    press(&mut app, hero, "heavy");
+    step(&mut app, 12);
+    let facing = app.world().get::<Transform>(hero).unwrap().forward();
+    assert!(facing.dot(Vec3::X) > 0.9, "a plain swing turns to the lock: {facing:?}");
+}

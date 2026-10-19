@@ -1496,6 +1496,7 @@ start, and triggers `PairStarted { attacker, victim, action }`. While it lasts:
   a despawn, goes on with its lunge stopped and hits nobody else (`RunHalted` keeps `only_victim` after the `Pairing` is
   gone). Other attackers can still hit the victim unless the pair is
   `exclusive` (kept for revives: then nobody else's hits find it);
+- **the aim** (FU4): the run turns toward its victim, lock-on or not (a locked foe that is not the victim does not pull the run to itself and make the blow miss while the break is spent): at the start (the victim the binding found) and while it runs (`Pairing::victim`). The lock-on tracking, assist and sight check that an action with `steer: Aim` has judge the victim in its place. The client's prediction of a host's run does the same. A run that is not paired still follows the lock-on;
 - **the strike**: the pair's first hit that lands on a victim still in the pair's state ends its break (`ends_break`, once a
   pair; the break protection starts) and forces the reaction `strike_reaction` (3, a knockdown, by default; 0: none, the
   damage lands, `Damaged::reaction` is `None` and the victim keeps its held pose) with `Reaction::forced` and the hit's
