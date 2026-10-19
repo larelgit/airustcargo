@@ -35,6 +35,8 @@
             break_range: 4.0,
         ),
     ),
+    // A stroke: the one action a swimmer may start.
+    "c_stroke": (net_id: 168, phases: [("stroke", 0.3)], tags: ["afloat"]),
     "c_held": (net_id: 154, phases: [("held", 1.0)]),
     "c_counter": (
         net_id: 155,

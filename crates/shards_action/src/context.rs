@@ -22,7 +22,7 @@ use ai_core::{AiId, AiIndex, SimTick};
 use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::{flat, Intent, NetRole, PlayerId};
-use shards_motion::PhysicsWorld;
+use shards_motion::{MotionState, PhysicsWorld};
 
 use crate::combat::{clear_line, Blocked, Damaged, Evaded, GuardBroken, Parried, PerfectEvaded, Reacted, Staggered};
 use crate::def::{ActionDef, CombatTuning, Forget, GuardPress, MovesetDef, PairDef, PairSelect, PairState, PairTeam, Recall, When, EPS};
@@ -259,8 +259,14 @@ pub fn resolve(world: &World, entity: Entity) -> Option<ContextInputs> {
     let memory = world.get::<Memory>(entity);
     let stamina = world.get::<Stamina>(entity);
     let conditions = world.get_resource::<ContextConditions>();
+    let mode = world.get::<MotionState>(entity).map(|m| m.mode);
     for (i, binding) in moveset.context.iter().enumerate() {
         if out.bound(&binding.input).is_some() || running == Some(binding.action.as_str()) {
+            continue;
+        }
+        // The medium refuses it (`only_in`): it does not bind, so the input falls to the next binding or the
+        // moveset's action, and nothing that reads the context (the HUD's finisher prompt, `finishable by`) sees it.
+        if mode.is_some_and(|m| moveset.gates(m) && db.get::<ActionDef>(&binding.action).is_some_and(|d| !moveset.allows(m, d))) {
             continue;
         }
         let mut victim = None;

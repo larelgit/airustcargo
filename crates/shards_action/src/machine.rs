@@ -400,9 +400,16 @@ impl<'a> FighterView<'a> {
         self.bound(input).or_else(|| self.moveset_def()?.action(input))
     }
 
-    /// The action this tick's context binds `input` to, if any.
+    /// The action this tick's context binds `input` to, if any. A binding whose action the moveset's `only_in`
+    /// refuses in the body's motion mode does not bind (`context::resolve` leaves it out too; this covers a
+    /// context resolved before the mode changed, or a client's copy of its host's).
     pub fn bound(&self, input: &str) -> Option<&'a str> {
-        self.context.and_then(|c| c.bound(input)).map(|b| b.action.as_str())
+        let action = self.context.and_then(|c| c.bound(input)).map(|b| b.action.as_str())?;
+        let refused = match (self.mode, self.moveset_def()) {
+            (Some(mode), Some(moveset)) if moveset.gates(mode) => self.db.get::<ActionDef>(action).is_some_and(|def| !moveset.allows(mode, def)),
+            _ => false,
+        };
+        (!refused).then_some(action)
     }
 }
 

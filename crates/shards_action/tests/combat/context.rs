@@ -9,7 +9,7 @@ use shards_action::{
     pair_victim, remember, ContextInputs, DamageCtx, Damaged, GuardArm, HitWeight, Memory, PairEnd, PairEnded, Paired, Pairing,
     Protection, RunHalted,
 };
-use shards_action::{forget, ActionAppExt, ActionDef};
+use shards_action::{can_start, forget, ActionAppExt, ActionDef, FighterView};
 use shards_content::ContentDb;
 use shards_core::{Intent, PlayerId};
 
@@ -740,4 +740,56 @@ fn the_remember_tool_takes_a_few_seconds_not_a_billion() {
     assert!(err.contains("from 0 to"), "{err}");
     let out = ok(&mut app, "remember", json!({"id": who, "key": "parried", "seconds": 5.0}));
     assert!(out.contains("remembers parried"), "{out}");
+}
+
+// --- a binding the medium refuses does not bind (FU4) ---------------------------------------
+
+/// A pool 5 m deep at x 80..120, with a floor: a body put in it swims in a few ticks.
+fn pool(app: &mut App) -> Vec3 {
+    use shards_motion::{Collider, CollisionLayers, Shape, Volume, VolumeKind};
+    let world = app.world_mut();
+    wall(world, Vec3::new(80.0, -6.0, -20.0), Vec3::new(120.0, -5.0, 20.0));
+    world.spawn((
+        Collider::new(Shape::cuboid(Vec3::new(20.0, 2.5, 20.0))).with_layers(CollisionLayers::VOLUME),
+        Volume { kind: VolumeKind::Water },
+        Transform::from_translation(Vec3::new(100.0, -2.5, 0.0)),
+    ));
+    Vec3::new(100.0, -1.1, 0.0)
+}
+
+#[test]
+fn a_binding_the_medium_refuses_falls_to_the_movesets_action() {
+    // On the ground a broken foe in reach binds the light to the finisher...
+    let (mut app, _, foe) = arena();
+    let swimmer = hero(app.world_mut(), "c_swimmer", Vec3::new(10.0, 0.0, 0.0), N);
+    app.world_mut().get_mut::<Transform>(foe).unwrap().translation = Vec3::new(10.0, 0.0, -1.8);
+    break_poise(&mut app, foe);
+    step(&mut app, 2);
+    assert_eq!(bound(&app, swimmer, "light").as_deref(), Some("c_finisher"));
+    assert!(app.world().get::<ContextInputs>(swimmer).is_some_and(|c| c.victim().is_some()), "the HUD would prompt on the ground");
+
+    // ...in water the moveset's `only_in` refuses it: nothing binds, the HUD's `you.finisher` source
+    // (`ContextInputs::victim`) and the AI's `finishable by` (the same list) see none, and the light is the stroke.
+    let (mut app, _, foe) = arena();
+    let at = pool(&mut app);
+    let swimmer = hero(app.world_mut(), "c_swimmer", at, N);
+    app.world_mut().get_mut::<Transform>(foe).unwrap().translation = at + Vec3::new(0.0, 0.0, -1.8);
+    break_poise(&mut app, foe);
+    step(&mut app, 30);
+    assert_eq!(app.world().get::<shards_motion::MotionState>(swimmer).unwrap().mode, shards_motion::MotionMode::Water);
+    assert!(pair_victim_exists(&app, swimmer), "the foe is still a candidate: only the medium refuses");
+    assert_eq!(bound(&app, swimmer, "light"), None, "{:?}", app.world().get::<ContextInputs>(swimmer));
+    assert!(app.world().get::<ContextInputs>(swimmer).is_none_or(|c| c.victim().is_none()));
+    let view = FighterView::of(app.world(), swimmer).unwrap();
+    assert_eq!(can_start(&view, "light", 1.0 / 60.0).map(|s| s.action), Ok("c_stroke".to_owned()));
+    press(&mut app, swimmer, "light");
+    step(&mut app, 2);
+    assert_eq!(action(&app, swimmer), "c_stroke");
+}
+
+/// Whether `e`'s pair `select` (the finisher's) takes some victim now, whatever the medium says.
+fn pair_victim_exists(app: &App, e: Entity) -> bool {
+    let db = app.world().resource::<ContentDb>();
+    let select = db.get::<ActionDef>("c_finisher").and_then(|d| d.pair.as_ref()).map(|p| p.select.clone()).unwrap();
+    pair_victim(app.world(), e, &select).is_some()
 }

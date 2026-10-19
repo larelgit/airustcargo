@@ -1966,6 +1966,11 @@ impl MovesetDef {
         self.inputs.get(input).map(String::as_str)
     }
 
+    /// Whether `only_in` names `mode` at all (then it refuses some actions there): asked before an action's definition is read.
+    pub fn gates(&self, mode: MotionMode) -> bool {
+        self.only_in.iter().any(|(m, _)| *m == mode)
+    }
+
     /// Whether `def` may run while the body is in motion mode `mode`: no `only_in` names the mode,
     /// or `def` has one of its tags.
     pub fn allows(&self, mode: MotionMode, def: &ActionDef) -> bool {

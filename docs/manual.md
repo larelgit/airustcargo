@@ -1451,7 +1451,7 @@ binding, victim)] }`: for each input, the first binding in content order whose `
 `Pair` (the binding's action is paired and its `select` finds a victim now; the victim is kept with the binding),
 `StaminaAbove(v)` (a fighter without stamina always has enough) or `Condition(name)` (a game's `add_context_condition(name,
 fn(&World, Entity) -> bool)`). A binding never holds for the action the fighter runs now (a running finisher does not restart
-itself through a cancel window), and a dead fighter has none.
+itself through a cancel window), and a dead fighter has none. A binding whose action the moveset's `only_in` refuses in the body's motion mode (FU4: a finisher while swimming) does not bind either: the input falls to the next binding or the moveset's action, so in water the light is the stroke, and `you.finisher` (`ContextInputs::victim`) and `finishable by` show no finisher. `can_start` applies the same rule to a context resolved before the mode changed.
 
 **Precedence.** A bound input starts its bound action wherever the input would start anything: from idle, from a buffered
 press, from a held input, and in a cancel window, where it beats the window's own target for that input (a `Combo` link or an
