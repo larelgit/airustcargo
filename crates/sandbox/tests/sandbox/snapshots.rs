@@ -1350,3 +1350,38 @@ fn mid_flight_and_with_a_puddle_ticking() {
         step(app, 150);
     });
 }
+
+/// Temporary ground (R2): a slab laid in the middle of play (a static `WORLD` collider with
+/// `AiKind`, so it has an `AiId` and the snapshot keeps it) holds the player, comes back with a
+/// load, and once taken away (`despawn`) lets the player down to the floor, in both games alike.
+#[test]
+fn ground_laid_mid_play_comes_back_and_holds_the_player() {
+    use shards::ai_core::AiKind;
+    use shards::motion::{Body, Collider, Shape};
+    let mut app = sandbox::test_app(42);
+    calm_skeletons(&mut app);
+    calm_warden(&mut app);
+    ok(&mut app, "teleport", json!({"id": PLAYER, "x": 10, "z": 10}));
+    step(&mut app, 30);
+    let floor = get::<Transform>(&app, PLAYER).translation.y;
+    let slab = app
+        .world_mut()
+        .spawn((Name::new("Slab"), AiKind("Slab".into()), Collider::new(Shape::cuboid(Vec3::new(1.5, 0.5, 1.5))), Body::Static, Transform::from_xyz(10.0, floor + 0.5, 10.0)))
+        .id();
+    let slab = app.world().get::<AiId>(slab).unwrap().to_string();
+    ok(&mut app, "teleport", json!({"id": PLAYER, "x": 10, "z": 10, "y": floor + 3.0}));
+    step(&mut app, 60);
+    let on_slab = |app: &App, top: f32| {
+        let at = get::<Transform>(app, PLAYER).translation;
+        assert!((at.y - top).abs() < 0.05 && get::<MotionState>(app, PLAYER).grounded, "stands at {top}: {at}");
+    };
+    on_slab(&app, floor + 1.0);
+
+    assert_continues_alike("ground laid mid-play", app, |app| {
+        step(app, 10);
+        on_slab(app, floor + 1.0);
+        ok(app, "despawn", json!({"id": slab}));
+        step(app, 60);
+        on_slab(app, floor);
+    });
+}

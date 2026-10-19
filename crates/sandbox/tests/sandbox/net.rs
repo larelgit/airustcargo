@@ -810,6 +810,55 @@ fn parts_come_to_a_client_and_its_swings_land_through_them() {
     }
 }
 
+/// Where the body `id` stands on `member`, if it has it.
+fn feet_on(stand: &Stand, member: usize, id: &str) -> Option<Vec3> {
+    let world = stand.world(member);
+    let mut q = world.try_query::<(&AiId, &Transform)>()?;
+    q.iter(world).find(|(i, _)| i.to_string() == id).map(|(_, t)| t.translation)
+}
+
+/// Temporary ground (R2) in co-op: a slab the host lays down in the middle of play (a static
+/// `WORLD` collider with `AiKind`, so it has an `AiId`) comes to c1 with the host's id, and c1's
+/// body stands on it on both machines (the host's simulation, c1's prediction); taken away, the
+/// body falls to the floor on both, and the slab is gone from c1.
+#[test]
+fn ground_laid_mid_play_comes_to_a_client_and_holds_its_body() {
+    use shards::ai_core::AiKind;
+    use shards::motion::{Collider, Shape};
+    let mut stand = stand_with(1, lossy());
+    let player = body(&stand, C1);
+    for id in ["e6", "e7", "e8", "e14"] {
+        assert!(stand.call(HOST, "npc_set_state", json!({"id": id, "state": "calm"})).ok);
+    }
+    stand.run(10);
+    let slab = stand
+        .world_mut(HOST)
+        .spawn((Name::new("Slab"), AiKind("Slab".into()), Collider::new(Shape::cuboid(Vec3::new(1.5, 0.5, 1.5))), Transform::from_xyz(0.0, 0.5, 4.0)))
+        .id();
+    let slab = stand.world(HOST).get::<AiId>(slab).unwrap().to_string();
+    assert!(stand.call(HOST, "teleport", json!({"id": player, "x": 0, "z": 4, "y": 3})).ok);
+    stand.run(120);
+    let slab_on = |stand: &Stand, member| {
+        let world = stand.world(member);
+        let mut q = world.try_query::<(&AiId, &Collider)>().unwrap();
+        q.iter(world).any(|(id, _)| id.to_string() == slab)
+    };
+    assert!(slab_on(&stand, C1), "c1 has the slab, by the host's id, with its collider");
+    for member in [HOST, C1] {
+        let at = feet_on(&stand, member, &player).unwrap();
+        assert!((at.y - 1.0).abs() < 0.05, "member {member}: c1's body stands on the slab: {at}");
+    }
+
+    assert!(stand.call(HOST, "despawn", json!({"id": slab})).ok);
+    stand.run(120);
+    for member in [HOST, C1] {
+        let at = feet_on(&stand, member, &player).unwrap();
+        assert!(at.y.abs() < 0.05, "member {member}: back on the floor: {at}");
+        assert_eq!(desyncs(&stand, member), 0);
+    }
+    assert!(!slab_on(&stand, C1), "the slab is gone from c1");
+}
+
 /// The `ActionSound`s a member heard: `(actor, action, sound)`.
 #[derive(Resource, Default)]
 struct Sounds(Vec<(Entity, String, String)>);
