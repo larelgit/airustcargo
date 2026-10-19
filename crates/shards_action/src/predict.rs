@@ -26,7 +26,11 @@
 //! charge could no longer turn.
 //!
 //! Hits, effects, damage, stamina spent and statuses are never predicted: they come with the
-//! host's state.
+//! host's state. Neither is an action with `pair` (B3, 13a "Context staleness"): whether a
+//! finisher starts depends on the victim's break and on who stands nearer, which the host
+//! resolves on its own tick, so the press is let go and the host's run is taken over. A guard
+//! that needs a fresh press (`perfect_needs_press`) shows the perfect window of the press rule
+//! run on this machine's own presses until the host confirms the start.
 
 use std::collections::VecDeque;
 
@@ -42,11 +46,12 @@ use shards_motion::{
 };
 
 use crate::combat::Died;
+use crate::context::{arm_idle, fresh_press, guard_press, step_arm, ContextInputs, GuardArm, RunHalted};
 use crate::def::{ActionDef, BufferMode, CombatTuning, MovesetDef, EPS};
 use crate::fighter::{sprint_rule, Charges, Cooldowns, Dead, Fighter, Stamina};
 use crate::leap::{plan_leap, radius_of, LeapSite};
 use crate::machine::{
-    advance, body_height, buffer_press, cap_queue, charge_due, choose_in, free_sprint, in_sight, launch_due, press_life, start_facing,
+    advance, body_height, buffer_press, cap_queue, charge_due, choose_in, free_sprint, gate_perfect, in_sight, launch_due, press_life, start_facing,
     steer_locomotion, step_run, tracked, understands, ActionRejected, ActionStarted, ActionState, FighterView, LeapRun, Queued, RunExtras,
     Running,
 };
@@ -114,6 +119,9 @@ pub struct ActionPredictor {
     /// The run shown here that last ran out of time, with the extra recovery it had: the host may
     /// still be in a longer recovery of it.
     ended: Option<(u32, f32)>,
+    /// The guard press rule run on this machine's own `Intent` ([`GuardArm`] as the host would have
+    /// it): a guard started here takes its perfect window from this until the host confirms it.
+    arm: GuardArm,
 }
 
 pub(crate) fn plugin(app: &mut App) {
@@ -148,6 +156,10 @@ pub(crate) struct PredictedBody {
     ghost: Has<Ghost>,
     shown: Option<&'static mut PredictedAction>,
     dead: Has<Dead>,
+    /// The host's, replicated: what this tick binds, the guard press, a halted run.
+    context: Option<&'static ContextInputs>,
+    arm: Option<&'static GuardArm>,
+    halted: Option<&'static RunHalted>,
 }
 
 /// `NetSet::Predict`, after `MotionSystems::PredictIntent`, before the controller: see the
@@ -332,6 +344,20 @@ pub(crate) fn predict_actions(
 
     // 3. This tick's presses: buffered as the host buffers them; one may start now.
     let moveset = db.get::<MovesetDef>(&b.fighter.moveset);
+    // The press rule on this machine's own presses, as the host's `arm_guard` runs it.
+    let rule = moveset.and_then(|m| guard_press(&db, m));
+    match &rule {
+        Some((press, inputs)) if !b.dead => {
+            let down = inputs.iter().any(|i| b.intent.is_held(i));
+            let pressed = b.intent.pressed.iter().any(|p| inputs.contains(&p.input.as_str()));
+            let running = shown.as_ref().map(|s| s.run.instance);
+            predictor.arm = step_arm(predictor.arm, press, pressed, down, running, now, dt);
+            if arm_idle(&predictor.arm, press, now, dt) {
+                predictor.arm = GuardArm::default();
+            }
+        }
+        _ => predictor.arm = GuardArm::default(),
+    }
     let mode = moveset.map_or(&BufferMode::PerInput, |m| &m.buffer);
     let tuning = CombatTuning::of(&db);
     let (ttl, sight) = (tuning.input_buffer, tuning.sight_height);
@@ -378,9 +404,21 @@ pub(crate) fn predict_actions(
         mode: b.motion.map(|m| m.mode),
         off_ground: crate::machine::off_ground(b.motion),
         leap: site,
+        context: b.context,
         ..FighterView::new(&db, &b.fighter.moveset, &local, &b.intent.held, b.dead)
     };
     let choice = (!b.dead).then(|| choose_in(&view, &predictor.queued, dt)).flatten();
+    // A paired action is not predicted (13a, "Context staleness"): whether it starts depends on the
+    // host's state of the victim (its break, who stands nearer), which the host resolves on its own
+    // tick, so the press is let go and the host's `ActionStarted` is taken over when it comes. In
+    // the stand a client pressing a finisher near the end of the break was wrong every time.
+    let choice = choice.filter(|c| {
+        let pair = db.get::<ActionDef>(&c.start.action).is_some_and(|d| d.pair.is_some());
+        if pair && let Some(i) = c.queued {
+            predictor.queued.remove(i);
+        }
+        !pair
+    });
     if let Some(choice) = choice
         && let Some(def) = db.get::<ActionDef>(&choice.start.action)
     {
@@ -398,6 +436,12 @@ pub(crate) fn predict_actions(
         });
         let facing = plan.map_or_else(|| start_facing(def, choice.dir, b.intent, here, forward, target), |p| p.dir);
         let run = Running::new(&choice.start.action, def, instance, facing, choice.dir, Some(choice.input.clone()));
+        // A guard that needs a fresh press takes the press now, as the host's machine does.
+        if let Some(press) = def.guard.as_ref().and_then(|g| g.perfect_needs_press.as_ref()) {
+            let fresh = fresh_press(Some(&predictor.arm), press, now, dt);
+            predictor.arm.armed = false;
+            predictor.arm.run = fresh.then_some(instance);
+        }
         commands.trigger(ActionStarted {
             entity,
             action: run.action.clone(),
@@ -449,6 +493,9 @@ pub(crate) fn predict_actions(
                 let aimed = tracked(def, b.intent, target, sees);
                 let spans;
                 (spans, external) = step_run(&mut s.run, def, s.extras.as_mut(), s.leap.map_or(1.0, |l| l.scale), b.intent, here, aimed, dt);
+                if b.halted.is_some_and(|h| h.instance == s.run.instance) {
+                    external = Vec3::ZERO;
+                }
                 s.run.refresh(def, RunExtras::extra_of(s.extras.as_ref()));
                 // The leap launches the predicted body in the tick it crosses `leap.at`, as the host's does.
                 if let (Some(l), Some(state)) = (def.leap.as_ref(), s.leap.as_mut())
@@ -517,6 +564,14 @@ pub(crate) fn predict_actions(
         cap_queue(&mut predictor.queued, ttl);
     }
 
+    // A guard that needs a fresh press shows its perfect window only when a fresh press started this
+    // run: this machine's own press rule until the host confirms the start, then the host's.
+    if let Some(s) = shown.as_mut()
+        && let Some(def) = db.get::<ActionDef>(&s.run.action)
+    {
+        let arm = if s.confirmed { b.arm } else { Some(&predictor.arm) };
+        gate_perfect(&mut s.run, def, arm);
+    }
     match (shown, b.shown.as_mut()) {
         (Some(s), Some(there)) => {
             if **there != s {

@@ -65,7 +65,8 @@ impl Plugin for GameplayPlugin {
         app.add_systems(
             FixedUpdate,
             (
-                fate::boss_phases.in_set(SimSet::Resolve).after(ActionSystems::Deaths),
+                // Before the encounter step, so a phase change and the adds it adopts are seen in the same tick.
+                fate::boss_phases.in_set(SimSet::Resolve).after(ActionSystems::Deaths).before(shards::encounter::EncounterSystems::Step),
                 (fate::remove_corpses, layout::rebuild_changed_layouts)
                     .chain()
                     .in_set(SimSet::Cleanup)

@@ -30,12 +30,14 @@
 
 use ai_core::AiId;
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 use shards_content::ContentDb;
 use shards_core::{flat, NetRole};
 use shards_motion::{
     Collider, ColliderId, LayerMask, MotionState, PhysicsWorld, QueryFilter,
 };
 
+use crate::context::{held_by, in_victim_action, may_hit, strike as pair_strike, Pairing, Strike};
 use crate::body::{Barrier, DamageTaken};
 use crate::def::{touches, ActionDef, CombatTuning, HitFlag, MovesetDef, EPS};
 use crate::fighter::{
@@ -91,18 +93,20 @@ impl IgnoreReason {
     }
 }
 
-/// How heavy a hit felt, for hit stop and camera. Ordered: a heavier weight wins.
-#[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+/// How heavy a hit felt, for hit stop and camera. Ordered: a heavier weight wins. Content names
+/// one as an action's weight floor ([`ActionDef::weight`]).
+#[derive(Reflect, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HitWeight {
     #[default]
     Light,
     /// The hit asked for reaction tier 2 or 3.
     Heavy,
-    /// Reserved for a game or a later module to set on `DamageCtx::weight` (a counterattack); the engine never sets it.
+    /// A counterattack: an action with `weight: Counter` sets it as the floor of its hits.
     Counter,
     /// The hit broke the target's poise.
     Break,
-    /// Reserved, as `Counter` (a hit from a paired action on its victim); the engine never sets it.
+    /// A paired action's strike on its victim while the victim is in the pair's state (a finisher
+    /// on a broken enemy).
     Finisher,
 }
 
@@ -148,6 +152,10 @@ pub struct DamageCtx {
     pub guard_mult: Option<f32>,
     /// Weight floor; the engine raises it (heavy reaction, break) when it applies the hit.
     pub weight: HitWeight,
+    /// The hit is a paired action's strike on its victim, in the pair's state (B3): it will weigh
+    /// `Finisher` and force the pair's reaction whatever the hooks do to the other fields. A
+    /// finisher's damage hook keys on this.
+    pub pair: bool,
 }
 
 /// A game's step in the damage pipeline: `app.add_damage_hook(crits)`.
@@ -330,6 +338,7 @@ fn detect(world: &mut World) -> Vec<Detected> {
                 .into_iter()
                 .filter(|t| world.get::<Health>(*t).is_some() && world.get::<Dead>(*t).is_none())
                 .filter(|t| hostile(team, world.get::<Team>(*t)))
+                .filter(|t| may_hit(world, attacker, run.instance, *t))
                 // Burrowed: nothing to hit, so no hit, no mark (it may be hit once it is out, still in the window).
                 .filter(|t| !intangible(world, *t))
                 .map(|t| (order_key(world, t), t))
@@ -370,7 +379,7 @@ fn chest(world: &World, entity: Entity, sight: f32) -> Option<Vec3> {
 /// Whether no `LayerMask::WORLD` collider lies between the chests of `attacker` and `target`. Their
 /// own colliders never count: the ray excludes both (a fighter whose collider has the default
 /// layers, which are WORLD, would otherwise block its own ray).
-fn clear_line(world: &World, physics: &PhysicsWorld, attacker: Entity, target: Entity, sight: f32) -> bool {
+pub(crate) fn clear_line(world: &World, physics: &PhysicsWorld, attacker: Entity, target: Entity, sight: f32) -> bool {
     let (Some(from), Some(to)) = (chest(world, attacker, sight), chest(world, target, sight)) else { return true };
     let along = to - from;
     let Ok(dir) = Dir3::new(along) else { return true };
@@ -393,6 +402,7 @@ fn resolve(world: &mut World, d: Detected) {
     }
     .or_else(|| facing.and_then(|f| flat(f).try_normalize()))
     .unwrap_or(Vec3::NEG_Z);
+    let pair = pair_strike(world, d.attacker, d.target, &d.action).is_some();
     let mut ctx = DamageCtx {
         attacker: d.attacker,
         credit: d.attacker,
@@ -413,7 +423,8 @@ fn resolve(world: &mut World, d: Detected) {
         knockback: hit.knockback,
         taken: 1.0,
         guard_mult: None,
-        weight: HitWeight::Light,
+        weight: if pair { def.weight.unwrap_or_default().max(HitWeight::Finisher) } else { def.weight.unwrap_or_default() },
+        pair,
     };
     modifiers(world, &mut ctx);
     let hooks = world.resource::<DamageHooks>().0.clone();
@@ -516,8 +527,14 @@ struct Plan {
     reacts: Option<u8>,
 }
 
-fn plan(world: &World, ctx: &DamageCtx) -> Plan {
+fn plan(world: &World, ctx: &DamageCtx, strike: Option<&Strike>) -> Plan {
     let breaks = matches!(ctx.outcome, Outcome::Hit | Outcome::Blocked { .. }) && poise_breaks(world, ctx.target, ctx.poise);
+    if let (Outcome::Hit, Some(s)) = (ctx.outcome, strike) {
+        // A pair's strike: its forced reaction replaces the hit's own.
+        let r = Reaction::forced(s.tier, Some(ctx.credit), ctx.dir);
+        // `strike_reaction: 0` forces nothing.
+        return Plan { breaks: false, reacts: (s.tier > 0 && should_react(world, ctx.target, &r, 0)).then_some(s.tier) };
+    }
     let reacts = match (ctx.outcome, ctx.reaction) {
         (Outcome::Hit, Some(tier)) if !breaks => {
             should_react(world, ctx.target, &Reaction::hit(tier, Some(ctx.credit), ctx.dir, ctx.knockback, ctx.reaction_armor), ctx.reaction_armor)
@@ -540,11 +557,23 @@ fn weight_of(ctx: &DamageCtx, breaks: bool) -> HitWeight {
     weight
 }
 
-fn apply(world: &mut World, ctx: DamageCtx) {
+fn apply(world: &mut World, mut ctx: DamageCtx) {
     let (attacker, credit, target, action) = (ctx.attacker, ctx.credit, ctx.target, ctx.action.clone());
     // The combat object that hit, when it is not the credited entity.
     let source = (ctx.attacker != ctx.credit).then_some(ctx.attacker);
-    let plan = plan(world, &ctx);
+    // A paired action's strike on its victim, in the pair's state: it ends the break once, weighs
+    // `Finisher`, and forces its reaction (no statuses, no poise, no immunity).
+    let strike = matches!(ctx.outcome, Outcome::Hit).then(|| pair_strike(world, attacker, target, &action)).flatten();
+    if let Some(s) = &strike {
+        if s.end_break {
+            end_break(world, target);
+            if let Some(mut p) = world.get_mut::<Pairing>(attacker) {
+                p.broke_once = true;
+            }
+        }
+        ctx.weight = ctx.weight.max(HitWeight::Finisher);
+    }
+    let plan = plan(world, &ctx, strike.as_ref());
     let weight = weight_of(&ctx, plan.breaks);
     match ctx.outcome {
         Outcome::Ignored => {
@@ -639,6 +668,12 @@ fn apply(world: &mut World, ctx: DamageCtx) {
                 source,
             });
             if finish_if_dead(world, target, credit, &action, source) {
+                return;
+            }
+            if let Some(s) = strike {
+                if plan.reacts == Some(s.tier) {
+                    react(world, target, Reaction { knockback: ctx.knockback, ..Reaction::forced(s.tier, Some(credit), ctx.dir) });
+                }
                 return;
             }
             apply_statuses(world, target, &ctx.status);
@@ -923,7 +958,12 @@ fn should_react(world: &World, target: Entity, r: &Reaction, armor: u8) -> bool 
     if !r.ignore_armor && (r.tier <= armor || hyper_armored(world, target)) {
         return false;
     }
-    if world.get::<Poise>(target).is_some_and(Poise::is_broken) {
+    // The strike of the pair that holds the target reacts whatever its poise and its action are.
+    let holder = held_by(world, target);
+    if holder.is_some() && holder == r.from {
+        return r.tier >= 3 || r.ignore_immunity || world.get::<Protection>(target).is_none_or(|p| p.reactions <= EPS);
+    }
+    if world.get::<Poise>(target).is_some_and(Poise::is_broken) || in_victim_action(world, target) {
         return false;
     }
     if let Some(run) = world.get::<ActionState>(target).and_then(|s| s.current.as_ref())

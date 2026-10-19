@@ -72,17 +72,19 @@
 //!
 //! ```text
 //! SimSet::Input    ActionSystems::Orders    Order::Attack → Intent (after core's follow_orders)
-//! SimSet::Act      ActionSystems::Machine   presses → buffer → start/advance → LocomotionInput
-//!                  ActionSystems::Effects   heal, stamina, statuses, sounds, game effects
+//! SimSet::Act      ActionSystems::Context   guard presses (GuardArm), context bindings (ContextInputs)
+//!                  ActionSystems::Machine   presses → buffer → start/advance → LocomotionInput
+//!                  ActionSystems::Effects   pairs start (start_pairs), heal, stamina, statuses, sounds, game effects
 //! SimSet::Move     (controller)             integrates LocomotionInput, external included
 //! SimSet::Resolve  ActionSystems::Hits      overlaps → damage pipeline → events
-//!                  ActionSystems::Fighters  sprint drain, regeneration, cooldowns, finished actions end
+//!                  ActionSystems::Fighters  sprint drain, regeneration, cooldowns, memories age, pairs kept or lost,
+//!                                           finished actions end
 //!                  ActionSystems::Statuses  status ticks and expiry
 //!                  ActionSystems::Deaths    fighters at 0 health die
 //! ```
 //!
 //! Tools: `light_attack`, `heavy_attack`, `block`, `parry`, `dodge`, `use_technique`,
-//! `use_item`, `lock_on`, `attack` (player); `god`, `heal`, `stagger`, `motion_bake` (dev);
+//! `use_item`, `lock_on`, `attack` (player); `god`, `heal`, `stagger`, `react`, `remember`, `motion_bake` (dev);
 //! `combat_overlay` (dev, with the `render` feature).
 //!
 //! ## The render feature
@@ -109,6 +111,7 @@ pub mod bake;
 pub mod body;
 pub mod clipfile;
 pub mod combat;
+pub mod context;
 pub mod cue;
 pub mod def;
 pub mod draw;
@@ -145,10 +148,14 @@ pub use body::{
     clear_barrier, clear_damage_taken, extend_damage_taken, grant_barrier, set_damage_taken, Barrier, BarrierGranted, DamageTaken,
     DamageTakenExpired, ProcGates, TakenMult,
 };
+pub use context::{
+    cut_action, forget, hold_break, pair_victim, release_pair, remember, Bound, ContextCondition, ContextConditions, ContextInputs,
+    GuardArm, Memory, PairEnd, PairEnded, PairStarted, Paired, Pairing, Remembered, RunHalted,
+};
 pub use cue::{ActionSound, SoundCue};
 pub use def::{
-    ActionDef, AssistDef, BufferMode, CancelDef, ChargeDef, CombatTuning, Cost, Effect, GuardDef, HitDef, HitFlag, HitShape, HoldDef, Local, MotionBake,
-    LeapDef, LeapSearch, ReactionDef, StaminaMode,
+    ActionDef, AssistDef, BindingDef, BufferMode, CancelDef, ChargeDef, CombatTuning, Cost, Effect, Forget, GuardDef, GuardPress, HitDef, HitFlag,
+    HitShape, HoldDef, LeapDef, LeapSearch, Local, MemoryDef, MotionBake, PairDef, PairSelect, PairState, PairTeam, ReactionDef, Recall, StaminaMode, When,
     Face, MovesetDef, Phase, Span, Steer, TelegraphDef, TimedEffect, Transition,
 };
 pub use fighter::{
@@ -188,6 +195,9 @@ pub mod prelude {
 pub enum ActionSystems {
     /// `SimSet::Input`, after `CoreSystems::FollowOrders`: `Order::Attack`.
     Orders,
+    /// `SimSet::Act`, before the machine: guard presses arm, and every fighter's context
+    /// bindings are resolved ([`ContextInputs`]).
+    Context,
     /// `SimSet::Act`: every fighter's action machine.
     Machine,
     /// `SimSet::Act`, after the machine: effects the actions reached.
@@ -229,6 +239,10 @@ pub trait ActionAppExt {
 
     /// The game's code for an action's `Custom(name)` effect.
     fn add_action_effect(&mut self, name: &str, effect: ActionEffect) -> &mut Self;
+
+    /// The game's condition `name` for context bindings (`When::Condition(name)`): whether it
+    /// holds for the fighter now. The same name replaces a condition.
+    fn add_context_condition(&mut self, name: &str, condition: ContextCondition) -> &mut Self;
 }
 
 impl ActionAppExt for App {
@@ -253,6 +267,13 @@ impl ActionAppExt for App {
         let mut effects = self.world_mut().get_resource_or_init::<ActionEffects>();
         effects.0.retain(|(n, _)| n != name);
         effects.0.push((name.to_owned(), effect));
+        self
+    }
+
+    fn add_context_condition(&mut self, name: &str, condition: ContextCondition) -> &mut Self {
+        let mut conditions = self.world_mut().get_resource_or_init::<ContextConditions>();
+        conditions.0.retain(|(n, _)| n != name);
+        conditions.0.push((name.to_owned(), condition));
         self
     }
 }
@@ -291,6 +312,14 @@ impl Plugin for ActionPlugin {
             .register_type::<DamageTakenExpired>()
             .register_type::<Knockback>()
             .register_type::<RunExtras>()
+            .register_type::<Memory>()
+            .register_type::<ContextInputs>()
+            .register_type::<GuardArm>()
+            .register_type::<Pairing>()
+            .register_type::<Paired>()
+            .register_type::<RunHalted>()
+            .register_type::<PairStarted>()
+            .register_type::<PairEnded>()
             .register_type::<LeapRun>()
             .register_type::<Animated>()
             .register_type::<ActionMissed>()
@@ -326,6 +355,8 @@ impl Plugin for ActionPlugin {
             .init_resource::<StatusEffects>()
             .init_resource::<ActionEffects>()
             .init_resource::<machine::PendingEffects>()
+            .init_resource::<context::PendingPairs>()
+            .init_resource::<ContextConditions>()
             .add_engine_module("action", VERSION)
             .add_engine_invariant("action.resources_in_range", invariants::resources_in_range)
             .add_engine_invariant("action.running_sane", invariants::running_sane)
@@ -334,6 +365,8 @@ impl Plugin for ActionPlugin {
             .add_engine_invariant("action.damage_taken_sane", invariants::damage_taken_sane)
             .add_engine_invariant("action.knockback_sane", invariants::knockback_sane)
             .add_engine_invariant("action.extras_follow_run", invariants::extras_follow_run)
+            .add_engine_invariant("action.pairs_match", invariants::pairs_match)
+            .add_engine_invariant("action.memory_sane", invariants::memory_sane)
             .add_engine_invariant("action.leap_follows_run", invariants::leap_follows_run)
             .add_engine_invariant("action.ghost_follows_run", invariants::ghost_follows_run);
         coverage::plugin(app);
@@ -345,7 +378,7 @@ impl Plugin for ActionPlugin {
                 (
                     ActionSystems::Orders.in_set(SimSet::Input).after(CoreSystems::FollowOrders),
                     ModifierSystems::Reset.after(ActionSystems::Orders),
-                    (ActionSystems::Machine, ActionSystems::Effects, ActionSystems::Push)
+                    (ActionSystems::Context, ActionSystems::Machine, ActionSystems::Effects, ActionSystems::Push)
                         .chain()
                         .in_set(SimSet::Act)
                         .after(MotionSystems::Intent),
@@ -392,6 +425,7 @@ impl Plugin for ActionPlugin {
             .add_observer(fighter::protect_after_reaction)
             // Cosmetic: a game may add it in a window only, and replays must not care.
             .replay_ignore::<Animated>();
+        context::plugin(app);
         predict::plugin(app);
         lock::plugin(app);
         ai::register(app);

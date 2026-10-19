@@ -99,6 +99,8 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("shards::tile_levels::TileLevels", "which level instance is which tile, made again when the region is (snapshot prepare `region`)"),
     ("shards::ui_wiring::MenuControls", "the menus' controls"),
     // shards_action
+    ("shards_action::context::ContextConditions", "the context conditions, registered at build time"),
+    ("shards_action::context::PendingPairs", "paired actions the machine started, taken in the same tick: empty between ticks"),
     ("shards_action::combat::DamageHooks", "the damage hooks, registered at build time"),
     ("shards_action::machine::ActionEffects", "the custom action effects, registered at build time"),
     ("shards_action::machine::PendingEffects", "effects queued and run inside one tick: empty between ticks"),
@@ -108,6 +110,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     // shards_audio
     ("shards_audio::", "the mixer, the music's diagnostics and the audio device: sound only reads the world"),
     // shards_content
+    ("shards_encounter::EncounterHooks", "the out rules and despawn hooks games register, set at build time"),
     ("shards_content::ContentAppliedHooks", "what runs after a content change is applied, registered at build time"),
     ("shards_content::ContentGuards", "the content guards, registered at build time"),
     ("shards_content::db::ContentDb", "loaded content: the world is built around it, and snapshots check its hash"),
@@ -228,7 +231,7 @@ fn unclassified(names: &BTreeSet<String>) -> Vec<&str> {
 #[test]
 fn every_resource_is_saved_or_said_to_be_outside_the_simulation() {
     let mut seen = BTreeSet::new();
-    for name in ["combat_prototype.json", "region.json", "voxel_arena.json"] {
+    for name in ["combat_prototype.json", "region.json", "voxel_arena.json", "encounter.json"] {
         let app = played(name);
         let names = not_saved(app.world());
         let unknown = unclassified(&names);

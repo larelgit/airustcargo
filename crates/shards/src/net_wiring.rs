@@ -7,7 +7,7 @@ use serde_json::json;
 use shards_motion::{ColliderId, ColliderIds};
 use shards_action::combat::{Blocked, Damaged, Died, Evaded, GuardBroken, Parried, PerfectEvaded, Reacted, Staggered};
 use shards_action::machine::{ActionRejected, ActionStarted, Healed, Telegraph};
-use shards_action::{ActionSound, BarrierGranted};
+use shards_action::{ActionSound, BarrierGranted, PairEnded, PairStarted};
 use shards_net::{NetEventAppExt, NetHooks};
 use shards_npc::{AttackToken, NavAgent, NpcDrive, Perceived};
 use shards_world::ActiveRegion;
@@ -36,6 +36,9 @@ impl Plugin for EngineNetPlugin {
             .net_event::<ActionStarted>()
             .net_event::<ActionRejected>()
             .net_event::<Telegraph>()
+            // A pair taken and let go (the finisher's hold): the client shows the host's.
+            .net_event::<PairStarted>()
+            .net_event::<PairEnded>()
             // An action's `Sound` effect runs on the host only (a client's prediction starts no effects):
             // the client plays the host's sound, like the host's hit sparks.
             .net_event::<ActionSound>();

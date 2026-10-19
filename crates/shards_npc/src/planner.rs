@@ -234,6 +234,15 @@ pub fn choose(
     pick_weighted(rng, &eligible)
 }
 
+/// How near an NPC with nothing chosen closes in: the shortest `max` among the options
+/// `allowed` now, else among those it may ever choose (weight above 0); infinite with none.
+/// A window that cannot be chosen would draw it inside the ones that can.
+pub(crate) fn approach_window(options: &[Resolved], allowed: impl Fn(&Resolved) -> bool) -> f32 {
+    let shortest = |pick: &dyn Fn(&Resolved) -> bool| options.iter().filter(|o| pick(o)).map(|o| o.max).fold(f32::INFINITY, f32::min);
+    let open = shortest(&|o| o.weight > 0.0 && allowed(o));
+    if open.is_finite() { open } else { shortest(&|o| o.weight > 0.0) }
+}
+
 /// Whether `distance` lies in the option's window.
 pub fn in_window(o: &Resolved, distance: f32) -> bool {
     distance >= o.min - 1e-4 && distance <= o.max + 1e-4
@@ -366,7 +375,7 @@ pub(crate) fn plan_attacks(
             (grant, target, radius, distance)
         };
         // Judged on the NPC's read-only view, by the rules the director's grant judges by.
-        let (options, chosen, decides, ready) = {
+        let (options, chosen, nearest, decides, ready) = {
             let Ok(f) = npcs.get(entity) else { continue };
             let Some(inputs) = inputs(&f, &cx, (grant.target, target, radius), &notes, &inflight) else { continue };
             let plan_def = inputs.plan_def;
@@ -390,21 +399,17 @@ pub(crate) fn plan_attacks(
                 let sensed = f.perceived.get(grant.target).is_some_and(|k| k.age <= 1e-4);
                 can_start(&inputs.view, &o.input, dt).is_ok() && fits(o, &inputs) && sensed
             });
-            (options, chosen, decides, ready)
+            let nearest = approach_window(&options, ok);
+            (options, chosen, nearest, decides, ready)
         };
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
         let here = f.transform.translation;
-        if chosen.is_none() && !decides {
-            // Between two decisions with no choice yet: it stands.
-            f.drive.goal = None;
-            continue;
-        }
         let home = f.home.map(|h| (h.pos.unwrap_or(here), h.leash));
         let leash = |p: Vec3| clamp_to_leash(home.map(|h| h.0), home.map_or(0.0, |h| h.1), p);
         let Some(i) = chosen else {
             grant.attack = None;
-            // Nothing to choose here: close in to the nearest window that could fit.
-            let nearest = options.iter().map(|o| o.max).fold(f32::INFINITY, f32::min);
+            // Nothing to choose here (between two decisions: nothing chosen yet): close in to the
+            // nearest window it could choose. Only the choice and the press wait for a decision tick.
             if nearest.is_finite() && distance > nearest {
                 f.drive.goal = Some(leash(target));
                 f.drive.within = (nearest * 0.85).max(0.3);
@@ -502,6 +507,19 @@ mod tests {
             assert_eq!(choose(&options, |_| true, 2.5, true, &mut rng), None);
             assert_eq!(choose(&options, |_| true, 9.0, true, &mut rng), None);
         }
+    }
+
+    #[test]
+    fn with_nothing_chosen_it_closes_in_to_a_window_it_could_choose() {
+        // A link only a chain reaches (weight 0) has the shortest window: it must not draw the
+        // NPC inside the lunge's minimum, where nothing it may choose fits.
+        let options = [option("link", 0.0, 0.0, 1.0, &[]), option("lunge", 1.0, 3.0, 6.0, &[]), option("jab", 1.0, 0.0, 2.0, &[])];
+        assert_eq!(approach_window(&options, |_| true), 2.0);
+        // The jab on its cooldown: the lunge's window, while the jab waits.
+        assert_eq!(approach_window(&options, |o| o.name != "jab"), 6.0);
+        // Nothing allowed now (spacing, budget): the shortest of what it may choose later, so it keeps coming.
+        assert_eq!(approach_window(&options, |_| false), 2.0);
+        assert_eq!(approach_window(&[option("link", 0.0, 0.0, 1.0, &[])], |_| true), f32::INFINITY);
     }
 
     #[test]

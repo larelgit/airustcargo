@@ -1,0 +1,197 @@
+# Context and paired actions (B3): the light attack is a finisher next to a broken enemy (it takes
+# the skeleton, holds it, ends its break with one strike and knocks it down), a counter within 0.5 s
+# of a perfect guard, a cut within 0.3 s of a roll's end, and the plain jab otherwise; the guard
+# opens its perfect window only on a fresh press.
+#
+# Two arena fighters are borrowed: the skeleton e7 gets the `sparring` moveset (reactions, a break
+# protection) and the player e5 the `contextual` one (`content/combat/context.*.ron`); both go back
+# at the end. The skeleton's swings are pressed by a dev agent possessing it (`session --subject
+# e7`, its behaviour kept `calm`), the player's by a player-scope agent through the same controls a
+# human has.
+
+seed 42
+
+# --- the arena as the game spawns it, whatever was played in it before: everyone stands down
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+# (a dead player is brought back first: its own controls refuse a dead body)
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god on=false
+step 150
+act heal id=e5
+act heal id=e6
+act heal id=e7
+act set id=e6 component=Boss path=phase value=1
+act set id=e5 component=Fighter path=moveset value=contextual
+act set id=e7 component=Fighter path=moveset value=sparring
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=0 z=-1.8 y=0
+act teleport id=e6 x=0 z=-14 y=0
+act teleport id=e8 x=18 z=18 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+step 2
+invariant field e5 Health.current > 0
+
+session --agent skeleton --scope dev --subject e7
+act lock_on target=e5
+session --agent bot --scope player
+act lock_on target=e7
+expect result contains "ok: locked on e7"
+session --agent scenario
+# (the locked body turns to its target at the lock turn speed: let it finish before the pair looks at the angle)
+step 31
+
+# --- 1. the skeleton's poise breaks: the light attack is the finisher, and the skeleton finishable
+mark
+act stagger id=e7 poise=true
+expect result contains "e7 staggered, poise broken"
+step 1
+observe
+expect result contains "light -> spar_finisher on e7"
+expect result contains "finishable by e5"
+session --agent bot
+act light_attack
+expect result contains "ok: spar_finisher"
+session --agent scenario
+step 2
+expect journal "e5 takes e7 with spar_finisher"
+expect shows e7 "held by e5"
+expect shows e7 "spar_finished"
+expect shows e5 "pairing e7"
+# the strike: the break ends, the skeleton is knocked down (a forced reaction replaces the hold)
+step 40 --until "journal:e7 reacts knockdown"
+expect journal "e5 -> e7 spar_finisher -25 (hp 15)"
+expect journal "e7 reacts knockdown (e5 spar_react_down)"
+expect field e7 Poise.broken == 0
+expect shows e7 "poise protected"
+step 60 --until "journal:lets go"
+expect journal "e5 lets go of e7 (finished)"
+act inspect id=e7
+expect result !contains "held by"
+
+# --- 2. a perfect guard against the skeleton's slam (a fresh press): light within 0.5 s is the counter
+step 100
+act heal id=e5
+act heal id=e7
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=0 z=-1.8 y=0
+step 2
+mark
+session --agent skeleton
+act heavy_attack
+session --agent scenario
+step 24
+session --agent bot
+act block
+session --agent scenario
+step 40 --until "journal:e5 parried"
+expect journal "e5 parried e7 spar_slam, -10 stamina"
+expect shows e5 "remembers parried"
+session --agent bot
+act light_attack
+expect result contains "ok: spar_counter"
+act block on=false
+session --agent scenario
+step 31
+expect journal "e5 -> e7 spar_counter -14"
+act inspect id=e5
+expect result !contains "remembers parried"
+
+# --- 3. the guard pressed again too soon is a plain block: the slam is blocked, not parried
+step 100
+act heal id=e5
+act heal id=e7
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=0 z=-1.8 y=0
+step 2
+mark
+session --agent skeleton
+act heavy_attack
+session --agent scenario
+step 14
+session --agent bot
+act block
+session --agent scenario
+step 4
+session --agent bot
+act block on=false
+session --agent scenario
+step 4
+session --agent bot
+act block
+session --agent scenario
+step 40 --until "journal:e5 blocked"
+expect journal "e5 blocked e7 spar_slam"
+expect !journal "e5 parried"
+session --agent bot
+act block on=false
+session --agent scenario
+
+# --- 4. a roll, then light within 0.3 s of its end: the cut out of the roll
+step 100
+act heal id=e5
+act heal id=e7
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=0 z=-1.8 y=0
+step 2
+session --agent bot
+act dodge
+expect result contains "ok: spar_dodge"
+session --agent scenario
+step 31
+expect shows e5 "remembers dodged"
+session --agent bot
+act light_attack
+expect result contains "ok: spar_dodge_cut"
+session --agent scenario
+step 40
+
+# --- 5. the same light 0.4 s after a roll's end: the plain jab
+step 60
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=0 z=-1.8 y=0
+step 2
+session --agent bot
+act dodge
+expect result contains "ok: spar_dodge"
+session --agent scenario
+step 55
+act inspect id=e5
+expect result !contains "remembers dodged"
+session --agent bot
+act light_attack
+expect result contains "ok: spar_jab"
+session --agent scenario
+step 40
+
+# --- the arena as it was: movesets back, nobody locked on, everybody healed, every timer run out
+session --agent skeleton
+act lock_on off=true
+session --agent bot
+act lock_on off=true
+act block on=false
+session --agent scenario
+act set id=e5 component=Fighter path=moveset value=player
+act set id=e7 component=Fighter path=moveset value=skeleton
+act heal id=e5
+act heal id=e6
+act heal id=e7
+act teleport id=e5 x=0 z=12 y=0
+act teleport id=e7 x=-12 z=2 y=0
+act teleport id=e6 x=0 z=-6 y=0
+act teleport id=e8 x=12 z=-2 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+step 200
+act inspect id=e5
+expect result !contains "Protection"
+expect result !contains "Memory"
+expect result !contains "ContextInputs"
+expect result !contains "GuardArm"
+act inspect id=e7
+expect result !contains "Protection"
+expect result !contains "Paired"

@@ -400,6 +400,61 @@ fn run_extras_of_another_run_stop_the_game() {
 }
 
 #[test]
+fn a_pair_whose_marks_disagree_stops_the_game() {
+    use shards::action::{Paired, Pairing};
+    // A real pair: the player's finisher holds the broken skeleton e7.
+    let mut app = sandbox::test_app(42);
+    for (id, value) in [("e5", "contextual"), ("e7", "sparring")] {
+        called(&mut app, "set", json!({"id": id, "component": "Fighter", "path": "moveset", "value": value}));
+    }
+    called(&mut app, "npc_set_state", json!({"id": "e7", "state": "calm"}));
+    called(&mut app, "teleport", json!({"id": "e5", "x": 0, "z": 0, "y": 0}));
+    called(&mut app, "teleport", json!({"id": "e7", "x": 0, "z": -1.8, "y": 0}));
+    step(&mut app, 2);
+    called(&mut app, "lock_on", json!({"target": "e7"}));
+    called(&mut app, "stagger", json!({"id": "e7", "poise": true}));
+    step(&mut app, 1);
+    called(&mut app, "light_attack", json!({}));
+    step(&mut app, 2);
+    let (player, skeleton) = (body(app.world(), 5), body(app.world(), 7));
+    assert!(app.world().get::<Pairing>(player).is_some(), "the finisher holds e7");
+    // The victim's mark goes behind the pair's back.
+    app.world_mut().entity_mut(skeleton).remove::<Paired>();
+    let tick = ai_core::sim::tick(app.world()) + 1;
+    let line = stops_on(&mut app, "action.pairs_match", tick);
+    assert!(line.contains("e5 Pairing names e7 whose mark says nothing"), "{line}");
+
+    // A pair mark of a run that is over.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.entity_mut(player).insert(Pairing { victim: AiId(7), action: "spar_finisher".into(), instance: 999, broke_once: false });
+    });
+    let line = stops_on(&mut app, "action.pairs_match", 2);
+    assert!(line.contains("e5 Pairing of spar_finisher instance 999 while it runs no action"), "{line}");
+}
+
+#[test]
+fn a_memory_out_of_order_stops_the_game() {
+    use shards::action::{Memory, Remembered};
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        let twice = vec![Remembered { key: "parried".into(), left: 0.4 }, Remembered { key: "parried".into(), left: 0.3 }];
+        world.entity_mut(player).insert(Memory(twice));
+    });
+    let line = stops_on(&mut app, "action.memory_sane", 2);
+    assert!(line.contains("e5 Memory keys `parried`, `parried`: sorted and unique"), "{line}");
+
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        let player = body(world, 5);
+        world.entity_mut(player).insert(Memory(vec![Remembered { key: "dodged".into(), left: f32::NAN }]));
+    });
+    let line = stops_on(&mut app, "action.memory_sane", 2);
+    assert!(line.contains("e5 Memory `dodged` left = NaN: a finite time above 0"), "{line}");
+}
+#[test]
 fn body_and_motion_state_that_does_not_belong_stops_the_game() {
     use shards::action::LeapRun;
     use shards::motion::{Ghost, Launch};

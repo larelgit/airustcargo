@@ -16,7 +16,12 @@ Read this when you add a tool, an invariant, a describer, or touch `AiId` or `Ai
   and a Bevy system `In<Call<Args>> -> ToolResult`. Kinds: `query` reads, `action` changes the world
   (journal, diff, replay), `control` manages time and the session. A tool error says how to fix the call.
 - The AI sees only entities with `AiVisible` (`AiKind` gives it). What is said about them is decided by
-  the describe functions (`register_ai_component`, `register_ai_describer`).
+  the describe functions (`register_ai_component`, `register_ai_describer`, and `register_ai_world_describer` for a fragment that needs the world around the entity: `finishable by e5`).
 - The engine assigns `AiId`. Do not write it in place (`get_mut`, `set`, BRP `world.mutate_components`):
   the "id → entity" index is kept by the `on_insert` and `on_discard` hooks. Inserting a new `AiId` renumbers
   the entity, and the old id gets a tombstone `renumbered to eN`.
+- Encounters (`shards_encounter`): the tools are `encounters`, `encounter key=K`, `encounter_start key=K [wave=N]`, `encounter_clear key=K` and `encounter_reset key=K|all
+  [forget=true]`; the conditions `encounter_active`, `encounter_between`, `encounter_wiped`, `encounter_won` and the NPC condition
+  `encounter_returning`; the engine rules `encounter.members_tracked`, `encounter.state_sane` and `encounter.lock_matches`. A prefab a run counts
+  needs an `AiId` (`AiKind`). A game plugs a downed state in with `add_encounter_out_rule` and cleans up what a member owns with
+  `add_encounter_despawn_hook`.

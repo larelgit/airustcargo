@@ -1,0 +1,31 @@
+// The yard's anchors and units. An anchor is an entity with `EncounterAnchor`: the tiles of the yard
+// place these prefabs at their centers. The units extend the arena's skeletons with an `EncounterRole`
+// (new prefabs, so the replays that spawn `skeleton` by id read what they read before).
+{
+    "yard_ring": (
+        components: {
+            "Name": "Yard ring",
+            "EncounterAnchor": (encounter: "ring_waves", key: Some("ring")),
+        },
+    ),
+    "yard_pack": (
+        components: {
+            "Name": "Yard pack",
+            "EncounterAnchor": (encounter: "yard_pack", key: Some("pack")),
+        },
+    ),
+    "yard_skeleton": (
+        extends: "skeleton",
+        components: {
+            "Name": "Yard Skeleton",
+            "EncounterRole": (cost: 1, tags: ["weak", "melee"]),
+        },
+    ),
+    "yard_captain": (
+        extends: "skeleton_captain",
+        components: {
+            "Name": "Yard Captain",
+            "EncounterRole": (cost: 2, tags: ["heavy", "melee"]),
+        },
+    ),
+}

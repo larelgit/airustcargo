@@ -1,0 +1,6 @@
+{
+    "default": (
+        limits: [(tag: "ranged", max: 2), (tag: "controller", max: 1, unless: Some("special_arena"))],
+        needs: [(tag: "support", others: 2)],
+    ),
+}

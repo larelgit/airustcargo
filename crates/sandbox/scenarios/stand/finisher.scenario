@@ -1,0 +1,124 @@
+# Co-op context and paired actions (B3): two clients next to the host's skeleton e7, whose poise
+# is broken. Only the nearer player (c1's e15) gets the finisher: the selection's `slack` gives a
+# broken enemy to the nearest player of the team, and c2's e16 stands 0.44 m farther. c1 presses
+# light from its own copy of the context; the client does not predict a paired action, so the host,
+# which resolves the press on the tick it is stamped with, starts the finisher and takes e7 with it. Then the host's skeleton
+# slams at e15 and c1 raises its guard on a fresh press: a parry, and the counter it binds to light.
+#
+# Both players get the `contextual` moveset and e7 the `sparring` one
+# (`content/combat/context.*.ron`, `sparring.*.ron`); they go back at the end.
+#
+#   cargo sandbox --stand 2 --headless --paused --port 0 --port-file F --net-sim latency=150,loss=0.02 &
+#   SHARDS_PORT_FILE=F cargo shards wait --peer all
+#   SHARDS_PORT_FILE=F cargo shards scenario crates/sandbox/scenarios/stand/finisher.scenario
+#   SHARDS_PORT_FILE=F cargo shards stand stop
+stand clients=2 latency=150 loss=0.02
+seed 42
+
+@host act npc_set_state id=e6 state=calm
+@host act npc_set_state id=e7 state=calm
+@host act npc_set_state id=e8 state=calm
+@host act npc_set_state id=e14 state=calm
+@host act heal id=e5
+@host act heal id=e15
+@host act heal id=e16
+@host act heal id=e7
+@host act set id=e15 component=Fighter path=moveset value=contextual
+@host act set id=e16 component=Fighter path=moveset value=contextual
+@host act set id=e7 component=Fighter path=moveset value=sparring
+@host act teleport id=e5 x=10 z=12 y=0
+@host act teleport id=e7 x=0 z=10.2 y=0
+@host act teleport id=e15 x=0 z=11.6 y=0
+@host act teleport id=e16 x=1.2 z=11.6 y=0
+@c1 act stop
+@c2 act stop
+step 120
+invariant !journal "desync"
+
+@c1 session --agent bot --scope player --player 1
+@c1 act lock_on target=e7
+@c1 expect result contains "ok: locked on e7"
+@c2 session --agent bot --scope player --player 2
+@c2 act lock_on target=e7
+@c2 expect result contains "ok: locked on e7"
+@c1 session --agent scenario
+@c2 session --agent scenario
+step 30
+
+# --- 1. e7's poise breaks: the finisher is c1's alone
+@host act stagger id=e7 poise=true
+@host expect result contains "e7 staggered, poise broken"
+@c1 step 60 --until "journal:e7 staggered"
+step 6
+@c1 act inspect id=e15
+@c1 expect result contains "light -> spar_finisher on e7"
+@c2 act inspect id=e16
+@c2 expect result !contains "spar_finisher"
+@c1 session --agent bot
+@c1 act light_attack
+@c1 expect result contains "ok: spar_finisher · the host starts it"
+@c1 session --agent scenario
+@host step 60 --until "journal:e15 takes e7 with spar_finisher"
+@host expect stopped "e15 takes e7"
+@host step 60 --until "journal:e7 reacts knockdown"
+@host expect journal "e15 -> e7 spar_finisher -25"
+@c1 step 120 --until "journal:e15 lets go of e7 (finished)"
+@c1 expect journal "e15 takes e7 with spar_finisher"
+@c2 expect journal "e7 reacts knockdown"
+@c1 act net_status
+@c1 expect result contains "\"mispredicted\": 0"
+step 200
+invariant !journal "desync"
+
+# --- 2. the skeleton slams at e15; c1's guard press is fresh, the guard perfect: a parry and its counter
+@host act heal id=e7
+@host act heal id=e15
+@host act teleport id=e7 x=0 z=10.2 y=0
+@host act teleport id=e15 x=0 z=12 y=0
+step 60
+@host session --agent skeleton --scope dev --subject e7
+@host act lock_on target=e15
+@host act heavy_attack
+@host expect result contains "ok: spar_slam"
+@c1 step 40 --until "journal:e7 winds up spar_slam"
+@c1 session --agent bot
+@c1 act block
+@c1 session --agent scenario
+@host step 60 --until "journal:e15 parried e7 spar_slam"
+@host expect stopped "e15 parried"
+@c1 step 40 --until "journal:e15 parried"
+step 4
+@c1 session --agent bot
+@c1 act light_attack
+@c1 expect result contains "ok: spar_counter · predicted, host confirms"
+@c1 act block on=false
+@c1 session --agent scenario
+@host step 60 --until "journal:e15 -> e7 spar_counter"
+@host expect journal "e15 -> e7 spar_counter -14"
+step 60
+@c1 act net_status
+@c1 expect result contains "\"mispredicted\": 0"
+invariant !journal "desync"
+
+# --- the arena as it was: movesets back, nobody locked on
+@host act lock_on off=true
+@host session --agent scenario
+@c1 session --agent bot
+@c1 act lock_on off=true
+@c1 session --agent scenario
+@c2 session --agent bot
+@c2 act lock_on off=true
+@c2 session --agent scenario
+@host act set id=e15 component=Fighter path=moveset value=player
+@host act set id=e16 component=Fighter path=moveset value=player
+@host act set id=e7 component=Fighter path=moveset value=skeleton
+@host act heal id=e5
+@host act heal id=e15
+@host act heal id=e16
+@host act heal id=e7
+@host act teleport id=e5 x=0 z=12 y=0
+@host act teleport id=e15 x=2 z=12 y=0
+@host act teleport id=e16 x=4 z=12 y=0
+@host act teleport id=e7 x=-12 z=2 y=0
+step 200
+invariant !journal "desync"

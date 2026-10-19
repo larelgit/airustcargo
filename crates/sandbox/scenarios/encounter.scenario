@@ -1,0 +1,125 @@
+# Encounters (G9): the yard (`content/region/yard.region.ron`, a small fixed region east of the arena) holds two
+# encounters (`content/encounter/yard.encounter.ron`). The ring is three waves of 1, 2 and 1 skeletons started by a
+# trigger volume and won once; the pack is a placed pack of 2 or 3 on markers. The scenario walks the ring through a
+# start, a clear (a death with no killer), a wipe in a wave, a resume, a wipe between waves, a win and a world save,
+# then lets the pack start, makes everyone leave, and waits for the reset.
+#
+# The members spawn after the scenario starts, so they cannot be named: `encounter_clear` kills the wave in progress.
+# Timers are exact (1.2 s is 72 ticks, 2.5 s 150, 2.0 s 120). The ring's anchor is at (248, -184), the pack's at (280, -184).
+
+seed 42
+
+# --- setup (dev): the yard, the player unhurtable at its gate, nothing started yet
+act regen region=yard seed=1
+expect result contains "ok: yard seed 1"
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god
+act encounter_reset key=all forget=true
+step 3
+mark
+
+# --- 1. the yard has its two runs, waiting for their start; nothing started
+act encounters
+expect result contains "yard/pack yard_pack Armed wave 1/1 members"
+expect result contains "yard/ring ring_waves Armed wave 0/3 members 0"
+expect result contains "completed: []"
+expect !journal "started"
+
+# --- 2. the player walks into the ring: the run starts, the first wave is due in 1.2 s and spawns 72 ticks later
+act teleport id=e5 x=248 z=-182 y=0
+step 600 --until named:encounter_active
+expect journal "encounter yard/ring (ring_waves) started: 1/1 players in"
+expect journal "encounter yard/ring: wave 1/3 in 1.2 s"
+act encounter key=yard/ring
+expect result contains "Between 1.2 s"
+step 72
+expect journal "encounter yard/ring: wave 1/3 spawned"
+act encounter key=yard/ring
+expect result contains "Running, wave 1"
+
+# --- 3. the wave dies (health ran out, no killer): it is cleared, the next is due in 2.5 s and spawns 150 ticks later
+mark
+act encounter_clear key=yard/ring
+step 2
+expect journal "encounter yard/ring: wave 1/3 cleared"
+expect journal "encounter yard/ring: wave 2/3 in 2.5 s"
+step 150
+expect journal "encounter yard/ring: wave 2/3 spawned"
+act encounter key=yard/ring
+expect result contains "Running, wave 2"
+
+# --- 4. a wipe in wave 2: its members go (silently), the wave goes back to 1; the player stands again and wave 2
+# comes back 2.0 s later with new ids
+mark
+act god on=false
+act set id=e5 component=Health path=current value=0
+step 3
+expect journal "encounter yard/ring: wiped in wave 2/3, back to 1/3"
+act encounter key=yard/ring
+expect result contains "Wiped (waiting for someone to stand)"
+expect result contains "members: 0"
+act heal id=e5
+act god
+step 3
+expect journal "encounter yard/ring: resumed, wave 2/3 in 2.0 s"
+step 120
+expect journal "encounter yard/ring: wave 2/3 spawned"
+
+# --- 5. wave 2 dies; a wipe between waves rewinds nothing, so wave 3 is the pending wave and wave 2 does not repeat
+mark
+act encounter_clear key=yard/ring
+step 2
+expect journal "encounter yard/ring: wave 2/3 cleared"
+act god on=false
+act set id=e5 component=Health path=current value=0
+step 3
+expect journal "encounter yard/ring: wiped between waves, wave 3/3 still pending"
+act heal id=e5
+act god
+step 3
+expect journal "encounter yard/ring: resumed, wave 3/3 in 2.0 s"
+step 120
+expect journal "encounter yard/ring: wave 3/3 spawned"
+expect !journal "wave 2/3 spawned"
+
+# --- 6. the last wave dies: the encounter is won, once, and remembered
+mark
+act encounter_clear key=yard/ring
+step 2
+expect journal "encounter yard/ring: wave 3/3 cleared"
+expect journal "encounter yard/ring: won"
+act encounters
+expect result contains "yard/ring ring_waves Won"
+expect result contains "completed: [yard/ring]"
+
+# --- 7. a world save keeps the win: a load restores it silently, and the run is made again won with no members
+mark
+act save_game what=world slot=qa-encounter
+act load_game what=world slot=qa-encounter
+expect journal "encounters: 1 won restored (yard/ring)"
+step 2
+expect !journal "yard/ring: won"
+act encounters
+expect result contains "yard/ring ring_waves Won wave 0/3 members 0"
+expect result contains "completed: [yard/ring]"
+
+# --- 8. the pack: it starts when the player comes within 10 m (or earlier, when a member sees him); the player leaves for
+# 30 s and the run resets; its survivors are home and whole again
+mark
+act teleport id=e5 x=280 z=-176 y=0
+step 600 --until named:encounter_active
+expect journal "encounter yard/pack (yard_pack) started"
+act teleport id=e5 x=216 z=-184 y=0
+step 1820
+expect journal "encounter yard/pack: reset (nobody near for 30.0 s)"
+step 400
+act encounters
+expect result contains "yard/pack yard_pack Armed wave 1/1 members"
+
+# --- clean up: forget what was won, the player back in the arena
+act encounter_reset key=all forget=true
+act teleport id=e5 x=0 z=12 y=0
+act god on=false

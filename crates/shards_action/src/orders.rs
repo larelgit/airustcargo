@@ -13,6 +13,7 @@ use shards_motion::{CharacterController, CharacterParams, Collider, MotionState,
 
 use crate::def::{ActionDef, MovesetDef};
 use crate::fighter::{Charges, Cooldowns, Dead, Fighter, Stamina};
+use crate::context::ContextInputs;
 use crate::leap::{radius_of, LeapSite};
 use crate::machine::{can_start, ActionRejected, ActionState, FighterView};
 
@@ -37,6 +38,7 @@ type Attackers<'w, 's> = Query<
         Option<&'static CharacterController>,
         Option<&'static CharacterParams>,
         Has<Dead>,
+        Option<&'static ContextInputs>,
     ),
 >;
 
@@ -52,7 +54,7 @@ pub(crate) fn follow_attack_orders(
     mut fighters: Attackers,
 ) {
     let dt = time.delta_secs();
-    for (entity, fighter, mut intent, state, tf, stamina, cooldowns, charges, motion, controller, params, dead) in &mut fighters {
+    for (entity, fighter, mut intent, state, tf, stamina, cooldowns, charges, motion, controller, params, dead, context) in &mut fighters {
         let Some(order) = intent.orders.front().cloned() else { continue };
         let Order::Attack { target, ref input, repeat } = order else { continue };
         if dead {
@@ -81,6 +83,7 @@ pub(crate) fn follow_attack_orders(
             mode: motion.map(|m| m.mode),
             off_ground: crate::machine::off_ground(motion),
             leap: site,
+            context,
             ..FighterView::new(&db, &fighter.moveset, state, &intent.held, dead)
         };
         match can_start(&view, input, dt) {

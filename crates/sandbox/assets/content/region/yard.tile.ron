@@ -1,0 +1,47 @@
+// The tiles of the yard (`yard.region.ron`): 32 m squares whose top is y = 0, each on a ground box. Made for 32 m
+// cells (`tile_size`), so the wilds (16 m) never take them, and placed by the region itself (`fixed`, weight 0).
+// Positions are in the tile's frame: its center at the origin, -Z north.
+//
+// Their navigation is baked in `assets/nav/` like every tile's (`cargo sandbox --bake-nav`).
+{
+    // Where players appear.
+    "yard_gate": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        weight: 0.0,
+        tags: ["yard"],
+        tile_size: Some(32.0),
+        slots: [(at: (0.0, 0.0, 0.0), accepts: ["spawn"])],
+        geometry: Inline([
+            Box(min: (-16.0, -1.0, -16.0), max: (16.0, 0.0, 16.0)),
+            Solid(shape: Cuboid(half: (0.5, 2.0, 0.5)), at: (-3.0, 2.0, -2.0)),
+            Solid(shape: Cuboid(half: (0.5, 2.0, 0.5)), at: (3.0, 2.0, -2.0)),
+        ]),
+    ),
+    // The ring: a trigger volume 24 x 8 x 24 m at the center (the start of `ring_waves`), and the
+    // encounter's anchor standing there.
+    "yard_ring": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        weight: 0.0,
+        tags: ["yard"],
+        tile_size: Some(32.0),
+        geometry: Inline([
+            Box(min: (-16.0, -1.0, -16.0), max: (16.0, 0.0, 16.0)),
+            Volume(kind: Trigger(name: "yard_ring"), shape: Cuboid(half: (12.0, 4.0, 12.0)), at: (0.0, 2.0, 0.0)),
+            Prefab(id: "yard_ring", at: (0.0, 0.0, 0.0)),
+        ]),
+    ),
+    // The pack: three markers named `pack` around the anchor of `yard_pack`.
+    "yard_pack": (
+        sockets: (n: "grass", e: "grass", s: "grass", w: "grass"),
+        weight: 0.0,
+        tags: ["yard"],
+        tile_size: Some(32.0),
+        geometry: Inline([
+            Box(min: (-16.0, -1.0, -16.0), max: (16.0, 0.0, 16.0)),
+            Marker(name: "pack", at: (6.0, 0.0, -5.0)),
+            Marker(name: "pack", at: (-6.0, 0.0, -5.0)),
+            Marker(name: "pack", at: (0.0, 0.0, 6.0)),
+            Prefab(id: "yard_pack", at: (0.0, 0.0, 0.0)),
+        ]),
+    ),
+}

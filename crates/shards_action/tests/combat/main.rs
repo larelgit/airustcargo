@@ -6,6 +6,7 @@ mod agents;
 mod body_motion;
 mod body_state;
 mod common;
+mod context;
 mod golden;
 mod hits;
 mod lock;

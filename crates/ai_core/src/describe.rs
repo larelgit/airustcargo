@@ -25,7 +25,9 @@ impl AiKind {
     }
 }
 
-pub type DescribeFn = Arc<dyn Fn(EntityRef) -> Option<String> + Send + Sync>;
+/// A describer: the fragment of an entity's line, read from the entity (and, for the ones that need
+/// it, the world around it).
+pub type DescribeFn = Arc<dyn Fn(&World, EntityRef) -> Option<String> + Send + Sync>;
 
 /// One registered fragment source.
 #[derive(Clone)]
@@ -123,7 +125,7 @@ pub fn facts(world: &World, entity: Entity) -> Option<EntityFacts> {
     let id = *e.get::<AiId>()?;
     let describers = world.get_resource::<AiDescribers>();
     let fragments = describers
-        .map(|d| d.0.iter().filter_map(|d| (d.describe)(e).map(|f| (d.key, f))).filter(|(_, f)| !f.is_empty()).collect())
+        .map(|d| d.0.iter().filter_map(|d| (d.describe)(world, e).map(|f| (d.key, f))).filter(|(_, f)| !f.is_empty()).collect())
         .unwrap_or_default();
     let tf = e.get::<Transform>();
     Some(EntityFacts {

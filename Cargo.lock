@@ -5432,6 +5432,7 @@ dependencies = [
  "shards_content",
  "shards_core",
  "shards_dev",
+ "shards_encounter",
  "shards_fx",
  "shards_hitstop",
  "shards_level",
@@ -5535,6 +5536,26 @@ dependencies = [
  "shards_core",
  "shards_motion",
  "shards_script",
+]
+
+[[package]]
+name = "shards_encounter"
+version = "0.4.0"
+dependencies = [
+ "ai_core",
+ "bevy",
+ "ron",
+ "schemars",
+ "serde",
+ "serde_json",
+ "shards",
+ "shards_action",
+ "shards_content",
+ "shards_core",
+ "shards_level",
+ "shards_motion",
+ "shards_npc",
+ "shards_world",
 ]
 
 [[package]]

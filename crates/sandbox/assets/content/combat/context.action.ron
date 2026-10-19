@@ -1,0 +1,65 @@
+// Context and paired actions (B3), for the `contextual` moveset and `context.scenario`
+// (`stand/finisher.scenario` too). Net ids 150-169.
+{
+    // The finisher: what the light attack is next to a broken enemy. It takes its victim when it
+    // starts (the lock-on target first, else the nearest one within 2 m plus its body, 1.2 m up or
+    // down, 100 degrees either side of where the player means to face, in sight, with no other
+    // player 0.3 m nearer to it), holds the victim's break until the strike, hits only it, ends
+    // the break and knocks it down. Nothing hurts the player while it runs.
+    "spar_finisher": (
+        net_id: 150,
+        phases: [("lunge", 0.25), ("strike", 0.15), ("recovery", 0.45)],
+        hits: [(span: Phase("strike"), shape: Cone(range: 2.6, angle: 120), damage: 25, knockback: 4.0)],
+        iframes: [Phases("lunge", "recovery")],
+        displacement: [(0.0, 0.0), (0.25, 0.6)],
+        pair: (
+            select: (state: Broken, range: 2.0, height: 1.2, angle: 100, line_of_sight: true, prefer_target: true, slack: 0.3),
+            victim_action: "spar_finished",
+            only_victim: true,
+            hold_break: 0.55,
+            ends_break: true,
+            break_range: 4.0,
+        ),
+    ),
+    // The victim's held pose: it only has to outlast the strike, whose knockdown replaces it.
+    "spar_finished": (net_id: 151, phases: [("held", 1.0)]),
+    // The counter: a light within 0.5 s of a parry, while there is stamina. A heavier blow.
+    "spar_counter": (
+        net_id: 152,
+        phases: [("windup", 0.08), ("active", 0.12), ("recovery", 0.35)],
+        cost: (stamina: 10, stamina_mode: Any),
+        hits: [(span: Phase("active"), shape: Cone(range: 2.6, angle: 120), damage: 14, poise: 8, reaction: 2)],
+        weight: Counter,
+    ),
+    // The cut out of a roll: a light within 0.3 s of the roll's end.
+    "spar_dodge_cut": (
+        net_id: 153,
+        phases: [("windup", 0.06), ("active", 0.1), ("recovery", 0.3)],
+        cost: (stamina: 5),
+        hits: [(span: Phase("active"), shape: Cone(range: 2.4, angle: 120), damage: 9, poise: 6, reaction: 1)],
+    ),
+    // The roll the cut follows: tagged `dodge` (its end is remembered, its start forgets a parry).
+    "spar_dodge": (
+        net_id: 154,
+        phases: [("roll", 0.4), ("recover", 0.1)],
+        cost: (stamina: 22, stamina_mode: Any),
+        iframes: [Secs(0.07, 0.25)],
+        perfect_iframes: [Secs(0.105, 0.215)],
+        steer: Move,
+        tags: ["dodge"],
+    ),
+    // A guard whose perfect window needs a fresh press: a press at least 0.35 s after the last
+    // one, the guard up within 0.15 s of it; a parry makes the next press fresh. A guard held
+    // through an attack, a roll or a hit comes back as a plain block. A light or a roll cuts it.
+    "spar_parry_guard": (
+        net_id: 155,
+        phases: [("raise", 0.18), ("hold", 0.3), ("lower", 0.1)],
+        hold: (input: "block", span: Phase("hold")),
+        guard: (span: Phases("raise", "hold"), perfect: Phase("raise"), stamina_per_damage: 0.8,
+                perfect_cost_mult: 0.5, parry_staggers: false, break_damage_mult: 0.5,
+                status_mult: 0.25, break_status_mult: 0.5, arc: 140,
+                perfect_needs_press: (gap: 0.35, entry: 0.15)),
+        cancels: [(span: Secs(0.0, 0.58), into: [Input("light"), Input("dodge")])],
+        move_speed: 0.4,
+    ),
+}
