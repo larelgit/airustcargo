@@ -24,7 +24,7 @@ fn spawn_hero(app: &mut App, at: Vec3) -> Entity {
     spawn_model(app, at, "models/model.gltf")
 }
 
-fn spawn_model(app: &mut App, at: Vec3, file: &'static str) -> Entity {
+pub(crate) fn spawn_model(app: &mut App, at: Vec3, file: &'static str) -> Entity {
     let model = app.world().resource::<AssetServer>().load(GltfAssetLabel::Scene(0).from_asset(file));
     let (controller, intent, transform) = character("", at);
     app.world_mut()
@@ -44,7 +44,7 @@ fn spawn_model(app: &mut App, at: Vec3, file: &'static str) -> Entity {
 }
 
 /// Updates until `done` holds.
-fn update_until(app: &mut App, what: &str, done: impl Fn(&App) -> bool) {
+pub(crate) fn update_until(app: &mut App, what: &str, done: impl Fn(&App) -> bool) {
     let started = Instant::now();
     while !done(app) {
         assert!(started.elapsed() < Duration::from_secs(30), "gave up waiting for: {what}");
@@ -59,7 +59,7 @@ fn spine_angle(app: &mut App, character: Entity) -> f32 {
 }
 
 /// The local transform of bone `name` of `character`'s model.
-fn bone(app: &mut App, character: Entity, name: &str) -> Transform {
+pub(crate) fn bone(app: &mut App, character: Entity, name: &str) -> Transform {
     let world = app.world_mut();
     let mut names = world.query::<(Entity, &Name)>();
     let bone = names
@@ -70,7 +70,7 @@ fn bone(app: &mut App, character: Entity, name: &str) -> Transform {
     *world.get::<Transform>(bone).unwrap()
 }
 
-fn is_below(world: &World, mut entity: Entity, ancestor: Entity) -> bool {
+pub(crate) fn is_below(world: &World, mut entity: Entity, ancestor: Entity) -> bool {
     while let Some(parent) = world.get::<ChildOf>(entity) {
         entity = parent.parent();
         if entity == ancestor {
@@ -80,7 +80,7 @@ fn is_below(world: &World, mut entity: Entity, ancestor: Entity) -> bool {
     false
 }
 
-fn progress(app: &App, character: Entity) -> Option<f32> {
+pub(crate) fn progress(app: &App, character: Entity) -> Option<f32> {
     let run = app.world().get::<ActionState>(character)?.current.as_ref()?;
     Some(run.t / run.length)
 }
@@ -201,7 +201,7 @@ fn the_blender_humanoid_rolls_in_place_and_bows_with_a_clip_of_its_second_file()
 }
 
 /// The entity of bone `name` of `character`'s model.
-fn bone_entity(app: &mut App, character: Entity, name: &str) -> Entity {
+pub(crate) fn bone_entity(app: &mut App, character: Entity, name: &str) -> Entity {
     let world = app.world_mut();
     let mut names = world.query::<(Entity, &Name)>();
     names
