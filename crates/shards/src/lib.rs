@@ -136,6 +136,7 @@ pub mod prelude {
     pub use shards_locale::prelude::*;
     pub use shards_motion::prelude::*;
     pub use shards_npc::prelude::*;
+    pub use shards_rules::RuleClass;
     pub use shards_save::prelude::*;
     pub use shards_settings::prelude::*;
     pub use shards_ui::prelude::*;

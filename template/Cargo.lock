@@ -5379,6 +5379,7 @@ dependencies = [
  "serde_json",
  "shards_content",
  "shards_core",
+ "shards_look",
  "shards_motion",
  "shards_settings",
 ]
@@ -5580,6 +5581,7 @@ dependencies = [
  "shards_core",
  "shards_level",
  "shards_motion",
+ "shards_rules",
  "shards_world",
 ]
 

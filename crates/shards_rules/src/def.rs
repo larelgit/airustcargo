@@ -20,6 +20,8 @@ pub const MAX_BONUS: f32 = 1.0;
 pub const MAX_CHARGE: u32 = 255;
 /// The longest charge name, in characters (a save names charges the same way).
 pub const MAX_CHARGE_NAME: usize = 64;
+/// The longest rule set id, in bytes (a save names the rule set in play by its id and refuses a longer one).
+pub const MAX_MODE: usize = 64;
 /// The largest shift of a director's attack tokens, either way.
 pub const MAX_TOKEN_SHIFT: i32 = 8;
 /// The largest `attack_tokens.min`.
@@ -216,6 +218,12 @@ impl ContentDef for RuleSetDef {
 
     fn validate(&self, id: &str, refs: &mut Refs) {
         let rules = refs.get::<RulesDef>(RULES_ID);
+        if id.len() > MAX_MODE {
+            refs.error(format!(
+                "rule set id `{id}` is {} bytes: an id is at most {MAX_MODE} bytes (a save names the rule set in play by it): shorten it",
+                id.len()
+            ));
+        }
         match rules {
             None => refs.error(format!(
                 "rule sets need `content/**/*.rules.ron` with the definition `{RULES_ID}`, which lists them in `modes`"
@@ -492,6 +500,24 @@ mod tests {
         assert_eq!((plain.attack_rest, plain.attack_tokens), (1.0, TokenRule::default()), "left out: the engine's numbers");
         assert_eq!(plain.classes["player"].incoming_damage, 1.0);
         assert_eq!(db.peek::<RulesDef>("default").unwrap().class_names(), ["player", "brute"]);
+    }
+
+    #[test]
+    fn an_overlong_rule_set_id_is_refused_at_content_load() {
+        let long = "m".repeat(MAX_MODE + 1);
+        let rules = format!(r#"{{"default": (modes: ["plain", "{long}"], start: "plain")}}"#);
+        let sets = format!(r#"{{"plain": (name: "Plain"), "{long}": (name: "Long")}}"#);
+        assert_eq!(
+            errors(&[(RULES_FILE, &rules), (SETS_FILE, &sets)]),
+            [format!(
+                "content/s.rule_set.ron: rule_set `{long}`: rule set id `{long}` is {} bytes: an id is at most {MAX_MODE} bytes (a save names the rule set in play by it): shorten it",
+                MAX_MODE + 1
+            )]
+        );
+        let ok = "m".repeat(MAX_MODE);
+        let rules = format!(r#"{{"default": (modes: ["{ok}"], start: "{ok}")}}"#);
+        let sets = format!(r#"{{"{ok}": (name: "Edge")}}"#);
+        assert_eq!(errors(&[(RULES_FILE, &rules), (SETS_FILE, &sets)]), Vec::<String>::new(), "exactly the limit is allowed");
     }
 
     #[test]

@@ -54,13 +54,13 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
 - Engine tools (`shards tools`): **movement** — `move_to` (`path=true` follows `path_to`), `move`, `stop`, `jump`,
   `sprint`, `glide`, the `clearance` and `path_to` queries (in a region over the navmesh: `path_to` names the `provider`, `clearance` —
   `closed`, where the navmesh ends before the physics does), `input_bindings`, `rebind`; **combat** — `light_attack`, `heavy_attack`,
-  `block`, `parry`, `dodge`, `use_item`, `use_technique`, `lock_on` (`side=left|right` switches), `attack`, `god`, `heal`, `stagger` (`poise=true` breaks the poise), `react` (a developer tool: it forces a reaction), `remember` (a developer tool: a memory of the context, B3), `barrier` and `damage_taken` (developer tools: a barrier, a named damage multiplier), `combat_objects` (the projectiles and zones in the world, B4), `motion_bake`
+  `block`, `parry`, `dodge`, `use_item`, `use_technique`, `lock_on` (`side=left|right` switches), `attack`, `god`, `heal`, `stagger` (`poise=true` breaks the poise), `react` (a developer tool: it forces a reaction), `remember` (a developer tool: a memory of the context, B3), `barrier` and `damage_taken` (developer tools: a barrier, a named damage multiplier), `combat_objects` (the projectiles and zones in the world, B4), `motion_bake`, `animation` (a developer tool: what the animation bridge shows for a body, `id=eN [animset=ID] [bones=true]`)
   (the same as `--bake-motion`); **content** —
   `content_list`, `content_get`, `content_check`, `content_reload`, `spawn_prefab`; **world** — `regen`, `region_load`,
   `goto_tile`, `region_info`, `worldgen_report`, `spawn_level`, `level_info`, `level_reload`, and in a voxel region `sea_current_at` (player: the current
   of the water at a point, toward the middle of the grid) and `voxel_info` (dev: size, chunks, steps with versions, hash, water and sea boxes,
   wide volumes); **NPCs and navigation** —
-  `npc_state` (`nav.routes`: over the navmesh of which body class the NPC plans, or why it plans over the local grid), `npc_set_state`,
+  `npc_schedule` (why each option of an NPC's attack plan is eligible or refused now, by the director's and the planner's own judge; `angle=`, `players=`, `distance=`, `target=` ask what-ifs; a dev caller also gets the planner's next draw; the host answers, a client is refused), `npc_state` (`nav.routes`: over the navmesh of which body class the NPC plans, or why it plans over the local grid), `npc_set_state`,
   `nav_path` (`body=large` — over the navmesh of a body class), `nav_info` (`bodies` — the body classes and their navmeshes), `nav_bake`, the overlays
   `world_overlay` and `nav_overlay` (window),
   `npc_overlay` (a line on each NPC near the players: state, target, token, leash, what it sees and hears; in the window — F7); **rules** —
