@@ -711,6 +711,7 @@ mod tests {
             zone: None,
             zone_until: 0.0,
             anim: None,
+            held: 0.0,
         };
         shards_action::ActionState { current: Some(run), started: 1 }
     }
