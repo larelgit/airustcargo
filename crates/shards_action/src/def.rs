@@ -823,8 +823,8 @@ pub struct PairSelect {
     pub range: f32,
     /// Largest height difference (m).
     pub height: f32,
-    /// Largest angle (degrees, half-angle) between where the fighter means to face (toward its
-    /// lock-on target, else its movement input, else its facing) and the victim.
+    /// Largest angle (degrees, half-angle) between the fighter's body facing (not its lock-on
+    /// direction, not its movement input) and the victim.
     pub angle: f32,
     /// No `LayerMask::WORLD` collider between the two chests (`CombatTuning::sight_height`).
     #[serde(default, skip_serializing_if = "is_false")]
@@ -1379,6 +1379,10 @@ impl Check<'_, '_, '_> {
         }
         if let Some(victim) = &pair.victim_action {
             self.refs.require::<ActionDef>(victim, "pair.victim_action");
+        }
+        if self.def.charge.is_some() {
+            // A charge turns the run into another action, and the pair would still name this one.
+            self.refs.error("a paired action has no charge: the charged action would run on with a pair that names this one; leave out `charge` or `pair`");
         }
     }
 
@@ -2569,6 +2573,20 @@ mod tests {
             shards_content::db::Source { path: "content/m.moveset.ron".into(), text: movesets.into() },
         ];
         shards_content::ContentDb::build(&kinds, &sources).errors().map(|e| e.to_string()).collect()
+    }
+
+    #[test]
+    fn a_paired_action_with_a_charge_is_a_content_error() {
+        let actions = r#"{
+            "fin": (net_id: 1, phases: [("a", 0.3)], pair: (select: (state: Broken, range: 2, height: 1, angle: 60)),
+                    charge: (after: 0.2, into: "fin_charged")),
+            "fin_charged": (net_id: 2, phases: [("a", 0.3)]),
+        }"#;
+        let errors = errors_of(actions, "{}");
+        assert_eq!(
+            errors,
+            ["content/a.action.ron: action `fin`: a paired action has no charge: the charged action would run on with a pair that names this one; leave out `charge` or `pair`"],
+        );
     }
 
     #[test]

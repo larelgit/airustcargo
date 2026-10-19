@@ -1458,7 +1458,7 @@ perfect window, as before. The press is stamped by tick into the lazy component 
 one place, `gate_perfect`, after every refresh of a run's windows (the machine, `force_action`, a client's prediction).
 Godot's quirk of stamping the press when the guard starts, not when the button goes down, is not reproduced.
 
-**Paired actions** (`ActionDef::pair`). When a paired action starts, the machine notes it, and `start_pairs` (in
+**Paired actions** (`ActionDef::pair`; a paired action has no `charge`, a content error, since the charge would turn the run into another action that the pair does not name). When a paired action starts, the machine notes it, and `start_pairs` (in
 `ActionSystems::Effects`, before the effects) takes the victim: the binding's victim if it is still free, else what `select`
 finds now. `select: (team, state, range, height, angle, line_of_sight, prefer_target, slack)` asks for a fighter with
 `Health` that is alive and not held by another, and that:

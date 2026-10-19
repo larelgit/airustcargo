@@ -1,8 +1,8 @@
 # Co-op context and paired actions (B3): two clients next to the host's skeleton e7, whose poise
 # is broken. Only the nearer player (c1's e15) gets the finisher: the selection's `slack` gives a
 # broken enemy to the nearest player of the team, and c2's e16 stands 0.44 m farther. c1 presses
-# light from its own copy of the context; the client predicts the finisher and the host, which
-# resolves the press on the tick it is stamped with, takes e7 with it. Then the host's skeleton
+# light from its own copy of the context; the client does not predict a paired action, so the host,
+# which resolves the press on the tick it is stamped with, starts the finisher and takes e7 with it. Then the host's skeleton
 # slams at e15 and c1 raises its guard on a fresh press: a parry, and the counter it binds to light.
 #
 # Both players get the `contextual` moveset and e7 the `sparring` one
