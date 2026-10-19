@@ -19,13 +19,14 @@ use shards_look::LookPlugin;
 use shards_motion::MotionPlugin;
 use shards_net::NetPlugin;
 use shards_npc::NpcPlugin;
+use shards_rules::{RulesPlugin, RulesSystems};
 use shards_scatter::ScatterPlugin;
 use shards_save::SavePlugin;
 use shards_locale::LocalePlugin;
 use shards_settings::ShardsSettingsPlugin;
 use shards_ui::UiPlugin as ShardsUiPlugin;
 use shards_voxel::VoxelPlugin;
-use shards_world::WorldPlugin;
+use shards_world::{WorldPlugin, WorldSystems};
 
 use crate::audio_wiring::EngineAudioPlugin;
 use crate::coop::CoopPlugin;
@@ -115,6 +116,9 @@ impl PluginGroup for EnginePlugins {
             // Player settings: the groups the modules below apply (controls, camera, warnings).
             .add(ShardsSettingsPlugin)
             .add(MotionPlugin)
+            // Rules: the rule set a world plays (by class, by session size), before the modules that read it.
+            .add(RulesPlugin)
+            .add(RulesOrder)
             .add(ActionPlugin)
             .add(LevelPlugin)
             .add(WorldPlugin)
@@ -191,6 +195,16 @@ fn leave_out(mut group: PluginGroupBuilder, without: &[&str]) -> PluginGroupBuil
         };
     }
     group
+}
+
+/// The rules first in a tick: `RulesSystems::Apply` before the world's zones, the other set of
+/// `SimSet::Input` that runs before `CoreSystems::FollowOrders` (the umbrella knows both crates).
+struct RulesOrder;
+
+impl Plugin for RulesOrder {
+    fn build(&self, app: &mut App) {
+        app.configure_sets(FixedUpdate, RulesSystems::Apply.before(WorldSystems::Zones));
+    }
 }
 
 /// A build for players (feature `dist`): the developer's keys do nothing, neither the console and

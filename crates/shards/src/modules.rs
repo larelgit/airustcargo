@@ -12,8 +12,8 @@ pub struct OptionalModule {
     pub what: &'static str,
 }
 
-/// The modules every game runs: the simulation, its content and settings, bodies and the fight.
-pub const REQUIRED_MODULES: &[&str] = &["core", "content", "settings", "motion", "action"];
+/// The modules every game runs: the simulation, its content and settings, bodies, the rules and the fight.
+pub const REQUIRED_MODULES: &[&str] = &["core", "content", "settings", "motion", "rules", "action"];
 
 /// The modules a game may leave out, in the order [`EnginePlugins`](crate::EnginePlugins) adds
 /// them. The plugins that join two modules (level files as tiles, co-op saves) go with either.
@@ -103,7 +103,7 @@ mod tests {
     #[test]
     fn what_cannot_be_left_out_is_named_with_what_can() {
         let err = check_without(&names(&["motion"])).unwrap_err();
-        assert!(err.starts_with("`motion` runs in every game (core, content, settings, motion, action)") && err.contains("level, world"), "{err}");
+        assert!(err.starts_with("`motion` runs in every game (core, content, settings, motion, rules, action)") && err.contains("level, world"), "{err}");
         let err = check_without(&names(&["sound"])).unwrap_err();
         assert!(err.starts_with("`sound` is not an engine module a game can leave out: level, world,"), "{err}");
         let err = check_without(&names(&["locale"])).unwrap_err();

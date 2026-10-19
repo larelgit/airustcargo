@@ -559,3 +559,16 @@ fn a_tick_that_ran_inside_a_hit_stop_hold_stops_the_game() {
     let line = stops_on(&mut app, "hitstop.no_ticks_inside", 1);
     assert!(line.contains("2 simulation tick(s) ran while the clock was held for a hit stop"), "{line}");
 }
+
+#[test]
+fn a_rule_set_content_does_not_have_stops_the_game() {
+    // The sandbox has no rules content: any mode in play is one content does not have.
+    let mut app = sandbox::test_app(42);
+    app.world_mut().insert_resource(shards::rules::ActiveRules { mode: "nope".into(), generation: 1, players: 1 });
+    let line = stops_on(&mut app, "rules.mode_known", 1);
+    assert!(line.contains("ActiveRules plays `nope`, which content does not have"), "{line}");
+
+    let mut app = sandbox::test_app(42);
+    app.world_mut().insert_resource(shards::rules::ActiveRules::default());
+    assert_eq!(step(&mut app, 5), "ran 5 ticks (0 → 5)", "a neutral mode is no rule set, and known");
+}
