@@ -809,3 +809,51 @@ fn a_replay_verifies_with_animated_bodies_and_the_picture_does_work() {
     assert!(props > 0, "no prop was drawn: the test proves nothing");
     assert!(on_hip, "no sword was ever on the hip: the drink's mount never ran");
 }
+
+/// The same for the motion modes (animation design 10.2, D1.2): the body-motion replay swims in the
+/// pool with a stroke, the bridge draws the sword on the back, in the hand for the stroke and lowers
+/// the model, and the replay still verifies identical with the bare run's state hash.
+#[test]
+fn a_replay_with_a_swim_verifies_with_animated_bodies_in_the_water() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/replays/body_motion.json");
+    let replay: Replay = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let bare = played(replay.clone());
+    assert!(report(&bare).identical(), "{}", report(&bare));
+    let want = replay::state_hash(bare.world());
+
+    let mut app = sandbox::test_app(replay.seed);
+    app.add_systems(Update, dress_fighters);
+    let started = std::time::Instant::now();
+    while shards::ai_core::status::status(app.world())["anim"]["bound"].as_u64() == Some(0) {
+        assert!(started.elapsed() < std::time::Duration::from_secs(60), "no body was bound to a model");
+        app.update();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let end = replay.end.tick;
+    replay::play(app.world_mut(), replay).unwrap();
+    app.update();
+    let (mut swam, mut back, mut in_hand, mut dropped) = (false, false, false, false);
+    let mut sample = |app: &mut App| {
+        let world = app.world_mut();
+        let mut q = world.query::<&shards::action::render::AnimationBound>();
+        for b in q.iter(world) {
+            let water = b.mode() == Some(shards::motion::MotionMode::Water);
+            swam |= water;
+            back |= water && b.place("sword") == Some(&shards::action::Place::Socket("back".into()));
+            in_hand |= water && b.place("sword") == Some(&shards::action::Place::Socket("hand_r".into()));
+            dropped |= b.drop_depth() > 0.0;
+        }
+    };
+    // A frame after every tick: the bridge sees every moment of the stroke.
+    for _ in 0..end {
+        ok(&mut app, "step", json!({"ticks": 1}));
+        app.update();
+        sample(&mut app);
+    }
+    assert!(report(&app).identical(), "{}", report(&app));
+    assert_eq!(replay::state_hash(app.world()), want, "the picture changed the game");
+    assert!(swam, "no body was drawn swimming: the test proves nothing");
+    assert!(back, "no sword rode the back afloat: the mode's mount never ran");
+    assert!(in_hand, "no sword was in the hand afloat: the stroke never made the rules step aside");
+    assert!(dropped, "the model was never lowered: the drop never ran");
+}

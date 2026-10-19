@@ -2,7 +2,6 @@
 //! in the hand, the draw after leaving the water, a layer that is off in the water, and the model
 //! lowered by a swing afloat. A real pool: a water volume the character controller swims in.
 
-use shards::action::render::AnimationBound;
 use shards::action::ModeLeft;
 use shards::motion::{Collider, CollisionLayers, MotionMode, MotionState, Shape, Volume, VolumeKind};
 use shards::prelude::*;

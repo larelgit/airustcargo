@@ -459,7 +459,7 @@ mod tests {
         app.add_systems(Update, apply_model);
         let parent = app.world_mut().spawn((Transform::default(), GlobalTransform::default())).id();
         let bone = app.world_mut().spawn((Transform::from_xyz(0.1, 0.9, 0.2), ChildOf(parent))).id();
-        let mut bound = AnimationBound::new(Entity::PLACEHOLDER, AssetId::invalid());
+        let mut bound = AnimationBound::new(Entity::PLACEHOLDER, AssetId::default());
         bound.root = Some((bone, Vec3::ZERO));
         bound.modes.depth = 0.15;
         let body = app.world_mut().spawn((Animated::new("h"), bound)).id();
