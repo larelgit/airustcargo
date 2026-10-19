@@ -102,6 +102,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("shards_action::context::ContextConditions", "the context conditions, registered at build time"),
     ("shards_action::context::PendingPairs", "paired actions the machine started, taken in the same tick: empty between ticks"),
     ("shards_action::combat::DamageHooks", "the damage hooks, registered at build time"),
+    ("shards_action::combat::LethalHooks", "the lethal hooks, registered at build time"),
     ("shards_action::machine::ActionEffects", "the custom action effects, registered at build time"),
     ("shards_action::machine::PendingEffects", "effects queued and run inside one tick: empty between ticks"),
     ("shards_action::predict::ActionPredictor", "a co-op client's predicted actions; a host or a single player never uses it"),

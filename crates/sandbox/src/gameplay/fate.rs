@@ -1,7 +1,9 @@
 //! What happens around fights and on the course: the boss's phases, the dead monsters'
-//! remains, the lock-on marker that follows life and death, and the goal pad.
+//! remains, the lock-on marker that follows life and death, who goes down instead of dying
+//! ([`spare`]), and the goal pad.
 
-use shards::action::{Died, Healed};
+use shards::action::{ActionAppExt, ActionDef, Died, Fate, Healed, Lethal, LethalCause, MovesetDef, Standing};
+use shards::content::ContentDb;
 use shards::motion::{LockOnTarget, Volume, VolumeEntered, VolumeKind};
 use shards::prelude::*;
 
@@ -13,6 +15,7 @@ pub const GOAL: &str = "goal";
 pub(super) fn plugin(app: &mut App) {
     app.register_type::<Remains>()
         .register_type::<Corpse>()
+        .add_lethal_hook(spare)
         .add_observer(on_died)
         .add_observer(on_healed)
         .add_observer(on_volume_entered);
@@ -124,4 +127,24 @@ fn on_volume_entered(
     if goal && players.contains(entity) {
         commands.trigger(ReachedGoal { entity, goal: volume });
     }
+}
+
+/// The sandbox's lethal hook (B5): a fighter whose moveset has a `downed` pose goes down instead of
+/// dying to a hit while another player still stands (has health, neither dead nor down), and
+/// bleeds out when the pose's time runs out (the `partner` moveset's `spar_down`: 20 s). Any other
+/// death (no pose, no partner standing, health run out some other way) is a death: a fighter
+/// with no `downed` pose, every one before B5, dies exactly as before.
+fn spare(world: &mut World, lethal: &Lethal) -> Fate {
+    if lethal.cause != LethalCause::Hit {
+        return Fate::Die;
+    }
+    let db = world.resource::<ContentDb>();
+    let Some(pose) = world.get::<Fighter>(lethal.entity).and_then(|f| db.get::<MovesetDef>(&f.moveset)).and_then(|m| m.downed.clone()) else {
+        return Fate::Die;
+    };
+    let Some(bleed) = db.get::<ActionDef>(&pose).map(ActionDef::length) else { return Fate::Die };
+    let partner = world
+        .try_query_filtered::<(Entity, &Health), (With<PlayerId>, Standing)>()
+        .is_some_and(|mut q| q.iter(world).any(|(e, h)| e != lethal.entity && h.current > 0.0));
+    if partner { Fate::Down { bleed: Some(bleed) } } else { Fate::Die }
 }

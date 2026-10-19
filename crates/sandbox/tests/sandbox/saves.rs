@@ -524,3 +524,47 @@ fn a_save_made_at_zero_health_leaves_the_body_dead() {
     assert!(dead(&app));
     assert_eq!(health(&app), 0.0);
 }
+
+/// The downed state (B5) is not saved: a body saved while down has no health, so it is saved as
+/// dead, and loading that save never lays a body down.
+#[test]
+fn loaded_zero_health_body_stays_dead() {
+    use shards::action::Downed;
+    let downed = |app: &App| app.world().get::<Downed>(player_entity(app)).is_some();
+    let saves = Saves::new("downed");
+    let mut app = saves.game();
+    ok(&mut app, "set", json!({"id": PLAYER, "component": "Fighter", "path": "moveset", "value": "partner"}));
+    step(&mut app, 2);
+    ok(&mut app, "save_game", json!({"what": "character", "slot": "standing"}));
+    let saved = health(&app);
+    ok(&mut app, "down", json!({"id": PLAYER, "bleed": 10}));
+    step(&mut app, 2);
+    assert!(downed(&app) && !dead(&app));
+    ok(&mut app, "save_game", json!({"what": "character", "slot": "down"}));
+
+    // Loaded into a standing body: no health, so it dies on the next tick (no hook is asked to lay it
+    // down: its health ran out, no blow), and it is dead, not down.
+    ok(&mut app, "heal", json!({"id": PLAYER}));
+    assert!(!downed(&app) && !dead(&app));
+    ok(&mut app, "load_game", json!({"what": "character", "slot": "down"}));
+    step(&mut app, 1);
+    assert!(dead(&app) && !downed(&app), "saved down is saved dead");
+
+    // Loaded into a downed body: down no more, and dead on the next tick.
+    ok(&mut app, "heal", json!({"id": PLAYER}));
+    ok(&mut app, "down", json!({"id": PLAYER}));
+    ok(&mut app, "load_game", json!({"what": "character", "slot": "down"}));
+    assert!(!downed(&app), "the load ends the downed state");
+    step(&mut app, 1);
+    assert!(dead(&app) && !downed(&app));
+
+    // A downed body loading a save with health stands up with it.
+    ok(&mut app, "heal", json!({"id": PLAYER}));
+    ok(&mut app, "down", json!({"id": PLAYER}));
+    ok(&mut app, "load_game", json!({"what": "character", "slot": "standing"}));
+    assert!(!downed(&app) && !dead(&app));
+    assert_eq!(health(&app), saved);
+    assert_ne!(action(&app, PLAYER), "spar_down", "the downed pose is cut");
+    step(&mut app, 30);
+    assert!(!dead(&app));
+}
