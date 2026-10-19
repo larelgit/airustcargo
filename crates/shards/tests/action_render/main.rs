@@ -16,4 +16,5 @@
 
 mod fixtures;
 mod headless;
+mod sockets;
 mod window;

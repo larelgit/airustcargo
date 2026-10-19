@@ -19,13 +19,15 @@
 pub mod bridge;
 pub mod hud;
 pub mod overlay;
+pub mod props;
 
 use bevy::prelude::*;
 use shards_core::LocalPlayer;
 use shards_settings::AccessibilitySettings;
 
-pub use bridge::{AnimGraphs, AnimationBound};
+pub use bridge::{AnimGraphs, AnimStats, AnimationBound};
 pub use hud::ThreatHud;
+pub use props::{PropOf, Sockets};
 pub use overlay::{CombatOverlay, CombatOverlayGizmos, TelegraphGizmos, TelegraphSettings};
 
 pub(crate) fn plugin(app: &mut App) {
