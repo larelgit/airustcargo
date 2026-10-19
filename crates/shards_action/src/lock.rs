@@ -25,8 +25,9 @@
 //!
 //! Without a definition the check does nothing at all: no component, no journal line, no lock
 //! taken away (a game keeps what it had). The hooks that tell motion's lock-on who may be
-//! locked on to (alive, and a `LockOnTarget` or a hostile fighter) and who is dangerous (an
-//! attack whose hit zone would land on the locker) are this module's ([`LockHooks`]).
+//! locked on to (alive, and a `LockOnTarget` or a hostile fighter; a body part's lock point while its
+//! body stands, R3) and who is dangerous (an attack whose hit zone would land on the locker) are this
+//! module's ([`LockHooks`]).
 
 use ai_core::prelude::*;
 use ai_core::{with_query, AiIndex, Offenders};

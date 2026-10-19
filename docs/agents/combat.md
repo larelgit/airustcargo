@@ -31,4 +31,12 @@ Read this when you drive a fight through `dodge`, `light_attack`, `block`, `use_
   names the part it went through (`e5 -> e19 light_1 at hand -10 (hp 1190)`, the body's loss) and a break is
   `e19 hand broken by e5`. A swing meets the part nearest the middle of its cone, so stand where the part you want is the
   nearest one; a body whose definition says `body_hurtbox: false` takes nothing through its own capsule. A dev agent opens or
-  closes a part with `part name=core op=on|off` (without `id`: the body you are locked on) and breaks one with `op=break`.
+  closes a part with `part name=core op=on|off` (without `id`: the body you are locked on, or the body of the point you are
+  locked on) and breaks one with `op=break`.
+- Lock points (R3): a big body's parts can be lock-on targets of their own, and the colossus is locked on to only through them
+  (manual, "Lock points (R3)"). `lock_on` picks a point, `lock_on point=hand` names one (of `target`, else of the body you are
+  locked on), and the answer, `observe` and the journal name a point with its body: `ok: locked on e21 (hand of e19)`,
+  `lock e21 (hand of e19)`. A swing that overlaps the point you are locked on goes through it, so lock on the part you want
+  to hit; `side=left|right` moves between points too. A broken point lets the lock go (`e5 lock released: e21 (hand of
+  e19)`; lock on another), and the body's death loses it (`lock lost: … dead`). `attack target=` on the body keeps your lock on
+  one of its points.

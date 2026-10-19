@@ -18,15 +18,21 @@
 //! the game's. [`set_part`] turns a part on or off (a weak spot that opens), [`break_part`] breaks
 //! one; the dev tool `part` does both.
 //!
+//! **Lock points (R3).** A part with `lock: true` is a lock-on target of its own (`LockOnTarget` and
+//! `LockPoint` on its entity until it breaks); with `lock_body: false` the body itself is taken only
+//! through its points. The lock-on rules are `crate::lock`'s; [`body_of`] is how the rest of the
+//! module set (orders, pairs, leaps, spawns) sees the body behind a point.
+//!
 //! ```ron
 //! // content/combat/colossus.parts.ron
 //! {
 //!     "colossus": (
 //!         body_hurtbox: false,
+//!         lock_body: false,
 //!         parts: {
-//!             "core": (shape: Sphere(radius: 0.6), at: (forward: 0.9, up: 2.0), damage: 3.0, tags: ["weak"], enabled: false),
-//!             "hand": (shape: Sphere(radius: 0.5), at: (forward: 1.4, up: 1.2, right: 1.0), health: Some(60), to_body: 0.5),
-//!             "leg_left": (shape: Capsule(half_height: 0.8, radius: 0.45), at: (forward: 0.3, up: 1.2, right: -0.7), poise: 2.0),
+//!             "core": (shape: Sphere(radius: 0.6), at: (forward: 0.9, up: 2.0), damage: 3.0, tags: ["weak"], enabled: false, lock: true),
+//!             "hand": (shape: Sphere(radius: 0.5), at: (forward: 1.4, up: 1.2, right: 1.0), health: Some(60), to_body: 0.5, lock: true),
+//!             "leg_left": (shape: Capsule(half_height: 0.8, radius: 0.45), at: (forward: 0.3, up: 1.2, right: -0.7), poise: 2.0, lock: true),
 //!         },
 //!     ),
 //! }
