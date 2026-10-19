@@ -471,7 +471,7 @@ pub fn may_lock_on(world: &World, me: Entity, target: Entity, id: AiId, def: &Lo
         let what = if part.broken { "broken" } else { "not a lock point" };
         if world.get::<LockOnTarget>(target).is_none() {
             return Err(match points.is_empty() {
-                true => format!("{id} ({} of {}) is {what}, and {} has no lock points; lock on to the body", part.id, part.body, part.body),
+                true => format!("{id} ({} of {}) is {what}, and {} has no lock points left", part.id, part.body, part.body),
                 false => format!("{id} ({} of {}) is {what}; its lock points: {} (`lock_on target={} point=NAME`)", part.id, part.body, points.join(", "), part.body),
             });
         }
