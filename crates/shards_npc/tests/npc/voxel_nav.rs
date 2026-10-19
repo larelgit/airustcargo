@@ -369,3 +369,35 @@ fn a_corner_where_four_chunks_meet_is_linked_once() {
     assert_eq!(pairs.len(), pairs.iter().collect::<BTreeSet<_>>().len(), "a move is listed twice");
     assert_eq!(all_moves(&fresh), pairs);
 }
+
+#[test]
+fn the_tile_graph_holds_every_diagonal_stitch_the_components_count() {
+    let mut app = region_app(solid);
+    let settings = settings(&app);
+    let nav = bake_volume(app.world_mut(), &settings, Cut::Chunks).unwrap();
+    let diagonals: Vec<_> = (0..nav.node_count())
+        .flat_map(|n| nav.extras_of(n))
+        .filter(|e| {
+            let (a, b) = (nav.node_column(e.from), nav.node_column(e.to));
+            !e.navlink && (a[0] - b[0]).abs() == 1 && (a[1] - b[1]).abs() == 1
+        })
+        .collect();
+    assert!(!diagonals.is_empty(), "the chunk corners are stitched diagonally");
+    // A route whose only way across a corner is a diagonal reaches the goal in a large region
+    // only if the graph has the stitch: a graph without it reports no route where the
+    // components (and the full search of a small region) find one.
+    for e in &diagonals {
+        assert!(nav.component(e.from) == nav.component(e.to));
+        assert!(nav.tile_graph_joins(e.from, e.to), "{:?} -> {:?}: in the components, not in the tile graph", nav.node_column(e.from), nav.node_column(e.to));
+    }
+    // Restitched in a world with a box at a corner, as a refresh does: the graph of a fresh bake
+    // of that world.
+    let put = |app: &mut App| wall(app.world_mut(), Vec3::new(-4.4, 1.0, -4.4), Vec3::new(-3.6, 3.0, -3.6));
+    put(&mut app);
+    let carved = bake_volume(app.world_mut(), &settings, Cut::Chunks).unwrap();
+    let mut fresh_app = region_app(solid);
+    put(&mut fresh_app);
+    let fresh = bake_volume(fresh_app.world_mut(), &settings, Cut::Chunks).unwrap();
+    assert_eq!(carved.tile_graph_digest(), fresh.tile_graph_digest());
+    assert_ne!(carved.tile_graph_digest(), nav.tile_graph_digest(), "the box changes the corner");
+}

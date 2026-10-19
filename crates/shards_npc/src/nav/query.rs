@@ -171,6 +171,23 @@ impl NavRegion {
         Ok(self.finish(physics, query, start, goal, hops, explored))
     }
 
+    /// Whether the tile graph has an edge between the graph nodes of `a` and `b` (the two ends
+    /// of a stitch, a hop or a navlink). A check that the graph and the components agree.
+    #[doc(hidden)]
+    pub fn tile_graph_joins(&self, a: NodeId, b: NodeId) -> bool {
+        let at = |n: NodeId| self.graph.nodes.iter().position(|g| g.node == Some(n) && g.portal.is_none());
+        let Some((a, b)) = at(a).zip(at(b)) else { return false };
+        self.graph.edges[self.graph.first[a] as usize..self.graph.first[a + 1] as usize].iter().any(|e| e.0 as usize == b)
+    }
+
+    /// The tile graph as one text row per node: equal for equal graphs.
+    #[doc(hidden)]
+    pub fn tile_graph_digest(&self) -> String {
+        let g = &self.graph;
+        let rows = (0..g.nodes.len()).map(|n| (g.nodes[n].node, g.nodes[n].portal, &g.edges[g.first[n] as usize..g.first[n + 1] as usize]));
+        rows.map(|row| format!("{row:?}")).collect::<Vec<_>>().join("\n")
+    }
+
     /// Whether a body walks from `query.from` straight to `query.to` on the navmesh: every
     /// column on the line entered by a walking link (no drop, no ledge, nothing switched off)
     /// and a body-wide sweep through the physics world meets nothing, ending in the goal's

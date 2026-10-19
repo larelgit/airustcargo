@@ -1395,11 +1395,12 @@ impl NavRegion {
         made
     }
 
-    /// Whether `e` is a two-cell hop across a tile edge (not a step into the facing column).
+    /// Whether `e` is a stitch that is not a step into the facing column: a two-cell hop across a
+    /// tile edge, or a diagonal step across a chunk seam (a corner where chunks meet). It has no
+    /// portal pair to join: the graph gets its two ends as nodes (as for a navlink).
     fn is_hop(&self, e: &Extra) -> bool {
         let (a, b) = (self.node_column(e.from), self.node_column(e.to));
-        // Two columns along one axis; a diagonal step across a chunk seam is not a hop.
-        !e.navlink && matches!(((a[0] - b[0]).abs(), (a[1] - b[1]).abs()), (2, 0) | (0, 2))
+        !e.navlink && matches!(((a[0] - b[0]).abs(), (a[1] - b[1]).abs()), (2, 0) | (0, 2) | (1, 1))
     }
 
     /// The node nearest `pos` within `reach` meters (flat), preferring its own height
@@ -1506,7 +1507,8 @@ impl NavRegion {
                 graph.nodes.push(GraphNode { inst: inst as u32, node: node.map(|n| self.base[inst] + n), portal: Some(p as u32) });
             }
         }
-        // Ends of navlinks and of hops across tile edges (they start or land off the edge).
+        // Ends of navlinks, of hops across tile edges (they start or land off the edge) and of
+        // diagonal steps across a chunk seam (they join corners, not the portals of an edge).
         let mut ends: Vec<NodeId> = self.extras.iter().filter(|e| e.navlink || self.is_hop(e)).flat_map(|e| [e.from, e.to]).collect();
         ends.sort_unstable();
         ends.dedup();
@@ -1539,7 +1541,7 @@ impl NavRegion {
                 }
             }
         }
-        // Across tiles: a stitch joins the portals of the two sides; a navlink or a hop its
+        // Across tiles: a stitch joins the portals of the two sides; a navlink, a hop or a diagonal its
         // two ends.
         for extra in &self.extras {
             let pair = if extra.navlink || self.is_hop(extra) {
