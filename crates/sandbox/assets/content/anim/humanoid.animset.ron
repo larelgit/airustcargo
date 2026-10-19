@@ -55,5 +55,21 @@
         // The walk's feet keep pace at 2 m/s, the run's at 4.5 m/s.
         speeds: (walk: 2.0, run: 4.5, sprint: 7.5),
         root_motion: "root",
+        // Places on the skeleton a prop can sit in (a bone and a turn from it), the props a moveset
+        // carries (`content/props/sandbox.prop.ron`) and where they go while an action runs. The
+        // player carries a sword in the right hand; the drink puts it on the hip from 0.1 s to 0.9 s
+        // of the action (the flask is in the hand then), and a roll, a flinch or a death that cuts
+        // the drink leaves it there for 0.05 s of the new action. The skeletons and the warden
+        // carry nothing.
+        sockets: {
+            "hand_r": (bone: "hand.R"),
+            "hand_l": (bone: "hand.L"),
+            "hip": (bone: "hips", offset: (0.2, 0.0, 0.0), turn: (0.0, 0.0, 180.0)),
+            "back": (bone: "spine"),
+        },
+        carry: {"player": [(prop: "sword", socket: "hand_r")], "*": []},
+        mounts: {
+            "drink": (moves: [(prop: "sword", to: Some("hip"), span: Secs(0.1, 0.9))], on_cut: {"sword": 0.05}),
+        },
     ),
 }

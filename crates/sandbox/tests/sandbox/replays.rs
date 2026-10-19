@@ -741,3 +741,71 @@ fn a_replay_with_the_assist_on_verifies_on_a_machine_with_it_off() {
     assert!(report.identical(), "{report}");
     assert!(!held_while_playing, "playback let the setting's input reach the replayed body");
 }
+
+/// Gives every fighter the animset and the humanoid's model as the sandbox's `dress` does where
+/// something is drawn, bodies that spawn during the replay included.
+fn dress_fighters(
+    mut commands: Commands,
+    bodies: Query<Entity, (With<Fighter>, Without<shards::action::Animated>)>,
+    assets: Res<AssetServer>,
+) {
+    for body in &bodies {
+        let scene = assets.load(shards::bevy::gltf::GltfAssetLabel::Scene(0).from_asset("models/humanoid.glb"));
+        commands
+            .entity(body)
+            .insert(shards::action::Animated::new("humanoid"))
+            .with_child(shards::bevy::world_serialization::WorldAssetRoot(scene));
+    }
+}
+
+/// The picture never feeds the simulation (animation design 10.2). The headless sandbox draws
+/// nothing, so no body has `Animated`; this one dresses every fighter with the humanoid, as a
+/// window would, and plays the combat prototype's reference replay with frames between the ticks.
+/// The bridge binds the players, spawns the sword under a hand bone, and the replay still verifies
+/// identical and the game's state hash is the one of the bare run. The `anim` status shows the
+/// bridge did work, so the test cannot pass by doing nothing.
+#[test]
+fn a_replay_verifies_with_animated_bodies_and_the_picture_does_work() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/replays/combat_prototype.json");
+    let replay: Replay = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let bare = played(replay.clone());
+    assert!(report(&bare).identical(), "{}", report(&bare));
+    let want = replay::state_hash(bare.world());
+
+    let mut app = sandbox::test_app(replay.seed);
+    app.add_systems(Update, dress_fighters);
+    // The model loads on the asset server's threads: wait for the player to be bound first.
+    let started = std::time::Instant::now();
+    while shards::ai_core::status::status(app.world())["anim"]["bound"].as_u64() == Some(0) {
+        assert!(started.elapsed() < std::time::Duration::from_secs(60), "no body was bound to a model");
+        app.update();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let end = replay.end.tick;
+    replay::play(app.world_mut(), replay).unwrap();
+    app.update();
+    let (mut props, mut bound, mut on_hip) = (0, 0, false);
+    let mut sample = |app: &mut App| {
+        let world = app.world_mut();
+        let mut q = world.query::<&shards::action::render::AnimationBound>();
+        on_hip |= q.iter(world).any(|b| b.place("sword") == Some(&shards::action::Place::Socket("hip".into())));
+        let app = &*app;
+        let anim = shards::ai_core::status::status(app.world())["anim"].clone();
+        props = props.max(anim["props"].as_u64().unwrap());
+        bound = bound.max(anim["bound"].as_u64().unwrap());
+    };
+    for _ in 0..end / 10 {
+        ok(&mut app, "step", json!({"ticks": 10}));
+        app.update();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        sample(&mut app);
+    }
+    ok(&mut app, "step", json!({"ticks": end % 10}));
+    app.update();
+    sample(&mut app);
+    assert!(report(&app).identical(), "{}", report(&app));
+    assert_eq!(replay::state_hash(app.world()), want, "the picture changed the game");
+    assert!(bound > 0, "no body was bound");
+    assert!(props > 0, "no prop was drawn: the test proves nothing");
+    assert!(on_hip, "no sword was ever on the hip: the drink's mount never ran");
+}

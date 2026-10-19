@@ -1,0 +1,11 @@
+// Things the sandbox's characters carry (content kind `prop`): the engine draws them under the
+// bones of the model, where the animset's `carry` and `mounts` say. A box needs no model file.
+//
+// The mannequin of `humanoid.glb` already has a sword skinned into its fist (a blade 0.76 m long
+// at 45 degrees, forward and down, `tools/blender/humanoid.py`), which no content can take away:
+// the prop sword is drawn over it, along the same blade, a little thicker, so that what moves
+// during the drink and the equip is the prop (the skinned one stays in the hand).
+{
+    // The box turned 45 degrees and moved 0.47 m along the blade (the grip), so that its handle end sits in the fist and the blade runs forward and down as the mannequin's own.
+    "sword": (size: (0.05, 0.9, 0.02), grip: (0.0, 0.33, -0.33), turn: (-45.0, 0.0, 0.0)),
+}

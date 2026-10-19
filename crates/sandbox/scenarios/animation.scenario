@@ -1,0 +1,37 @@
+# The animation bridge's props (animation design D1.1), headless: nothing is drawn, so the
+# `animation` tool says what the bridge would choose for the humanoid set. The hero carries the
+# sword in the right hand; the drink puts it on the hip for a while (the `drink` mount), then it
+# goes back. A body without `Animated` needs the set named.
+
+seed 42
+
+act? ui_close screen=confirm_quit
+act? ui_close screen=settings
+act? ui_close screen=pause
+act heal id=e5
+act stop
+
+# --- 1. at rest: the sword is in the hand; the warden carries nothing
+act animation id=e5 animset=humanoid
+expect result contains "e5 has no Animated"
+expect result contains "carry (moveset player): sword at hand_r"
+expect result contains "props: sword at hand_r"
+act? animation id=e5
+expect result contains "is not animated"
+act content_get kind=prop id=sword
+expect result contains "\"size\""
+
+# --- 2. a drink: the sword sits at the hip through the middle of it, and is back in the hand after
+# (a shared game may hold the hero mid-swing)
+step 60
+act use_item item=flask
+step 30
+act animation id=e5 animset=humanoid
+expect result contains "props: sword at hip"
+step 40
+act animation id=e5 animset=humanoid
+expect result contains "props: sword at hand_r"
+
+# --- 3. a fix for a bad call
+act? animation id=e5 animset=humanoyd
+expect result contains "is not in content"
