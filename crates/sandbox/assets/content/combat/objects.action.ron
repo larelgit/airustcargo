@@ -1,0 +1,71 @@
+// Spawned combat objects (B4) on neutral numbers: the caster's volley, line and ring, and the
+// actions of what they lay down (prefabs in `objects.prefab.ron`, the moveset in
+// `caster.moveset.ron`). `objects.scenario` plays them. Net ids 170-185.
+{
+    // Three bolts in a fan at the lock-on target, the middle one homing (index 1 of 0..2).
+    "caster_volley": (
+        net_id: 170,
+        phases: [("windup", 1.0), ("cast", 0.22), ("recovery", 0.85)],
+        effects: [(at: 1.0, effect: Spawn((prefab: ["bolt", "bolt_homing", "bolt"], action: ["bolt_fly"],
+                   at: (forward: 0.8, up: 1.2), aim: Target(height: 0.9), count: 3, pattern: Fan(spread: 11))))],
+    ),
+    // A bolt's flight: the window is open the whole flight; where it stops it bursts.
+    "bolt_fly": (
+        net_id: 171,
+        phases: [("fly", 2.4)],
+        impact: "bolt_burst",
+        hits: [(span: Phase("fly"), shape: Sphere(radius: 0.26), damage: 8, poise: 6, guard_damage: 18, reaction: 1)],
+    ),
+    // The burst lays a chilling puddle on the floor below.
+    "bolt_burst": (
+        net_id: 172,
+        phases: [("burst", 0.1)],
+        effects: [(at: 0.0, effect: Spawn((prefab: ["zone"], action: ["chill_puddle"], ground: 4.0)))],
+    ),
+    // A ground zone: active at once for 3 s, then a fade; it hits each body in it every 0.8 s, from
+    // that body's first hit, and cannot be blocked or perfectly dodged.
+    "chill_puddle": (
+        net_id: 173,
+        phases: [("telegraph", 0.0), ("active", 3.0), ("fade", 0.5)],
+        tags: ["capture"],
+        hits: [(span: Phase("active"), shape: Sphere(radius: 1.5), at: (up: 0.8), damage: 2, guard_damage: 18,
+                repeat: 0.8, flags: [Unblockable, NoPerfectEvade], status: [("spar_chill", 22)])],
+    ),
+    // Six zones in a line ahead, landing one after another.
+    "caster_line": (
+        net_id: 174,
+        phases: [("windup", 0.8), ("cast", 0.3), ("recovery", 0.6)],
+        effects: [(at: 0.8, effect: Spawn((prefab: ["zone"], count: 6, pattern: Line(start: 1.8, step: 1.7),
+                   action: ["line_zone_0", "line_zone_1", "line_zone_2", "line_zone_3", "line_zone_4", "line_zone_5"])))],
+    ),
+    // Index i of the line: telegraphed for 0.35 + 0.16 i seconds, then it lands.
+    "line_zone_0": (net_id: 175, phases: [("telegraph", 0.35), ("active", 0.25)], telegraph: (symbol: "^"),
+                    hits: [(span: Phase("active"), shape: Circle(radius: 0.9, height: 2.0), damage: 12, poise: 10, reaction: 2)]),
+    "line_zone_1": (net_id: 176, phases: [("telegraph", 0.51), ("active", 0.25)], telegraph: (symbol: "^"),
+                    hits: [(span: Phase("active"), shape: Circle(radius: 0.9, height: 2.0), damage: 12, poise: 10, reaction: 2)]),
+    "line_zone_2": (net_id: 177, phases: [("telegraph", 0.67), ("active", 0.25)], telegraph: (symbol: "^"),
+                    hits: [(span: Phase("active"), shape: Circle(radius: 0.9, height: 2.0), damage: 12, poise: 10, reaction: 2)]),
+    "line_zone_3": (net_id: 178, phases: [("telegraph", 0.83), ("active", 0.25)], telegraph: (symbol: "^"),
+                    hits: [(span: Phase("active"), shape: Circle(radius: 0.9, height: 2.0), damage: 12, poise: 10, reaction: 2)]),
+    "line_zone_4": (net_id: 179, phases: [("telegraph", 0.99), ("active", 0.25)], telegraph: (symbol: "^"),
+                    hits: [(span: Phase("active"), shape: Circle(radius: 0.9, height: 2.0), damage: 12, poise: 10, reaction: 2)]),
+    "line_zone_5": (net_id: 180, phases: [("telegraph", 1.15), ("active", 0.25)], telegraph: (symbol: "^"),
+                    hits: [(span: Phase("active"), shape: Circle(radius: 0.9, height: 2.0), damage: 12, poise: 10, reaction: 2)]),
+    // Eight lines of four zones around the caster, turned by a random angle; the rings land from the
+    // inside out.
+    "caster_radial": (
+        net_id: 181,
+        phases: [("windup", 1.0), ("cast", 0.4), ("recovery", 1.2)],
+        effects: [(at: 1.0, effect: Spawn((prefab: ["zone"], count: 4, random_turn: true,
+                   pattern: Radial(lines: 8, start: 1.6, step: 2.1), action: ["ring_zone_0", "ring_zone_1", "ring_zone_2", "ring_zone_3"])))],
+    ),
+    // Index j on a line: telegraphed for 0.5 + 0.22 j seconds, then it lands.
+    "ring_zone_0": (net_id: 182, phases: [("telegraph", 0.5), ("active", 0.25)], telegraph: (symbol: "o"),
+                    hits: [(span: Phase("active"), shape: Circle(radius: 0.8, height: 2.0), damage: 10, poise: 8, reaction: 1)]),
+    "ring_zone_1": (net_id: 183, phases: [("telegraph", 0.72), ("active", 0.25)], telegraph: (symbol: "o"),
+                    hits: [(span: Phase("active"), shape: Circle(radius: 0.8, height: 2.0), damage: 10, poise: 8, reaction: 1)]),
+    "ring_zone_2": (net_id: 184, phases: [("telegraph", 0.94), ("active", 0.25)], telegraph: (symbol: "o"),
+                    hits: [(span: Phase("active"), shape: Circle(radius: 0.8, height: 2.0), damage: 10, poise: 8, reaction: 1)]),
+    "ring_zone_3": (net_id: 185, phases: [("telegraph", 1.16), ("active", 0.25)], telegraph: (symbol: "o"),
+                    hits: [(span: Phase("active"), shape: Circle(radius: 0.8, height: 2.0), damage: 10, poise: 8, reaction: 1)]),
+}

@@ -328,6 +328,60 @@ pub fn spawn_prefab(world: &mut World, id: &str, transform: Transform, overrides
     Ok(entity.id())
 }
 
+/// Prefabs [`spawn_prefab_cached`] built, kept as values until a definition of their chain
+/// changes: a spell that spawns many objects a second reads each prefab's text once. A cache, not
+/// simulation state: what it holds follows from content.
+#[derive(Resource, Default)]
+pub struct PrefabCache {
+    built: BTreeMap<String, Cached>,
+    builds: u64,
+}
+
+/// One built prefab: the definitions of its chain (root first) it was built from, and its
+/// components by type path.
+struct Cached {
+    chain: Vec<PrefabDef>,
+    components: Vec<(std::any::TypeId, Box<dyn Reflect>)>,
+}
+
+impl PrefabCache {
+    /// How many times a prefab was built from text (a first spawn, or one after its definitions
+    /// changed).
+    pub fn builds(&self) -> u64 {
+        self.builds
+    }
+}
+
+/// [`spawn_prefab`] with no overrides, through the [`PrefabCache`]: the prefab is built from its
+/// text on its first spawn and again only when a definition of its `extends` chain changed. Each
+/// spawn reads the chain from content all the same (a replay's content check sees what it used).
+pub fn spawn_prefab_cached(world: &mut World, id: &str, transform: Transform) -> Result<Entity, String> {
+    let defs: Vec<PrefabDef> = chain(world.resource::<ContentDb>(), id)?.into_iter().cloned().collect();
+    let Some(cache) = world.get_resource::<PrefabCache>() else { return spawn_prefab(world, id, transform, None) };
+    let fresh = cache.built.get(id).is_some_and(|c| c.chain == defs);
+    let app_registry = world.resource::<AppTypeRegistry>().clone();
+    let registry = app_registry.read();
+    if !fresh {
+        let built = build(world.resource::<ContentDb>(), &registry, id, None)?;
+        let components = built.into_values().map(|(reg, value)| (reg.type_id(), value)).collect();
+        let mut cache = world.resource_mut::<PrefabCache>();
+        cache.builds += 1;
+        cache.built.insert(id.to_owned(), Cached { chain: defs, components });
+    }
+    // Out of the world while its values are inserted (an insert's hooks and observers may spawn).
+    world.resource_scope(|world, cache: Mut<PrefabCache>| {
+        let cached = cache.built.get(id).expect("built above");
+        let mut entity = world.spawn_empty();
+        for (type_id, value) in &cached.components {
+            if let Some(component) = registry.get(*type_id).and_then(|reg| reg.data::<ReflectComponent>()) {
+                component.insert(&mut entity, value.as_partial_reflect(), &registry);
+            }
+        }
+        entity.insert(transform);
+        Ok(entity.id())
+    })
+}
+
 /// Spawn a prefab (an entity defined in content/**/*.prefab.ron) at (x, z). List them
 /// with `content_list kind=prefab`.
 #[derive(Deserialize, JsonSchema)]

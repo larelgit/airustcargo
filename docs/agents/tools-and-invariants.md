@@ -25,3 +25,5 @@ Read this when you add a tool, an invariant, a describer, or touch `AiId` or `Ai
   `encounter_returning`; the engine rules `encounter.members_tracked`, `encounter.state_sane` and `encounter.lock_matches`. A prefab a run counts
   needs an `AiId` (`AiKind`). A game plugs a downed state in with `add_encounter_out_rule` and cleans up what a member owns with
   `add_encounter_despawn_hook`.
+
+- Combat objects (B4) add the engine rules `action.objects_sane` (an object has an owner in the world; a projectile holds finite numbers and a unit direction) and `action.objects_capped` (no more than `max_objects` alive in a tick that spawned some), the query `combat_objects`, the conditions `objects_live` and `projectile_flying`, and the describers `object` and `projectile`. A combat object carries `NoTombstone` (required by `CombatObject`): it leaves no tombstone in the `AiIndex`, so a radial cast cannot push the ids worth remembering out of the graveyard. Spawn objects only through `spawn_objects`, which keeps the caps; a prefab with a `CombatObject` made by hand trips `objects_capped`.

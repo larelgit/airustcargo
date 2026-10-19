@@ -1051,16 +1051,12 @@ pub(crate) fn run_machines(
                             commands.entity(entity).try_insert(Launch { height: l.height });
                         }
                     }
-                    for &(lo, hi) in &spans {
-                        for e in def.effects.iter().filter(|e| crosses(e.at, lo, hi)) {
-                            pending.0.push((entity, run.action.clone(), e.effect.clone()));
-                        }
-                        if let Some(tg) = &def.telegraph
-                            && crosses(tg.at, lo, hi)
-                        {
-                            commands.trigger(telegraph(entity, def, run, here));
-                        }
-                    }
+                    crossed(
+                        def,
+                        &spans,
+                        |e| pending.0.push((entity, run.action.clone(), e.clone())),
+                        || commands.trigger(telegraph(entity, def, run, here)),
+                    );
                     run.refresh(def, RunExtras::extra_of(extras.as_ref()));
                     gate_perfect(run, def, f.arm.as_deref());
                     // Held long enough: it turns into its charged action, if the stamina is there.
@@ -1751,6 +1747,19 @@ fn crosses(at: f32, lo: f32, hi: f32) -> bool {
     at > lo + EPS && at <= hi + EPS
 }
 
+/// What the stretches `spans` of a tick crossed of `def`'s timeline, in order: each effect goes to
+/// `effect`, the telegraph to `telegraph`. The machine's runs and the combat objects' share it.
+pub(crate) fn crossed(def: &ActionDef, spans: &[(f32, f32)], mut effect: impl FnMut(&Effect), mut telegraph: impl FnMut()) {
+    for &(lo, hi) in spans {
+        for e in def.effects.iter().filter(|e| crosses(e.at, lo, hi)) {
+            effect(&e.effect);
+        }
+        if def.telegraph.as_ref().is_some_and(|tg| crosses(tg.at, lo, hi)) {
+            telegraph();
+        }
+    }
+}
+
 /// Moves `run` on by `dt`, looping inside the hold span while `holding`. Returns the
 /// stretches of the timeline the tick covered (two when it looped).
 pub(crate) fn advance(run: &mut Running, def: &ActionDef, dt: f32, holding: bool) -> Vec<(f32, f32)> {
@@ -1791,7 +1800,7 @@ fn begin(
     }
 }
 
-fn telegraph(attacker: Entity, def: &ActionDef, run: &Running, feet: Vec3) -> Telegraph {
+pub(crate) fn telegraph(attacker: Entity, def: &ActionDef, run: &Running, feet: Vec3) -> Telegraph {
     let zones = action_zones(def, run.t, feet, run.facing);
     let first = zones.first();
     let tg = def.telegraph.clone().unwrap_or_else(|| crate::def::TelegraphDef {
@@ -1899,7 +1908,17 @@ pub(crate) fn finish_actions(
             if has_ghost {
                 commands.entity(entity).try_remove::<Ghost>();
             }
+            let then = db.get::<ActionDef>(&run.action).and_then(|d| d.then.clone());
             commands.trigger(ActionEnded::of(entity, &run, ActionEnd::Finished));
+            // `then` starts in this tick, after the end's observers; one of them that started
+            // something else (a reaction) keeps it.
+            if let Some(then) = then {
+                commands.queue(move |world: &mut World| {
+                    if world.get::<ActionState>(entity).is_some_and(|s| s.current.is_none()) {
+                        force_action(world, entity, &then);
+                    }
+                });
+            }
         }
     }
 }
@@ -2019,6 +2038,9 @@ pub fn apply_effect(world: &mut World, entity: Entity, action: &str, effect: &Ef
             grant_barrier(world, entity, amount, *seconds);
         }
         Effect::Sound(sound) => world.trigger(ActionSound { entity, action: action.to_owned(), sound: sound.clone() }),
+        Effect::Spawn(spawn) => {
+            crate::objects::spawn_objects(world, entity, action, spawn, None);
+        }
         Effect::Custom(name) => {
             let hook = world.resource::<ActionEffects>().0.iter().find(|(n, _)| n == name).map(|(_, f)| *f);
             match hook {

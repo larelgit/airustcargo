@@ -801,6 +801,8 @@ mod tests {
             active_for: 0.3,
             symbol: symbol.map(str::to_owned),
             flags: Vec::new(),
+            owner: None,
+            tags: Vec::new(),
         }
     }
 
