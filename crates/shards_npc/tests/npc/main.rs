@@ -15,4 +15,5 @@ mod perception;
 mod replay;
 mod snapshot;
 mod tools;
+mod voxel_nav;
 mod warden;

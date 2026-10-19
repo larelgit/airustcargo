@@ -361,8 +361,8 @@ fn body_of(world: &World, e: Entity) -> Option<CharacterParams> {
 }
 
 fn nav_path(In(call): In<Call<NavPathArgs>>, world: &mut World) -> ToolResult<Value> {
-    if crate::nav::region_is_volume(world) {
-        return Err(format!("no navmesh for this region ({}): use path_to, which plans over the local grid", crate::nav::VOXEL_NO_NAV));
+    if crate::nav::region_is_volume(world) && !crate::nav::simulates(world) {
+        return Err(format!("no navmesh for this region ({}): routes are the host's; `path_to` plans over the local grid", crate::nav::VOXEL_NOT_SIMULATED));
     }
     // Tools run between ticks: colliders a call just moved must be where the route sees them.
     let _ = world.run_system_cached(sync_physics);

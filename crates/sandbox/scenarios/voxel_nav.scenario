@@ -1,0 +1,93 @@
+# The voxel arena's navmesh (A2e): the region of `voxel_arena.scenario`, whose navigation the engine
+# bakes in memory when it loads, one bake per 64 m chunk and body class, stitched across the chunk
+# seams (nothing is written to `assets/nav/`). Here the navmesh is read and walked: `nav_info`,
+# the route `nav_path` finds through the cave (it crosses the seam at x = 0 on the way), the large
+# body class that does not fit the tunnel, and a skeleton that chases the player up the steps and
+# through the cave by those routes.
+#
+# The arena's floor is at y 0 and its middle at (0.5, -399.5), on the seam of four chunks. The steps
+# are to the north-east (four 1 m risers, x 4 to 8, z -407..-405), the cave to the west (a tunnel
+# through a mound, x -31..-17 along z -399.5, its floor at y 0; the ground falls 1 m at its west
+# end). The skeleton is spawned as part of the region (`RegionPart`), so the `regen` that ends the
+# scenario takes it away, whatever id it had: ids of spawned bodies depend on what ran before.
+
+seed 42
+
+# --- 1. to the voxel arena: the region of seed 7 replaces whatever region there was
+act heal id=e5
+act stop
+act block on=false
+act glide on=false
+act sprint on=false
+act lock_on off=true
+act regen region=voxel_arena seed=7
+expect result contains "ok: voxel_arena seed 7 v1 (attempt 1, 16 chunks, 6 POIs"
+expect journal "region loaded: voxel_arena seed 7 v1 (256 x 32 x 256, 2 water boxes, 4 sea boxes"
+# One navmesh per body class, made inside the call that loads the region.
+expect journal "navmesh: voxel_arena seed 7 v1 (16 chunks, 250097 nodes, 16989 links across edges, 0 navlinks)"
+expect journal "navmesh (body large): 16 chunks, 243673 nodes, 16093 links across edges, 0 navlinks"
+expect !journal "navmesh: none"
+act god
+invariant field e5 Health.current > 0
+step 60
+act stop
+act teleport id=e5 x=0.5 z=-399.5 y=0
+step 2
+
+# --- 2. what the navmesh is: baked in memory, 4 x 4 chunks, every chunk edge open
+act nav_info
+expect result contains "\"summary\": \"16 chunks, 250097 nodes, 16989 links across edges, 0 navlinks\""
+expect result contains "in memory, 16 chunks, baked in "
+expect result contains "\"closed_edges\": 0"
+expect result contains "\"carved_cells\": 0"
+expect result contains "\"body\": \"large\""
+expect result contains "\"from_files\": []"
+act region_info
+expect result contains "4×4 chunks of 64m"
+
+# --- 3. a route through the cave: from the arena's middle west, across the seam of chunks (2, 2)
+# and (1, 2), through the tunnel, down the 1 m drop at its end and on 6 m more
+act nav_path to='{"x": -36.5, "z": -399.5}'
+expect result contains "\"provider\": \"navmesh\""
+expect result contains "path 37.4m, 6 turns: 30.3m W → 1.0m W (drop 1.0m) → 3.0m W → 2.0m W → 0.7m SW → 0.4m NW"
+expect result contains "\"(1, 2)\""
+expect result contains "\"(2, 2)\""
+# `path_to` asks the same navmesh
+act path_to target='{"x": -23.5, "z": -399.5}'
+expect result contains "\"provider\": \"navmesh\""
+expect result contains "path 24.0m, 1 turns: 24.0m W"
+# the steps: four 1 m climbs
+act nav_path to='{"x": 7.5, "z": -405.5}'
+expect result contains "path 10.9m, 7 turns: 6.1m NE → 1.0m N (mantle 1.0m) → 1.0m E (mantle 1.0m) → 1.0m E (mantle 1.0m) → 1.0m E (mantle 1.0m) → 0.5m E → 0.4m NW"
+# the large body (1.6 m wide, 3.2 m tall) does not fit the tunnel (2.2 m wide, 2.2 m high): the
+# way is shut to its navmesh, and the error says so
+act? nav_path to='{"x": -36.5, "z": -399.5}' body=large
+expect result contains "the goal (-36.5, -399.5) is on ground the start cannot reach at all (tile (1, 2) from tile (2, 2))"
+
+# --- 4. a skeleton chases the player up the steps: it sees the player 10 m away on the top, its
+# route is the navmesh's (a mantle for each riser), and it claws
+act spawn_prefab id=skeleton x=-2.5 y=0 z=-399.5 overrides='{"RegionPart": {}}'
+expect result contains "skeleton at (-2.5, -399.5)"
+act teleport id=e5 x=7.5 z=-405.5 y=4
+step 5
+expect journal "idle → fight e5"
+step 700 --until "journal:-> e5 claw"
+expect stopped "-> e5 claw"
+expect journal "climbs a 1.0m ledge"
+
+# --- 5. through the cave: the player goes in at the tunnel's mouth, 20 m west, and the skeleton comes
+# after it across the arena and into the tunnel
+act teleport id=e5 x=-19.5 z=-399.5 y=0
+step 2000 --until "journal:-> e5 claw"
+expect stopped "-> e5 claw"
+observe
+expect result contains "fight e5"
+expect result contains "cave.0"
+
+# --- the way the world was: the same region again takes the skeleton with it
+act stop
+act regen region=voxel_arena seed=7
+expect result contains "ok: voxel_arena seed 7 v1 (attempt 1, 16 chunks, 6 POIs"
+act teleport id=e5 x=0.5 z=-399.5 y=0
+step 5
+act god on=false

@@ -156,7 +156,7 @@ impl NavRegion {
         }
         let corridor = self.corridor(start, goal);
         let found = match &corridor {
-            Some(tiles) => self.search(start, goal, Some(tiles), usize::MAX),
+            Some(tiles) => self.search(start, goal, Some(&self.widened(tiles)), usize::MAX),
             None => None,
         };
         let found = found.or_else(|| (self.node_count() as usize <= 4 * FULL_BUDGET).then(|| self.search(start, goal, None, FULL_BUDGET)).flatten());
@@ -318,6 +318,32 @@ impl NavRegion {
             }
         }
         dist
+    }
+
+    /// The corridor with the chunks around it, in a voxel region: the tile graph measures from
+    /// each portal's middle node, so the corridor it picks may leave out the chunk a cheaper
+    /// crossing of a seam is in, and a chunk is only a seam in the ground, not a place a route
+    /// has a reason to stay in. A region of tiles keeps the corridor as it is: its tiles are
+    /// separate places. Sorted, once each.
+    fn widened(&self, tiles: &[u32]) -> Vec<u32> {
+        if self.voxel.is_none() {
+            return tiles.to_vec();
+        }
+        let mut out = tiles.to_vec();
+        for &t in tiles {
+            let [cx, cz] = self.instances[t as usize].cell;
+            for dz in -1..=1 {
+                for dx in -1..=1 {
+                    let (x, z) = (cx + dx, cz + dz);
+                    if x >= 0 && z >= 0 && (x as u32) < self.size[0] && (z as u32) < self.size[1] {
+                        out.extend(self.instance_at([x * self.per as i32, z * self.per as i32]));
+                    }
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 
     /// The tiles a route goes through, by A* over the tile graph; `None`: the graph knows no way.

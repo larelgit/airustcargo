@@ -52,6 +52,27 @@ pub fn bake(main: &World, root: Option<&std::path::Path>, kind: TileKind, id: &s
     NavTile::from_file(&tile.to_file())
 }
 
+/// One chunk of a voxel region, baked in memory from `physics`: the columns `base..base + size`
+/// of the region's grid (its north-west corner at `origin`), sampled with the chunk's world
+/// position, never at the origin. Nothing is spawned and no file is written; `physics` is what
+/// the chunk is a function of (the voxel field and the water, see
+/// `region::volume`), and a chunk keeps no [`BakedCollider`]: the key of its bake
+/// stands for the field. Pure: the same inputs, the same bytes, on any thread.
+pub(crate) fn bake_chunk(
+    physics: &PhysicsWorld,
+    settings: &NavSettings,
+    id: &str,
+    hash: String,
+    tile_size: f32,
+    frame: Frame,
+    size: [u32; 2],
+) -> Result<NavTile, String> {
+    let sampled = Sampler::new(physics, settings, size).at(frame).run();
+    let tile = assemble(TileKind::Tile, id, hash, tile_size, settings.cell, size, sampled, Vec::new())?;
+    // The costs as a file read would give them, as a tile's are.
+    NavTile::from_file(&tile.to_file())
+}
+
 /// An empty world with what spawning a tile reads: content, the type registry (prefabs and
 /// level components), collider ids, a physics world.
 fn scratch_world(main: &World, db: &ContentDb) -> World {
@@ -136,6 +157,14 @@ fn level(y: f32) -> i32 {
     (y * 4.0).round() as i32
 }
 
+/// Where a bake's columns are in the world, when it is not a tile alone at the origin (a chunk
+/// of a voxel region): the region's north-west corner and the global column of the bake's first.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Frame {
+    pub origin: Vec2,
+    pub base: [i32; 2],
+}
+
 /// The flood over one tile.
 pub(crate) struct Sampler<'a> {
     terrain: Terrain<'a>,
@@ -143,6 +172,8 @@ pub(crate) struct Sampler<'a> {
     cell: f32,
     safe_drop: f32,
     size: [u32; 2],
+    /// `None` for a tile: columns are `(i + 0.5) * cell`, literally, as they have always been.
+    frame: Option<Frame>,
     probes: HashMap<(i32, i32, i32), Probe>,
     nodes: Vec<Raw>,
     index: HashMap<Key, usize>,
@@ -157,6 +188,7 @@ impl<'a> Sampler<'a> {
             cell: settings.cell,
             safe_drop: settings.safe_drop,
             size,
+            frame: None,
             probes: HashMap::new(),
             nodes: Vec::new(),
             index: HashMap::new(),
@@ -164,8 +196,21 @@ impl<'a> Sampler<'a> {
         }
     }
 
-    fn centre(&self, i: i32) -> f32 {
-        (i as f32 + 0.5) * self.cell
+    /// The bake's columns at a place in the world (a voxel region's chunk): its centres are the
+    /// region navmesh's own ([`NavRegion::column_center`](super::region::NavRegion::column_center)):
+    /// `origin + (global column + 0.5) * cell`, the same bits whichever way the region is cut.
+    pub(crate) fn at(mut self, frame: Frame) -> Self {
+        self.frame = Some(frame);
+        self
+    }
+
+    /// The world coordinate of the centre of column `i` along `axis` (0: x, 1: z). A tile keeps
+    /// the plain product: adding a zero origin would turn a `-0.0` into `+0.0`.
+    fn centre(&self, i: i32, axis: usize) -> f32 {
+        match self.frame {
+            None => (i as f32 + 0.5) * self.cell,
+            Some(f) => f.origin[axis] + ((f.base[axis] + i) as f32 + 0.5) * self.cell,
+        }
     }
 
     fn inside(&self, i: i32, j: i32) -> bool {
@@ -173,7 +218,7 @@ impl<'a> Sampler<'a> {
     }
 
     fn probe(&mut self, i: i32, j: i32, from_y: f32) -> Probe {
-        let (x, z) = (self.centre(i), self.centre(j));
+        let (x, z) = (self.centre(i, 0), self.centre(j, 1));
         let terrain = &self.terrain;
         *self.probes.entry((i, j, level(from_y))).or_insert_with(|| terrain.probe(x, z, from_y))
     }
@@ -199,7 +244,7 @@ impl<'a> Sampler<'a> {
         let filter = QueryFilter::new(LayerMask::WORLD);
         for j in 0..self.size[1] as i32 {
             for i in 0..self.size[0] as i32 {
-                let (x, z) = (self.centre(i), self.centre(j));
+                let (x, z) = (self.centre(i, 0), self.centre(j, 1));
                 let mut from = top;
                 for _ in 0..32 {
                     if from <= bottom {
@@ -245,7 +290,7 @@ impl<'a> Sampler<'a> {
 
     /// The move from `from` to cell `(i, j)` (`dist`: a two-cell hop's length).
     fn step(&mut self, from: Stance, i: i32, j: i32, dist: Option<f32>) -> Option<Step> {
-        let (x, z) = (self.centre(i), self.centre(j));
+        let (x, z) = (self.centre(i, 0), self.centre(j, 1));
         let dist = dist.unwrap_or_else(|| Vec2::new(x - from.pos.x, z - from.pos.z).length());
         let probe = self.probe(i, j, from.pos.y);
         step_onto(&self.terrain, from, (x, z), probe, dist, self.safe_drop)

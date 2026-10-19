@@ -2927,7 +2927,7 @@ three markers `pack` and the anchor of `yard_pack` (a placed pack of 2 to 3 skel
   combinations and `min/max_threat` are not in the definition. Co-op count scaling (M8) would wrap the count of a group in
   `spawn.rs` (`count`/`up_to` times a session factor), and the budget check would read the same factor.
 - Walkability of spawn points is judged for the default `CharacterParams`, from the anchor to the point, and only where the region
-  has a navmesh (not on a hand-made level or a voxel region).
+  has a navmesh (not on a hand-made level).
 - The invulnerable walk home of the pull-back has no primitive to stand on (`Invulnerable` is the dev god mode); `encounter_returning` lets a
   behaviour ignore targets on the way.
 - A fight is not saved: a world save keeps only what was won.
@@ -4222,7 +4222,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify -
 # replay finished at tick 1010: identical to the recording (17 checks) [1010 ticks in 3.00s, 22 frames]
 ```
 
-**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`) and the voxel arena (`voxel_arena`), each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
+**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`), the voxel arena (`voxel_arena`) and its navmesh (`voxel_nav`), each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
 (for the template: `cargo test --test game record_reference_replays -- --ignored`).
 
 - Game data follows the same rule as `inspect`: everything except the `bevy_*` types and the internal markers of `ai_core`, plus `Transform` and `Name`. So components that only the window adds (`Visibility`, `GlobalTransform`, meshes) do not change the hash, and an `Entity` inside a component is hashed as its `AiId`. Labels and describe fragments are text for the AI and are not part of the hash: a new wording or a new describer does not break old replays.
@@ -5943,13 +5943,48 @@ controller's, a later change.
 
 ### Navigation
 
-Until the in-memory chunk bake exists, a voxel region has no navmesh, and the tools say so: NPCs plan over the local grid
-(`npc_state`'s `nav.routes`: `local grid: no navmesh for this region (voxel region, nav not baked yet)`), `nav_path` refuses
-(`no navmesh for this region (voxel region, nav not baked yet): use path_to, which plans over the local grid`), `nav_info`
-answers `navmesh: none` with the reason, `nav_bake` bakes the content's tile files as `--bake-nav` does (none of them is the
-volume's) and adds why the region in the world has none, and the journal has
-`navmesh: none for this region: voxel region, nav not baked yet; NPCs plan on the local grid` as an event, not a warning (it is
-by design, so `warning` rules and `--until warning` do not stop on every `regen`).
+A voxel region's navmesh is **baked in memory when the region loads** (`regen`, `change_region`, a snapshot or save load, a content
+change that makes the region again), inside the call that loads it, so no tick sees the region without it. It is the same
+`NavRegion` a region of tiles has (routes, `nav_path`, `path_to`, `move_to path=true`, `clearance`, NPC routes and `plain_sight`, carving,
+the overlay), and nothing is written to `assets/nav/`: `--check-content` asks for no bake file of a voxel region (no tile or room names a
+chunk), and `nav_bake` / `--bake-nav` do not touch it (`nav_bake` says so when a voxel region is in the world).
+
+- **One bake per chunk and body class.** The region's cells are its chunks (the content's `chunk`, 64 x 32 x 64 cells in the sandbox: 128 x 128
+  columns at the nav settings' 0.5 m). A chunk is sampled at its place in the world, with the region's corner and its first column as
+  the origin, through the same flood, move rule and assembly as a tile's (`bake_chunk`: a tile's frame is literally `(i + 0.5) * cell`, as it always
+  was). Solidity is the collision's, so leaves and everything else the field holds as air are passable; swim nodes come from the region's water
+  volumes and cover the grid only (the bake has no nodes in the open sea; a route to a goal outside the grid is refused, as `the goal is
+  outside the region`).
+- **What a chunk is a function of**: the voxel field, the region's water volumes, the body class's numbers and the chunk's place, and nothing
+  else. The solids placed in the region later (a prop, a collider a scenario spawns) are not in it: they carve the navmesh as they carve a
+  tile's, and a node on top of such a solid is not made (only the field has floors). `NavBakes` keeps each bake under its `ChunkKey`
+  (region, the FNV of the field and the water, the chunk size in columns, the chunk, the body class and the FNV of the settings it was baked with),
+  and so does a process-wide cache (256 bakes), which is why a snapshot load, a heavy-mode twin or a second game in the process bakes nothing
+  twice. `SHARDS_VOXEL_CACHE=off` (the voxel module's switch) turns the process cache off; `NavBakes::isolated` keeps one world's bakes to itself.
+- **Parallel and ordered.** The chunks that are not kept, of every body class together (32 tasks for the sandbox's two classes), are baked on
+  Bevy's compute task pool, each a pure function of the field; the results are put back in chunk order before anything is assembled, so the navmesh does
+  not depend on which thread finished first (the test `chunk_bakes_do_not_depend_on_threads` bakes four times and compares every chunk's bytes).
+- **Stitching.** The chunks are stitched across every chunk edge, all open (ground has no sockets), as tiles are: each boundary node gets the
+  move into the facing column and the two-cell hops over it, both ways, **and the four diagonal moves** (no corner cut, as the bake moves
+  diagonally): without them the chunks would not be the grid baked in one piece. A route's tile corridor is widened by the chunks around it, because the tile
+  graph measures from each side's middle node and its corridor may leave out the chunk a cheaper crossing of a seam is in. Regions of tiles keep both
+  as they were (no diagonals across tile edges, the corridor as the graph gave it): their navmeshes and replays do not change.
+- **Only machines that simulate bake.** A co-op client (`NetRole::Client`) does not: its `nav_info` says `not baked: this machine does not
+  simulate`, `npc_state`'s `nav.routes` says `local grid: no navmesh for this region (not baked: this machine does not simulate)`, `nav_path` says routes are the
+  host's, and the journal has `navmesh: not baked: this machine does not simulate`. Hosts, single player, `--verify`, heavy mode and `shards soak` bake.
+- **`nav_info`** is the tile answer plus `bake`: `in memory, 16 chunks, baked in 700 ms` (`, 16 kept from an earlier bake` when the bakes were kept),
+  for the region and for each body class (`bodies[].bake`). The time is the loaded machine's wall clock, never state, and the journal does not
+  carry it: `navmesh: voxel_arena seed 7 v1 (16 chunks, 250097 nodes, 16989 links across edges, 0 navlinks)`, then one line per other body class.
+- **The chunks against one piece.** `bake_volume(world, settings, Cut::Whole)` bakes the grid as one tile. The tests compare it with the chunks
+  stitched: every node and every move equal (global column, floor, way of standing, kind, cost), the same areas, the same cells reached from
+  the spawn, and the lengths of 64 routes between random cells equal within 0.5 m: on the sandbox island (`the_arenas_sixteen_chunks_are_the_island_baked_in_one_piece`)
+  and on a small volume with a step, a tunnel's mouth and a lake exactly on the seams (`crates/shards_npc/tests/npc/voxel_nav.rs`).
+- **Cost** (dev profile, so the engine's crates at `opt-level = 1`, on a machine running other builds; 16 logical CPUs, 8 pool workers): the
+  sandbox island's 16 chunks take 330-380 ms on the pool for one body class and 650-770 ms with the stitching and the tile graph (250,097 nodes
+  for `agent`); both body classes together cost about 1.25 s per region change; the island baked in one piece on one thread takes 2.8 s (about
+  170 ms a chunk). `cargo test -p sandbox --test sandbox -- --ignored --nocapture voxel_nav_bake_time` prints them (add `--release` on an idle machine
+  for a figure to quote). The stall is under the design's 2 s, so the bake stays inside the region change; one that grows past it would move to the
+  loading state's own tick budget.
 
 ### Tools, conditions, the journal
 
@@ -5990,8 +6025,10 @@ Its checks are `arena_flat`, `spawn_on_ground`, `pool_depth` and `cave_open`; it
 (`steps.0`, `ledge.0`, `pool.0`, `overhang.0`, `cave.0`) and the marker `post`. The sea reaches 100 m past the grid, and the
 sandbox's `bodies_in_world` rule counts it (`past_grid` in `world.bounds.ron`). The scenario `crates/sandbox/scenarios/voxel_arena.scenario`
 (recorded as `tests/replays/voxel_arena.json`) walks it: up the steps (four climbs of 1 m), a jump and a climb onto the ledge, under the
-overhang, through the pool and out, through the cave's tunnel, the current at fixed spots and the two conditions. It has no NPC chase
-and no `nav_path`: there is no navmesh yet. Below the sea floor past the grid's edge there is nothing: a body put there falls, and the
+overhang, through the pool and out, through the cave's tunnel, the current at fixed spots and the two conditions. The scenario
+`crates/sandbox/scenarios/voxel_nav.scenario` (recorded as `tests/replays/voxel_nav.json`) reads and walks the navmesh the region is baked
+with (see "Navigation" above): `nav_info`, `nav_path` through the cave and up the steps (the large body class does not fit the tunnel), and a skeleton
+that chases the player up the steps and into the cave by those routes. Below the sea floor past the grid's edge there is nothing: a body put there falls, and the
 engine has no out-of-world rule of its own; in the sandbox `bodies_in_world` stops the game once it is below `fall_below`
 (`crates/sandbox/tests/sandbox/voxel_arena.rs`). A seed takes about 60 ms to generate and build in the dev profile (a debug build of the
 engine's crates, `opt-level = 1`); `--worldgen-report voxel_arena --seeds 1..1000` runs in CI.
@@ -6367,6 +6404,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
   (`npc_beyond_leash`); when the player goes north, it reaches the edge of the zone and returns to the lair;
 - `npc_avoidance.scenario` (E6) — three arena skeletons run single file toward the player: the rear ones go round the front ones (`npc_avoiding`,
   `npc_overlay` writes `avoiding e7`), five seconds of combat, and the journal stays silent about the avoidance;
+- `voxel_nav.scenario` (A2e) — the voxel arena's navmesh, baked in memory when the region loads: `nav_info` (`in memory, 16 chunks`), `nav_path` through the cave (37.4 m, a drop at its end, across the seam of two chunks) and up the four steps (mantles), the large body class refused in the tunnel, and a skeleton that chases the player up the steps and through the cave on the navmesh;
 - `npc_bodies.scenario` (E6) — the wilds with seed 42 are baked for both the skeletons (`agent`) and the guard (class `large`); the arena's guard in the pylon hall: `npc_state` names its class (`navmesh, body large`), and `nav_path body=large` and `nav_path` without it each follow the navmesh of their own class (a typo in the name gets a hint), the guard walks round the colonnade to the player along its own navmesh (`npc_overlay`
   writes `body large`), does not go past its leash, and at the end returns to the arena;
 - `region.scenario` (E5) — `regen region=wilds seed=42` and the manifest hash `7bbfdc3b62623fbc`, the player at the gate, a path two tiles forward and back along the navmesh (`move_to path=true`, stopping at `near_poi`), a different seed gives a different manifest, and the same seed gives the same one, down to the byte;

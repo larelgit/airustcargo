@@ -82,7 +82,7 @@ pub mod tile;
 pub(crate) mod tools;
 
 pub use query::{NavError, NavPath, NavQuery};
-pub use region::{rebuild, refresh, NavBakes, NavRegion};
+pub use region::{bake_volume, clear_shared_bakes, prebake_volume, rebuild, refresh, ChunkKey, Cut, NavBakes, NavRegion, Prebaked, VoxelBake};
 pub use settings::{NavBodyDef, NavSettings, NavSettingsDef, DEFAULT_BODY};
 pub use tile::NavTile;
 pub use tools::{bake_files, bake_region, BakeReport, NavOverlay};
@@ -155,12 +155,19 @@ pub fn navmesh_path(world: &World, from: Vec3, to: Vec3, params: &CharacterParam
     }
 }
 
-/// Why the region in the world has no navmesh when it is a voxel volume (until its in-memory
-/// bake lands): `npc_state`, `nav_info`, `nav_path` and the journal say it.
-pub const VOXEL_NO_NAV: &str = "voxel region, nav not baked yet";
+/// Why a voxel region has no navmesh on a machine that does not simulate (a co-op client): it
+/// does not bake, NPCs are the host's and walk where the host's routes take them. `nav_info`,
+/// `nav_path`, `npc_state` and the journal say it.
+pub const VOXEL_NOT_SIMULATED: &str = "not baked: this machine does not simulate";
+
+/// Whether this machine simulates the world ([`shards_core::NetRole::simulates`]): a single-player
+/// game, a host and the tools (`--verify`, heavy mode, `shards soak`) do; a co-op client does not.
+pub fn simulates(world: &World) -> bool {
+    world.get_resource::<shards_core::NetRole>().is_none_or(|role| role.simulates())
+}
 
 /// Whether the region in the world is a voxel volume ([`Layout::Volume`](shards_world::manifest::Layout::Volume)),
-/// which has no navmesh yet: NPCs and `move_to path=true` plan over the local grid there.
+/// whose navmesh is baked in memory, chunk by chunk, when it loads (on machines that simulate).
 pub fn region_is_volume(world: &World) -> bool {
     world.get_resource::<ActiveRegion>().is_some_and(|r| r.manifest.layout == shards_world::manifest::Layout::Volume)
 }
@@ -224,10 +231,12 @@ pub(crate) fn route_source<'w>(world: &'w World, params: &CharacterParams, at: O
     if world.get_resource::<ActiveRegion>().is_none() {
         return grid("no region loaded", false);
     }
-    if region_is_volume(world) {
-        return grid(&format!("no navmesh for this region ({VOXEL_NO_NAV})"), false);
-    }
-    let Some(nav) = region_nav(world) else { return grid("the region has no navmesh", false) };
+    let Some(nav) = region_nav(world) else {
+        if region_is_volume(world) && !simulates(world) {
+            return grid(&format!("no navmesh for this region ({VOXEL_NOT_SIMULATED})"), false);
+        }
+        return grid("the region has no navmesh", false);
+    };
     // A start the region does not cover is the local grid's (`NavError::NotCovered`).
     if at.is_some_and(|at| nav.instance_at(nav.column_of(at)).is_none()) {
         return grid("the NPC stands outside the region", true);

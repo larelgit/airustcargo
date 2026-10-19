@@ -1,8 +1,8 @@
 # The voxel arena (A2c): a voxel region north of the arena, made by the sandbox's generation
 # steps (`src/gameplay/terrain.rs`) from `content/world/arena.voxel_region.ron`: hills that fall
 # to a sea at the rim, a lake, trees, and in the middle a flat arena with steps, a ledge, a
-# pool, an overhang and a cave. Movement only: a voxel region has no navmesh until A2e, so no
-# NPC chases here and nothing asks `nav_path`; `path_to` plans over the local grid.
+# pool, an overhang and a cave. Movement only: the navmesh the region is baked with when it loads
+# is read and walked in `voxel_nav.scenario`; `path_to` here asks it.
 #
 # The arena's floor is at y 0 and its middle at (0.5, -399.5). Around it: the steps to the
 # north-east (four 1 m risers from x 4 to x 8, z -407..-405), the ledge to the north-west (2 m
@@ -26,7 +26,7 @@ expect result contains "ok: voxel_arena seed 7 v1 (attempt 1, 16 chunks, 6 POIs"
 expect result contains "spawn at (0.5, -399.5)"
 expect journal "region generated: voxel_arena seed 7 v1 (attempt 1, 16 chunks, 6 POIs)"
 expect journal "region loaded: voxel_arena seed 7 v1 (256 x 32 x 256, 2 water boxes, 4 sea boxes"
-expect journal "navmesh: none for this region: voxel region, nav not baked yet"
+expect journal "navmesh: voxel_arena seed 7 v1 (16 chunks, 250097 nodes, 16989 links across edges, 0 navlinks)"
 act god
 invariant field e5 Health.current > 0
 # Whatever the body was doing before (an attack winding down) ends; then back on the spawn.
@@ -49,7 +49,7 @@ expect result contains "\"sea_boxes\": 4"
 # --- 2. up the steps: each 1 m riser is a ledge the walk climbs by itself
 session --agent walker --scope player
 act path_to target='{"x": 7.5, "z": -405.5}'
-expect result contains "\"provider\": \"local grid\""
+expect result contains "\"provider\": \"navmesh\""
 expect result contains "(mantle 1.0m)"
 act move_to target='{"x": 3.5, "z": -405.5}' within=0.3
 session --agent scenario
