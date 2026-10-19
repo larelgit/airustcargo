@@ -104,6 +104,10 @@ fn a_heavy_failure_is_shrunk_on_heavy_games_and_the_scenario_asks_for_heavy_mode
     let fuzzed = fuzz_and_shrink(|_| heavy_planted(false), &plan, 100, std::time::Duration::from_secs(300)).unwrap();
     let finding = fuzzed.finding.expect("the planted heavy bug was not found");
     assert!(matches!(finding.stop, Stop::Heavy { .. }), "{:?}", finding.stop);
+    // The headline, then what differed: the campaign's log names it, not only the tick.
+    let mut lines = finding.text.lines();
+    assert!(lines.next().is_some_and(|l| l.starts_with("heavy check failed at tick")), "{}", finding.text);
+    assert!(lines.any(|l| l.contains("Marked") && l.contains("differs")), "{}", finding.text);
     assert!(finding.reproduced);
     assert!(finding.shrunk.rounds.len() <= finding.before.len());
     let text = finding.scenario(42, Some((30, 30, 0)));
