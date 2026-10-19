@@ -845,9 +845,12 @@ pub struct PairSelect {
     pub range: f32,
     /// Largest height difference (m).
     pub height: f32,
-    /// Largest angle (degrees, half-angle) between the fighter's body facing (not its lock-on
-    /// direction, not its movement input) and the victim.
+    /// Largest angle (degrees, half-angle) between the angle origin ([`PairSelect::angle_from`]: the body's facing, not its lock-on
+    /// direction or its movement input, unless asked) and the victim.
     pub angle: f32,
+    /// Where `angle` is measured from: the body's facing (the default), or the direction the fighter means (`PairAngle::Intent`).
+    #[serde(default, skip_serializing_if = "PairAngle::is_facing")]
+    pub angle_from: PairAngle,
     /// No `LayerMask::WORLD` collider between the two chests (`CombatTuning::sight_height`).
     #[serde(default, skip_serializing_if = "is_false")]
     pub line_of_sight: bool,
@@ -858,6 +861,24 @@ pub struct PairSelect {
     /// nearer to the victim by more than this (m, on the ground plane).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slack: Option<f32>,
+}
+
+/// Where a pair's `angle` is measured from ([`PairSelect::angle_from`]).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PairAngle {
+    /// The body's facing (design 6.4 and the original game's finisher candidate): a player running away from a victim has no pair
+    /// on it, a locked player whose body looks elsewhere is judged by the body.
+    #[default]
+    Facing,
+    /// The direction the fighter means: the lock-on direction first, else the movement input's direction, else the body's
+    /// facing. A locked fighter whose body looks away can still take the victim it is locked on to; one running away from it cannot.
+    Intent,
+}
+
+impl PairAngle {
+    fn is_facing(&self) -> bool {
+        *self == PairAngle::Facing
+    }
 }
 
 /// Whose side a pair victim is on ([`PairSelect::team`]).
@@ -1964,6 +1985,11 @@ impl MovesetDef {
     /// The action `input` starts.
     pub fn action(&self, input: &str) -> Option<&str> {
         self.inputs.get(input).map(String::as_str)
+    }
+
+    /// Whether `only_in` names `mode` at all (then it refuses some actions there): asked before an action's definition is read.
+    pub fn gates(&self, mode: MotionMode) -> bool {
+        self.only_in.iter().any(|(m, _)| *m == mode)
     }
 
     /// Whether `def` may run while the body is in motion mode `mode`: no `only_in` names the mode,

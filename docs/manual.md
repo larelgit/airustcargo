@@ -1465,7 +1465,7 @@ binding, victim)] }`: for each input, the first binding in content order whose `
 `Pair` (the binding's action is paired and its `select` finds a victim now; the victim is kept with the binding),
 `StaminaAbove(v)` (a fighter without stamina always has enough) or `Condition(name)` (a game's `add_context_condition(name,
 fn(&World, Entity) -> bool)`). A binding never holds for the action the fighter runs now (a running finisher does not restart
-itself through a cancel window), and a dead fighter has none.
+itself through a cancel window), and a dead fighter has none. A binding whose action the moveset's `only_in` refuses in the body's motion mode (FU4: a finisher while swimming) does not bind either: the input falls to the next binding or the moveset's action, so in water the light is the stroke, and `you.finisher` (`ContextInputs::victim`) and `finishable by` show no finisher. `can_start` applies the same rule to a context resolved before the mode changed.
 
 **Precedence.** A bound input starts its bound action wherever the input would start anything: from idle, from a buffered
 press, from a held input, and in a cancel window, where it beats the window's own target for that input (a `Combo` link or an
@@ -1486,7 +1486,7 @@ Godot's quirk of stamping the press when the guard starts, not when the button g
 
 **Paired actions** (`ActionDef::pair`; a paired action has no `charge`, a content error, since the charge would turn the run into another action that the pair does not name). When a paired action starts, the machine notes it, and `start_pairs` (in
 `ActionSystems::Effects`, before the effects) takes the victim: the binding's victim if it is still free, else what `select`
-finds now. `select: (team, state, range, height, angle, line_of_sight, prefer_target, slack)` asks for a fighter with
+finds now. `select: (team, state, range, height, angle, angle_from, line_of_sight, prefer_target, slack)` asks for a fighter with
 `Health` that is alive and not held by another, and that:
 
 - is of another team (`Hostile`, the default) or of the fighter's own (`Ally`);
@@ -1494,7 +1494,8 @@ finds now. `select: (team, state, range, height, angle, line_of_sight, prefer_ta
 - is within `range` plus its body radius on the ground plane, and within `height` up or down;
 - is within `angle` degrees (a half-angle) of the body's facing. Not the lock-on direction and not the stick, as in the
   original game's finisher candidate: a player running away from a broken enemy has no finisher on it, and a locked player
-  whose body looks elsewhere is judged by the body (a test pins it);
+  whose body looks elsewhere is judged by the body (a test pins it).
+  `angle_from: Facing` is the default and is the rule above. `angle_from: Intent` (FU4, a content choice on the pair) measures from what the fighter means instead: the direction to its lock-on target first, else its movement input's direction, else the facing. So a locked fighter whose body looks away (a roll away from the foe) can still take the locked, broken foe, and one running away from the foe still cannot. It is unserialized at the default, so no content hash changes;
 - has no world collider between the two chests, when `line_of_sight` is set;
 - with `slack`, has no other living player of the fighter's team nearer to it by more than `slack` metres (two players next to
   one broken enemy: only the nearer gets the finisher).
@@ -1510,6 +1511,7 @@ start, and triggers `PairStarted { attacker, victim, action }`. While it lasts:
   a despawn, goes on with its lunge stopped and hits nobody else (`RunHalted` keeps `only_victim` after the `Pairing` is
   gone). Other attackers can still hit the victim unless the pair is
   `exclusive` (kept for revives: then nobody else's hits find it);
+- **the aim** (FU4): the run turns toward its victim, lock-on or not (a locked foe that is not the victim does not pull the run to itself and make the blow miss while the break is spent): at the start (the victim the binding found) and while it runs (`Pairing::victim`). The lock-on tracking, assist and sight check that an action with `steer: Aim` has judge the victim in its place. The client's prediction of a host's run does the same. A run that is not paired still follows the lock-on;
 - **the strike**: the pair's first hit that lands on a victim still in the pair's state ends its break (`ends_break`, once a
   pair; the break protection starts) and forces the reaction `strike_reaction` (3, a knockdown, by default; 0: none, the
   damage lands, `Damaged::reaction` is `None` and the victim keeps its held pose) with `Reaction::forced` and the hit's
@@ -1529,7 +1531,7 @@ Every end goes through `release_pair(world, attacker, end)`. It takes both marks
 the pair `Finished` with the victim alive (the strike's reaction already replaced it, or the held pose runs out), and triggers
 `PairEnded { attacker, victim, action, end }` (`Finished`, `Lost`, `Cut`; `victim` is `None` when it no longer exists). A
 finisher whose strike kills its victim ends as `Lost` (the victim is dead when `tend_pairs` looks), never `Finished`, and the
-journal says `lets go of e7 (lost)`: a game that keys on the end of a pair (a lane that rewards finishers) listens to `Damaged`
+journal says `lets go of e7 (killed)` (FU4: `PairEnded::killed` is true when the victim's `Died` named the attacker and the pair's action, set through the short-lived mark `PairKilled`, which is left out of replays; a victim lost otherwise, by another death, a despawn or `break_range`, stays `(lost)`; `PairEnded::describe()` gives the word): a game that keys on the end of a pair (a lane that rewards finishers) listens to `Damaged`
 with `weight: Finisher` or to `Died`, not to `PairEnd::Finished`. When the attacker dies mid-pair the pair is `Cut` and the
 victim's held action is cut with it, so its broken poise ends with that action (the victim is free at once; no ruling asks for
 more).
@@ -1567,7 +1569,7 @@ is shown. A test compares the shown window with the host's tick by tick (122 sha
 **What the AI sees.** Describe: `remembers parried 0.32s`, `light -> spar_finisher on e7` (the bound inputs), `pairing e7`,
 `held by e5`, `guard press armed` and `guard armed (perfect window)`, and on a possible victim `finishable by e5`. That last
 one is derived from the players' bindings each time it is asked; it is not a component. Journal: `e5 takes e7 with
-spar_finisher`, `e5 lets go of e7 (finished)` (or `lost`, `cut`). Conditions: `step --until named:pair_ready` (some fighter's
+spar_finisher`, `e5 lets go of e7 (finished)` (or `killed`: the victim died of the blow, `lost`, `cut`). Conditions: `step --until named:pair_ready` (some fighter's
 context binds a paired action on a victim), `named:paired` (some pair runs). Dev tools: `remember id=e5 key=parried
 seconds=0.5` (0 forgets; without `seconds`, the moveset's own time) and `stagger id=e7 poise=true` (breaks the poise for the
 stagger's length, as a poise break does). The HUD source `you.finisher` is a flag: an input of the viewer is bound to a paired
@@ -1664,6 +1666,8 @@ refused; else it procs, and `min_proc_interval` closes its gate. `Statuses::add`
 callers; `Statuses::add_with(id, def, amount, limit, gated, capped)` and `Statuses::tick_with(.., gated)` hold the new rules,
 and `add_status_buildup` (hits and `Status` effects) uses them with the target's `ProcGates` and its moveset's cap. An instant
 status is active for one tick: `StatusApplied`, its `on_apply` (and `on_tick` once), then `StatusExpired`. A `refresh` returns `Applied` like a proc, so `StatusApplied` and the game's `on_apply` run again and the gate closes again; a game whose `on_apply` is not repeatable checks the status's `stacks` or its own state. Chill's longer recovery and burn's explosion are the game's.
+
+**The source of a status (FU4).** `StatusApplied` carries `source: Option<AiId>`: who built the status up. A hit passes its attacker (the credited owner when a combat object hit, `DamageCtx::credit`); `add_status_buildup_from(world, entity, status, amount, source)` takes it from a caller that has one, and `add_status_buildup` (no source, the old signature) passes `None`, as does a `Status` action effect on its own body and a status that took a free slot while waiting at full buildup. The `on_apply` hook has no event, so it reads the same value from the resource `StatusSource` (set for that call only, `None` at any other time; transient, so not in snapshots). A game that wants the source later keeps it itself (for example a power per status id on the target, written in `on_apply`). Hooks nest: a hook that builds up another status runs that status's hook inside, and `StatusSource` has the outer value again when the inner hook returns.
 
 **What the AI sees.** Describe: `barrier 15 (6.2s)`, `takes x1.35 (core 3.1s)` (several: `takes x0.50 (armor), x1.35 (core
 3.1s)`), `proc gate spar_chill 1.2s`. Journal: `e5 barrier 50 for 8.0s`, ` [barrier -15]` on a hit line. Dev tools: `barrier
@@ -1938,7 +1942,9 @@ spawned, start_in, action, stay }`, the owner's `Team` and an `ActionState`; a p
 from its text on its first spawn and again only when a definition of its `extends` chain changed (`spawn_prefab_cached`).
 A prefab that is not AI-visible (no `AiKind`) is refused at the spawn with an error in the journal. A prefab whose `Projectile` has a negative or non-finite number (`speed`, `lifetime`, `homing`, `aim_height`) is refused the same way, naming the prefab. The objects whose
 `start_in` is 0 start their action at once; an object acts from the tick after its spawn (an object spawned by an action's
-effect on tick N steps and hits from tick N + 1; a delayed one, from the tick after its delay ends, and a projectile flies from the tick after its run has stepped). An aim that needs a lock-on target (`Target`, `AtTarget`) with none spawns nothing and says so: `[event] e8 spawn of caster_volley skipped: it aims at the lock-on target and there is none (lock_on first); nothing spawned`. `ObjectsSpawned` is journalled: `e8 spawns 3 x bolt_fly`.
+effect on tick N steps and hits from tick N + 1; a delayed one, from the tick after its delay ends, and a projectile flies from the tick after its run has stepped). An aim that needs a target (`Target`, `AtTarget`; the target is `Intent::target`, else `AimTarget`, else a projectile flight's, as below) with none spawns nothing and says so: `[event] e8 spawn of caster_volley skipped: it aims at a target and there is none (provide a target or lock_on first); nothing spawned`. `ObjectsSpawned` is journalled: `e8 spawns 3 x bolt_fly`.
+
+**The target of a brain-driven spawn (FU4).** `target_of` reads `Intent::target` (the lock-on), then the component `AimTarget(Option<AiId>)`, then a flight's target. An NPC (`Npc` requires it) has its drive write its brain's current target into `AimTarget` every tick in `NpcSystems::Drive` (`None` while the brain is dormant), so an NPC whose plan presses an action with an `AtTarget` or `Target` spawn lays its objects at its target with no `lock_on`; the brain still never writes `Intent.target`, so every lock-on rule (the check, `action.lock_on_valid`, steering) is untouched. `AimTarget` is derived state: it is `replay_ignore`d and rewritten before anything reads it. A game's own non-locking body (a scripted caster) can write it itself. While an agent drives an NPC with orders (`move_to`, `attack`) the drive still mirrors the brain's target (`None` while the brain is dormant, for example in `calm`), so a spawn the agent presses aims at the brain's current target; with the brain dormant the mirror is `None`, so with no lock-on either an `AtTarget` or `Target` spawn has no target and is skipped (it does not remember a last target); a pair run (finisher) is separate, it aims at its victim.
 
 **Caps.** `CombatTuning::max_objects` (256) and `max_objects_per_owner` (96) are content. A spawn checks them before its
 first index and lays down the indices that fit, in index order (only those are placed), and the journal says so:

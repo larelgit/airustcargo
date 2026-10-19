@@ -35,6 +35,18 @@
             break_range: 4.0,
         ),
     ),
+    // A stroke: the one action a swimmer may start.
+    "c_stroke": (net_id: 168, phases: [("stroke", 0.3)], tags: ["afloat"]),
+    // The finisher with its angle measured from what the fighter means (the lock, else the stick, else the body).
+    "c_finisher_intent": (
+        net_id: 169,
+        phases: [("lunge", 0.2), ("strike", 0.1), ("recovery", 0.3)],
+        hits: [(span: Phase("strike"), shape: Cone(range: 2.5, angle: 120), damage: 20)],
+        pair: (
+            select: (state: Broken, range: 2.0, height: 1.2, angle: 100, angle_from: Intent),
+            victim_action: "c_held",
+        ),
+    ),
     "c_held": (net_id: 154, phases: [("held", 1.0)]),
     "c_counter": (
         net_id: 155,

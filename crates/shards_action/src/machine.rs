@@ -27,7 +27,7 @@ use shards_motion::{
 
 use std::ops::DerefMut;
 
-use crate::context::{fresh_press, ContextInputs, GuardArm, PendingPair, PendingPairs, RunHalted};
+use crate::context::{fresh_press, ContextInputs, GuardArm, PendingPair, PendingPairs, Pairing, RunHalted};
 use crate::body::grant_barrier;
 use crate::cue::ActionSound;
 use crate::def::{touches, ActionDef, BufferMode, CancelTo, CombatTuning, Effect, Face, MovesetDef, StaminaMode, Steer, EPS};
@@ -411,9 +411,16 @@ impl<'a> FighterView<'a> {
         self.bound(input).or_else(|| self.moveset_def()?.action(input))
     }
 
-    /// The action this tick's context binds `input` to, if any.
+    /// The action this tick's context binds `input` to, if any. A binding whose action the moveset's `only_in`
+    /// refuses in the body's motion mode does not bind (`context::resolve` leaves it out too; this covers a
+    /// context resolved before the mode changed, or a client's copy of its host's).
     pub fn bound(&self, input: &str) -> Option<&'a str> {
-        self.context.and_then(|c| c.bound(input)).map(|b| b.action.as_str())
+        let action = self.context.and_then(|c| c.bound(input)).map(|b| b.action.as_str())?;
+        let refused = match (self.mode, self.moveset_def()) {
+            (Some(mode), Some(moveset)) if moveset.gates(mode) => self.db.get::<ActionDef>(action).is_some_and(|def| !moveset.allows(mode, def)),
+            _ => false,
+        };
+        (!refused).then_some(action)
     }
 }
 
@@ -880,6 +887,7 @@ pub(crate) struct FighterData {
     context: Option<&'static ContextInputs>,
     arm: Option<&'static mut GuardArm>,
     halted: Option<&'static RunHalted>,
+    pairing: Option<&'static Pairing>,
 }
 
 /// What the machine decided for one fighter this tick.
@@ -945,12 +953,21 @@ pub(crate) fn run_machines(
         let here = f.transform.translation;
         let forward = *f.transform.forward();
         let locked = f.intent.target.and_then(|id| index.get(id)).and_then(|e| positions.get(e).ok().map(|p| (e, p)));
-        let target = locked.map(|(_, (t, _, _))| t.translation);
         // The lock-on target as a leap sees it: where it stands and how wide its body is.
         let target_body = locked.map(|(_, (t, _, collider))| (t.translation, radius_of(collider)));
         // A start judges a leap's landing from where the body stands, on the host as on a client.
         let choice = choose(&f, &db, leap_site(&f, &physics, &db, (here, forward), target_body), dt);
-        // Whether the lock-on target is in sight of the fighter, for an assist that needs it (asked only then).
+        // A paired action aims at its victim, lock-on or not: the one it starts on, the one it holds while it runs.
+        let victim = match &choice {
+            Some(c) => db
+                .get::<ActionDef>(&c.start.action)
+                .filter(|d| d.pair.is_some())
+                .and_then(|_| f.context.and_then(|ctx| ctx.bound(&c.input)).filter(|b| b.action == c.start.action).and_then(|b| b.victim)),
+            None => pair_victim_of(f.pairing, f.state.current.as_ref()),
+        };
+        let locked = victim.and_then(|id| index.get(id)).and_then(|e| positions.get(e).ok().map(|p| (e, p))).or(locked);
+        let target = locked.map(|(_, (t, _, _))| t.translation);
+        // Whether the aimed-at body is in sight of the fighter, for an assist that needs it (asked only then).
         let mine = body_height(f.body.and_then(|(_, p)| p));
         let sees = || {
             let Some((them, (there, params, _))) = locked else { return true };
@@ -1577,6 +1594,12 @@ pub(crate) fn steer(
     let ahead = flat(forward).try_normalize().unwrap_or(Vec3::NEG_Z);
     // Nothing pressed and nothing held: a backstep leaves the way the body does not face.
     pick.unwrap_or(if def.steer == Steer::MoveOrBack { -ahead } else { ahead })
+}
+
+/// The victim of the pair the current run belongs to (`Pairing::instance` is the run's): what a paired action's aim follows
+/// instead of the lock-on while it runs.
+pub(crate) fn pair_victim_of(pairing: Option<&Pairing>, run: Option<&Running>) -> Option<AiId> {
+    pairing.filter(|p| run.is_some_and(|r| r.instance == p.instance)).map(|p| p.victim)
 }
 
 /// While an action tracks, it turns toward the target or the aim point.

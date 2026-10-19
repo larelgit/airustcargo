@@ -414,3 +414,49 @@ fn a_leap_with_no_landing_takes_no_token() {
     }
     assert!(leaps(&app) >= 1, "{:#?}", journal(&app));
 }
+
+/// A brain-driven NPC's spawn with `aim: AtTarget` finds its target through `AimTarget` (the brain's own
+/// target, mirrored by the drive) with no `lock_on`: the zone lands at the target's feet.
+#[test]
+fn a_cast_with_an_at_target_spawn_lays_its_object_at_the_npcs_target() {
+    use shards_action::{AimTarget, CombatObject};
+    let mut app = app();
+    let hero = player(app.world_mut(), 0, Vec3::new(1.5, 0.0, 0.0));
+    let at = Vec3::new(-5.0, 0.0, 1.0);
+    let layer = Npc::new("grunt", "grunt").with_plan("layer").with_director("single");
+    let npc = crate::common::npc(app.world_mut(), "layer", layer, at, (Vec3::new(1.5, 0.0, 0.0) - at).normalize());
+    let (hero_id, npc_id) = (aid(&app, hero), aid(&app, npc));
+    let mut laid = None;
+    for _ in 0..1200 {
+        step(&mut app, 1);
+        let world = app.world_mut();
+        let mut objects = world.query::<(&CombatObject, &Transform)>();
+        if let Some((o, t)) = objects.iter(world).next() {
+            laid = Some((o.owner, t.translation));
+            break;
+        }
+    }
+    let (owner, point) = laid.expect("the cast laid its zone");
+    assert_eq!(owner, npc_id);
+    let hero_at = app.world().get::<Transform>(hero).unwrap().translation;
+    assert!((point - hero_at).with_y(0.0).length() < 0.05, "at its target's feet: {point} vs {hero_at}");
+    assert_eq!(app.world().get::<AimTarget>(npc).unwrap().0, Some(hero_id), "the brain's target, mirrored");
+    assert!(app.world().get::<shards_core::Intent>(npc).unwrap().target.is_none(), "no lock-on was written");
+    let story = journal(&app);
+    assert!(!story.iter().any(|l| l.contains("spawn of") && l.contains("skipped")), "{story:#?}");
+}
+
+/// A body restored without the mirror (a snapshot from before it existed) is still driven, and gets it back.
+#[test]
+fn an_npc_without_the_aim_target_component_is_still_driven_and_gets_it() {
+    use shards_action::AimTarget;
+    let mut app = app();
+    let hero = player(app.world_mut(), 0, Vec3::new(1.5, 0.0, 0.0));
+    let layer = Npc::new("grunt", "grunt").with_plan("layer").with_director("single");
+    let npc = crate::common::npc(app.world_mut(), "layer", layer, Vec3::new(-5.0, 0.0, 1.0), E);
+    app.world_mut().entity_mut(npc).remove::<AimTarget>();
+    let start = app.world().get::<Transform>(npc).unwrap().translation;
+    step(&mut app, 120);
+    assert!(app.world().get::<Transform>(npc).unwrap().translation.distance(start) > 0.5, "it walked: it is driven");
+    assert_eq!(app.world().get::<AimTarget>(npc).map(|a| a.0), Some(Some(aid(&app, hero))));
+}

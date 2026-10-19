@@ -22,10 +22,10 @@ use ai_core::{AiId, AiIndex, SimTick};
 use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::{flat, Intent, NetRole, PlayerId};
-use shards_motion::PhysicsWorld;
+use shards_motion::{MotionState, PhysicsWorld};
 
-use crate::combat::{clear_line, Blocked, Damaged, Evaded, GuardBroken, Parried, PerfectEvaded, Reacted, Staggered};
-use crate::def::{ActionDef, CombatTuning, Forget, GuardPress, MovesetDef, PairDef, PairSelect, PairState, PairTeam, Recall, When, EPS};
+use crate::combat::{clear_line, Blocked, Damaged, Died, Evaded, GuardBroken, Parried, PerfectEvaded, Reacted, Staggered};
+use crate::def::{ActionDef, CombatTuning, Forget, GuardPress, MovesetDef, PairAngle, PairDef, PairSelect, PairState, PairTeam, Recall, When, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Poise, Stamina, Team};
 use crate::machine::{interrupted, ActionEnd, ActionEnded, ActionStarted, ActionState};
 use crate::zone::body_radius;
@@ -113,6 +113,13 @@ pub struct Pairing {
     pub broke_once: bool,
 }
 
+/// On the attacker of a running paired action whose victim just died of the pair's own blow (set when `Died` names the
+/// attacker and the pair's action, taken by `release_pair`, which reports it as `PairEnded::killed`). A mark that lives from
+/// the kill to the next `tend_pairs`; left out of replays, as the pair's end is already in the state it leaves.
+#[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[reflect(Component, Default)]
+pub struct PairKilled;
+
 /// On the victim of a running paired action.
 #[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq)]
 #[reflect(Component, Default)]
@@ -173,6 +180,16 @@ pub struct PairEnded {
     pub victim: Option<Entity>,
     pub action: String,
     pub end: PairEnd,
+    /// The victim died of the pair's own blow (its `Died` named the attacker and the pair's action): the journal says
+    /// `killed` for an end that is `Lost` and killed, `lost` for a victim lost otherwise. The end stays `Lost`.
+    pub killed: bool,
+}
+
+impl PairEnded {
+    /// The word the journal ends the line with: `killed` for a victim that died of the pair's own blow, else `PairEnd::describe`.
+    pub fn describe(&self) -> &'static str {
+        if self.killed && self.end == PairEnd::Lost { "killed" } else { self.end.describe() }
+    }
 }
 
 /// How a pair ended ([`PairEnded`]).
@@ -259,8 +276,14 @@ pub fn resolve(world: &World, entity: Entity) -> Option<ContextInputs> {
     let memory = world.get::<Memory>(entity);
     let stamina = world.get::<Stamina>(entity);
     let conditions = world.get_resource::<ContextConditions>();
+    let mode = world.get::<MotionState>(entity).map(|m| m.mode);
     for (i, binding) in moveset.context.iter().enumerate() {
         if out.bound(&binding.input).is_some() || running == Some(binding.action.as_str()) {
+            continue;
+        }
+        // The medium refuses it (`only_in`): it does not bind, so the input falls to the next binding or the
+        // moveset's action, and nothing that reads the context (the HUD's finisher prompt, `finishable by`) sees it.
+        if mode.is_some_and(|m| moveset.gates(m) && db.get::<ActionDef>(&binding.action).is_some_and(|d| !moveset.allows(m, d))) {
             continue;
         }
         let mut victim = None;
@@ -281,12 +304,24 @@ pub fn resolve(world: &World, entity: Entity) -> Option<ContextInputs> {
     Some(out)
 }
 
-/// Where `entity` faces for the angle test of a pair's `select`: its body's facing, as design 6.4
-/// and the original game's finisher candidate have it (not the lock-on direction and not the
-/// stick: a player running away from a broken enemy has no finisher on it, and a locked player
-/// whose body looks elsewhere is judged by the body).
-fn meant_facing(world: &World, entity: Entity) -> Vec3 {
-    world.get::<Transform>(entity).and_then(|t| flat(*t.forward()).try_normalize()).unwrap_or(Vec3::NEG_Z)
+/// Where `entity` faces for the angle test of a pair's `select`. [`PairAngle::Facing`] (the default): its body's facing, as
+/// design 6.4 and the original game's finisher candidate have it (not the lock-on direction and not the stick: a player running
+/// away from a broken enemy has no finisher on it, and a locked player whose body looks elsewhere is judged by the body).
+/// [`PairAngle::Intent`]: the direction to its lock-on target, else its movement input's direction, else the facing.
+fn meant_facing(world: &World, entity: Entity, from: PairAngle) -> Vec3 {
+    let facing = world.get::<Transform>(entity).and_then(|t| flat(*t.forward()).try_normalize()).unwrap_or(Vec3::NEG_Z);
+    if from == PairAngle::Facing {
+        return facing;
+    }
+    let here = world.get::<Transform>(entity).map(|t| t.translation);
+    let intent = world.get::<Intent>(entity);
+    let locked = intent
+        .and_then(|i| i.target)
+        .and_then(|id| world.resource::<AiIndex>().get(id))
+        .and_then(|e| world.get::<Transform>(e))
+        .zip(here)
+        .and_then(|(there, here)| flat(there.translation - here).try_normalize());
+    locked.or_else(|| intent.and_then(|i| flat(i.move_dir).try_normalize())).unwrap_or(facing)
 }
 
 /// Whether `candidate` is a victim `entity`'s pair `select` may take now (every rule but the
@@ -354,7 +389,7 @@ fn qualifies(world: &World, entity: Entity, candidate: Entity, select: &PairSele
 /// qualifies, else the nearest that qualifies (3D distance, strictly nearer; ties: the lower `AiId`).
 pub fn pair_victim(world: &World, entity: Entity, select: &PairSelect) -> Option<Entity> {
     let here = world.get::<Transform>(entity)?.translation;
-    let face = meant_facing(world, entity);
+    let face = meant_facing(world, entity, select.angle_from);
     if select.prefer_target
         && let Some(locked) = world.get::<Intent>(entity).and_then(|i| i.target).and_then(|id| world.resource::<AiIndex>().get(id))
         && qualifies(world, entity, locked, select, face)
@@ -512,15 +547,44 @@ pub(crate) fn start_pairs(world: &mut World) {
             world.get::<Dead>(v).is_none() && world.get::<Health>(v).is_some() && world.get::<Paired>(v).is_none_or(|x| x.by == me)
         };
         let named = p.victim.and_then(|id| world.resource::<AiIndex>().get(id)).filter(|v| free(world, *v));
+        let chosen_here = named.is_none();
         let Some(victim) = named.or_else(|| pair_victim(world, p.attacker, &pair.select)) else { continue };
         let Some(victim_id) = world.get::<AiId>(victim).copied() else { continue };
         world.entity_mut(p.attacker).insert(Pairing { victim: victim_id, action: p.action.clone(), instance: p.instance, broke_once: false });
         world.entity_mut(victim).insert(Paired { by: me, exclusive: pair.exclusive });
+        if chosen_here {
+            aim_at_victim(world, p.attacker, victim, p.instance);
+        }
         if let Some(action) = &pair.victim_action {
             crate::machine::force_action(world, victim, action);
         }
         hold_break(world, victim, pair.hold_break);
         world.trigger(PairStarted { attacker: p.attacker, victim, action: p.action });
+    }
+}
+
+/// A paired run whose victim the machine did not know when it aimed (a moveset input, or a binding without `When::Pair`: the
+/// machine aimed at the lock-on) turns to the victim `select` found, as it would have if the binding had named it: the press's
+/// direction still wins, an action with `turn` spans keeps the body's facing, and a `steer: Move` action keeps its own.
+fn aim_at_victim(world: &mut World, attacker: Entity, victim: Entity, instance: u32) {
+    let Some(there) = world.get::<Transform>(victim).map(|t| t.translation) else { return };
+    let Some(here) = world.get::<Transform>(attacker).map(|t| t.translation) else { return };
+    let intent = world.get::<Intent>(attacker).cloned().unwrap_or_default();
+    let Some(run) = world.get::<ActionState>(attacker).and_then(|s| s.current.as_ref()).filter(|r| r.instance == instance) else { return };
+    let (action, dir, forward) = (run.action.clone(), run.dir, run.facing);
+    let Some(def) = world.resource::<ContentDb>().get::<ActionDef>(&action) else { return };
+    if !def.turn.is_empty() {
+        return;
+    }
+    let facing = crate::machine::steer(def, dir, &intent, here, forward, Some(there));
+    if let Some(mut state) = world.get_mut::<ActionState>(attacker)
+        && let Some(run) = state.current.as_mut().filter(|r| r.instance == instance)
+    {
+        run.facing = facing;
+    }
+    if let Some(mut extras) = world.get_mut::<crate::machine::RunExtras>(attacker).filter(|x| x.instance == instance) {
+        extras.start_facing = facing;
+        extras.from = facing;
     }
 }
 
@@ -548,7 +612,8 @@ pub fn release_pair(world: &mut World, attacker: Entity, end: PairEnd) {
             cut_action(world, v);
         }
     }
-    world.trigger(PairEnded { attacker, victim, action: pairing.action, end });
+    let killed = world.entity_mut(attacker).take::<PairKilled>().is_some();
+    world.trigger(PairEnded { attacker, victim, action: pairing.action, end, killed });
 }
 
 /// `ActionSystems::Fighters`: pairs whose victim died, is gone or (with `break_range`) got too far
@@ -774,6 +839,21 @@ fn on_damaged(e: On<Damaged>, role: Option<Res<NetRole>>, mut commands: Commands
     });
 }
 
+/// A victim that dies of its pair's own blow: the attacker's pair is marked [`PairKilled`], so its end says so.
+fn on_died(e: On<Died>, role: Option<Res<NetRole>>, mut commands: Commands) {
+    if !host(&role) {
+        return;
+    }
+    let (victim, killer, action) = (e.event().entity, e.event().killer, e.event().action.clone());
+    let (Some(killer), Some(action)) = (killer, action) else { return };
+    commands.queue(move |world: &mut World| {
+        let victim = world.get::<AiId>(victim).copied();
+        if victim.is_some() && world.get::<Pairing>(killer).is_some_and(|p| Some(p.victim) == victim && p.action == action) {
+            world.entity_mut(killer).insert(PairKilled);
+        }
+    });
+}
+
 fn on_reacted(e: On<Reacted>, role: Option<Res<NetRole>>, mut commands: Commands) {
     if host(&role) {
         let entity = e.event().entity;
@@ -835,6 +915,7 @@ pub(crate) fn plugin(app: &mut App) {
         ),
     )
     .add_observer(on_parried)
+        .add_observer(on_died)
         .add_observer(on_perfect_evaded)
         .add_observer(on_blocked)
         .add_observer(on_evaded)
