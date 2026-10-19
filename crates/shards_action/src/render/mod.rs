@@ -18,6 +18,7 @@
 
 pub mod bridge;
 pub mod hud;
+pub mod modes;
 pub mod overlay;
 pub mod props;
 
@@ -27,6 +28,7 @@ use shards_settings::AccessibilitySettings;
 
 pub use bridge::{AnimGraphs, AnimStats, AnimationBound};
 pub use hud::ThreatHud;
+pub use modes::AnimSystems;
 pub use props::{PropOf, Sockets};
 pub use overlay::{CombatOverlay, CombatOverlayGizmos, TelegraphGizmos, TelegraphSettings};
 
