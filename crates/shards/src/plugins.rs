@@ -12,6 +12,7 @@ use shards_audio::AudioPlugin as ShardsAudioPlugin;
 use shards_content::ContentPlugin;
 use shards_core::{CorePlugin, EngineConfig};
 use shards_dev::DevPlugin;
+use shards_encounter::EncounterPlugin;
 use shards_fx::FxPlugin;
 use shards_hitstop::HitstopPlugin;
 use shards_level::LevelPlugin;
@@ -29,6 +30,7 @@ use shards_world::WorldPlugin;
 
 use crate::audio_wiring::EngineAudioPlugin;
 use crate::coop::CoopPlugin;
+use crate::encounter_wiring::EngineEncounterPlugin;
 use crate::net_wiring::EngineNetPlugin;
 use crate::save_sections::EngineSavePlugin;
 use crate::ui_wiring::EngineUiPlugin;
@@ -121,6 +123,8 @@ impl PluginGroup for EnginePlugins {
             // Level files as the geometry of tiles: joins the two above.
             .add(TileLevelsPlugin)
             .add(NpcPlugin)
+            // Waves of enemies at a place: anchors, runs, wipes and resets (needs the NPC and world modules).
+            .add(EncounterPlugin)
             // Co-op: roles, join, inputs, replication; then what it needs of the modules above.
             .add(NetPlugin)
             .add(EngineNetPlugin)
@@ -145,6 +149,8 @@ impl PluginGroup for EnginePlugins {
             .add(VoxelPlugin)
             // Effects: particles from content in pools, the telegraphs on the ground as decals.
             .add(FxPlugin)
+            // Where encounters meet the net, effects, sound, messages and saves.
+            .add(EngineEncounterPlugin)
             // Hit stop: a brief hold of the picture (and of the real-time clock when alone) when a blow lands.
             .add(HitstopPlugin);
         // Steam (feature `steam`): lobbies, the relay as a transport, achievements, cloud saves.
@@ -173,6 +179,7 @@ fn leave_out(mut group: PluginGroupBuilder, without: &[&str]) -> PluginGroupBuil
             "level" => off::<TileLevelsPlugin>(off::<LevelPlugin>(group)),
             "world" => off::<TileLevelsPlugin>(off::<WorldPlugin>(group)),
             "npc" => off::<NpcPlugin>(group),
+            "encounter" => off::<EngineEncounterPlugin>(off::<EncounterPlugin>(group)),
             "net" => off::<EngineNetPlugin>(off::<NetPlugin>(group)),
             "save" => off::<EngineSavePlugin>(off::<SavePlugin>(group)),
             "coop" => off::<CoopPlugin>(group),

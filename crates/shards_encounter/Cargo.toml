@@ -1,0 +1,36 @@
+[package]
+name = "shards_encounter"
+description = "Shards encounters: groups of enemies that come in waves at a place, start when players arrive, end when the last counted member falls, rewind when the players are wiped and reset when they leave."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+shards_content.workspace = true
+shards_motion.workspace = true
+shards_action.workspace = true
+# Regions: the players, the ground under a point, markers and points of interest.
+shards_world.workspace = true
+# Level markers (`LevelMarker`) are spawn points too.
+shards_level.workspace = true
+# `Home`, `force_state`, the navmesh, NPC conditions.
+shards_npc.workspace = true
+bevy = { workspace = true, features = ["std", "serialize"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+# Reads the components a prefab's text holds (`EncounterRole`, `EncounterAnchor`, `Npc`) in content checks.
+ron.workspace = true
+
+[dev-dependencies]
+# Test apps load their content through the asset server, like a game.
+bevy = { workspace = true, features = ["std", "serialize", "bevy_asset", "bevy_state", "multi_threaded"] }
+# Integration tests build the game the way a game does: `shards::testing::test_app`. With the
+# features a game has, so `cargo test -p shards_encounter` builds Bevy as the workspace does.
+shards = { workspace = true, features = ["render", "remote", "hot_reload"] }
+ron.workspace = true
+serde_json.workspace = true
