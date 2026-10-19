@@ -1,4 +1,4 @@
-//! The NPC rules a duel needs: strif let Some(i) = (0..2).find(|i| shards_npc::wait_of(app.world(), who[*i]).is_some_and(|(_, left)| (20..=38).contains(&left))) {ke spacing between NPCs, conditional plan options, rest
+//! The NPC rules a duel needs: strike spacing between NPCs, conditional plan options, rest
 //! semantics, combo continuation, decision cadence (perception's keep range is in
 //! `perception.rs`). Counted in ticks, from the actions that start.
 
