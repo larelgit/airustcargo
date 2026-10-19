@@ -38,6 +38,8 @@ Read this when you write or change anything that runs in the simulation: systems
   A large `f64` is first reduced to a small one, while it is still `f64` (the phase, modulo `TAU`): `f32` has only 24 bits.
   Exact operations (`sqrt`, `abs`, `floor`, `round`, `mul_add`, `rem_euclid`, `to_radians`) stay as methods.
 
+- **A hold of the clock is not a pause and not the simulation (hit stop).** `ai_core::ClockHold` forces the virtual clock's speed to 0 for real time while a hit stop lasts, only alone with a picture, in real time (never headless, stepped, in a replay or in a stand): zero ticks run inside it, so ticks, replays and snapshots do not see it. `sim::speed()` reports the player's speed, so read speed through it, never `Time<Virtual>::relative_speed()`. Presentation that must keep moving through a hold reads `Time<Real>`. A co-op machine never holds the clock; `PresentationHolds` freezes the picture of single bodies by `AiId` and is not a component. Detail: `docs/manual.md`, "Hit stop".
+
 ## Snapshots, replays, tick time
 
 - A snapshot does not see new simulation state outside entities with `AiId` (a resource, a counter): register it

@@ -18,6 +18,10 @@ const FALL_PROBE: f32 = 60.0;
 const GRAZE: f32 = 0.02;
 /// A floor whose normal has a `y` above this is flat (about 2.6°).
 const FLAT: f32 = 0.999;
+/// Two flat floors this close (m) are the same floor: the height a ray reports carries float noise
+/// (a thick or far collider gives a few 1e-7), and with a `step_height` of 0 any noise would read as
+/// a ledge or a drop.
+pub(super) const FLOOR_NOISE: f32 = 1e-3;
 
 /// Why a spot cannot be stood on.
 #[derive(Clone, Copy, Debug, PartialEq)]

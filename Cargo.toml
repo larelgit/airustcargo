@@ -18,6 +18,7 @@ members = [
     "crates/shards_scatter",
     "crates/shards_voxel",
     "crates/shards_fx",
+    "crates/shards_hitstop",
     "crates/shards_npc",
     "crates/shards_encounter",
     "crates/shards_world",
@@ -136,6 +137,7 @@ shards_look = { path = "crates/shards_look" }
 shards_scatter = { path = "crates/shards_scatter" }
 shards_voxel = { path = "crates/shards_voxel" }
 shards_fx = { path = "crates/shards_fx" }
+shards_hitstop = { path = "crates/shards_hitstop" }
 shards_world = { path = "crates/shards_world" }
 shards_net = { path = "crates/shards_net" }
 shards_steam = { path = "crates/shards_steam" }

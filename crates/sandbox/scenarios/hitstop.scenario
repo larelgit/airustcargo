@@ -1,0 +1,116 @@
+# Hit stop (C2): when a blow lands the picture stands still for a beat, and a game played alone with
+# a picture holds its real-time clock for it (never slow motion: no tick is lost, none is added).
+# What holds, and for how long, is content: `content/fx/sandbox.hitstop.ron` is an ordered list of
+# rules over the combat events (the first that matches gives the hold). This scenario runs headless
+# and stepped, where nothing is ever held: the blow still becomes a hold in the table's eyes
+# (`HitStopped`, a `hitstop:` journal line on every machine that sees combat), the tools say what
+# the table gives and why this machine held nothing, and the player's settings scale it. The hold
+# itself (the clock, the ticks that did not run inside it) is checked in the crate's tests and in
+# the live offscreen run, where a window's real time exists.
+
+seed 42
+
+# --- the game as it is now is kept, and put back at the end: this scenario plays a fight, and the
+# games that share a world with it (the scenarios run one after another) draw their randomness from
+# the tick, so a tick it took would change what the later ones see
+act snapshot_save path=snapshots/hitstop_before.json
+expect result contains "hitstop_before.json: tick"
+
+# --- the arena as the game spawns it, whatever was played in it before: everyone stands down
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+# (a dead player is brought back first: its own controls refuse a dead body)
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+step 150
+act heal id=e5
+act heal id=e6
+act settings_set group=accessibility reset=true
+act set id=e6 component=Boss path=phase value=1
+act teleport id=e5 x=0 z=-3 y=0
+act teleport id=e6 x=0 z=-6 y=0
+act teleport id=e7 x=-18 z=18 y=0
+act teleport id=e8 x=18 z=18 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+
+# --- the table: the rules in the order they are tried, the ceiling, and a machine that never holds
+act hitstop
+expect result contains "hit stop: headless: never holds"
+expect result contains "settings: scale 1 (accessibility.hit_stop; 0 is off) · only the local player's blows: no"
+expect result contains "table: 8 rules · ceiling 0.12 s · cooldown 0.00 s"
+expect result contains "finisher       damaged · weight ≥ Finisher · local player involved → 0.10 s"
+expect result contains "poise break    damaged · weight ≥ Break · local player involved → 0.10 s"
+expect result contains "heavy hit      damaged · reaction ≥ 2 · local player involved → 0.08 s"
+expect result contains "hit            damaged · local player involved → 0.06 s"
+expect result contains "parry          parried · local player involved → 0.10 s"
+act content_get kind=hitstop id=sandbox
+expect result contains "sandbox.hitstop.ron"
+expect result contains "PerfectEvaded"
+
+# --- a real blow: the player's swing lands on the warden; the table gives a hold for it
+mark
+act attack target=e6
+expect result contains "attacking e6"
+step 300 --until "journal:hitstop: hit"
+expect journal "hitstop: hit 0.06 s (damaged) on e5, e6"
+expect journal "e5 -> e6 light_1 -20"
+
+# --- nothing was held: headless there is no picture, and the clock is the stepped one
+act hitstop
+expect result contains "hit 0.06 s (damaged) on e5, e6: not held: nothing is drawn (headless) (0.00 s)"
+expect result contains " · 0 clock holds · 0 picture holds · "
+expect result contains "clock: never held yet"
+
+# --- the tool makes the holds the table gives for the other events, as a blow would
+act hitstop_play event=damaged weight=Finisher attacker=e5
+expect result contains "finisher 0.10 s (damaged): not held: nothing is drawn (headless)"
+act hitstop_play event=damaged weight=Break attacker=e5
+expect result contains "poise break 0.10 s (damaged)"
+act hitstop_play event=damaged reaction=2 attacker=e5
+expect result contains "heavy hit 0.08 s (damaged)"
+act hitstop_play event=blocked attacker=e5
+expect result contains "block 0.06 s (blocked)"
+act hitstop_play event=parried attacker=e5
+expect result contains "parry 0.10 s (parried)"
+act hitstop_play event=perfect_evaded attacker=e5
+expect result contains "perfect dodge 0.10 s (perfect_evaded)"
+act hitstop_play event=staggered
+expect result contains "no hold: no rule of the table gives a hold for staggered"
+act hitstop_play seconds=5
+expect result contains "manual 0.12 s (damaged)"
+
+# --- a typo names the closest, and an impossible hold is refused
+act? hitstop_play event=perfect_evade
+expect result contains "did you mean `perfect_evaded`?"
+act? hitstop_play seconds=-1
+expect result contains "a duration above 0"
+
+# --- the player's scale: 0 turns hit stop off and the machine says why it held nothing
+act settings_set group=accessibility key=hit_stop value=0
+expect result contains "accessibility.hit_stop 1 → 0"
+act hitstop_play event=damaged attacker=e5
+expect result contains "not held: hit stop is off in the settings"
+act? settings_set group=accessibility key=hit_stop value=2
+expect result contains "0 to 1"
+act settings_set group=accessibility key=hit_stop value=0.5
+act settings_set group=accessibility key=hit_stop_local_only value=true
+act hitstop_play seconds=1 attacker=e6 target=e7
+expect result contains "not held: the local player is not in this blow (hit_stop_local_only)"
+act settings_set group=accessibility reset=true
+
+# --- a second table, an unreachable rule, or a hold past its ceiling, is refused with what to change
+act? content_apply changes='[{"kind": "hitstop", "id": "spare", "def": {"max_seconds": 0.1, "rules": [{"when": {"event": "Damaged"}, "seconds": 0.06}, {"when": {"event": "Damaged", "weight_at_least": "Break"}, "seconds": 0.5}]}}]'
+expect result contains "a game has one hit stop table, and this one has more: sandbox; keep one"
+expect result contains "never matches, rule 1 (rule 1 damaged) before it matches everything it does"
+expect result contains "seconds 0.5 is longer than max_seconds 0.1 and would be cut"
+act hitstop
+expect result contains "table: 8 rules"
+
+
+# --- the game as it was found
+act snapshot_load path=snapshots/hitstop_before.json
+expect result contains "hitstop_before.json: tick"

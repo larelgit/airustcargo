@@ -14,6 +14,7 @@ use shards_core::{CorePlugin, EngineConfig};
 use shards_dev::DevPlugin;
 use shards_encounter::EncounterPlugin;
 use shards_fx::FxPlugin;
+use shards_hitstop::HitstopPlugin;
 use shards_level::LevelPlugin;
 use shards_look::LookPlugin;
 use shards_motion::MotionPlugin;
@@ -149,7 +150,9 @@ impl PluginGroup for EnginePlugins {
             // Effects: particles from content in pools, the telegraphs on the ground as decals.
             .add(FxPlugin)
             // Where encounters meet the net, effects, sound, messages and saves.
-            .add(EngineEncounterPlugin);
+            .add(EngineEncounterPlugin)
+            // Hit stop: a brief hold of the picture (and of the real-time clock when alone) when a blow lands.
+            .add(HitstopPlugin);
         // Steam (feature `steam`): lobbies, the relay as a transport, achievements, cloud saves.
         #[cfg(feature = "steam")]
         let group = group.add(shards_steam::SteamPlugin);
@@ -187,6 +190,7 @@ fn leave_out(mut group: PluginGroupBuilder, without: &[&str]) -> PluginGroupBuil
             "scatter" => off::<ScatterPlugin>(group),
             "voxel" => off::<VoxelPlugin>(group),
             "fx" => off::<FxPlugin>(group),
+            "hitstop" => off::<HitstopPlugin>(group),
             #[cfg(feature = "steam")]
             "steam" => off::<shards_steam::SteamClientPlugin>(off::<shards_steam::SteamPlugin>(group)),
             "dev" => off::<DevPlugin>(group),

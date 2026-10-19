@@ -1,0 +1,28 @@
+// The sandbox's hit stop (content kind `hitstop`, one per game): how long the picture stands still
+// when a blow lands. The first rule that matches a combat event gives its hold, in seconds; an
+// event no rule matches gives none. This is a neutral example: a game writes its own ladder.
+//
+// A hold is a pause, never slow motion: played alone with a picture it keeps the real-time clock
+// still (no tick runs inside it); in co-op only the pictures of the bodies in the blow stand still;
+// headless, stepped and in a replay nothing is held (`hitstop` says why). The player's scale
+// (`accessibility.hit_stop`, 0 turns it off) and `max_seconds` bound every hold.
+//
+// `involves_local: true` keeps a rule to the blows the local player is in: a fight between two
+// others, a hazard tick or a crowd far away holds nothing.
+{
+    "sandbox": (
+        max_seconds: 0.12,
+        // After a hold is over, a new one waits this long (s), so a flurry does not stutter.
+        cooldown: 0.0,
+        rules: [
+            (name: "finisher", when: (event: Damaged, weight_at_least: Finisher, involves_local: true), seconds: 0.10),
+            (name: "poise break", when: (event: Damaged, weight_at_least: Break, involves_local: true), seconds: 0.10),
+            (name: "counter", when: (event: Damaged, weight_at_least: Counter, involves_local: true), seconds: 0.08),
+            (name: "heavy hit", when: (event: Damaged, reaction_at_least: 2, involves_local: true), seconds: 0.08),
+            (name: "hit", when: (event: Damaged, involves_local: true), seconds: 0.06),
+            (name: "block", when: (event: Blocked, involves_local: true), seconds: 0.06),
+            (name: "parry", when: (event: Parried, involves_local: true), seconds: 0.10),
+            (name: "perfect dodge", when: (event: PerfectEvaded, involves_local: true), seconds: 0.10),
+        ],
+    ),
+}

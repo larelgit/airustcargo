@@ -10,7 +10,7 @@
     "seed": 42,
     "tick_hz": 59.99999880000003,
     "engine": "0.4.0",
-    "state_hash": "b13b4b8e305e5132",
+    "state_hash": "ea25707f2699858a",
     "checks": {
       "content": "895395b98956d706",
       "levels": "cbf29ce484222325",
@@ -1902,7 +1902,6 @@
             }
           },
           "shards_motion::physics::ColliderId": 62,
-          "shards_net::replicate::NetAlways": {},
           "shards_npc::brain::Home": {
             "leash": 18.0,
             "pos": [
@@ -1993,9 +1992,6 @@
           "shards_world::zones::ActiveZone": {}
         }
       }
-    ],
-    "left_out": [
-      "shards::encounter_wiring::OurNetAlways (not registered for reflection)"
     ]
   },
   "end": {
@@ -2313,7 +2309,7 @@
   "checks": [
     {
       "tick": 540,
-      "hash": "6d7a19c05fabdf76",
+      "hash": "b6af9b6fbf018bbe",
       "parts": {
         "entities": {
           "e1": {
@@ -2569,7 +2565,6 @@
             "MotionState": "b928559e7fb8a321",
             "Name": "c1135842c5136de9",
             "NavAgent": "7d37dccfc4daeee1",
-            "NetAlways": "ee175a33dee1b7cd",
             "Npc": "5261f0cbfc256463",
             "NpcBrain": "d6c596ca026661f8",
             "NpcDrive": "86e42107c9ecae6a",

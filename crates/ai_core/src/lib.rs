@@ -51,6 +51,7 @@ pub mod failures;
 pub mod heavy;
 #[cfg(feature = "render")]
 pub mod highlight;
+pub mod hold;
 pub mod id;
 pub mod invariants;
 pub mod journal;
@@ -94,6 +95,7 @@ pub use failures::{ai_core_error_handler, AiFailures, SystemFailure};
 pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible};
 pub use coverage::AiCoverage;
 pub use heavy::{HeavyConfig, HeavyFailure, HeavyTwin};
+pub use hold::{ClockHold, PresentationHolds};
 pub use invariants::{with_query, AiInvariants, InvariantSystems, Offenders, RuleQueries, Violation};
 pub use journal::{capture_log_layer, AiJournal, JournalEntry, JournalKind};
 pub use net_rules::{replicated_components, rules_hash, NetRules};
@@ -208,6 +210,8 @@ impl Plugin for AiCorePlugin {
             .init_resource::<AiLineOfSight>()
             .init_resource::<AiConditions>()
             .init_resource::<SimGate>()
+            .init_resource::<ClockHold>()
+            .init_resource::<PresentationHolds>()
             .init_resource::<AiStatusFields>()
             .init_resource::<NetRules>()
             // Which body is "mine" is each machine's own business.
@@ -219,6 +223,8 @@ impl Plugin for AiCorePlugin {
             .add_systems(FixedFirst, sim::advance_tick)
             // Before this frame's time is counted: a held gate means no tick is due.
             .add_systems(First, sim::apply_gate.before(bevy::time::TimeSystems))
+            // After the gate (a gate that paused the clock ends a hit stop), before the time is counted.
+            .add_systems(First, (hold::apply_hold, hold::prune_holds).after(sim::apply_gate).before(bevy::time::TimeSystems))
             // Several apps in one process: this one is working now (its log lines and
             // failures are its own).
             .add_systems(First, process::activate_app.before(sim::apply_gate))

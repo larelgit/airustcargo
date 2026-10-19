@@ -6,7 +6,7 @@
 use ai_core::spatial::compass_vector;
 use bevy::prelude::*;
 
-use super::terrain::{Block, Probe, Terrain};
+use super::terrain::{Block, Probe, Terrain, FLOOR_NOISE};
 use crate::controller::CharacterParams;
 use crate::physics::PhysicsWorld;
 
@@ -164,9 +164,9 @@ impl<'a> Marcher<'a> {
             Probe::Floor { y, normal } => {
                 let dy = y - from.y;
                 let allowance = self.terrain.slope_rise(STEP, from.up, normal.y);
-                if dy < -self.safe_drop {
+                if dy < -self.safe_drop.max(FLOOR_NOISE) {
                     Sample::Stop(Hazard::Cliff { drop: Some(-dy) })
-                } else if dy > p.step_height + allowance {
+                } else if dy > p.step_height + allowance + FLOOR_NOISE {
                     // Up to what the controller climbs it is a ledge, above that a wall.
                     Sample::Stop(if climbable(p, dy, from.swim) { Hazard::Ledge { rise: dy } } else { Hazard::Wall })
                 } else {
@@ -227,10 +227,10 @@ impl<'a> Marcher<'a> {
         for k in 1..=2 {
             let ahead = at + dir * (STEP * k as f32);
             match self.terrain.probe(ahead.x, ahead.z, state.y) {
-                Probe::Floor { y, .. } if y - state.y > p.step_height && climbable(p, y - state.y, state.swim) => {
+                Probe::Floor { y, .. } if y - state.y > p.step_height + FLOOR_NOISE && climbable(p, y - state.y, state.swim) => {
                     return Hazard::Ledge { rise: y - state.y };
                 }
-                Probe::Floor { y, .. } if y - state.y < -self.safe_drop => return Hazard::Cliff { drop: Some(state.y - y) },
+                Probe::Floor { y, .. } if y - state.y < -self.safe_drop.max(FLOOR_NOISE) => return Hazard::Cliff { drop: Some(state.y - y) },
                 Probe::Void => return Hazard::Cliff { drop: None },
                 Probe::Water { .. } if !state.swim => return Hazard::Water,
                 Probe::Blocked(_) => {}

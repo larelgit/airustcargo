@@ -59,6 +59,7 @@ use bevy::ecs::query::QueryData;
 use bevy::gltf::{Gltf, GltfNode};
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
+use ai_core::{AiId, PresentationHolds};
 use shards_content::ContentDb;
 use shards_core::Predicted;
 use shards_motion::{MotionState, MoveModifiers};
@@ -162,6 +163,8 @@ pub struct AnimationBound {
     ready: BTreeSet<String>,
     /// What plays on each layer that has played something lately.
     overlays: BTreeMap<String, Overlay>,
+    /// The character's animation is paused by a [`PresentationHolds`] hold (a hit stop in co-op).
+    held: bool,
 }
 
 impl AnimationBound {
@@ -471,6 +474,7 @@ pub fn bind_players(
             root: None,
             ready,
             overlays: BTreeMap::new(),
+            held: false,
         });
     }
 }
@@ -519,6 +523,8 @@ pub struct Driven {
     /// A client's own body shows the action it predicts, not the host's older state.
     shown: Option<&'static PredictedAction>,
     predicted: Has<Predicted>,
+    /// For [`PresentationHolds`].
+    id: Option<&'static AiId>,
     motion: Option<&'static MotionState>,
     modifiers: Option<&'static MoveModifiers>,
     fighter: Option<&'static Fighter>,
@@ -530,6 +536,8 @@ pub struct Driven {
 pub fn drive(
     mut commands: Commands,
     time: Res<Time>,
+    real: Res<Time<Real>>,
+    holds: Option<Res<PresentationHolds>>,
     fixed: Res<Time<Fixed>>,
     db: Option<Res<ContentDb>>,
     graphs: Res<AnimGraphs>,
@@ -539,9 +547,10 @@ pub fn drive(
 ) {
     let Some(db) = db else { return };
     let overstep = fixed.overstep().as_secs_f32();
+    let now = real.elapsed();
     let frozen = time.delta_secs() <= 0.0;
     let standing = MotionState::default();
-    for DrivenItem { entity, animated: set_ref, mut bound, state, shown, predicted, motion, modifiers, fighter, dead } in &mut animated {
+    for DrivenItem { entity, animated: set_ref, mut bound, state, shown, predicted, id, motion, modifiers, fighter, dead } in &mut animated {
         let (Some(set), Some(built)) = (db.get::<AnimSet>(&set_ref.animset), graphs.built(&set_ref.animset)) else {
             continue;
         };
@@ -549,6 +558,21 @@ pub fn drive(
             continue; // `bind_players` takes it over to the rebuilt graph next
         }
         let Ok((mut player, mut transitions)) = players.get_mut(bound.player) else { continue };
+
+        // A hit stop in co-op: this body's picture stands still (the clock runs on). Its player
+        // is paused as a whole, and nothing is sought or switched until the hold is over.
+        let held = holds.as_ref().zip(id).is_some_and(|(holds, id)| holds.is_held(*id, now));
+        if held != bound.held {
+            bound.held = held;
+            if held {
+                player.pause_all();
+            } else {
+                player.resume_all();
+            }
+        }
+        if held {
+            continue;
+        }
 
         // The running action as (key, seconds in, length). One that has a hold loop (a raised
         // block) is not looked ahead: it would run past the loop's end.
@@ -1070,6 +1094,44 @@ mod tests {
         rig.app.update();
         let swing = rig.playing().into_iter().find(|p| p.0 == "swing_1").unwrap();
         assert!((swing.3 - 1.0).abs() < 1e-3, "{swing:?}");
+    }
+
+    #[test]
+    fn a_body_in_a_picture_hold_stands_still_and_moves_on_when_it_ends() {
+        let mut rig = rig();
+        rig.app.init_resource::<PresentationHolds>().insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(100)));
+        rig.app.world_mut().entity_mut(rig.character).insert(AiId(7));
+        rig.velocity(1.5);
+        for _ in 0..3 {
+            rig.app.update();
+        }
+        let walk = |rig: &Rig| rig.playing().into_iter().find(|p| p.0 == "walk").unwrap();
+        assert_eq!(rig.main_clip().as_deref(), Some("walk"));
+        let moving = walk(&rig).1;
+        rig.app.update();
+        assert!(walk(&rig).1 > moving, "it walks");
+
+        // Held for 0.25 s of real time: frames of 0.1 s.
+        let until = rig.app.world().resource::<Time<Real>>().elapsed() + Duration::from_millis(250);
+        rig.app.world_mut().resource_mut::<PresentationHolds>().hold(AiId(7), until - Duration::from_millis(250), until);
+        rig.app.update();
+        let held_at = walk(&rig).1;
+        assert!(rig.app.world().get::<AnimationPlayer>(rig.player).unwrap().all_paused());
+        // Even the clip it should switch to waits (the body stops: idle is not shown while held).
+        rig.velocity(0.0);
+        rig.app.update();
+        assert_eq!((walk(&rig).1, rig.main_clip().as_deref()), (held_at, Some("walk")), "nothing moves or switches");
+        // The hold is over after 0.25 s: the player runs again and the choice catches up.
+        for _ in 0..3 {
+            rig.app.update();
+        }
+        assert!(!rig.app.world().get::<AnimationPlayer>(rig.player).unwrap().all_paused());
+        assert_eq!(rig.main_clip().as_deref(), Some("idle"));
+        // Another body's hold does not touch this one.
+        let until = rig.app.world().resource::<Time<Real>>().elapsed() + Duration::from_secs(5);
+        rig.app.world_mut().resource_mut::<PresentationHolds>().hold(AiId(9), until - Duration::from_secs(5), until);
+        rig.app.update();
+        assert!(!rig.app.world().get::<AnimationPlayer>(rig.player).unwrap().all_paused());
     }
 
     #[test]

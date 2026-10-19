@@ -390,3 +390,27 @@ fn the_regression_folder_exists_and_explains_itself() {
     let readme = std::fs::read_to_string(regress_dir().join("README.md")).expect("scenarios/regress/README.md");
     assert!(readme.contains("fuzz"), "{readme}");
 }
+
+/// `npc_navmesh.scenario` proves the same things whatever tick it starts at: the NPC dice are
+/// keyed by tick, so a scenario that leans on one start tick passes in a fresh game and fails
+/// live. Here it starts after 0, 1, 2, ... ticks (a prime-ish spread up to 4099).
+#[test]
+fn npc_navmesh_passes_from_any_start_tick() {
+    let _turn = snapshot_file_turn();
+    let path = single_game_dir().join("npc_navmesh.scenario");
+    let text = std::fs::read_to_string(&path).expect("npc_navmesh.scenario");
+    let mut failed = Vec::new();
+    for start in [0u64, 1, 2, 3, 5, 7, 13, 37, 64, 100, 199, 333, 601, 1000, 2503, 4099] {
+        let mut app = sandbox::test_app(42);
+        crate::common::step(&mut app, start);
+        let report = run_file_text(&mut app, &text);
+        if !report.passed {
+            failed.push(format!("start tick {start}:\n{report}"));
+        }
+    }
+    assert!(failed.is_empty(), "{} start tick(s) failed:\n\n{}", failed.len(), failed.join("\n\n"));
+}
+
+fn run_file_text(app: &mut shards::bevy::app::App, text: &str) -> shards::script::Report {
+    shards::ai_core::scenario::run_str(app.world_mut(), "npc_navmesh.scenario", text)
+}
