@@ -376,7 +376,7 @@ impl Plugin for ActionPlugin {
             .configure_sets(
                 FixedUpdate,
                 (
-                    ActionSystems::Orders.in_set(SimSet::Input).after(CoreSystems::FollowOrders),
+                    ActionSystems::Orders.in_set(SimSet::Input).after(CoreSystems::FollowOrders).after(MotionSystems::StallOrders),
                     ModifierSystems::Reset.after(ActionSystems::Orders),
                     (ActionSystems::Context, ActionSystems::Machine, ActionSystems::Effects, ActionSystems::Push)
                         .chain()

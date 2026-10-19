@@ -138,7 +138,7 @@ For the AI (`ai/status` shows the version and modules): ✅ test `status_names_t
 | 6 | API for warnings about off-screen attacks | ✅ | `threat_indicators(world, viewer, forward)` in `shards_action::zone`; markers at the edge of the screen — `shards_action::render::hud` |
 
 For the AI: the movement mode and speed in describe (`ground 3.6m/s`) are ✅; `jump`, `sprint` and `glide` are ✅; `clearance` and
-`path_to` by physics are ✅. `path_to` is a local grid A* (0.5 m, `src/perception/path.rs`). In a loaded region, `move_to path=true` and `path_to` ask the navmesh (E6) through `RoutePlanner` (`provider` in the answer). `clearance` closes the direction where the navmesh ends (`closed`; D4). Two floors within 1 mm are one floor (`FLOOR_NOISE`), so a body with `step_height: 0` reads flat floor as free, not as ledges or drops (`clearance` and `path_to`; test `a_body_with_no_step_height_sees_flat_floor_as_free_not_as_ledges` in `tests/motion/perception.rs`).
+`path_to` by physics are ✅. `path_to` is a local grid A* (0.5 m, `src/perception/path.rs`). In a loaded region, `move_to path=true` and `path_to` ask the navmesh (E6) through `RoutePlanner` (`provider` in the answer). `clearance` closes the direction where the navmesh ends (`closed`; D4). Two floors within 1 mm are one floor (`FLOOR_NOISE`), so a body with `step_height: 0` reads flat floor as free, not as ledges or drops (`clearance` and `path_to`; test `a_body_with_no_step_height_sees_flat_floor_as_free_not_as_ledges` in `tests/motion/perception.rs`). A `move` or `move_to` order that gets no closer for 2 s ends as `blocked` (`src/orders.rs`, `tests/motion/orders.rs`); the movement tools refuse a dead body.
 
 | Done when | Status | How it is checked |
 |---|---|---|
