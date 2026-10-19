@@ -9,3 +9,7 @@ Read this when you touch enemy brains, behaviour, perception, the director, atta
   `NpcSystems::Drive`, before `drive_intents`, it edits the route input `NavAgent::desired` (which `drive_intents` writes to
   `Intent`), and its own state `NavAgent::avoiding` and `side`; neighbours are taken in `AiId` order, with no randomness; its numbers are `avoidance` in
   `npc_tuning` or in the behaviour, not constants in code.
+- **One judge for an attack option.** Whether an option may be chosen now is `refusal()` (`shards_npc/src/planner.rs`) over the inputs that
+  `schedule::inputs()` builds; the director's grant (`direct`, step 3) and `plan_attacks` both call it. A new rule for options goes into
+  `refusal()` (and `Refusal`, in its place in the order), never into the director or the planner alone, so the grant and the choice cannot
+  disagree. Count the players the director counts with `schedule::living_players`.
