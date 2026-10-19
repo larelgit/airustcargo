@@ -810,18 +810,30 @@ fn a_replay_verifies_with_animated_bodies_and_the_picture_does_work() {
     assert!(on_hip, "no sword was ever on the hip: the drink's mount never ran");
 }
 
-/// The same for the motion modes (animation design 10.2, D1.2): the body-motion replay swims in the
-/// pool with a stroke, the bridge draws the sword on the back, in the hand for the stroke and lowers
-/// the model, and the replay still verifies identical with the bare run's state hash.
-#[test]
-fn a_replay_with_a_swim_verifies_with_animated_bodies_in_the_water() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/replays/body_motion.json");
+/// What the bridge drew while a replay was played with animated bodies and a frame after every tick.
+#[derive(Default, Debug)]
+struct Swim {
+    swam: bool,
+    sword_on_back: bool,
+    sword_in_hand_afloat: bool,
+    dropped: bool,
+    left_events: usize,
+}
+
+/// Plays the reference replay `file` with every fighter dressed (as `a_replay_verifies_with_animated_bodies...`),
+/// checks it verifies identical with the bare run's state hash, and reports what was drawn of the motion modes.
+fn played_swimming(file: &str) -> Swim {
+    #[derive(Resource, Default)]
+    struct Lefts(usize);
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/replays").join(file);
     let replay: Replay = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let bare = played(replay.clone());
     assert!(report(&bare).identical(), "{}", report(&bare));
     let want = replay::state_hash(bare.world());
 
     let mut app = sandbox::test_app(replay.seed);
+    app.init_resource::<Lefts>();
+    app.add_observer(|_: On<shards::action::ModeLeft>, mut lefts: ResMut<Lefts>| lefts.0 += 1);
     app.add_systems(Update, dress_fighters);
     let started = std::time::Instant::now();
     while shards::ai_core::status::status(app.world())["anim"]["bound"].as_u64() == Some(0) {
@@ -832,28 +844,37 @@ fn a_replay_with_a_swim_verifies_with_animated_bodies_in_the_water() {
     let end = replay.end.tick;
     replay::play(app.world_mut(), replay).unwrap();
     app.update();
-    let (mut swam, mut back, mut in_hand, mut dropped) = (false, false, false, false);
-    let mut sample = |app: &mut App| {
+    let mut swim = Swim::default();
+    for _ in 0..end {
+        ok(&mut app, "step", json!({"ticks": 1}));
+        app.update();
         let world = app.world_mut();
         let mut q = world.query::<&shards::action::render::AnimationBound>();
         for b in q.iter(world) {
             let water = b.mode() == Some(shards::motion::MotionMode::Water);
-            swam |= water;
-            back |= water && b.place("sword") == Some(&shards::action::Place::Socket("back".into()));
-            in_hand |= water && b.place("sword") == Some(&shards::action::Place::Socket("hand_r".into()));
-            dropped |= b.drop_depth() > 0.0;
+            swim.swam |= water;
+            swim.sword_on_back |= water && b.place("sword") == Some(&shards::action::Place::Socket("back".into()));
+            swim.sword_in_hand_afloat |= water && b.place("sword") == Some(&shards::action::Place::Socket("hand_r".into()));
+            swim.dropped |= b.drop_depth() > 0.0;
         }
-    };
-    // A frame after every tick: the bridge sees every moment of the stroke.
-    for _ in 0..end {
-        ok(&mut app, "step", json!({"ticks": 1}));
-        app.update();
-        sample(&mut app);
     }
+    swim.left_events = app.world().resource::<Lefts>().0;
     assert!(report(&app).identical(), "{}", report(&app));
     assert_eq!(replay::state_hash(app.world()), want, "the picture changed the game");
-    assert!(swam, "no body was drawn swimming: the test proves nothing");
-    assert!(back, "no sword rode the back afloat: the mode's mount never ran");
-    assert!(in_hand, "no sword was in the hand afloat: the stroke never made the rules step aside");
-    assert!(dropped, "the model was never lowered: the drop never ran");
+    swim
+}
+
+/// The same for the motion modes (animation design 10.2, D1.2). The course replay swims across the
+/// pool and climbs out: the bridge draws the sword on the back in the water and fires `ModeLeft` for the
+/// water once the body is out; the body-motion replay swims a stroke, which keeps the sword in the hand
+/// and lowers the model. Neither changes the replay.
+#[test]
+fn a_replay_with_a_swim_verifies_with_animated_bodies_in_the_water() {
+    let course = played_swimming("obstacle_course.json");
+    assert!(course.swam, "no body was drawn swimming: the test proves nothing: {course:?}");
+    assert!(course.sword_on_back, "no sword rode the back afloat: the mode's mount never ran: {course:?}");
+    assert!(course.left_events > 0, "the draw after the water never began: {course:?}");
+    let strokes = played_swimming("body_motion.json");
+    assert!(strokes.swam && strokes.sword_in_hand_afloat, "the stroke never made the rules step aside: {strokes:?}");
+    assert!(strokes.dropped, "the model was never lowered: {strokes:?}");
 }

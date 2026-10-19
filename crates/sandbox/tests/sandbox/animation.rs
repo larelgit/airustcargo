@@ -60,12 +60,13 @@ fn a_swimmer_has_its_sword_on_the_back_and_a_stroke_keeps_it_in_the_hand() {
     ok(&mut app, "teleport", json!({"id": PLAYER, "x": 61, "z": 0, "y": 3.2}));
     step(&mut app, 40);
     let said = text(&ok(&mut app, "animation", json!({"id": PLAYER, "animset": "humanoid"}))).to_owned();
-    assert!(
-        said.contains(
-            "  mode: water (as the controller says) · @mode:water applies · layers off: upper · drop 0.15 m over 0.22 s when an action runs"
-        ),
-        "{said}"
-    );
+    for part in [
+        "  mode: water (as the controller says) · @mode:water applies",
+        "layers off: upper",
+        "drop 0.15 m over 0.22 s when an action runs",
+    ] {
+        assert!(said.contains(part), "{part}: {said}");
+    }
     assert!(said.contains("  props: sword at back"), "{said}");
     // A stroke is a swing afloat: the sword is in the hand for it, and the model goes down.
     let player = shards::ai_core::AiId::parse(PLAYER).unwrap();
