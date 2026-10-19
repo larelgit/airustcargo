@@ -5582,6 +5582,7 @@ dependencies = [
  "shards_core",
  "shards_level",
  "shards_motion",
+ "shards_rules",
  "shards_world",
 ]
 

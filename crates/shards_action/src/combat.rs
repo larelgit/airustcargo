@@ -551,7 +551,8 @@ fn resolve(world: &mut World, d: Detected) {
     apply(world, ctx);
 }
 
-/// The engine's modifiers: god mode, i-frames (and perfect evades), guards, armor.
+/// The engine's modifiers: god mode, i-frames (and perfect evades), guards, the `DamageTaken` multiplier,
+/// the rules' incoming factor ([`DamageCtx::rules`]), armor.
 pub fn modifiers(world: &World, ctx: &mut DamageCtx) {
     let target = ctx.target;
     if world.get::<Invulnerable>(target).is_some() {
@@ -862,9 +863,7 @@ fn hurt(world: &mut World, target: Entity, damage: f32) -> (f32, f32) {
     (health.current, absorbed)
 }
 
-/// Damage that is not a hit: a status hook's burn, a hazard. It is never scaled by the rules
-/// (`shards_rules`): a pit or a kill volume that deals the target's health must kill in every mode; a
-/// game's damage over time that the rules should scale calls [`deal_ruled_damage`]. Takes `amount` off `target`'s barrier,
+/// Damage that is not a hit: a status hook's burn, a hazard. Takes `amount` off `target`'s barrier,
 /// then its health, and kills it when its health runs out (`Died`, with `credit` as the killer
 /// and no action). Returns the health left. Nothing is done to a dead or gone entity, to one in
 /// god mode ([`Invulnerable`]), or for an `amount` that is not a finite number above 0. It runs none of the hit
@@ -873,6 +872,10 @@ fn hurt(world: &mut World, target: Entity, damage: f32) -> (f32, f32) {
 /// triggers its own event. A machine that does not simulate (a co-op client) changes nothing and
 /// returns the health as it is: the host's state brings the damage, so an observer that calls
 /// this on every machine does not kill twice.
+///
+/// It is never scaled by the rules (`shards_rules`): a pit or a kill volume that deals the target's
+/// health must kill in every mode. A game's damage over time that the rules should scale calls
+/// [`deal_ruled_damage`].
 pub fn deal_damage(world: &mut World, target: Entity, amount: f32, credit: Option<Entity>) -> f32 {
     if world.get_entity(target).is_err() || world.get::<Dead>(target).is_some() {
         return 0.0;

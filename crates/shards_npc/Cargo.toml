@@ -17,6 +17,8 @@ shards_core.workspace = true
 shards_content.workspace = true
 shards_motion.workspace = true
 shards_action.workspace = true
+# The rules' guards: an NPC that fights holds a change of rules (`npc_engaged`).
+shards_rules.workspace = true
 # The region's tile graph and active zones; level files of tiles and their navlinks.
 shards_world.workspace = true
 shards_level.workspace = true
@@ -28,6 +30,5 @@ schemars.workspace = true
 ron.workspace = true
 
 [dev-dependencies]
-shards_rules.workspace = true
 # Test apps load their content through the asset server, like a game.
 bevy = { workspace = true, features = ["std", "serialize", "bevy_asset", "bevy_state", "multi_threaded"] }

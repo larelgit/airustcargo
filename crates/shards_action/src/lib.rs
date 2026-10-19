@@ -294,6 +294,10 @@ impl ActionAppExt for App {
 
 /// Actions, combat, fighter resources and statuses (adds [`MotionPlugin`] and [`RulesPlugin`] if they are
 /// missing). Needs `CorePlugin` and `ContentPlugin` (`shards::EnginePlugins` adds all).
+///
+/// A game that builds its app by hand and also adds the world's zones must order `RulesSystems::Apply`
+/// before `WorldSystems::Zones` itself, as the umbrella does (`shards::EnginePlugins`); without it the two
+/// systems have no order and a replay can diverge.
 pub struct ActionPlugin;
 
 impl Plugin for ActionPlugin {

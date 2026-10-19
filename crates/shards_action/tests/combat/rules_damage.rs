@@ -10,7 +10,7 @@ use serde_json::json;
 use shards_action::prelude::*;
 use shards_action::{
     deal_damage, deal_ruled_damage, objects::spawn_objects, objects::SpawnDef, ActionAppExt, Armor, Blocked, DamageCtx,
-    Damaged, Evaded, GuardBroken, Invulnerable, Parried,
+    Damaged, Evaded, GuardBroken, Invulnerable, Outcome, Parried,
 };
 use shards_core::PlayerId;
 use shards_rules::{ActiveRules, RuleClass};
@@ -77,7 +77,7 @@ fn swing_with(
     input: &str,
     setup: impl FnOnce(&mut App, Entity, Entity),
 ) -> Swing {
-    let (mut app, a, v) = bout_with(if guarding { "b_victim" } else { "r_victim" }, watch);
+    let (mut app, a, v) = bout_with(if guarding { "b_victim_poise" } else { "r_victim" }, watch);
     if let Some(mode) = mode {
         play(&mut app, mode);
     }
@@ -140,8 +140,10 @@ fn incoming_halves_a_blocks_chip_and_a_guard_breaks_damage_not_the_guards_cost()
     assert_eq!(base.dealt[0].0, "block");
     let chip = base.dealt[0].1;
     assert!(chip > 0.0, "{base:?}");
+    assert!(base.poise > 0.0, "the guard with a poise share loses poise on a block: {base:?}");
     let ward = swing(Some("ward"), None, Some("player"), true, "light");
     assert_dealt(&ward, "block", chip * 0.5);
+    assert!(near(ward.poise, base.poise), "the incoming factor leaves a block's poise alone: {ward:?} {base:?}");
     assert!(near(ward.stamina, base.stamina), "the block's stamina cost is not scaled: {ward:?} {base:?}");
     assert!(near(ward.poise, base.poise), "{ward:?} {base:?}");
 
@@ -231,6 +233,7 @@ fn outgoing_scales_health_and_poise_of_a_hit_a_block_and_a_guard_break() {
         let base = swing(None, None, None, guarding, input);
         assert_eq!(base.dealt[0].0, kind, "{base:?}");
         assert!(base.dealt[0].1 > 0.0, "{base:?}");
+        assert!(kind == "break" || base.poise > 0.0, "a hit and a block lose poise (a break resets it): {base:?}");
         let power = swing(Some("power"), Some("brute"), None, guarding, input);
         assert_dealt(&power, kind, base.dealt[0].1 * 1.5);
         assert!(near(power.poise, base.poise * 1.5), "{kind} poise: {power:?} {base:?}");
@@ -244,32 +247,66 @@ fn outgoing_scales_health_and_poise_of_a_hit_a_block_and_a_guard_break() {
     }
 }
 
+static SEEN: std::sync::Mutex<Vec<(String, f32)>> = std::sync::Mutex::new(Vec::new());
+
+/// What a hook sees on a ctx that is not a hit: `(outcome, rules)`; and it puts a health and poise
+/// damage on that ctx that nothing should scale (and nothing should apply).
+fn see_and_load(ctx: &mut DamageCtx, _: &World) {
+    if !matches!(ctx.outcome, Outcome::Hit | Outcome::Blocked { .. } | Outcome::GuardBroken) {
+        SEEN.lock().unwrap().push((format!("{:?}", ctx.outcome), ctx.rules));
+        ctx.damage = 10.0;
+        ctx.poise = 10.0;
+    }
+}
+
 #[test]
-fn outgoing_adds_nothing_to_a_parry_an_evade_or_an_ignored_hit() {
-    // A parry: the stamina it costs is the guard's.
-    let run = |mode: Option<&str>, class: Option<&str>, setup: fn(&mut App, Entity, Entity), tick: u64, wait: u64| {
-        let (mut app, a, v) = bout_with("r_victim", watch);
+fn outgoing_and_incoming_leave_a_parry_an_evade_and_an_ignored_hit_alone() {
+    let run = |mode: Option<&str>, class: Option<&str>, setup: fn(&mut App, Entity, Entity), input: &str| {
+        SEEN.lock().unwrap().clear();
+        let (mut app, a, v) = bout_with("r_victim", |app| {
+            watch(app);
+            app.add_damage_hook(see_and_load);
+        });
         if let Some(mode) = mode {
             play(&mut app, mode);
         }
-        if let Some(class) = class {
-            app.world_mut().entity_mut(a).insert(RuleClass(class.to_owned()));
+        for e in [a, v] {
+            if let Some(class) = class {
+                app.world_mut().entity_mut(e).insert(RuleClass(class.to_owned()));
+            }
         }
         setup(&mut app, a, v);
-        step(&mut app, wait);
-        press(&mut app, a, "heavy");
-        step(&mut app, tick);
-        (app.world().resource::<Dealt>().0.clone(), hp(&app, v), stamina(&app, v))
+        press(&mut app, a, input);
+        step(&mut app, 12);
+        let poise = app.world().get::<Poise>(a).unwrap();
+        let seen = SEEN.lock().unwrap().clone();
+        (app.world().resource::<Dealt>().0.clone(), hp(&app, v), hp(&app, a), stamina(&app, v), poise.max - poise.current, seen)
     };
-    let guard = |app: &mut App, _: Entity, v: Entity| hold(app, v, "block", true);
-    let base = run(None, None, guard, 8, 0);
-    assert_eq!(base.0, [("parry", 0.0)]);
-    assert_eq!(run(Some("power"), Some("brute"), guard, 8, 0), base);
+    let parry = |app: &mut App, _: Entity, v: Entity| hold(app, v, "block", true);
+    let evade = |app: &mut App, _: Entity, v: Entity| {
+        press(app, v, "dodge");
+        step(app, 2);
+    };
     let god = |app: &mut App, _: Entity, v: Entity| {
         app.world_mut().entity_mut(v).insert(Invulnerable);
     };
-    let ignored = run(Some("power"), Some("brute"), god, 8, 0);
-    assert_eq!((ignored.0.len(), ignored.1), (0, 100.0), "{ignored:?}");
+    for (name, setup, input, outcome) in [
+        ("parry", parry as fn(&mut App, Entity, Entity), "heavy", "Parried"),
+        ("evade", evade, "technique.7", "Evaded"),
+        ("god mode", god, "light", "Ignored"),
+    ] {
+        let base = run(None, None, setup, input);
+        let ruled = run(Some("power"), Some("brute"), setup, input);
+        let ward = run(Some("ward"), Some("player"), setup, input);
+        assert!(base.5.iter().any(|(o, _)| o.contains(outcome)), "{name}: the hook saw {:?}", base.5);
+        // The factor of an incoming class is not set on these paths, and nothing the hook put there is applied.
+        for (what, r) in [("power", &ruled), ("ward", &ward)] {
+            assert!(r.5.iter().all(|(_, rules)| *rules == 1.0), "{name} ({what}): ctx.rules stays 1: {:?}", r.5);
+            assert_eq!(r.0, base.0, "{name} ({what})");
+            assert_eq!((r.1, r.2, r.3, r.4), (base.1, base.2, base.3, base.4), "{name} ({what}): hp, stamina and poise as without rules");
+        }
+        assert_eq!(base.1, 100.0, "{name}: nothing is applied: {base:?}");
+    }
 }
 
 #[test]
@@ -289,6 +326,13 @@ fn outgoing_is_times_the_session_row() {
     };
     assert_eq!(hit(1), [("hit", 15.0)], "a session of one: 1.5 × 1");
     assert_eq!(hit(2), [("hit", 30.0)], "a session of two: 1.5 × 2");
+}
+
+/// Names the third body as the credit, when there is one.
+fn credit_third_if_set(ctx: &mut DamageCtx, world: &World) {
+    if let Some(third) = world.get_resource::<Third>() {
+        ctx.credit = third.0;
+    }
 }
 
 /// Names the third body as the credit (as a game's hook does for an object's owner).
@@ -339,12 +383,20 @@ fn outgoing_follows_the_credit_a_hook_names_and_no_hook_folds_it() {
 
 #[test]
 fn a_combat_objects_damage_is_ruled_by_its_owners_class() {
-    let bolt = |mode: Option<&str>, owner: Option<&str>| {
-        let mut app = app_with(watch);
+    let bolt = |mode: Option<&str>, owner: Option<&str>, named: Option<&str>| {
+        let mut app = app_with(|app| {
+            watch(app);
+            app.add_damage_hook(credit_third_if_set);
+        });
         if let Some(mode) = mode {
             play(&mut app, mode);
         }
         let hero = hero(app.world_mut(), "hero", Vec3::ZERO, N);
+        if let Some(class) = named {
+            let third = fighter(app.world_mut(), "Third", "dummy", "heroes", Vec3::new(8.0, 0.0, 0.0), N);
+            app.world_mut().entity_mut(third).insert(RuleClass(class.to_owned()));
+            app.world_mut().insert_resource(Third(third));
+        }
         let target = brute(app.world_mut(), Vec3::new(0.0, 0.0, -3.0), S);
         if let Some(owner) = owner {
             app.world_mut().entity_mut(hero).insert(RuleClass(owner.to_owned()));
@@ -357,16 +409,19 @@ fn a_combat_objects_damage_is_ruled_by_its_owners_class() {
         step(&mut app, 20);
         (app.world().resource::<Dealt>().0.clone(), hp(&app, target))
     };
-    let (base, hp_base) = bolt(None, None);
+    let (base, hp_base) = bolt(None, None, None);
     assert_eq!(base.len(), 1, "{base:?}");
     assert!(base[0].1 > 0.0 && near(hp_base, 100.0 - base[0].1), "{base:?} {hp_base}");
-    let (ruled, hp_ruled) = bolt(Some("power"), Some("brute"));
+    let (ruled, hp_ruled) = bolt(Some("power"), Some("brute"), None);
     assert_eq!(ruled.len(), 1, "{ruled:?}");
     assert!(near(ruled[0].1, base[0].1 * 1.5), "the owner's class rules the bolt's damage: {ruled:?} {base:?}");
     assert!(near(hp_ruled, 100.0 - base[0].1 * 1.5), "{hp_ruled}");
     // The bolt has no class of its own; an owner of another class, or of none, deals the base.
-    assert!(near(bolt(Some("power"), Some("player")).0[0].1, base[0].1));
-    assert!(near(bolt(Some("power"), None).0[0].1, base[0].1));
+    assert!(near(bolt(Some("power"), Some("player"), None).0[0].1, base[0].1));
+    assert!(near(bolt(Some("power"), None, None).0[0].1, base[0].1));
+    // A hook that names another credit overrides the owner, whichever class the owner is: the factor follows it.
+    assert!(near(bolt(Some("power"), Some("player"), Some("brute")).0[0].1, base[0].1 * 1.5));
+    assert!(near(bolt(Some("power"), Some("brute"), Some("player")).0[0].1, base[0].1));
 }
 
 // --- damage that is not a hit --------------------------------------------------------------------
