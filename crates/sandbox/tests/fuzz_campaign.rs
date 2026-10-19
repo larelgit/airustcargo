@@ -212,9 +212,16 @@ fn the_nightly_fuzz_campaign() {
             regress::command_count(&scenario),
             path.display()
         );
+        // What a heavy check found differs: the log names it, not only the tick.
+        for line in finding.text.lines().skip(1).take(10) {
+            println!("      {line}");
+        }
+        let mut lines = finding.text.lines();
+        let headline = lines.next().unwrap_or_default();
         stopped.push(format!(
-            "seed {run_seed}: {} ({} -> {} rounds, {}; replay {})",
-            finding.text.lines().next().unwrap_or_default(),
+            "seed {run_seed}: {}{} ({} -> {} rounds, {}; replay {})",
+            headline,
+            lines.next().map(|first| format!(": {first}")).unwrap_or_default(),
             finding.before.len(),
             finding.shrunk.rounds.len(),
             path.display(),

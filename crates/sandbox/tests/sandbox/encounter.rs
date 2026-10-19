@@ -100,6 +100,27 @@ fn a_snapshot_of_the_ring_in_wave_two_and_in_a_wipe_continues_alike() {
     });
 }
 
+/// Issue #72 (the nightly fuzz campaign's heavy checks): wave 1 of the ring, a `net_always` fight, is
+/// on, and its member carries `NetAlways` with the umbrella's marker that it put it there. A game
+/// loaded from a snapshot of that must take `NetAlways` off the member when the run lets it go, as the
+/// original does. The marker was not in snapshots: the loaded game left the corpse in every client's
+/// view, and its snapshot had nothing to leave out (`left_out differs`). The between-waves snapshot
+/// above does not see it: by then wave 1 is gone, and both games put the marker on wave 2 themselves.
+#[test]
+fn a_snapshot_inside_a_net_always_fight_lets_its_members_go_as_the_original_does() {
+    let mut app = yard();
+    into_the_ring(&mut app);
+    let member = shards::encounter::run(app.world(), RING).unwrap().members[0].id;
+    let entity = app.world().resource::<AiIndex>().get(member).unwrap();
+    assert!(app.world().get::<NetAlways>(entity).is_some(), "in every client's view");
+    assert_continues_alike("wave 1 of a net_always fight, until its member is let go", app, |app| {
+        ok(app, "encounter_clear", json!({"key": RING}));
+        step(app, 10);
+        let Some(entity) = app.world().resource::<AiIndex>().get(member) else { return };
+        assert!(app.world().get::<NetAlways>(entity).is_none(), "{member}, let go by the run, is still in every client's view");
+    });
+}
+
 #[test]
 fn a_cue_with_an_unknown_sound_fails_the_content_check() {
     let app = sandbox::test_app(42);

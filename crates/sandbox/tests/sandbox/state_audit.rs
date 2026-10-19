@@ -3,14 +3,24 @@
 //! either saved in snapshots (`add_snapshot_resource`), or named in [`OUTSIDE`] as outside the
 //! simulation, with why. A resource that is neither may be state a snapshot misses: the audit
 //! fails and names its type, and it goes into one list or the other.
+//!
+//! The same for components: every component that has been on an entity with an `AiId` (in any
+//! archetype the world made, empty ones included) is saved in snapshots (it reflects, with
+//! `#[reflect(Component)]`), or is named in [`COMPONENTS_OUTSIDE`] with why. A private marker that
+//! a system puts on such an entity is state too (issue #72: the encounter umbrella's marker of
+//! its own `NetAlways` was neither, and a game loaded in the middle of a `net_always` fight never
+//! took that `NetAlways` off).
 
 use std::any::TypeId;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use shards::ai_core::replay;
-use shards::ai_core::SnapshotRegistry;
+use shards::ai_core::{AiId, SnapshotRegistry};
 use shards::prelude::*;
+use shards::serde_json::json;
+
+use crate::common::*;
 
 /// Resources outside the simulation, by the start of their type name, and why. A generic type
 /// is named up to its `<`.
@@ -202,6 +212,10 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("shards_world::region::StartRegion", "the start region, chosen at launch"),
 ];
 
+/// Components that are on entities with an `AiId` and that snapshots do not save, by the start of
+/// their type name, and why. Bevy's own (`bevy_`) are never saved and are not listed.
+const COMPONENTS_OUTSIDE: &[(&str, &str)] = &[];
+
 fn replays_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/replays")
 }
@@ -234,11 +248,73 @@ fn unclassified(names: &BTreeSet<String>) -> Vec<&str> {
     names.iter().map(String::as_str).filter(|name| !OUTSIDE.iter().any(|(pattern, _)| name.starts_with(pattern))).collect()
 }
 
+/// The type names of the components that have been on an entity with an `AiId` in `world` (every
+/// archetype it made, empty ones included: a fight that ended still counts) and that a snapshot
+/// cannot save, as `ai_core::state` decides it: not registered for reflection, or registered
+/// without `#[reflect(Component)]`. Bevy's own are left out, as snapshots leave them out.
+fn unsaved_on_ids(world: &World) -> BTreeSet<String> {
+    let Some(ai_id) = world.component_id::<AiId>() else {
+        return BTreeSet::new();
+    };
+    let registry = world.resource::<AppTypeRegistry>().read();
+    let mut found = BTreeSet::new();
+    for archetype in world.archetypes().iter().filter(|a| a.contains(ai_id)) {
+        for &id in archetype.components() {
+            let Some(info) = world.components().get_info(id) else { continue };
+            let name = info.name().to_string();
+            if name.starts_with("bevy_") || name.starts_with('<') {
+                continue;
+            }
+            let saved = info.type_id().and_then(|t| registry.get(t)).is_some_and(|r| r.data::<ReflectComponent>().is_some());
+            if !saved {
+                found.insert(name);
+            }
+        }
+    }
+    found
+}
+
+/// Of `names`, those [`COMPONENTS_OUTSIDE`] does not name.
+fn unclassified_components(names: &BTreeSet<String>) -> Vec<&str> {
+    names.iter().map(String::as_str).filter(|name| !COMPONENTS_OUTSIDE.iter().any(|(pattern, _)| name.starts_with(pattern))).collect()
+}
+
+/// Fails, naming them, when components on entities with an `AiId` in `world` are neither saved in
+/// snapshots nor named in [`COMPONENTS_OUTSIDE`]; returns all those not saved.
+fn audit_components(what: &str, world: &World) -> BTreeSet<String> {
+    let names = unsaved_on_ids(world);
+    let unknown = unclassified_components(&names);
+    assert!(
+        unknown.is_empty(),
+        "{what}: components on entities with an AiId that snapshots do not save (derive Reflect, add \
+         #[reflect(Component)] and register the type) and that COMPONENTS_OUTSIDE \
+         (crates/sandbox/tests/sandbox/state_audit.rs) does not name with a reason:\n{}",
+        unknown.join("\n")
+    );
+    names
+}
+
+/// The yard's ring, a `net_always` fight, in its first wave: what no reference replay reaches.
+fn ring_fight() -> App {
+    let mut app = sandbox::test_app(42);
+    ok(&mut app, "regen", json!({"region": "yard", "seed": 1}));
+    ok(&mut app, "god", json!({}));
+    step(&mut app, 3);
+    ok(&mut app, "teleport", json!({"id": PLAYER, "x": 248, "z": -182, "y": 0}));
+    ok(&mut app, "step", json!({"ticks": 600, "until": [{"named": "encounter_active"}]}));
+    step(&mut app, 72);
+    let ring = shards::encounter::run(app.world(), "yard/ring").expect("the yard has its ring");
+    assert!(ring.wave == 1 && !ring.members.is_empty(), "wave 1 of the ring is on: {ring:?}");
+    app
+}
+
 #[test]
 fn every_resource_is_saved_or_said_to_be_outside_the_simulation() {
     let mut seen = BTreeSet::new();
+    let mut seen_components = BTreeSet::new();
     for name in ["combat_prototype.json", "region.json", "voxel_arena.json", "encounter.json"] {
         let app = played(name);
+        seen_components.extend(audit_components(name, app.world()));
         let names = not_saved(app.world());
         let unknown = unclassified(&names);
         assert!(
@@ -253,6 +329,27 @@ fn every_resource_is_saved_or_said_to_be_outside_the_simulation() {
     let stale: Vec<&str> =
         OUTSIDE.iter().map(|(pattern, _)| *pattern).filter(|pattern| !seen.iter().any(|name| name.starts_with(pattern))).collect();
     assert!(stale.is_empty(), "OUTSIDE names resources the sandbox no longer has: {stale:?}");
+    seen_components.extend(audit_components("the yard's ring fight", ring_fight().world()));
+    let stale: Vec<&str> = COMPONENTS_OUTSIDE
+        .iter()
+        .map(|(pattern, _)| *pattern)
+        .filter(|pattern| !seen_components.iter().any(|name| name.starts_with(pattern)))
+        .collect();
+    assert!(stale.is_empty(), "COMPONENTS_OUTSIDE names components no entity with an AiId had: {stale:?}");
+}
+
+/// A marker a system puts on an entity with an id, with no reflection.
+#[derive(Component)]
+struct Unreflected;
+
+#[test]
+fn a_component_on_an_entity_with_an_id_that_snapshots_cannot_save_fails_the_audit() {
+    let mut app = sandbox::test_app(42);
+    assert!(unclassified_components(&unsaved_on_ids(app.world())).is_empty(), "{:?}", unsaved_on_ids(app.world()));
+    // Spawned and gone again: its archetype stays, as the members of a fight that ended leave theirs.
+    let probe = app.world_mut().spawn((AiKind::new("Probe"), Unreflected)).id();
+    app.world_mut().despawn(probe);
+    assert_eq!(unclassified_components(&unsaved_on_ids(app.world())), ["sandbox::state_audit::Unreflected"]);
 }
 
 /// A resource the snapshot does not hold, and nobody said why.

@@ -370,6 +370,7 @@ jobs:
             "- seed: \`$SEED\`${MINUTES:+, minutes: \`$MINUTES\`}" \
             "- run: $RUN_URL" \
             "- artifacts (logs, replays, crashes of the failed jobs; the performance output): $RUN_URL#artifacts" \
+            "- the fuzz campaign's shrunk scenarios (\`fuzz-out/regress/\`) and its log (\`fuzz-out/campaign.log\`) are in the artifact \`fuzz\`, not in \`failure-nightly-fuzz\`" \
             "" \
             "To repeat it: the commands are in the steps of \`.github/workflows/nightly.yml\`.")
           gh label create nightly --color B60205 --description "A failed nightly run" 2>/dev/null || true
