@@ -1517,7 +1517,7 @@ Every end goes through `release_pair(world, attacker, end)`. It takes both marks
 the pair `Finished` with the victim alive (the strike's reaction already replaced it, or the held pose runs out), and triggers
 `PairEnded { attacker, victim, action, end }` (`Finished`, `Lost`, `Cut`; `victim` is `None` when it no longer exists). A
 finisher whose strike kills its victim ends as `Lost` (the victim is dead when `tend_pairs` looks), never `Finished`, and the
-journal says `lets go of e7 (lost)`: a game that keys on the end of a pair (a lane that rewards finishers) listens to `Damaged`
+journal says `lets go of e7 (killed)` (FU4: `PairEnded::killed` is true when the victim's `Died` named the attacker and the pair's action, set through the short-lived mark `PairKilled`, which is left out of replays; a victim lost otherwise, by another death, a despawn or `break_range`, stays `(lost)`; `PairEnded::describe()` gives the word): a game that keys on the end of a pair (a lane that rewards finishers) listens to `Damaged`
 with `weight: Finisher` or to `Died`, not to `PairEnd::Finished`. When the attacker dies mid-pair the pair is `Cut` and the
 victim's held action is cut with it, so its broken poise ends with that action (the victim is free at once; no ruling asks for
 more).
@@ -1555,7 +1555,7 @@ is shown. A test compares the shown window with the host's tick by tick (122 sha
 **What the AI sees.** Describe: `remembers parried 0.32s`, `light -> spar_finisher on e7` (the bound inputs), `pairing e7`,
 `held by e5`, `guard press armed` and `guard armed (perfect window)`, and on a possible victim `finishable by e5`. That last
 one is derived from the players' bindings each time it is asked; it is not a component. Journal: `e5 takes e7 with
-spar_finisher`, `e5 lets go of e7 (finished)` (or `lost`, `cut`). Conditions: `step --until named:pair_ready` (some fighter's
+spar_finisher`, `e5 lets go of e7 (finished)` (or `killed`: the victim died of the blow, `lost`, `cut`). Conditions: `step --until named:pair_ready` (some fighter's
 context binds a paired action on a victim), `named:paired` (some pair runs). Dev tools: `remember id=e5 key=parried
 seconds=0.5` (0 forgets; without `seconds`, the moveset's own time) and `stagger id=e7 poise=true` (breaks the poise for the
 stagger's length, as a poise break does). The HUD source `you.finisher` is a flag: an input of the viewer is bound to a paired

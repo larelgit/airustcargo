@@ -651,7 +651,8 @@ fn a_finisher_that_kills_its_victim_does_not_cleave_the_next_foe() {
     finisher(&mut app, hero, foe);
     step(&mut app, 40);
     assert!(app.world().get::<Dead>(foe).is_some(), "{:#?}", journal(&app));
-    assert!(!lines(&app, "(lost)").is_empty(), "{:#?}", journal(&app));
+    assert!(!lines(&app, "(killed)").is_empty(), "{:#?}", journal(&app));
+    assert!(lines(&app, "(lost)").is_empty(), "a victim killed by the blow is not lost: {:#?}", journal(&app));
     assert_eq!(hp(&app, other), 100.0, "the foe beside it is not hit: {:#?}", journal(&app));
 }
 
@@ -851,4 +852,29 @@ fn a_pairs_angle_can_be_measured_from_what_the_fighter_means() {
     app.world_mut().get_mut::<Intent>(hero).unwrap().move_dir = N;
     app.world_mut().get_mut::<Intent>(hero).unwrap().target = Some(other_id);
     assert_eq!(victim(&app, &intent), None, "the lock points south");
+}
+
+#[test]
+fn a_victim_killed_by_something_else_during_the_pair_is_lost_not_killed() {
+    let (mut app, hero, foe) = arena();
+    let ends = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let into = ends.clone();
+    app.world_mut().add_observer(move |e: On<PairEnded>| into.lock().unwrap().push((e.event().end, e.event().killed)));
+    // The finisher's own blow kills: `Lost`, and the event says it was the blow.
+    app.world_mut().get_mut::<Health>(foe).unwrap().current = 10.0;
+    finisher(&mut app, hero, foe);
+    step(&mut app, 40);
+    assert_eq!(ends.lock().unwrap().as_slice(), [(PairEnd::Lost, true)]);
+    assert!(app.world().get::<shards_action::PairKilled>(hero).is_none(), "the mark goes with the pair");
+    // A second pair whose victim dies of something else (a kill with no killer) is lost.
+    let (mut app, hero, foe) = arena();
+    let into = ends.clone();
+    ends.lock().unwrap().clear();
+    app.world_mut().add_observer(move |e: On<PairEnded>| into.lock().unwrap().push((e.event().end, e.event().killed)));
+    finisher(&mut app, hero, foe);
+    step(&mut app, 3);
+    shards_action::kill(app.world_mut(), foe, None, None);
+    step(&mut app, 2);
+    assert_eq!(ends.lock().unwrap().as_slice(), [(PairEnd::Lost, false)]);
+    assert!(!lines(&app, "(lost)").is_empty() && lines(&app, "(killed)").is_empty(), "{:#?}", journal(&app));
 }

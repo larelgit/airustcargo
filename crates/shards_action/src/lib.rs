@@ -153,7 +153,7 @@ pub use body::{
 };
 pub use context::{
     cut_action, forget, hold_break, pair_victim, release_pair, remember, Bound, ContextCondition, ContextConditions, ContextInputs,
-    GuardArm, Memory, PairEnd, PairEnded, PairStarted, Paired, Pairing, Remembered, RunHalted,
+    GuardArm, Memory, PairEnd, PairEnded, PairKilled, PairStarted, Paired, Pairing, Remembered, RunHalted,
 };
 pub use cue::{ActionSound, SoundCue};
 pub use def::{
@@ -328,6 +328,8 @@ impl Plugin for ActionPlugin {
             .register_type::<Pairing>()
             .register_type::<Paired>()
             .register_type::<RunHalted>()
+            .register_type::<PairKilled>()
+            .replay_ignore::<PairKilled>()
             .register_type::<PairStarted>()
             .register_type::<PairEnded>()
             .register_type::<LeapRun>()

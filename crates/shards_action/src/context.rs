@@ -24,7 +24,7 @@ use shards_content::ContentDb;
 use shards_core::{flat, Intent, NetRole, PlayerId};
 use shards_motion::{MotionState, PhysicsWorld};
 
-use crate::combat::{clear_line, Blocked, Damaged, Evaded, GuardBroken, Parried, PerfectEvaded, Reacted, Staggered};
+use crate::combat::{clear_line, Blocked, Damaged, Died, Evaded, GuardBroken, Parried, PerfectEvaded, Reacted, Staggered};
 use crate::def::{ActionDef, CombatTuning, Forget, GuardPress, MovesetDef, PairAngle, PairDef, PairSelect, PairState, PairTeam, Recall, When, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Health, Poise, Stamina, Team};
 use crate::machine::{interrupted, ActionEnd, ActionEnded, ActionStarted, ActionState};
@@ -113,6 +113,13 @@ pub struct Pairing {
     pub broke_once: bool,
 }
 
+/// On the attacker of a running paired action whose victim just died of the pair's own blow (set when `Died` names the
+/// attacker and the pair's action, taken by `release_pair`, which reports it as `PairEnded::killed`). A mark that lives from
+/// the kill to the next `tend_pairs`; left out of replays, as the pair's end is already in the state it leaves.
+#[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[reflect(Component, Default)]
+pub struct PairKilled;
+
 /// On the victim of a running paired action.
 #[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq)]
 #[reflect(Component, Default)]
@@ -173,6 +180,16 @@ pub struct PairEnded {
     pub victim: Option<Entity>,
     pub action: String,
     pub end: PairEnd,
+    /// The victim died of the pair's own blow (its `Died` named the attacker and the pair's action): the journal says
+    /// `killed` for an end that is `Lost` and killed, `lost` for a victim lost otherwise. The end stays `Lost`.
+    pub killed: bool,
+}
+
+impl PairEnded {
+    /// The word the journal ends the line with: `killed` for a victim that died of the pair's own blow, else `PairEnd::describe`.
+    pub fn describe(&self) -> &'static str {
+        if self.killed && self.end == PairEnd::Lost { "killed" } else { self.end.describe() }
+    }
 }
 
 /// How a pair ended ([`PairEnded`]).
@@ -566,7 +583,8 @@ pub fn release_pair(world: &mut World, attacker: Entity, end: PairEnd) {
             cut_action(world, v);
         }
     }
-    world.trigger(PairEnded { attacker, victim, action: pairing.action, end });
+    let killed = world.entity_mut(attacker).take::<PairKilled>().is_some();
+    world.trigger(PairEnded { attacker, victim, action: pairing.action, end, killed });
 }
 
 /// `ActionSystems::Fighters`: pairs whose victim died, is gone or (with `break_range`) got too far
@@ -792,6 +810,21 @@ fn on_damaged(e: On<Damaged>, role: Option<Res<NetRole>>, mut commands: Commands
     });
 }
 
+/// A victim that dies of its pair's own blow: the attacker's pair is marked [`PairKilled`], so its end says so.
+fn on_died(e: On<Died>, role: Option<Res<NetRole>>, mut commands: Commands) {
+    if !host(&role) {
+        return;
+    }
+    let (victim, killer, action) = (e.event().entity, e.event().killer, e.event().action.clone());
+    let (Some(killer), Some(action)) = (killer, action) else { return };
+    commands.queue(move |world: &mut World| {
+        let victim = world.get::<AiId>(victim).copied();
+        if victim.is_some() && world.get::<Pairing>(killer).is_some_and(|p| Some(p.victim) == victim && p.action == action) {
+            world.entity_mut(killer).insert(PairKilled);
+        }
+    });
+}
+
 fn on_reacted(e: On<Reacted>, role: Option<Res<NetRole>>, mut commands: Commands) {
     if host(&role) {
         let entity = e.event().entity;
@@ -853,6 +886,7 @@ pub(crate) fn plugin(app: &mut App) {
         ),
     )
     .add_observer(on_parried)
+        .add_observer(on_died)
         .add_observer(on_perfect_evaded)
         .add_observer(on_blocked)
         .add_observer(on_evaded)
