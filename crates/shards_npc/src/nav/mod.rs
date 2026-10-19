@@ -82,7 +82,7 @@ pub mod tile;
 pub(crate) mod tools;
 
 pub use query::{NavError, NavPath, NavQuery};
-pub use region::{bake_volume, clear_shared_bakes, prebake_volume, rebuild, refresh, ChunkKey, Cut, NavBakes, NavRegion, Prebaked, VoxelBake};
+pub use region::{bake_volume, chunk_files_sequential, clear_shared_bakes, prebake_volume, rebuild, refresh, ChunkKey, Cut, NavBakes, NavRegion, Prebaked, VoxelBake};
 pub use settings::{NavBodyDef, NavSettings, NavSettingsDef, DEFAULT_BODY};
 pub use tile::NavTile;
 pub use tools::{bake_files, bake_region, BakeReport, NavOverlay};

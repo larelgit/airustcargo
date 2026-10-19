@@ -223,6 +223,7 @@ fn nav_info(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
         .collect();
     // Meters to the centimeter, printed as written (`1.2`, not `1.2000000476837158`).
     let cm = |v: f32| (f64::from(v) * 100.0).round() / 100.0;
+    let timed = world.get_resource::<ai_core::perf::AiPerf>().is_some_and(|p| p.report);
     let r = &nav.report;
     let bodies: Vec<Value> = nav
         .classes()
@@ -237,7 +238,7 @@ fn nav_info(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
                 "failed": c.report.failed.iter().map(|(t, why)| format!("{t}: {why}")).collect::<Vec<_>>(),
             });
             if let Some(voxel) = &c.voxel {
-                body["bake"] = json!(voxel.to_string());
+                body["bake"] = json!(voxel.describe(timed));
             }
             body
         })
@@ -256,8 +257,9 @@ fn nav_info(In(_): In<Call<NoArgs>>, world: &mut World) -> ToolResult<Value> {
         "bodies": bodies,
     });
     if let Some(voxel) = &nav.voxel {
-        // `in memory, 16 chunks, baked in 123 ms`: the loaded machine's time, not state.
-        info["bake"] = json!(voxel.to_string());
+        // `in memory, 16 chunks, baked in 123 ms`: the loaded machine's time, not state, so shown
+        // only where timing is reported (as `voxel_info` does).
+        info["bake"] = json!(voxel.describe(timed));
     }
     Ok(info)
 }

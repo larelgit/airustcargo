@@ -37,7 +37,7 @@ step 2
 # --- 2. what the navmesh is: baked in memory, 4 x 4 chunks, every chunk edge open
 act nav_info
 expect result contains "\"summary\": \"16 chunks, 250097 nodes, 16989 links across edges, 0 navlinks\""
-expect result contains "in memory, 16 chunks, baked in "
+expect result contains "in memory, 16 chunks"
 expect result contains "\"closed_edges\": 0"
 expect result contains "\"carved_cells\": 0"
 expect result contains "\"body\": \"large\""
@@ -62,7 +62,7 @@ expect result contains "path 10.9m, 7 turns: 6.1m NE â†’ 1.0m N (mantle 1.0m) â†
 # the large body (1.6 m wide, 3.2 m tall) does not fit the tunnel (2.2 m wide, 2.2 m high): the
 # way is shut to its navmesh, and the error says so
 act? nav_path to='{"x": -36.5, "z": -399.5}' body=large
-expect result contains "the goal (-36.5, -399.5) is on ground the start cannot reach at all (tile (1, 2) from tile (2, 2))"
+expect result contains "the goal (-36.5, -399.5) is on ground the start cannot reach at all (chunk (1, 2) from chunk (2, 2))"
 
 # --- 4. a skeleton chases the player up the steps: it sees the player 10 m away on the top, its
 # route is the navmesh's (a mantle for each riser), and it claws
@@ -80,9 +80,11 @@ expect journal "climbs a 1.0m ledge"
 act teleport id=e5 x=-19.5 z=-399.5 y=0
 step 2000 --until "journal:-> e5 claw"
 expect stopped "-> e5 claw"
+# it clawed the player 27 m from the steps, at the tunnel's mouth: it crossed the arena and the seam at x = 0
+# (that the route is the navmesh's is `an_npc_in_the_voxel_arena_plans_on_the_baked_navmesh_and_says_so`: a
+# spawned id is not the same in every order the scenarios run in, so `npc_state` is asked there)
 observe
 expect result contains "fight e5"
-expect result contains "cave.0"
 
 # --- the way the world was: the same region again takes the skeleton with it
 act stop

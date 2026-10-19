@@ -144,9 +144,10 @@ impl NavRegion {
         let tile = |n: NodeId| self.instances[self.split(n).0 as usize].cell;
         if self.component(start) != self.component(goal) {
             let (a, b) = (tile(start), tile(goal));
+            // A voxel region is cut into chunks, whose edges are all open; a region of tiles has sockets.
+            let (noun, between) = if self.voxel.is_some() { ("chunk", "walls, cliffs or water") } else { ("tile", "walls, cliffs, water or tile edges whose sockets do not connect") };
             return Err(NavError::NoRoute(format!(
-                "the goal {} is on ground the start cannot reach at all (tile ({}, {}) from tile ({}, {})): walls, cliffs, \
-                 water or tile edges whose sockets do not connect lie between; aim for a point on the start's side",
+                "the goal {} is on ground the start cannot reach at all ({noun} ({}, {}) from {noun} ({}, {})): {between} lie between; aim for a point on the start's side",
                 fmt_pos(query.to),
                 b[0],
                 b[1],

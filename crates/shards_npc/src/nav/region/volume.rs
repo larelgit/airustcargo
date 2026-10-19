@@ -84,12 +84,24 @@ pub struct VoxelBake {
 impl fmt::Display for VoxelBake {
     /// `in memory, 16 chunks, baked in 120 ms`; with chunks kept: `..., 16 kept from an earlier bake`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.describe(true))
+    }
+}
+
+impl VoxelBake {
+    /// The bake as the tools say it. `timed: false` leaves out what differs from run to run (the
+    /// wall time, and how many chunks the process had kept), so that a test that compares whole
+    /// answers (`report_perf: false`) gets the same bytes.
+    pub fn describe(&self, timed: bool) -> String {
         let noun = if self.chunks == 1 { "chunk" } else { "chunks" };
-        write!(f, "in memory, {} {noun}, baked in {} ms", self.chunks, self.built_in.as_millis())?;
-        if self.reused > 0 {
-            write!(f, ", {} kept from an earlier bake", self.reused)?;
+        let mut out = format!("in memory, {} {noun}", self.chunks);
+        if timed {
+            out += &format!(", baked in {} ms", self.built_in.as_millis());
+            if self.reused > 0 {
+                out += &format!(", {} kept from an earlier bake", self.reused);
+            }
         }
-        Ok(())
+        out
     }
 }
 
@@ -268,12 +280,21 @@ pub fn prebake_volume(world: &mut World, classes: &[NavSettings], cut: Cut) -> R
     let grids: Vec<Grid> = classes.iter().map(|s| Grid::of(&source.region.manifest, s, cut)).collect::<Result<_, _>>()?;
     // (class, chunk, key) of every chunk that is not kept, in order.
     let mut jobs: Vec<(usize, [u32; 2], ChunkKey)> = Vec::new();
+    let mut current: Vec<(String, u64)> = Vec::new();
     for (k, settings) in classes.iter().enumerate() {
         for (&chunk, key) in grids[k].chunks.iter().zip(source.keys(&grids[k], settings)) {
+            if !current.iter().any(|(r, v)| *r == key.region && *v == key.volume) {
+                current.push((key.region.clone(), key.volume));
+            }
             if kept(world, shared, &key).is_none() {
                 jobs.push((k, chunk, key));
             }
         }
+    }
+    // Bakes of a field that is no longer the region's (another seed, changed content) are let go:
+    // this world keeps the chunks of the volume it has now, not those of every one it ever had.
+    if let Some(mut bakes) = world.get_resource_mut::<NavBakes>() {
+        bakes.chunks.retain(|key, _| current.iter().any(|(r, v)| *r == key.region && *v == key.volume));
     }
     let started = Instant::now();
     let baked = &source.baked;
@@ -394,4 +415,21 @@ pub(super) fn build(world: &mut World, settings: &NavSettings, cut: Cut, prebake
     let threads = ComputeTaskPool::get_or_init(TaskPool::default).thread_num();
     nav.voxel = Some(VoxelBake { chunks: grid.chunks.len(), reused, chunks_in, built_in: chunks_in + started.elapsed(), threads });
     Ok(nav)
+}
+
+/// The chunks of the voxel region in the world for `settings`, baked one after another on this
+/// thread and written as bake files, in chunk order: what the pool's bakes are compared with in
+/// tests (a chunk must not depend on which worker made it, or when). Keeps nothing.
+pub fn chunk_files_sequential(world: &mut World, settings: &NavSettings) -> Result<Vec<String>, String> {
+    let source = Source::of(world)?;
+    let grid = Grid::of(&source.region.manifest, settings, Cut::Chunks)?;
+    let keys = source.keys(&grid, settings);
+    grid.chunks
+        .iter()
+        .zip(&keys)
+        .map(|(&chunk, key)| {
+            let id = Grid::id(chunk);
+            bake_chunk(&source.baked, settings, &id, hash_of(key), grid.tile_size, grid.frame(chunk), [grid.per, grid.per]).map(|t| t.to_file())
+        })
+        .collect()
 }

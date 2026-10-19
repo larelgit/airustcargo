@@ -178,3 +178,50 @@ fn voxel_nav_bake_time() {
     let v = whole.voxel.unwrap();
     println!("the island in one piece (single thread): chunk {:.1} ms, whole build {:.1} ms, {} nodes", v.chunks_in.as_secs_f64() * 1e3, v.built_in.as_secs_f64() * 1e3, whole.node_count());
 }
+
+/// What a route costs on the island's chunked navmesh (the corridor widened by the chunks around
+/// it): corner to corner of the walkable ground and a short hop, for the PR. Run by hand like
+/// `voxel_nav_bake_time`:
+/// `cargo test -p sandbox --test sandbox -- --ignored --nocapture voxel_nav_route_time`.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn voxel_nav_route_time() {
+    use shards::npc::NavQuery;
+    let app = arena();
+    let nav = app.world().resource::<shards::npc::NavRegion>().clone();
+    let physics = app.world().resource::<shards::motion::PhysicsWorld>();
+    let spawn = Vec3::new(0.5, 0.0, -399.5);
+    let a = nav.nearest_node(spawn, 1.0, 1.0).unwrap();
+    // The farthest walkable cells of the spawn's area, by straight distance, and a hop of ~12 m.
+    let mut cells: Vec<Vec3> = (0..nav.node_count())
+        .filter(|n| nav.component(*n) == nav.component(a))
+        .map(|n| {
+            let (inst, i) = nav.split(n);
+            let local = &nav.instances[inst as usize].nav.nodes[i as usize];
+            let [gx, gz] = nav.node_column(n);
+            Vec3::new(-128.0 + (gx as f32 + 0.5) * 0.5, local.y_mm as f32 / 1000.0, -528.0 + (gz as f32 + 0.5) * 0.5)
+        })
+        .collect();
+    cells.sort_by(|p, q| (p.x + p.z).total_cmp(&(q.x + q.z)));
+    let (far_a, far_b) = (cells[0], *cells.last().unwrap());
+    for (label, from, to) in [("corner to corner", far_a, far_b), ("spawn to the far corner", spawn, far_b), ("a 12 m hop", spawn, spawn + Vec3::new(12.0, 0.0, 0.0))] {
+        for round in 0..3 {
+            let started = std::time::Instant::now();
+            let route = nav.path(physics, &NavQuery { from, to, goal_level: true, radius: 0.4, height: 1.8, step_height: 0.35 });
+            let took = started.elapsed().as_secs_f64() * 1e3;
+            println!("{label} (round {round}): {:.1} ms, {}", took, route.map_or_else(|e| format!("{e:?}"), |p| format!("{:.1} m", p.length)));
+        }
+    }
+}
+
+#[test]
+fn regenerating_the_island_keeps_the_chunk_bakes_of_the_island_it_has() {
+    let mut app = arena();
+    // This world bakes cold (it takes none from the process's keep), so it holds what it baked.
+    app.world_mut().get_resource_or_init::<shards::npc::nav::NavBakes>().isolated = true;
+    let held = |app: &App| app.world().resource::<shards::npc::nav::NavBakes>().chunks.len();
+    for seed in [8, 9, 10, 11] {
+        ok(&mut app, "regen", json!({"region": "voxel_arena", "seed": seed}));
+        assert_eq!(held(&app), 32, "seed {seed}: 16 chunks of two body classes, the earlier islands' bakes let go");
+    }
+}

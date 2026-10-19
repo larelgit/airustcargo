@@ -10,7 +10,7 @@ use shards_content::ContentDb;
 use shards_core::NetRole;
 use shards_motion::{Collider, CollisionLayers, PhysicsWorld, Shape, Volume, VolumeKind, VoxelCollider, VoxelField};
 use shards_npc::nav::settings::NavSettings;
-use shards_npc::nav::{bake_volume, rebuild, Cut, NavBakes};
+use shards_npc::nav::{bake_volume, chunk_files_sequential, rebuild, refresh, Cut, NavBakes};
 use shards_npc::{NavQuery, NavRegion};
 use shards_world::manifest::{Layout, RegionManifest, FORMAT};
 use shards_world::ActiveRegion;
@@ -247,6 +247,9 @@ fn chunk_bakes_do_not_depend_on_threads() {
             Some(first) => assert_eq!(*first, files, "round {round}: the chunks differ from the first round's"),
         }
     }
+    // And the pool is no part of the result: the same chunks baked one after another on this thread.
+    let alone = chunk_files_sequential(app.world_mut(), &settings).unwrap();
+    assert_eq!(seen.unwrap(), alone, "the pooled chunks differ from the sequential bakes");
 }
 
 #[test]
@@ -300,6 +303,29 @@ fn a_machine_that_does_not_simulate_bakes_nothing() {
     app.insert_resource(NetRole::Single);
     rebuild(app.world_mut());
     assert!(app.world().get_resource::<NavRegion>().is_some());
+}
+
+#[test]
+fn a_client_that_becomes_a_host_bakes_when_the_region_is_refreshed() {
+    let mut app = region_app(solid);
+    app.insert_resource(NetRole::Client);
+    rebuild(app.world_mut());
+    refresh(app.world_mut());
+    assert!(app.world().get_resource::<NavRegion>().is_none(), "a client keeps none");
+    // The role changes, the region does not: the next refresh (a tick, a tool) makes the navmesh.
+    app.insert_resource(NetRole::Single);
+    refresh(app.world_mut());
+    assert!(app.world().get_resource::<NavRegion>().is_some_and(|nav| nav.instances.len() == 9), "the machine simulates now");
+}
+
+#[test]
+fn nav_info_says_no_wall_time_where_timing_is_not_reported() {
+    let mut app = region_app(solid);
+    rebuild(app.world_mut());
+    app.world_mut().resource_mut::<ai_core::perf::AiPerf>().report = false;
+    let info = ai_core::call_tool(app.world_mut(), "dev", "nav_info", serde_json::json!({}));
+    let text = format!("{info:?}");
+    assert!(text.contains("in memory, 9 chunks") && !text.contains(" ms"), "{text}");
 }
 
 #[test]

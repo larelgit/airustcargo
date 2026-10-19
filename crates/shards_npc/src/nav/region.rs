@@ -53,7 +53,7 @@ use shards_world::manifest::Layout;
 use shards_world::{ActiveRegion, RegionGraph, TileId};
 
 mod volume;
-pub use volume::{bake_volume, clear_shared_bakes, prebake_volume, ChunkKey, Cut, Prebaked, VoxelBake};
+pub use volume::{bake_volume, chunk_files_sequential, clear_shared_bakes, prebake_volume, ChunkKey, Cut, Prebaked, VoxelBake};
 
 use super::bake::{bake, dijkstra, solid};
 use super::settings::{whole_cells, NavSettings, DEFAULT_BODY};
@@ -385,6 +385,8 @@ impl EdgeRow {
 struct NavFailed {
     region: u64,
     content: bevy::ecs::change_detection::Tick,
+    /// Whether this machine simulated then: a client that becomes a host tries again.
+    simulating: bool,
 }
 
 /// The navmesh of the region in the world (see the module docs): the one of the body class
@@ -727,7 +729,7 @@ pub fn rebuild(world: &mut World) {
     // it would save.
     if super::region_is_volume(world) && !super::simulates(world) {
         let content = content_changed(world);
-        world.insert_resource(NavFailed { region, content });
+        world.insert_resource(NavFailed { region, content, simulating: false });
         journal::emit(world, JournalKind::Event, format!("navmesh: {}", super::VOXEL_NOT_SIMULATED));
         return;
     }
@@ -757,7 +759,7 @@ pub fn rebuild(world: &mut World) {
         }
         Err(why) => {
             let content = content_changed(world);
-            world.insert_resource(NavFailed { region, content });
+            world.insert_resource(NavFailed { region, content, simulating: super::simulates(world) });
             journal::emit(world, JournalKind::Warn, format!("navmesh: none for this region: {why}; NPCs plan on the local grid"));
         }
     }
@@ -805,7 +807,7 @@ pub fn refresh(world: &mut World) {
     let Some(region) = world.get_resource::<ActiveRegion>().map(|r| r.hash) else { return };
     if world.get_resource::<NavRegion>().is_none_or(|nav| nav.hash != region) {
         let failed = world.get_resource::<NavFailed>().copied();
-        if failed.is_some_and(|f| f.region == region && f.content == content_changed(world)) {
+        if failed.is_some_and(|f| f.region == region && f.content == content_changed(world) && f.simulating == super::simulates(world)) {
             return;
         }
         rebuild(world);
