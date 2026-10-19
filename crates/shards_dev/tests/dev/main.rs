@@ -89,10 +89,13 @@ fn every_item_of_the_gdd_list_has_an_entry_whose_tool_exists() {
     assert!(!list.contains("no tool `"), "every entry's tool exists:\n{list}");
     // Sections in the order the engine registered them, the game's after.
     let groups: Vec<&str> = list.lines().filter(|l| !l.starts_with(' ') && !l.starts_with("dev menu")).collect();
-    assert_eq!(groups, ["time", "world", "combat", "ai", "encounter", "net", "saves", "voxel", "arena"], "{list}");
+    assert_eq!(groups, ["time", "world", "rules", "combat", "ai", "encounter", "net", "saves", "voxel", "arena"], "{list}");
     // Before a region exists, its checks say why they do nothing.
     let check = list.lines().find(|l| l.trim_start().starts_with("region_check")).unwrap();
     assert!(check.ends_with("(not here: no region in the world: make one with `regen region=<id>`)"), "{check}");
+    // A game without rules content: the rules' entry says so instead of failing when it runs.
+    let rules = list.lines().find(|l| l.trim_start().starts_with("rules_next")).unwrap();
+    assert!(rules.ends_with("(not here: this game has no rules: add `content/**/*.rules.ron` with the definition `default` and a `*.rule_set.ron` for each mode it lists)"), "{rules}");
     let fill = list.lines().find(|l| l.trim_start().starts_with("spawn_crate")).unwrap();
     assert!(fill.ends_with("spawn_prefab id= x=0 z=0 (finished in the console)"), "{fill}");
     let entries = menu_entries(app.world());
