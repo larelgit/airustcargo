@@ -1653,7 +1653,7 @@ for the one after; every end is a simulation tick, never a frame or a mesh. They
 snapshots carry them.
 
 **`deal_damage(world, target, amount, credit: Option<Entity>) -> f32`** is damage that is not a hit (a status hook's burn,
-a hazard): the barrier, then health, then, when health ran out, the lethal hooks (`lethal(.., credit, None, None, LethalCause::Damage)`, B5: with no hook, or each answering `Die`, `kill_with(.., credit, None, None)` as before; a `Survive` or a `Down` is carried out instead); it returns the health left (a survivor's after the hook).
+a hazard): the barrier, then health, then, when health ran out, the lethal hooks (`lethal(.., credit, None, None, LethalCause::Damage)`, B5: with no hook, or each answering `Die`, `kill_with(.., credit, None, None)` as before; a `Fate::Survive` or a `Fate::Down` answer is carried out instead); it returns the health left (a survivor's after the hook).
 It does nothing to a dead, downed or gone entity, to one in god mode (`Invulnerable`), or for an amount that is not above 0, and it
 runs none of the pipeline (no guard, armor, `DamageTaken`, hooks, reaction or poise) and triggers no `Damaged` (that event names
 a hit's action); a game that wants a line for it triggers its own event. Like `extend_recovery`, it does nothing on a machine that does not simulate (a co-op client), so an observer that calls it on every machine kills once. It is never scaled by the rules (a pit must kill in every mode); `deal_ruled_damage(world, target, amount, credit)` is `deal_damage` with `amount` times the target's `incoming` factor, for a game's burn tick or chain damage (see "Rules (C3)", "Damage").
@@ -1691,7 +1691,7 @@ zone or a hazard) or `Health` (health run out some other way, found by `check_de
 that answers `Survive` or `Down` only for a hit matches on `Hit` and lets everything else die: a kill volume or a pit refuses a
 survive that way (ledger E61). The answers:
 
-- The hooks are asked about a body that stands only: `lethal` returns `Die` at once, asking nothing, for a body that is gone, dead or down (a `Died` observer may have killed a second body of `check_deaths`'s list), and a `Survive` never lands on a fallen body. A hook is asked once per call of `lethal`; an observer of `Damaged` that deals damage to the body at 0 health asks again (cause `Damage`), and the `Damaged` event of a blow the hooks spare carries `hp_left` 0, so an observer reads `Survived` and `WentDown`, not `hp_left <= 0`, for a fall.
+- The hooks are asked about a body that stands only: `lethal` returns `Die` at once, asking nothing, for a body that is gone, dead or down (a `Died` observer may have killed a second body of `check_deaths`'s list), and `lethal` never applies `Fate::Survive` to a fallen body. A hook is asked once per call of `lethal`; an observer of `Damaged` that deals damage to the body at 0 health asks again (cause `Damage`), and the `Damaged` event of a blow the hooks spare carries `hp_left` 0, so an observer reads `Survived` and `WentDown`, not `hp_left <= 0`, for a fall.
 - `Fate::Die`: the death as it always was (`kill_with` with the same arguments: `Died`, the death action). With no hook, or
   hooks that all say `Die`, a fighter dies exactly as before B5, and the reference replays did not change.
 - `Fate::Survive { health, grace }`: health is set to `health` (clamped to `(2 * EPS, max]`; a number that is not finite means
@@ -1764,7 +1764,7 @@ The player tool `interact` (a press of the engine's `interact` input, which star
 **Grace.** `Grace { left }` ignores every hit (`IgnoreReason::Grace`) while `left > EPS`. `grant_grace(world, entity,
 seconds)` gives or lengthens one (it never shortens one). `tick_grace` (`ActionSystems::Fighters`, after the body state)
 counts it down and takes it off within half a tick of 0: `s` seconds granted on tick `N` cover the hits of `s * 60` ticks. The
-survive's protection is content's number, not a constant (the sandbox's is 1.0 s).
+grace of `Fate::Survive { grace, .. }` comes from content, not a constant (the sandbox's is 1.0 s).
 
 **A fallen attacker.** An attacker that dies or goes down mid-pair lets go of its victim (`cut`). A victim whose poise is
 still broken goes back into its stagger for exactly the rest of its break (`resume_stagger`): no fresh break, no `Staggered`,
