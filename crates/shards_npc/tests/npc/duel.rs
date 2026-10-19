@@ -968,3 +968,40 @@ fn a_strike_noted_in_one_pool_does_not_space_another_pool_after_the_npc_moves() 
     let late: Vec<_> = jabs.iter().filter(|(t, _)| *t > app.world().resource::<ai_core::SimTick>().0 - 300).collect();
     assert!(late.windows(2).filter(|w| w[0].1 != w[1].1).all(|w| w[1].0 - w[0].0 >= 42), "{late:?}");
 }
+
+// --- N1b: between two decisions the NPC keeps closing in -----------------------------------
+
+#[test]
+fn a_holder_that_presses_on_decision_keeps_closing_in_between_decisions() {
+    let (mut app, who) = deciding_duelist("decide_range");
+    teleport(&mut app, who, Vec3::new(0.0, 0.0, 12.0));
+    let mut decided = Vec::<u64>::new();
+    let mut last = flat_distance(feet(&app, who), Vec3::ZERO);
+    let (mut held, mut falling_between, mut arrived) = (0, 0, None);
+    for _ in 0..240 {
+        step(&mut app, 1);
+        let now = app.world().resource::<ai_core::SimTick>().0;
+        let on_decision = app.world().get::<NpcThink>(who).and_then(|t| t.decided) == Some(now);
+        if on_decision {
+            decided.push(now);
+        }
+        let dist = flat_distance(feet(&app, who), Vec3::ZERO);
+        if has_token(&app, who) && !on_decision && last > 2.5 {
+            held += 1;
+            if dist < last - 1e-4 {
+                falling_between += 1;
+            }
+        }
+        if arrived.is_none() && dist < 2.0 {
+            arrived = Some(now);
+        }
+        last = dist;
+    }
+    assert!(held >= 60, "it held a token before arriving on only {held} ticks");
+    assert!(falling_between * 10 >= held * 9, "it walked on {falling_between} of {held} ticks between decisions");
+    assert!(arrived.is_some_and(|t| t < 150), "it reached its window at {arrived:?}");
+    let jabs = starts(&app, who, "jab");
+    assert!(!jabs.is_empty(), "it never struck");
+    // The press is on a decision tick; the action starts a tick or two later.
+    assert!(jabs.iter().all(|t| decided.iter().any(|d| (*d..=*d + 2).contains(t))), "a press off the cadence: {jabs:?} vs {decided:?}");
+}

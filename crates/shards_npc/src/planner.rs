@@ -338,16 +338,12 @@ pub(crate) fn plan_attacks(
                 None => choose(&options, ok, distance, plan_def.in_range_only, &mut rng.stream(id, salt::PICK)),
             }
         };
-        if chosen.is_none() && !decides {
-            // Between two decisions with no choice yet: it stands.
-            f.drive.goal = None;
-            continue;
-        }
         let home = f.home.map(|h| (h.pos.unwrap_or(here), h.leash));
         let leash = |p: Vec3| clamp_to_leash(home.map(|h| h.0), home.map_or(0.0, |h| h.1), p);
         let Some(i) = chosen else {
             grant.attack = None;
-            // Nothing to choose here: close in to the nearest window that could fit.
+            // Nothing to choose here (between two decisions: nothing chosen yet): close in to the
+            // nearest window that could fit. Only the choice and the press wait for a decision tick.
             let nearest = options.iter().map(|o| o.max).fold(f32::INFINITY, f32::min);
             if nearest.is_finite() && distance > nearest {
                 f.drive.goal = Some(leash(target));

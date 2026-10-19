@@ -54,6 +54,8 @@
     // Asks, chooses and presses on decision ticks only, and the same plan on any tick.
     "decide_press": (options: [(input: "light")], rest: (0.5, 0.5), press_on_decision: true),
     "any_press": (options: [(input: "light")], rest: (0.5, 0.5)),
+    // Chooses only what reaches (nothing, far away): it must close in on every tick, not on decision ticks only.
+    "decide_range": (options: [(input: "light")], rest: (0.5, 0.5), in_range_only: true, press_on_decision: true),
     // The same chain as chain_always, asking the spacing when the continuation would start.
     "chain_gated": (
         options: [(input: "light", chain: Some((input: "light", chance: 1.0, gate_at_start: true))), (action: "swing_2", weight: 0.0, chain: Some((input: "light", chance: 1.0, gate_at_start: true)))],
