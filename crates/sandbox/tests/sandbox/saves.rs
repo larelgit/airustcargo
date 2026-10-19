@@ -124,7 +124,7 @@ fn the_engine_registers_what_it_saves() {
         .iter()
         .map(|s| (s["name"].as_str().unwrap(), s["kind"].as_str().unwrap(), s["version"].as_u64().unwrap(), s["source"].as_str().unwrap()))
         .collect();
-    assert_eq!(sections, [("region", "world", 2, "shards"), ("encounters", "world", 1, "shards"), ("position", "character", 1, "shards"), ("vitals", "character", 1, "shards")]);
+    assert_eq!(sections, [("region", "world", 2, "shards"), ("rules", "world", 1, "shards"), ("encounters", "world", 1, "shards"), ("position", "character", 1, "shards"), ("vitals", "character", 1, "shards")]);
     assert_eq!(out["sections"][0]["migrations_from"], json!([1]), "a region of version 1 (no manifest) still reads");
     let status = shards::ai_core::status::status(app.world());
     assert!(status["engine"]["modules"].as_array().unwrap().iter().any(|m| m["name"] == "save"));

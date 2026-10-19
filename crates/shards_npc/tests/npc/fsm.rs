@@ -97,3 +97,45 @@ fn ids_content_lacks_are_reported_with_what_they_mean() {
         assert_eq!(errors.iter().filter(|l| l.contains(needle)).count(), 1, "`{needle}` once in {errors:#?}");
     }
 }
+
+/// `engaged_npc` (the condition `npc_engaged` and the rules guard): the first fighting NPC in `AiId` order, and
+/// only by the kind of the state, through the behaviour's content.
+#[test]
+fn engaged_npc_picks_the_lowest_id_and_reads_the_kind_through_the_content() {
+    use ai_core::AiId;
+    use shards_npc::ai::engaged_npc;
+    let mut app = app();
+    let pos = Vec3::new(0.0, 0.0, -6.0);
+    let a = grunt(app.world_mut(), "sentry", "grunt", "default", pos);
+    let b = grunt(app.world_mut(), "sentry", "grunt", "default", pos);
+    let c = grunt(app.world_mut(), "sentry", "grunt", "default", pos);
+    let (bid, cid) = (aid(&app, b), aid(&app, c));
+    // Despawning the first swaps the last into its table row: the query now meets `c` before `b`.
+    app.world_mut().despawn(a);
+    let target = Some(AiId(99));
+    let set = |app: &mut App, e: Entity, state: &str, active: bool, target: Option<AiId>| {
+        let mut brain = app.world_mut().get_mut::<NpcBrain>(e).unwrap();
+        brain.state = state.to_owned();
+        brain.active = active;
+        brain.target = target;
+    };
+    assert!(engaged_npc(app.world()).is_none());
+
+    // `chase` of `sentry` is a fighting kind; the lower id wins whatever the query order.
+    set(&mut app, b, "chase", true, target);
+    set(&mut app, c, "chase", true, target);
+    let order: Vec<AiId> = app.world_mut().query::<(&AiId, &NpcBrain)>().iter(app.world()).map(|(i, _)| *i).collect();
+    assert_eq!(order, [cid, bid], "the query meets the higher id first, so the test can tell");
+    let (id, behavior, state, t) = engaged_npc(app.world()).unwrap();
+    assert_eq!((id, behavior.as_str(), state.as_str(), t), (bid, "sentry", "chase", target));
+
+    // A state of another kind (`home` is `return_home`) with a target is not a fight; nor is an inactive NPC,
+    // nor one without a target.
+    set(&mut app, b, "home", true, target);
+    set(&mut app, c, "chase", false, target);
+    assert!(engaged_npc(app.world()).is_none(), "return_home and a dormant NPC do not hold");
+    set(&mut app, c, "chase", true, None);
+    assert!(engaged_npc(app.world()).is_none(), "no target");
+    set(&mut app, c, "chase", true, target);
+    assert_eq!(engaged_npc(app.world()).map(|e| e.0), Some(cid), "only the fighting one is named");
+}
