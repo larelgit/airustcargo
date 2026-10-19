@@ -172,6 +172,9 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("shards_npc::nav::region::NavRegion", "the active region's navmesh, made again by the snapshot rebuild `navmesh`"),
     ("shards_npc::nav::tools::NavOverlay", "the navigation overlay: the picture"),
     ("shards_npc::overlay::NpcOverlay", "the NPC overlay: the picture"),
+    // shards_rules
+    ("shards_rules::guard::RulesGuards", "the rules guards, registered at build time"),
+    ("shards_rules::state::SessionFilter", "which player bodies count toward the session size, set at build time"),
     // shards_save
     ("shards_save::autosave::SaveRequests", "saves asked for and the autosave debounce: when files are written, not what the world is"),
     ("shards_save::launch::", "whether a save exists to continue, and whether the launch slot was loaded"),

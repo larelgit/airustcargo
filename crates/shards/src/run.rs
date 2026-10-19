@@ -1559,10 +1559,13 @@ mod tests {
     /// A game that spawns its one totem from content, like games are told to.
     fn game(config: &EngineConfig) -> App {
         let mut app = App::new();
-        app.add_plugins(EnginePlugins::new(config.clone())).add_systems(OnEnter(EngineState::InGame), |world: &mut World| {
-            shards_content::spawn_prefab(world, "totem", Transform::default(), None).unwrap();
-        });
+        app.add_plugins(EnginePlugins::new(config.clone())).add_systems(OnEnter(EngineState::InGame), spawn_totem);
         app
+    }
+
+    /// The test game's world: one totem.
+    fn spawn_totem(world: &mut World) {
+        shards_content::spawn_prefab(world, "totem", Transform::default(), None).unwrap();
     }
 
     /// [`game`], as `run` shares it.
@@ -1787,11 +1790,13 @@ mod tests {
         assert!(left_out_warnings(clean.world()).is_empty());
         // The same game with a component the checks cannot hash.
         let mut app = game(&config);
-        app.register_type::<Stamped>().add_systems(OnEnter(EngineState::InGame), |mut commands: Commands, totems: Query<Entity, With<ai_core::AiId>>| {
+        // After the totem is spawned: two unordered systems of one schedule run in whichever order it sorts them.
+        let stamp = |mut commands: Commands, totems: Query<Entity, With<ai_core::AiId>>| {
             for totem in &totems {
                 commands.entity(totem).insert(Stamped { at: std::time::Instant::now() });
             }
-        });
+        };
+        app.register_type::<Stamped>().add_systems(OnEnter(EngineState::InGame), stamp.after(spawn_totem));
         app.finish();
         app.cleanup();
         testing::verify(&mut app, recording).unwrap();

@@ -258,6 +258,7 @@ The rules that keep a game deterministic (gameplay in `FixedUpdate`, randomness 
 | `shards_scatter` | Foliage and small props strewn over region tiles from content, with levels of detail |
 | `shards_fx` | Particle effects from pools, and attack telegraphs as ground decals |
 | `shards_hitstop` | Hit stop: a brief hold of the picture (and of the real-time clock when playing alone) when a blow lands, from a table in content |
+| `shards_rules` | Rule sets as content: the mode a world plays (difficulty), by class of body and by session size, changed only by the host and out of combat |
 | `shards_dev` | The in-game developer menu and console |
 | `ai_core` | The AI layer: ids, the world as text, the journal, tools, time control, replays, snapshots, invariants |
 | `shards_script` | Scenario files and `--until` conditions (no Bevy) |

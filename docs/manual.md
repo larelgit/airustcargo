@@ -53,16 +53,17 @@ Instructions for agents are in [AGENTS.md](../AGENTS.md) (the short core and an 
 24. [Stylised materials (E10.1)](#stylised-materials-e101)
 25. [Foliage and small objects (E10.2)](#foliage-and-small-objects-e102)
 26. [Effects and decals (E10.3)](#effects-and-decals-e103)
-27. [Voxel terrain (core)](#voxel-terrain-core)
-28. [Voxel regions (A2c)](#voxel-regions-a2c)
-29. [Steam (E10.5)](#steam-e105)
-30. [Builds for players and Windows (E10.6)](#builds-for-players-and-windows-e106)
-31. [Crash reports (E10.7)](#crash-reports-e107)
-32. [The sandbox](#the-sandbox)
-33. [Tests and CI](#tests-and-ci)
-34. [What's next](#whats-next)
-35. [Building and iterating fast](#building-and-iterating-fast)
-36. [Conventions and building](#conventions-and-building)
+27. [Rules (C3)](#rules-c3)
+28. [Voxel terrain (core)](#voxel-terrain-core)
+29. [Voxel regions (A2c)](#voxel-regions-a2c)
+30. [Steam (E10.5)](#steam-e105)
+31. [Builds for players and Windows (E10.6)](#builds-for-players-and-windows-e106)
+32. [Crash reports (E10.7)](#crash-reports-e107)
+33. [The sandbox](#the-sandbox)
+34. [Tests and CI](#tests-and-ci)
+35. [What's next](#whats-next)
+36. [Building and iterating fast](#building-and-iterating-fast)
+37. [Conventions and building](#conventions-and-building)
 
 ## Quick start
 
@@ -328,6 +329,7 @@ and it calls their tools by name. `shards_look` (how meshes are drawn) knows onl
 | `crates/shards_voxel` | voxel terrain (G1): the core (A2b: `VoxelVolume` with the chunk size a parameter, edits for generation, the FNV hash, the `voxel_palette` content kind, deterministic noise, the registry of generation steps and checks with versions, `generate`, the stock steps `noise_hills` and `fill_water`, the merged boxes `column_boxes` and `water_boxes`) and the voxel region kind (A2c: the `voxel_region` content kind, generation with attempts and a fallback seed, the build of the terrain field, water, sea and current, the rebuild cache, `voxel.volume`, hot reload, `sea_current_at`, `voxel_info`, `in_current`, `near_grid_edge`); no navigation or meshing yet |
 | `crates/shards_fx` | effects (E10.3): effects in the content (`effect`, `*.effect.ron`) and the event table (`fx`, `*.fx.ron`): particles from pools (`max_live` meshes per effect, one mesh and one material, the colour in `MeshTag`), camera-facing quads, cubes and shards, glow, flight that follows a formula on the simulation clock; `PlayEffect`, effects for combat events and clip markers; telegraph decals (`ForwardDecal` with a zone material in WESL: circle, sector, rectangle, "stadium", the fill grows toward the hit), `DepthPrepass` on the `AiCamera` cameras; the `effects`, `effect_play` and `telegraph_decals` tools, the `fx` field in `ai/status`, two developer menu items; with the `render` feature, drawing (window or `--offscreen`) |
 | `crates/shards_hitstop` | hit stop (C2): the `hitstop` content kind (`*.hitstop.ron`, an ordered list of rules over the combat events, the first match gives a hold in seconds), the `HitStopped` event and its `hitstop:` journal line on every machine that sees combat, the real-time clock hold alone with a picture (`ai_core::ClockHold`: virtual speed 0, zero ticks, `speed` masked) and the pictures-only hold in co-op (`ai_core::PresentationHolds`, read by the animation bridge), the accessibility settings `hit_stop` and `hit_stop_local_only`, the tools `hitstop` and `hitstop_play` |
+| `crates/shards_rules` | rules (C3): the content kinds `rule_set` (`*.rule_set.ron`, one definition per mode) and `rules` (`*.rules.ron`, the one definition `default`) and their checks, the resource `ActiveRules` (the mode in play, its generation, the session size) with its snapshot prepare and optional replay check, the components `RuleClass` and `RuleScaled`, `SessionFilter`, the out-of-combat guards (`add_rules_guard`), the read API the hook sites use (`shards::rules::read`), the session count each tick, the tools `rules` and `rules_set`, the condition `rules_changeable`, the engine rule `rules.mode_known`; no hook site reads it yet |
 | `crates/shards_steam` | Steam (E10.5), behind the umbrella crate's `steam` feature (off by default; `steam_sdk` is the real client on `steamworks`): co-op over the Steam relay (`--steam-host` for a lobby with invites, `--steam-server` for an anonymous game server, `--join steam:<id>`, `+connect_lobby`), the `SteamTransport` transport for `shards_net`, achievements from the content (`achievement`, `UnlockAchievement`), copies of saves in Steam Cloud and their check at launch, a fake of the Steam process (`FakeSteam`) for tests, the `steam`, `steam_host`, `steam_join`, `steam_invite` and `achievement_unlock` tools, the `steam` field in `ai/status`, the `steam` section of the developer menu |
 | `crates/shards_dev` | developer menu and console (E11): items from modules (`add_dev_entry`) and from the game (the `devmenu` content kind), a console that takes `tool key=value` lines, the `dev_menu` and `console` tools; with the `render` feature, panels in the window (F10 and `` ` ``), Tab completes names from the schemas, the `dev` input context |
 | `crates/ai_core` | the AI layer, independent of any particular game: ids, the world view, the journal, tools, time, replays, transport |
@@ -371,7 +373,8 @@ All gameplay runs in `FixedUpdate`, in one of the `SimSet` sets. Module systems 
 FixedFirst       ai_core: tick +1, apply replay events and calls between ticks
 FixedUpdate
   PhysicsSystems::Sync            colliders moved between ticks (`teleport`, `set`)
-  SimSet::Input    WorldSystems::Zones           ActiveZone / Dormant around players (before orders)
+  SimSet::Input    RulesSystems::Apply           the session size of the rules (before the engine's other Input sets; only while ActiveRules exists)
+                   WorldSystems::Zones           ActiveZone / Dormant around players (before orders)
                    CoreSystems::FollowOrders     Order::MoveTo → Intent
                    ActionSystems::Orders         Order::Attack → Intent (after FollowOrders)
                    NpcSystems::Sense             who is active; sight, hearing, memory (after Orders and Zones)
@@ -446,7 +449,7 @@ line, and tests take `shards::testing::config()`.
 | `exit_with_host` | a client exits when the session ends instead of going back to the menu: with code 0 if the host ended it, 1 for a refusal, a kick, loss of the host, or a world that is not accepted; 2 if the session cannot be opened (an address that cannot be parsed; a busy port for `--host`). A host (`--host`) does not exit on `net_end` |
 | `without` | engine modules the game leaves out (`--without audio,scatter`): their plugins are not added, see below |
 
-**Modules the game leaves out.** `EngineConfig::without` (or `--without`) names modules the way `ai/status` lists them (`engine.modules`), and `EnginePlugins` does not add their plugins: a game without sound does not need `audio`, and a server without graphics does not need `look`, `scatter` or `fx`. You can turn off `level`, `world`, `npc`, `net`, `save`, `coop`, `locale`, `ui`, `audio`, `look`, `scatter`, `voxel`, `fx`, `hitstop`, `steam` and `dev` (`shards::modules::OPTIONAL_MODULES`); `core`, `content`, `settings`, `motion` and `action` are in every game. A module that another one needs can only leave together with it: `--without locale` gives ``--without: `ui` (screens, menus and the HUD) needs `locale`: leave out both (`--without locale,ui`) or
+**Modules the game leaves out.** `EngineConfig::without` (or `--without`) names modules the way `ai/status` lists them (`engine.modules`), and `EnginePlugins` does not add their plugins: a game without sound does not need `audio`, and a server without graphics does not need `look`, `scatter` or `fx`. You can turn off `level`, `world`, `npc`, `encounter`, `net`, `save`, `coop`, `locale`, `ui`, `audio`, `look`, `scatter`, `voxel`, `fx`, `hitstop`, `steam` and `dev` (`shards::modules::OPTIONAL_MODULES`); `core`, `content`, `settings`, `motion`, `rules` and `action` are in every game (`shards::modules::REQUIRED_MODULES`). A module that another one needs can only leave together with it: `--without locale` gives ``--without: `ui` (screens, menus and the HUD) needs `locale`: leave out both (`--without locale,ui`) or
 neither``, and `steam` (in a build that includes it) needs `net`. Something that only joins two modules goes with either of them: `coop` goes with `net` or `save`, and levels as tiles go with `level` or `world`. The command line checks the rest as well: `--without net` with `--host`, `--join` or `--stand`, `--without save` with `--character` or `--world`, `--without steam` with the Steam flags (`--steam-host`, `--steam-lobby`, `--stand-steam`, `--steam-server`, `--steam-relay-only`, `--steam-app`, `--join steam:…`), and `--without world` with `--worldgen-report`
 is an error with exit code 2; `EnginePlugins` with an invalid `without` panics with the same text. Stand members leave out the same modules as the host: the clients of `--stand N` take its setting, and the child processes of `--stand-udp` get its `--without`. A game that calls the API of a module it left out (`add_ui_action` without `ui`) is responsible for that itself. Without `ui`, the main menu is skipped by default, because there is nothing to draw it with (`--menu` still sets `MainMenu`, and `new_game` leads out of it). The test `a_game_runs_without_each_module_it_may_leave_out` (`crates/shards/tests/engine.rs`) turns off each module (along with the ones that need it) and runs the engine for 60 ticks.
 
@@ -495,8 +498,8 @@ The engine's input names are in `shards::core::input_names` (`jump`, `sprint`, `
 - A region change ends with a `WorldRebuilt { reason: "region <id>" }` event (as does loading a snapshot).
 - `player_body(world, n)` returns the body with `PlayerId(n)`; an agent bound to a player finds its body through it.
 
-**`ai/status`** shows the version and the modules: `engine: {version: "0.2.0", modules: [core, content, settings, motion, action, level,
-world, npc, net, save, coop, locale, ui, audio, look, scatter, voxel, fx, dev], state: "InGame", pause: "Running"}` and `loading: []`, while
+**`ai/status`** shows the version and the modules: `engine: {version: "0.2.0", modules: [core, content, settings, motion, rules, action, level,
+world, npc, net, save, coop, locale, ui, audio, look, scatter, voxel, fx, hitstop, dev], state: "InGame", pause: "Running"}` and `loading: []`, while
 nothing is loading; with a region in the world there is also a `world` field.
 
 ## Content (E4)
@@ -519,7 +522,7 @@ The game's numbers and definitions live in files, not in code: attacks, prefabs,
   voxels `voxel_palette` and `voxel_region`, enemies `behavior`, `perception`, `director`, `attack_plan`, `npc_tuning` and `nav`,
   encounters `encounter` and `encounter_rules` (see "Encounters (G9)"), sound `audio`, `sound` and `music`, screens `screen` and `theme`, `locale`, `save`, `net`, `perf`, `devmenu`, mesh looks `look` (see "Stylised materials (E10.1)"),
   foliage `scatter` (see "Foliage and small objects (E10.2)"), effects `effect` and `fx` (see "Effects and decals
-  (E10.3)"), hit stop `hitstop` (see "Hit stop (C2)"), with the `steam` feature, achievements `achievement` (see "Steam (E10.5)"). The game adds its own: the sandbox has `layout` and `bounds`, the template has
+  (E10.3)"), hit stop `hitstop` (see "Hit stop (C2)"), rules `rule_set` and `rules` (see "Rules (C3)"), with the `steam` feature, achievements `achievement` (see "Steam (E10.5)"). The game adds its own: the sandbox has `layout` and `bounds`, the template has
   `arena`.
   `content_list` (the tool) shows the content kinds and the number of definitions.
 - `#[serde(deny_unknown_fields)]` on a struct turns a typo into an error with the line number; without it, a typo in an optional field silently keeps the default value.
@@ -627,6 +630,8 @@ content: 206 definitions in 58 files
   prefab  14
   region  3
   room  0
+  rule_set  0
+  rules  0
   save  0
   scatter  6
   screen  3
@@ -2440,6 +2445,21 @@ Every draw comes from the NPC's own `SimRng` stream with its own salt.
 
 **Combo continuation.** `chain: Some((input: "light", chance: 0.7))` on an option says that when its action starts, a die is rolled (the NPC's `SimRng` stream, its own salt) and, on success, the NPC presses `input` at the *start of the action's recovery phase* (the phase named `recovery`, else the last one). The press goes into the same press queue as anyone's, with the same buffer life (`input_buffer`, 0.15 s), so it takes effect only if the action has a cancel window that lets the input through (`Combo(...)`) opening before the press dies: a window that opens later than the buffer life makes a chain that never fires, as the content says, with no special case in the engine. The continuation is itself an action start and rolls the odds written on the option that names its action (an `action: "swing_2"` option of `weight: 0.0` carries the link of a continuation that no moveset input starts; the planner never picks it). The state is the component `NpcChain { input, instance, pressed, strike, at_start, cleared }` (`pressed` is the tick of the press; inserted when a roll succeeds, removed when the attack ends, is cut short by a forced action, or its continuation starts or is refused). If the director spaces strikes and the continuation is a strike, a continuation that is not spaced is *refused*: nothing is pressed and the chain ends. The spacing is checked when the press is made, not when the combo window takes it, so a strike another NPC starts between the two is not counted against the continuation. `chain: Some((input: "light", chance: 0.7, gate_at_start: true))` asks it on the tick the action machine would take the queued input into the combo window (`can_start` says yes) instead. The design spaces attack *starts*, and the press and the start are 5-12 ticks apart, so a chained link is gated on the tick it would start: the press is made at the start of the recovery as before (and dies in the queue as before) but is no start for the others until then; if another NPC began a strike less than `min_spacing` ago the input is withdrawn from the queue, the chain ends and `ChainRefused` is journaled; if not, the NPC counts as starting on that tick for the planners after it (`NpcChain.cleared`, the tick it was let through). A press whose window is already open when it is made is asked at once. A pending press counts as a start for the others only while its input still waits in the queue (or on the tick it was pressed): a press that died unused started nothing. A chain rolls the odds of the first *open* option that names its action (an option with `when` counts only while it is open), so one action can carry different odds under different conditions. `ChainPressed` and `ChainRefused` are journaled (`e7 chains light after swing_1`, `e7 chain refused after swing_1: e8 began a strike 12 ticks ago (30 left)`); `npc_state` shows `chain`.
 
+### Scheduling attacks (bosses)
+
+Whether an option of a plan may be chosen now is decided by one function, shared by the director's grant and the planner (`shards_npc::schedule`). The director gives a waiting NPC a token only when some option of its plan passes, distance aside; the planner chooses, or keeps, only options that pass. Both build what the function reads with one builder: the NPC's read-only view (its plan, its plan memory, what the action machine reads, its open `when` options), its target as the NPC perceives it, the strike notes and the attacks in flight on the target. So the grant and the choice never judge one option two ways. The answer is the first rule that refuses the option, a `Refusal`, in this order:
+
+1. `Weight`: its weight is 0, a chain link that is never chosen;
+2. `Cooldown { left }`: it is on the plan's cooldown;
+3. `Closed { when }`: a `when` condition does not hold (`when` is the option's conditions as written);
+4. `Banned { after, ban }`: the plan ban `bans[ban]` forbids it after the past attack `after`;
+5. `Machine { reason }`: the action machine would start it neither now nor by waiting. A busy fighter, missing stamina or an action's own cooldown only delay it while the machine gives a time it would start by; with none (a held action with no end, stamina that never regenerates to the cost) it refuses. Death, an input or an action the moveset or content lacks, no charges, the mode gate (`only_in`), a leap off the ground and no landing for a leap refuse it too;
+6. `Budget { left, cost }`: it costs more than is left of the target's collision budget;
+7. `Overlap { by, with }`: the director's `allowed` does not let it overlap with an attack in flight on the target (`by` is the NPC that holds that attack, `with` its tags);
+8. `Spacing { by, ticks }`: NPC `by` of its director began a strike less than `min_spacing` ago, `ticks` ticks are left (never for a plan that `ignores_spacing`).
+
+The distance window is not one of these rules: the planner prefers the options whose window holds the distance and, with `in_range_only`, chooses only among them. Every rule reads the world as the system sees it and draws no random number, so the order only names the rule; it never changes whether an option passes, and plans choose exactly as before. The action machine's rule is also asked where it was asked before this order existed (after the weight, the cooldown and the bans, of a closed option too), because it reads definitions no other rule reads (the action a running action's cancel window or a context binding routes the input to), and the replay's `content` check records what a session read: a session reads the same definitions as before, so a recording made before verifies unchanged. More rules (the angle, the players, repeats, `forbid_after`, live tags) come with the scheduler's next slices, each a new `Refusal` variant in its place in the order, so a game that matches on `Refusal` gets a breaking change with each. The players the director counts for its token limit (bodies with `PlayerId`, not `Dead`) are counted by one function, which the director and the engine rule `npc.tokens_within_limit` share.
+
 ### Leash, home and zones
 
 `Home { pos, leash }`: where the NPC's home is and how far it can go from it, in metres. The NPC's targets stay inside the leash, with a 0.5 m margin for the body. The conditions `target_in_leash`, `beyond_leash` and `at_home` let the behaviour turn the NPC back home. The arena skeletons in the sandbox have a 30 m leash, the guard 26 m, the camp skeletons in the wilds 12 m, and the lair's guard 10 m. An NPC in `Dormant` (farther than the active radius from every player, see "World and generation (E5)") does not think or move. It wakes up on the tick a player comes close. A group of enemies spawned by an encounter ("Encounters (G9)") goes back to its home the same way when the players leave or are wiped: the encounter's `pull_back` heals the survivors of a placed wave and forces the behaviour state it names, and the NPC condition `encounter_returning` is true until they are home.
@@ -3736,6 +3756,7 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `core.intent_sane` | every `Intent` has a finite `move_dir` of length at most 1 (+ 1e-4) and a finite `aim`. The movement code survives garbage, so the rule names the writer that forgot to clamp. The host cleans a network client's input before it reaches `Intent`, so a bad frame cannot stop the host |
 | `motion.finite` | every `AiVisible` entity has a finite `Transform` translation and a finite rotation of length 1 ± 1e-3, and a finite `MotionState` (velocity, ground normal, timers, mantle, fall height, water surface, updraft, placed position). Scale is not judged |
 | `voxel.body_in_solid` | no character has its capsule centre in a solid cell of a voxel field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). On by default since the fuzz runs on the voxel arena (see "Voxel fields") |
+| `rules.mode_known` | while `ActiveRules` exists, its `mode` is empty (neutral) or names a rule set that is in `rules/default` `modes` and in content: `ActiveRules plays \`nope\`, which content does not have`. A content change that takes the mode away falls back to `start` inside the call, so a violation names a writer that set the mode by hand (see "Rules (C3)") |
 | `action.resources_in_range` | `Health`, `Stamina` and `Poise` are finite with `max > 0` and `0 <= current <= max`. Dead bodies are checked too (`current` is 0). A game that wants a buff above `max` raises `max` with it |
 | `action.running_sane` | a running action of a fighter or a combat object (B4) exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. The length is the run's own when that is longer than the definition's (miss recovery and `extend_recovery` lengthen a run, B2a). Without a content database the rule passes |
 | `action.protection_sane` | every `Protection` (the reaction and poise timers, B1) holds finite timers, none below 0. A NaN stays a NaN through the countdown and would shield its fighter for ever |
@@ -3776,12 +3797,13 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-30 rules, checked after every tick
+31 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
   motion.launch_sane  engine rule  armed
   voxel.body_in_solid  engine rule  armed
+  rules.mode_known  engine rule  armed
   action.resources_in_range  engine rule  armed
   action.running_sane  engine rule  armed
   action.protection_sane  engine rule  armed
@@ -4105,13 +4127,13 @@ are visible in the journal (`[agent] console: regen {"region":"wilds","seed":7}`
 
 **The menu** (F10 in a window; the `dev_menu` tool) — entries grouped by section. The engine's modules register their own entries for their own
 tools (`add_dev_entry`): time (pause, step, slow motion, snapshots, the error report), the world (the region and its seed, a check of this seed
-with the generator and of 200 such regions, colliders, tiles, mesh looks and their outlines, foliage, effects), combat (immortality, healing, hitboxes, telegraph decals), AI (NPC minds, navmesh), networking
+with the generator and of 200 such regions, colliders, tiles, mesh looks and their outlines, foliage, effects), rules (the next rule set), combat (immortality, healing, hitboxes, telegraph decals), AI (NPC minds, navmesh), networking
 (links, simulated lag), saves (a check). After them come the game's own entries from its content. A switch shows the line for its other
 state (`npc_overlay on=false` while the overlay is on). An entry that needs a value puts its line in the console for you to finish in a window, and the tool asks you to run it with values. An entry with nothing to act on right now says why:
 
 ```text
 $ shards act dev_menu
-dev menu: 37 entries (F10 in a window); `dev_menu run=<id>` runs one, `console line=...` runs any line
+dev menu: 42 entries (F10 in a window); `dev_menu run=<id>` runs one, `console line=...` runs any line
 time
   pause            Pause / resume                          resume
   step             One tick (while paused)                 step ticks=1
@@ -5516,6 +5538,77 @@ clock: 0.117 s held in all over 1 holds · ticks that ran inside a hold: 0 · th
 **Limits.** In co-op the pose of the bodies in the blow stands still (animation and drawn position); what the pictures do on their own clocks (camera, UI) run on. The held time is the time asked for plus up to about two frames: it starts from the start of the frame in which the blow is seen and is checked at the start of each frame (a measured 0.5 s hold took 0.51 s). The `Time<Virtual>` of a held clock is 0, so presentation that runs on it (a particle's life, `Res<Time>` in `Update`) stands still with the world; what must not stand still reads `Time<Real>`.
 
 **Deviations from the design, on purpose.** (1) The co-op picture hold freezes the whole drawn pose, not only the animation (the lead's answer to the first open question): `PresentationHolds::drawn` is asked by the one rule's two places, `shards_motion::interp::blend` (local and predicted bodies, the follow camera then follows the held picture) and `shards_net::interp::show` (a client's remote bodies); the catch-up is linear over the hold's length, like the interpolation blend itself. (2) The hold's systems are unnamed `First` systems in `ai_core` and the plugin has no `SystemSet` of its own: nothing orders against them, the hold is not simulation. (3) No reference replay is recorded with hit stop on: a hold changes no tick, so a recording is the same file with or without it; the test in `crates/sandbox/tests/sandbox/hitstop.rs` records one while the clock is held and verifies it with hit stop off, headless and in a window. (4) `hitstop_play seconds=` keeps the table's `max_seconds` and is journalled as `manual`.
+
+## Rules (C3)
+
+A world plays one **rule set** at a time (a mode; the examples here are `gentle`, `plain` and `harsh`), and the rule set says how the engine's numbers change for each **class** of body: the health damage a body takes and the damage it deals, its maximum health and poise, the stamina its actions cost, its guards' perfect window, the max of its named charges; and, for every director, the attack tokens and the rest after an attack. A **session table** scales a class by the number of players in the session. The host decides, and only out of combat. `shards_rules` (slice C3.1a) holds the content, the state, the reads, the guards and the tools; the hook sites that read them (damage, the maxima, stamina and the perfect window, charges, tokens and rest) come with the next slices (C3.2-C3.5). Until then a rule set changes what `rules` says and the session count, and nothing a body does.
+
+```ron
+// content/rules/game.rules.ron
+{
+    "default": (
+        modes: ["gentle", "plain", "harsh"],
+        start: "plain",
+        classes: ["brute"],
+        session: {"brute": (max_health: [1.0, 1.5])},
+        blocked: "@rules-blocked",
+        host_only: "@rules-host-only",
+    ),
+}
+// content/rules/modes.rule_set.ron (abbreviated)
+{
+    "harsh": (
+        name: "@rules-harsh",
+        summary: "@rules-harsh-summary",
+        classes: {
+            "player": (incoming_damage: 1.5, charges: {"flask": 2}),
+            "brute": (max_health: 1.5),
+        },
+        attack_tokens: (shift: 1),
+        attack_rest: 0.5,
+    ),
+}
+```
+
+**Content.** Two kinds, both simulation content:
+
+| kind | what it holds |
+|---|---|
+| `rules` (`*.rules.ron`, `RulesDef`) | the one definition `default`: `modes` (the rule sets in the order a menu lists them and `cycle` steps through them), `start` (the rule set a new world starts with, never the previous world's), `classes` (the classes a rule set, a session row and a `RuleClass` may name; `player` is always one), `session` (factors by session size, by class and column `max_health`, `max_poise`, `outgoing_damage`: entry n − 1 is for n players, more players than entries take the last), `blocked` (what a player reads when a guard refuses a change) and `host_only` (what a co-op guest reads: the host chooses) |
+| `rule_set` (`*.rule_set.ron`, `RuleSetDef`) | one definition per mode: `name` and `summary` (Fluent ids), `classes` (by class: `incoming_damage`, `outgoing_damage`, `max_health`, `max_poise` as factors, `stamina_cost` as rules of `tags` and a `factor`, `perfect_bonus` in seconds, `charges` as the max of named charges), `attack_tokens` (`shift` added to a director's limit, at least `min`; a limit of 0 stays 0) and `attack_rest` (× the rest an NPC takes after an attack it finished). A class it does not name, and every field left out, keep the engine's numbers |
+
+**A game without `rules/default` has no rules:** nothing is inserted into the world, every read returns the engine's numbers, and its replays and snapshots keep their bytes (the sandbox has no rules content, and its fourteen reference replays and the template's two verify identical with the module in).
+
+**The checks** (`--check-content`, a hot edit). A rule set needs `rules/default` and a place in its `modes` (``rule set `x` is not in `rules/default` `modes`: add it there or delete it``), a name, classes the rules know (``class `brut` is not one of `rules/default` `classes` (did you mean `brute`?): player, brute``), every factor above 0 and at most 10 (`` `max_health` 0 of class `brute`: a factor is above 0 and at most 10 (1 changes nothing) ``), a bonus from 0 to 1 s, cost rules with tags, none of them empty and no tag in two rules of a class (`merge them`), charge maxima from 1 to 255 and names of 1 to 64 characters without control characters, a token shift from −8 to 8 and a `min` from 0 to 64, and no `min` without a shift (`` `attack_tokens.min` 2 without a `shift` changes nothing: give a shift or leave `min` out ``). The rules are one definition, `default` (``the rules are one definition, `default`; `x` would be a second``), with `modes` not empty, without repeats, each an existing rule set, `start` among them, `classes` of lowercase letters, digits and `_` without repeats, session rows of known classes, each giving at least one column (``` `session.brute` gives no column: give `max_health`, `max_poise` or `outgoing_damage`, or remove the row ```) of at most 8 entries of factors, `blocked` and `host_only` Fluent texts that exist, and every rule set setting the same charges for a class (``class `player`: charge `flask` is set by `gentle` but not by `plain`: every rule set sets the same charges``). A prefab's `RuleClass` reads as a class (`("brute")`; without a type registry, as in a bare check of the folder, the check `rule_class` says a value that does not read) and names a class of `rules/default` (``RuleClass `brut` is not a class of `rules/default` (did you mean `brute`?): player, brute``). A `RuleClass` a level file gives a node is not checked yet: nothing reads a class until the bodies are brought to the rules (C3.3a).
+
+**The state.**
+
+| item | what it is | snapshot, replay, net |
+|---|---|---|
+| `ActiveRules { mode, generation, players }` (resource) | the rule set in play (empty: neutral, every read gives the engine's numbers), a generation that counts changes of what the rules say (a mode change, a content change), and the session size bodies are scaled for | `add_snapshot_resource` and the prepare `rules`; the optional replay check `rules` hashes the three while the resource exists and is not neutral (neutral = absent); replicated, never removed in a session with peers |
+| `RuleClass("brute")` (component) | the class the rules know a body by, authored in prefabs (`"RuleClass": ("brute")`); a body with `PlayerId` and no class is `player`, a body with neither is untouched | with its body |
+| `RuleScaled` (component) | what the rules did to a body: the key of its last apply, the bases of its maximum health and poise, the charges a change still owes; the type is here, its writer (`shards_action::rules_apply`) comes with C3.3a, the charges it owes with C3.3b | with its body |
+| `SessionFilter` (resource, set at build time) | which bodies with `PlayerId` count toward the session size; the default seats every body | not saved, not sent |
+| `RulesGuards` (resource, registered at build time) | what a change of rules must wait for: `app.add_rules_guard(name, fn(&World) -> Option<String>)`, asked in order, the first reason wins (`… [name]`); empty in this slice (the NPC module's `npc_engaged` comes with C3.1b) | not saved, not sent |
+
+**When it changes.**
+- **A new world** (`OnEnter(InGame)`, `start_rules` in the set `RulesSystems::Start`) plays `start`: the resource is inserted (or a neutral one overwritten, its generation + 1, no players counted yet) and the journal says ``rules: a new world plays `plain` ``. It triggers no event: a new world shows no banner. Nothing on a co-op client (the host's resource replicates) or without `rules/default`. A region trip hides `OnEnter` and `OnExit` of `InGame`, so the world keeps its mode across regions. A game's `OnEnter(InGame)` system that must see the new world's rules goes `.after(RulesSystems::Start)`. The module's system changed the order Bevy sorts unordered `OnEnter(InGame)` systems in: a game with two or more spawn systems there orders them itself, or their bodies may get other `AiId`s than before and its replays diverge.
+- **The main menu** (`OnExit(InGame)`, `end_rules`): a co-op host sets the resource neutral (a removal does not travel to its clients); alone (no `NetRole`, or `Single`) it is removed, and so is a co-op client's copy of the host's (it is not the client's to write, and it must not block a later world of the client's own). The next world starts at `start`, never at the previous world's mode.
+- **A content change** (`on_content_applied`, inside the call that changes content, so a replay runs it at the same tick; nothing on a client). Rules in play add 1 to `generation`, so every body is brought to the new numbers at the next tick. A mode content no longer has, or no longer lists in `modes`, falls back to `start` (neutral if `rules/default` is gone too), with the warning ``rules: the rule set `harsh` is gone from content: playing `plain` `` and `RulesChanged { cause: Content }`. Rules content that appears in a world without rules in play starts them, as a new world would. The call's answer has the line `rules: content changed; bodies are brought to it at the next tick`.
+- **A snapshot load** (the prepare `rules`, after the prepare `content`): the world's `ActiveRules` becomes what the snapshot holds; a snapshot without one removes it (a co-op host sets it neutral, since a removal does not travel). A load refused after the prepares ran puts back what the world had.
+- **Each tick**, in `SimSet::Input` before the engine's other sets there (`RulesSystems::Apply`, before `WorldSystems::Zones` and `CoreSystems::FollowOrders`, so before every engine set that follows them; on the host and alone only, while `ActiveRules` exists), `count_session` counts the distinct `PlayerId` values among the bodies `SessionFilter` seats (a corpse that keeps its `PlayerId` beside the player's new body counts once; dead and downed players count) and writes the count into `players`. When it moves and the rules' session table gives a factor, the journal says `rules: 2 players: brute health ×1.5`. A game's own `SimSet::Input` systems are not ordered against the set: one that reads the rules (a gate that reads a charge's max, from C3.3b on) goes `.after(RulesSystems::Apply)`.
+- **`rules_set`** (below).
+
+`RulesChanged { from, to, cause }` (`cause`: `Call`, `Load`, `Content`) says the rules in play changed; the journal has `rules: plain → harsh (call)` (and `(save)` for a save's world section, which comes with C3.1b); the fall back of a content change is said by its warning.
+
+**For agents.**
+- **`rules`** (Player, query; `mode=gentle` describes that rule set instead, without session factors): the mode described, `playing` (the mode in play, whatever `mode` asked about; `null` without rules in play), its name and summary (resolved), `modes`, `start`, the session size, the generation, by class only what differs from the engine's numbers (where a session row scales a factor, the mode's, the session's and their product), the attack tokens and the rest, whether a change is allowed now (`allowed now`, `refused now: … [guard]`, `refused now: a region is loading …`, on a client `the host chooses`) and who decides (by role: `host` on a co-op host, with or without peers yet, and on its clients; `this machine` alone). In a game without rules: ``this game has no rules: add `content/**/*.rules.ron` with the definition `default` and a `*.rule_set.ron` for each mode it lists``.
+- **`rules_set`** (Player, action; host only: on a co-op guest the route refuses it before it runs, with ``` `rules_set` runs on the host only: the host chooses the rules: call it on the host (<host>) ```, and the tool refuses a client by itself the same way where no forwarder is set): `mode=harsh`, or `cycle=1` / `cycle=-1` (the next or the one before in `modes`, wrapping around). It refuses, in this order: on a client, outside a world (while a region loads: ``a region is loading: the rules change in the game; call it again once `ai/status` says `engine.state` `InGame` ``), without rules, with both or neither of `mode` and `cycle`, with a `cycle` other than 1 or -1, with an unknown mode (with the closest), with `force=true` from a player's session, and while a guard holds (``the rules change only out of combat: <reason> [npc_engaged]. Wait with `step --until named:rules_changeable`, or pass `force: true` from a dev session``). A refusal records nothing in the replay. The same mode changes nothing (``rules: `plain` already; nothing changed``); another sets the mode, adds 1 to `generation`, triggers `RulesChanged { cause: Call }` and answers `rules: plain → harsh at tick 1834: bodies are brought to it at the start of the next tick; player: incoming damage ×1.5, charge flask 2; brute: health ×1.5; attack tokens +1 (at least 1); attack rest ×0.5`.
+- The condition **`rules_changeable`** (rules in play and no guard holds: `step --until named:rules_changeable`), **`ai/status`** → `rules: "gentle · session 2 · generation 4"` (or `"none"`), the engine rule **`rules.mode_known`** (see "Invariants (E11)"), and the developer menu's "Next rule set" (`rules_set cycle=1 force=true`) in its `rules` section; in a game without rules, and on a client, the menu says why it does nothing (`(not here: this game has no rules: …)`).
+
+**Reading the rules** (`shards::rules::read`, for the hook sites and a game's own code): `class_of`, `rules_def`, `active_set`, `class_rules`, `session_size` (and `count_seated` with a query state the caller keeps, as `count_session` does), `session_factor`, `incoming`, `outgoing` (the class's factor × the session row's; a game that captures a body's power for later damage multiplies by it where it captures it), `health_factor`, `poise_factor`, `RulesView::{stamina_factor, perfect_bonus}`, `charge_rules`, `token_limit`, `rest_factor`. Every one returns the neutral value when there are no rules. The ones that take the content database read through `get`, so what they read counts for the replay check `content`; the tools, the status, the condition and the engine rule read through `peek` and never count.
+
+**Deviations from the design, on purpose.** (1) `RulesPlugin` is in `EnginePlugins` already, with the re-export `shards::rules` and the ordering line `RulesSystems::Apply.before(WorldSystems::Zones)` (the design puts them in C3.1b): the state audit, the engine rule list and the total order of the tick are checked on the whole engine, so the module has to be in it to be tested; `rules` is a module every game runs (it cannot be left out with `--without`). (2) `rules` has no `living` field: `shards_rules` sees neither `Dead` nor the NPC module. (3) The prepare reads `ActiveRules` from the snapshot with serde, as the region's prepare reads its record: the reflected JSON of the resource is the same. (4) `rules_set` refuses without `rules/default`, not only without `ActiveRules`. (5) `cycle` from a mode that is not in `modes` goes to the first (`1`) or the last (`-1`). (6) A content change that takes `rules/default` away leaves a neutral resource; the neutral pass that removes it comes with C3.3a. (7) Rules content that appears in a world without rules in play journals ``rules: content has rules now: the world plays `plain` `` (the design gives no line). (8) A content change treats a neutral resource as an absent one: rules content starts `start` over it. (9) `decides` goes by role (`host` on a host before any peer joins too): the engine's core knows no peer count. (10) On a client the main menu removes its copy of the host's rules (the design sets it neutral): the copy is not the client's to write. (11) The dev entry is `DevCommand::Live` (the design says `Run`), so a game without rules and a client show why it does nothing instead of failing when it runs. (12) `rules_set` refuses a client by itself too, before every other check (the route does it first where a forwarder is set), and a call while a region loads has its own refusal. (13) The `rules` answer has `playing`. (14) A session row must give a column (the design's "each list has 1 to 8 entries": a column left out and an empty one read the same). (15) `start_rules` runs in a public set, `RulesSystems::Start`, for games to order against. (16) A prefab's `RuleClass` that does not read is reported by `rule_class` when there is no type registry, and the "not a class" error lists the classes.
 
 ## Voxel terrain (core)
 
