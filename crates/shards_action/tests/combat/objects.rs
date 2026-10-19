@@ -8,7 +8,7 @@ use shards_action::objects::{
     despawn_objects_of, live_tags_at, objects_of, spawn_objects, CombatObject, ProjectileFlight, Repeats, SpawnDef,
 };
 use shards_action::zone::zones_threatening;
-use shards_action::{hit_zones, kill, ActionDef, ActionEnded, ActionSound, ActionStarted, Damaged, Died, Invulnerable, Team};
+use shards_action::{hit_zones, kill, threat_indicators, ActionDef, ActionEnded, ActionSound, ActionStarted, Damaged, Died, Invulnerable, Team};
 use shards_content::{ContentDb, ContentKinds, PrefabCache, PrefabDef};
 use shards_core::Intent;
 
@@ -501,6 +501,8 @@ fn hit_zones_list_objects() {
     let at = feet(&app, brute);
     assert_eq!(zones_threatening(app.world(), brute, at, 0.4).len(), 1, "the brute stands in the hero's ring");
     assert!(zones_threatening(app.world(), hero, Vec3::new(3.0, 0.0, 0.0), 0.4).is_empty(), "the hero's own");
+    // No team on the hero: only the owner keeps its own ring off its warnings.
+    assert!(threat_indicators(app.world(), hero, N).iter().all(|i| i.source != ring), "the hero's own ring is no warning");
     step(&mut app, 60);
     assert!(hit_zones(app.world()).iter().all(|z| z.attacker != ring), "landed and over");
     assert_eq!(hit_ticks(&app, brute).len(), 1);

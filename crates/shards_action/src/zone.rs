@@ -388,8 +388,10 @@ pub fn threat_indicators(world: &World, viewer: Entity, view_forward: Vec3) -> V
     let radius = body_radius(world, viewer);
     let fwd = flat(view_forward).try_normalize().unwrap_or(Vec3::NEG_Z);
     let right = Vec3::new(-fwd.z, 0.0, fwd.x);
+    let mine = world.get::<AiId>(viewer).copied();
     let mut out: Vec<Indicator> = Vec::new();
-    for z in hit_zones(world).into_iter().filter(|z| z.attacker != viewer && hostile(z.team.as_ref(), team)) {
+    // Its own and its objects', as in `zones_threatening`.
+    for z in hit_zones(world).into_iter().filter(|z| z.attacker != viewer && (z.owner.is_none() || z.owner != mine) && hostile(z.team.as_ref(), team)) {
         if let Some(seen) = out.iter_mut().find(|i| i.source == z.attacker) {
             if z.lands_in < seen.lands_in {
                 seen.lands_in = z.lands_in;
