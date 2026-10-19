@@ -6,6 +6,7 @@
 //! | section | kind | holds |
 //! |---|---|---|
 //! | `region` | world | the region in the world: its id, seed, generator version, manifest hash and (v2) the manifest itself. Applying it builds the region from that manifest, without the generator, and changes to it through the world module's region change (when it differs from the one there): a game update that changes the generator leaves a saved world as it was. Refused, changing nothing, when content no longer has what the manifest names; a manifest that does not match its hash is damage (the save's backups are tried). A save of v1 kept no manifest: it is migrated to v2 without one, generated again, and refused if it no longer comes out the same; its next save is a v2 one |
+//! | `rules` | world | the rule set the world plays (`{"mode": null}` where the game has no rules, written in every game). Applying `null` does nothing at all. A mode that is not the one in play sets it, adds 1 to the rules' `generation` and triggers `RulesChanged` (`Load`); no body is rescaled by the load, the next tick brings them to it. A mode this game's content lacks is not refused: the journal warns and the mode in play stays. A game without `rules/default` is handed a mode as any game is handed one it lacks: the journal says so. Nothing on a co-op client |
 //! | `encounters` | world | the keys of the `once` encounters the world has won. Applying it despawns the runs of the encounters standing and remembers the keys; the next tick makes fresh runs (a won key comes back won, silently, with no events; the rest start over). A fight in progress is not saved |
 //! | `position` | character | the body's feet, its rotation (characters turn about Y: that is their facing) and the region it stood in. Applied onto a body in the same region only; in another one the body stays where it is and the journal says why |
 //! | `vitals` | character | health, stamina and charges. Applied to the components the body already has (a fresh body has what its prefab gives it); a charge the body lacks is added. A body that died since the save is revived (`shards_action::revive`, as the dev `heal` does, and `Healed` follows); a save made at zero health leaves it dead |
@@ -21,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use shards_action::{revive, Charge, Charges, Health, Healed, Stamina};
 use shards_content::ContentDb;
+use shards_rules::ActiveRules;
 use shards_save::{SaveAppExt, SaveKind, SaveSection};
 use shards_world::manifest::{Layout, FORMAT};
 use shards_world::{generate, region, ActiveRegion, DungeonDef, RegionDef, RegionManifest, WorldGen};
@@ -33,6 +35,8 @@ impl Plugin for EngineSavePlugin {
         // World first, then the character: the position is applied onto the region just built.
         app.add_save_section::<RegionSave>()
             .add_save_migration(RegionSave::NAME, 1, region_from_v1)
+            // The mode is in place before any character section is applied.
+            .add_save_section::<RulesSave>()
             // The world has won what it has won; the fights in progress start fresh.
             .add_save_section::<EncountersSave>()
             .add_save_section::<PositionSave>()
@@ -278,6 +282,47 @@ fn generate_again(world: &mut World, id: &str, seed: u64, title: &str, want: u64
     region::journal_generated(world, &generated);
     region::change_region(world, generated.manifest).map_err(|e| format!("cannot change to {title}: {e}"))?;
     Ok(())
+}
+
+// --- rules ------------------------------------------------------------------------------
+
+/// The longest rule set id a save may name (bytes), as a charge name is limited.
+const MAX_MODE: usize = 64;
+
+/// The `rules` section: the rule set the world plays. Always written, in every game: `{"mode": null}` where
+/// the game has no rules (or none in play), and applying that is a strict no-op.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct RulesSave {
+    /// The rule set the world plays; `None`: the world had no rules.
+    pub mode: Option<String>,
+}
+
+impl SaveSection for RulesSave {
+    const NAME: &'static str = "rules";
+    const VERSION: u32 = 1;
+    const KIND: SaveKind = SaveKind::World;
+
+    fn capture(world: &World, _: Option<Entity>) -> Result<Self, String> {
+        Ok(RulesSave { mode: world.get_resource::<ActiveRules>().filter(|r| !r.is_neutral()).map(|r| r.mode.clone()) })
+    }
+
+    fn check(&self, _: &World, _: Option<Entity>) -> Result<(), String> {
+        match &self.mode {
+            Some(mode) if mode.len() > MAX_MODE || mode.chars().any(char::is_control) => {
+                Err(format!("the rule set is named in at most {MAX_MODE} bytes without control characters"))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// `None`: nothing happens (no write, no `generation` change, no event, no journal line). A mode: see
+    /// [`shards_rules::load_mode`]; no body is rescaled here, the next tick's apply does it.
+    fn apply(self, world: &mut World, _: Option<Entity>) -> Result<(), String> {
+        if let Some(mode) = self.mode {
+            shards_rules::load_mode(world, &mode);
+        }
+        Ok(())
+    }
 }
 
 // --- position ---------------------------------------------------------------------------

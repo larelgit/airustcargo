@@ -121,7 +121,7 @@ impl Plugin for RulesPlugin {
             )
             .add_systems(FixedUpdate, count_session.in_set(RulesSystems::Apply))
             .init_resource::<RulesGuards>()
-            .insert_resource(SessionFilter::default())
+            .init_resource::<SessionFilter>()
             .add_engine_module("rules", VERSION)
             .add_engine_invariant("rules.mode_known", mode_known)
             .add_ai_condition("rules_changeable", tools::changeable)
@@ -197,6 +197,41 @@ pub fn start_rules(world: &mut World) {
 /// removed, and so is a client's copy of the host's. The next world starts at `start`.
 pub fn end_rules(world: &mut World) {
     end(world);
+}
+
+/// A save's world section puts the rule set `mode` in play (the umbrella's `rules` section calls it). The mode in
+/// play stays when the save names it already, or names one this game's content lacks (the journal warns: a game
+/// update that drops a mode keeps the world loadable); another mode is set, `generation` + 1, and
+/// [`RulesChanged`] `Load` follows. No body is rescaled here: the next tick's apply brings them. Nothing on a
+/// co-op client (the host's rules replicate).
+pub fn load_mode(world: &mut World, mode: &str) {
+    if !decides(world) {
+        return;
+    }
+    let Some(db) = world.get_resource::<ContentDb>() else { return };
+    // A mode in a game without `rules/default` is one the content lacks, as any other unknown mode.
+    let known = read::peek_rules_def(db).is_some_and(|def| def.modes.iter().any(|m| m == mode)) && db.peek::<RuleSetDef>(mode).is_some();
+    let (from, generation) = world.get_resource::<ActiveRules>().map_or((String::new(), 0), |r| (r.mode.clone(), r.generation));
+    if !known {
+        let playing = if from.is_empty() { "no rules".to_owned() } else { format!("`{from}`") };
+        journal::emit(
+            world,
+            JournalKind::Warn,
+            format!("rules: the save's rule set `{mode}` is not in this game's content: playing {playing}"),
+        );
+        return;
+    }
+    if from == mode {
+        return;
+    }
+    match world.get_resource_mut::<ActiveRules>() {
+        Some(mut rules) => {
+            rules.mode = mode.to_owned();
+            rules.generation = generation.wrapping_add(1);
+        }
+        None => world.insert_resource(ActiveRules { mode: mode.to_owned(), generation: 1, players: 0 }),
+    }
+    world.trigger(RulesChanged { from, to: mode.to_owned(), cause: RulesCause::Load });
 }
 
 /// After every content change a game applies while it runs (inside the call, so a replay runs it at the
