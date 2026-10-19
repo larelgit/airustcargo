@@ -1,0 +1,4 @@
+// What a layer's action lays down (an object that is not a fighter).
+{
+    "zone": (components: {"AiKind": ("zone")}),
+}

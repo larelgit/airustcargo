@@ -89,7 +89,7 @@ pub use tools::{bake_files, bake_region, BakeReport, NavOverlay};
 
 use ai_core::AiId;
 use bevy::prelude::*;
-use shards_action::Dead;
+use shards_action::{AimTarget, Dead};
 use shards_content::ContentDb;
 use shards_core::{flat, Intent};
 use shards_motion::perception::{
@@ -710,10 +710,25 @@ fn keep_on_leash(vel: Vec3, here: Vec3, home: Vec3, leash: f32) -> Vec3 {
 }
 
 /// `NpcSystems::Drive`: what NPCs decided goes into their `Intent`, like a keyboard's: the
-/// movement, the point to face, the presses, the held inputs. An NPC with orders of its own
+/// movement, the point to face, the presses, the held inputs, and its brain's target for `AimTarget`. An NPC with orders of its own
 /// (an agent took it over with `move_to` or `attack`) follows those instead.
-pub(crate) fn drive_intents(mut npcs: Query<(&NpcBrain, &NavAgent, &mut NpcDrive, &mut Intent), With<Npc>>) {
-    for (brain, agent, mut drive, mut intent) in &mut npcs {
+pub(crate) fn drive_intents(
+    mut npcs: Query<(Entity, &NpcBrain, &NavAgent, &mut NpcDrive, &mut Intent, Option<&mut AimTarget>), With<Npc>>,
+    mut commands: Commands,
+) {
+    for (entity, brain, agent, mut drive, mut intent, aim_target) in &mut npcs {
+        // The brain's target is what its spawned objects aim at (`SpawnAim::Target`, `AtTarget`): the brain never writes
+        // `Intent::target` (a lock-on), so `shards_action` reads this mirror after it. A body that has none yet (one restored
+        // from an older snapshot) gets it when there is something to mirror.
+        let target = if brain.active { brain.target } else { None };
+        match aim_target {
+            Some(mut aim) if aim.0 != target => aim.0 = target,
+            Some(_) => {}
+            None if target.is_some() => {
+                commands.entity(entity).insert(AimTarget(target));
+            }
+            None => {}
+        }
         if !intent.orders.is_empty() {
             // Its own presses are dropped and what it held is let go (the director and the
             // planner leave it out of the fight meanwhile).

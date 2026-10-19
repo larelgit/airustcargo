@@ -181,7 +181,7 @@ pub use status::{
     Statuses,
 };
 pub use objects::{
-    despawn_objects_of, live_tags_at, objects_of, spawn_objects, CombatObject, ObjectsSpawned, Projectile, ProjectileFlight, RepeatMark,
+    despawn_objects_of, live_tags_at, objects_of, spawn_objects, AimTarget, CombatObject, ObjectsSpawned, Projectile, ProjectileFlight, RepeatMark,
     Repeats, SpawnAim, SpawnDef, SpawnPattern,
 };
 pub use zone::{action_zones, hit_zones, threat_indicators, HitZone, Indicator, WorldShape};
@@ -437,7 +437,10 @@ impl Plugin for ActionPlugin {
             .add_observer(fighter::hurtbox_on_collider)
             .add_observer(fighter::protect_after_reaction)
             // Cosmetic: a game may add it in a window only, and replays must not care.
-            .replay_ignore::<Animated>();
+            .register_type::<AimTarget>()
+            .replay_ignore::<Animated>()
+            // Derived each tick from an NPC's brain (`shards_npc`), so a replay has it through the brain.
+            .replay_ignore::<AimTarget>();
         context::plugin(app);
         predict::plugin(app);
         lock::plugin(app);

@@ -1,0 +1,10 @@
+// A layer's attack: no hits of its own, a zone laid under its target (`aim: AtTarget`), which an NPC
+// finds through `AimTarget`, with no lock-on.
+{
+    "lay": (
+        net_id: 14,
+        phases: [("windup", 0.4), ("release", 0.2), ("recovery", 0.4)],
+        effects: [(at: 0.4, effect: Spawn((prefab: ["zone"], action: ["lay_zone"], aim: AtTarget)))],
+    ),
+    "lay_zone": (net_id: 15, phases: [("active", 3.0)], tags: ["capture"]),
+}

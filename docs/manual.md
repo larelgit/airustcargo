@@ -1929,6 +1929,8 @@ A prefab that is not AI-visible (no `AiKind`) is refused at the spawn with an er
 `start_in` is 0 start their action at once; an object acts from the tick after its spawn (an object spawned by an action's
 effect on tick N steps and hits from tick N + 1; a delayed one, from the tick after its delay ends, and a projectile flies from the tick after its run has stepped). An aim that needs a lock-on target (`Target`, `AtTarget`) with none spawns nothing and says so: `[event] e8 spawn of caster_volley skipped: it aims at the lock-on target and there is none (lock_on first); nothing spawned`. `ObjectsSpawned` is journalled: `e8 spawns 3 x bolt_fly`.
 
+**The target of a brain-driven spawn (FU4).** `target_of` reads `Intent::target` (the lock-on), then the component `AimTarget(Option<AiId>)`, then a flight's target. An NPC (`Npc` requires it) has its drive write its brain's current target into `AimTarget` every tick in `NpcSystems::Drive` (`None` while the brain is dormant), so an NPC whose plan presses an action with an `AtTarget` or `Target` spawn lays its objects at its target with no `lock_on`; the brain still never writes `Intent.target`, so every lock-on rule (the check, `action.lock_on_valid`, steering) is untouched. `AimTarget` is derived state: it is `replay_ignore`d and rewritten before anything reads it. A game's own non-locking body (a scripted caster) can write it itself.
+
 **Caps.** `CombatTuning::max_objects` (256) and `max_objects_per_owner` (96) are content. A spawn checks them before its
 first index and lays down the indices that fit, in index order (only those are placed), and the journal says so:
 `[warn] e8 spawn capped: 2 of 3 bolt_fly (max_objects 256, max_objects_per_owner 96)`. Together with the content check (a
