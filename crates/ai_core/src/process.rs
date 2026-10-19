@@ -27,7 +27,7 @@
 //! app it activated last, and lines it logs go there even if another thread activated another
 //! app meanwhile: tests running in parallel threads keep their journals apart. Failures need
 //! no activation at all: every app's error handler carries its own token (see
-//! [`failures::handler_for`](crate::failures::handler_for)).
+//! [`failures::handler_for`](crate::failures::handler_for)). An app past the handler slots (256) has its failures logged and collected by nobody; the "active" token is never used for a failure of a bound app.
 
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};

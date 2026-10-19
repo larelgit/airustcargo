@@ -352,7 +352,7 @@ fn a_load_that_fails_part_way_says_what_it_applied_and_records_the_load() {
     let err = fails(&mut world_fails, "load_game", json!({"what": "all", "slot": "camp"}));
     assert_eq!(
         err,
-        "loading world/camp failed at section brittle: refused on purpose; applied before it: region, encounters, chests, calendar, weather (missing from the file); the failed section may have changed the world too. \
+        "loading world/camp failed at section brittle: refused on purpose; applied before it: region, rules, encounters, chests, calendar, weather (missing from the file); the failed section may have changed the world too. \
          The world is partly loaded: fix the cause and load again, or go back with snapshot_load"
     );
     assert_eq!(calendar(&world_fails).day, 40);
@@ -555,7 +555,7 @@ fn a_section_whose_apply_changes_the_world_and_fails_may_have_changed_it() {
     let err = fails(&mut app, "load_game", json!({"what": "world", "slot": "camp"}));
     assert_eq!(
         err,
-        "loading world/camp failed at section scribbled_late: stopped half way; applied before it: region, encounters, chests, calendar; \
+        "loading world/camp failed at section scribbled_late: stopped half way; applied before it: region, rules, encounters, chests, calendar; \
          the failed section may have changed the world too. The world is partly loaded: fix the cause and load again, or go back with snapshot_load"
     );
     assert!(app.world().contains_resource::<Scribbled>());

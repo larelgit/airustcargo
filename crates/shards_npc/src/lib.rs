@@ -113,7 +113,7 @@ use shards_action::{ActionPlugin, ActionSystems};
 use shards_content::ContentAppExt;
 use shards_core::EngineAppExt;
 
-pub use invariants::{state_known, strike_spacing, tokens_within_limit, TokenAudit};
+pub use invariants::{plan_sequence, state_known, strike_spacing, tokens_within_limit, PlanAudit, TokenAudit};
 use shards_motion::perception::RoutePlanner;
 use shards_world::{WorldAppExt, WorldSystems};
 
@@ -135,8 +135,8 @@ pub use nav::{
 };
 pub use overlay::NpcOverlay;
 pub use perception::{sees, sees_within, sight_clear, HeardAt, Noise, Perceived, Sensed, Sound};
-pub use planner::{banned, choose, pick_weighted, resolve, NpcOptions, NpcPlan, PastAttack, Resolved};
-pub use schedule::Refusal;
+pub use planner::{banned, choose, pick_weighted, resolve, NpcOptions, NpcPlan, PastAttack, PlanCooldown, Resolved};
+pub use schedule::{schedule_report, target_angle, OptionReport, PickReport, Refusal, ScheduleParams, ScheduleReport, WhatIf};
 pub use strike::{spacing_ticks, wait_of, NpcStrike};
 
 /// Version of the NPC module.
@@ -279,11 +279,15 @@ impl Plugin for NpcPlugin {
             .add_observer(perception::hear_noise)
             .add_observer(perception::hit_noise)
             .add_observer(strike::action_started);
-        // The token rule judges the director's books right after it closed them.
+        // The token rule judges the director's books right after it closed them; the sequence rule
+        // judges the planner's presses right after it made them.
         if app.engine_invariants_on() {
             app.init_resource::<TokenAudit>()
+                .init_resource::<PlanAudit>()
                 .add_systems(FixedUpdate, invariants::audit_tokens.after(director::direct).in_set(NpcSystems::Direct))
-                .add_engine_invariant("npc.tokens_within_limit", tokens_within_limit);
+                .add_systems(FixedUpdate, invariants::audit_presses.after(planner::plan_attacks).in_set(NpcSystems::Plan))
+                .add_engine_invariant("npc.tokens_within_limit", tokens_within_limit)
+                .add_engine_invariant("npc.plan_sequence", plan_sequence);
         }
         // `move_to path=true` on the navmesh (a game's own planner, added before, stays).
         if !app.world().contains_resource::<RoutePlanner>() {

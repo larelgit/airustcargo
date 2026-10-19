@@ -1,0 +1,70 @@
+# The boss scheduler in co-op (N8a2): the warden fights (its plan is gameplay state every member hashes), a host and two
+# clients on 100 ms links with 1% loss. `npc_schedule` counts the session's living players (three), the stand must not report a
+# desync, and when a client's body dies the host counts two. A co-op session refuses `content_apply`, so the gated plans of
+# the single-game scenario cannot be applied here: the check is the player count the `players` gate reads. A client shows the
+# host's plan (history, no token) and refuses `npc_schedule`: the host owns NPC plans.
+#
+#   cargo sandbox --stand 2 --headless --paused --port 0 --port-file F &
+#   SHARDS_PORT_FILE=F cargo shards wait --peer all
+#   SHARDS_PORT_FILE=F cargo shards scenario crates/sandbox/scenarios/stand/boss_schedule.scenario
+#   SHARDS_PORT_FILE=F cargo shards stand stop
+stand clients=2 latency=100 loss=0.01
+seed 42
+
+# --- setup (dev, on the host): bodies e5 (the host's), e15 (c1's), e16 (c2's)
+@host act npc_set_state id=e6 state=calm
+@host act npc_set_state id=e7 state=calm
+@host act npc_set_state id=e8 state=calm
+@host act npc_set_state id=e14 state=calm
+@host act heal id=e5
+@host act heal id=e15
+@host act heal id=e16
+@host act heal id=e6
+@host act set id=e6 component=NpcPlan value='{"history": [], "cooldowns": [], "rest": 0.5, "attacks": 0}'
+@host act teleport id=e5 x=0 z=-3.5 y=0
+@host act teleport id=e15 x=-6 z=14 y=0
+@host act teleport id=e16 x=6 z=14 y=0
+@host act teleport id=e6 x=0 z=-6 y=0
+@host act teleport id=e7 x=-18 z=18 y=0
+@host act teleport id=e8 x=18 z=18 y=0
+@host act teleport id=e14 x=-18 z=-18 y=0
+@host act god
+step 60
+invariant !journal "desync"
+
+# --- three living players, counted by the host
+@host act npc_schedule id=e6 target=e5 distance=1.5
+expect result contains "\"players\": 3"
+
+
+# --- the fight: the plan's history is state on every member
+@host act npc_set_state id=e6 state=guard
+step 600
+invariant !journal "desync"
+@c1 act npc_state id=e6
+expect result contains "\"id\": \"warden\""
+expect result contains "\"token\": null"
+# the client runs no planner: a history in its answer is the host's, replicated
+expect result !contains "\"history\": []"
+# and it does not answer for the host
+@c1 act? npc_schedule id=e6 target=e5
+expect result contains "the host owns NPC plans: ask the host"
+
+# --- a client's body falls: the host counts two
+@host act set id=e15 component=Health path=current value=0
+step 30
+@host act npc_schedule id=e6 target=e5 distance=1.5
+expect result contains "\"players\": 2"
+step 300
+invariant !journal "desync"
+
+# --- everything back as it was
+@host act god on=false
+@host act npc_set_state id=e6 state=calm
+@host act heal id=e5
+@host act heal id=e15
+@host act heal id=e16
+@host act heal id=e6
+@host act set id=e6 component=NpcPlan value='{"history": [], "cooldowns": [], "rest": 0.5, "attacks": 0}'
+step 2
+invariant !journal "desync"

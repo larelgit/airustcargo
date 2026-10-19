@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use shards_content::db::closest;
 use shards_core::flat;
 use shards_motion::perception::{Leg, PathPlan, StepKind};
+use shards_rules::RulesAppExt;
 use shards_motion::{physics::sync_physics, CharacterController, CharacterParams, LayerMask, PhysicsWorld, QueryFilter, TargetArg};
 
 use crate::brain::{force_state, Home, Npc, NpcBrain, NpcDrive, NpcStateChanged, NpcThink};
@@ -19,11 +20,13 @@ use crate::chain::{ChainPressed, ChainRefused, NpcChain};
 use crate::director::{AttackToken, TokenGranted, TokenReturned};
 use crate::nav::{local_grid_path, local_grid_route, NavAgent, NavPaths, NAVMESH};
 use crate::perception::Perceived;
-use crate::planner::{NpcOptions, NpcPlan};
+use crate::planner::{repeats_of, NpcOptions, NpcPlan};
+use crate::schedule::{schedule_report, ScheduleParams, WhatIf};
 use crate::strike::{wait_of, NpcStrike};
 
 pub(crate) fn register(app: &mut App) {
-    app.register_ai_describer("npc", describe_npc)
+    app.add_rules_guard("npc_engaged", rules_guard)
+        .register_ai_describer("npc", describe_npc)
         .journal_event::<NpcStateChanged>(|e, w| {
             let target = e.target.map(|t| format!(" {t}")).unwrap_or_default();
             let forced = if e.forced { " (npc_set_state)" } else { "" };
@@ -52,6 +55,7 @@ pub(crate) fn register(app: &mut App) {
             ))
         })
         .add_ai_query("npc_state", Scope::Player, npc_state)
+        .add_ai_query("npc_schedule", Scope::Player, npc_schedule)
         .add_ai_query("nav_path", Scope::Player, nav_path)
         .add_ai_tool("npc_set_state", Scope::Dev, npc_set_state)
         // `step --until named:npc_attacking`: until an NPC's attack (by its token) is under way.
@@ -97,15 +101,34 @@ pub const LEASH_SLACK: f32 = 1.0;
 /// The engine's states an NPC fights in, by kind: `npc_engaged` holds while one is in them.
 pub const FIGHTING_STATES: [&str; 3] = ["chase", "attack", "wait_token"];
 
+/// The first active NPC with a target that is in a state of a [`FIGHTING_STATES`] kind, in `AiId` order: its
+/// id, its behaviour, its state and its target. What the condition `npc_engaged` and the rules guard of the
+/// same name ask.
+pub fn engaged_npc(w: &World) -> Option<(AiId, String, String, Option<AiId>)> {
+    let mut npcs = w.try_query::<(&AiId, &Npc, &NpcBrain)>()?;
+    let db = w.get_resource::<shards_content::ContentDb>();
+    npcs.iter(w)
+        .filter(|(_, _, b)| b.active && b.target.is_some())
+        .filter(|(_, npc, brain)| {
+            let behavior = db.and_then(|db| db.get::<crate::def::BehaviorDef>(&npc.behavior));
+            let kind = behavior.map_or(brain.state.as_str(), |b| b.kind_of(&brain.state));
+            FIGHTING_STATES.contains(&kind)
+        })
+        .min_by_key(|(id, _, _)| **id)
+        .map(|(id, npc, brain)| (*id, npc.behavior.clone(), brain.state.clone(), brain.target))
+}
+
 /// `npc_engaged`: an active NPC with a target is in a state of a [`FIGHTING_STATES`] kind.
 fn npc_engaged(w: &World) -> bool {
-    let Some(mut npcs) = w.try_query::<(&Npc, &NpcBrain)>() else { return false };
-    let db = w.get_resource::<shards_content::ContentDb>();
-    npcs.iter(w).filter(|(_, b)| b.active && b.target.is_some()).any(|(npc, brain)| {
-        let behavior = db.and_then(|db| db.get::<crate::def::BehaviorDef>(&npc.behavior));
-        let kind = behavior.map_or(brain.state.as_str(), |b| b.kind_of(&brain.state));
-        FIGHTING_STATES.contains(&kind)
-    })
+    engaged_npc(w).is_some()
+}
+
+/// The rules guard `npc_engaged`: the rules change only out of combat, and an NPC that fights (a partner's
+/// fight too) is combat. The reason names the first such NPC: ``e6 `skeleton` is fighting (`chase`, target e5)``.
+fn rules_guard(w: &World) -> Option<String> {
+    let (id, behavior, state, target) = engaged_npc(w)?;
+    let target = target.map(|t| format!(", target {t}")).unwrap_or_default();
+    Some(format!("{id} `{behavior}` is fighting (`{state}`{target})"))
 }
 
 /// How far past its sight range an NPC counts as near for `npc_near` (× the range).
@@ -166,6 +189,52 @@ pub(crate) fn npc_line(brain: &NpcBrain, token: Option<&AttackToken>, home: Opti
 pub struct NpcStateArgs {
     /// The NPC: 42 or "e42".
     pub id: Id,
+}
+
+/// Which options an NPC may choose now, the first rule that refuses each of the others, and each
+/// eligible option's chance (the director's grant and the planner judge by the same rules). A dev
+/// caller also gets `pick`: the option the next tick's draw would take, when the next tick is a
+/// decision tick of an NPC that holds a grant. Read-only.
+#[derive(Deserialize, JsonSchema)]
+pub struct NpcScheduleArgs {
+    /// The NPC: 42 or "e42".
+    pub id: Id,
+    /// Judge against this target. Default: its grant's target, else its brain's.
+    pub target: Option<Id>,
+    /// Meters, instead of the measured distance.
+    pub distance: Option<f32>,
+    /// Degrees 0-180 (0 ahead, 180 behind), instead of the measured angle.
+    pub angle: Option<f32>,
+    /// Living players, instead of the counted ones.
+    pub players: Option<u32>,
+}
+
+fn npc_schedule(In(call): In<Call<NpcScheduleArgs>>, p: ScheduleParams, role: Option<Res<shards_core::NetRole>>) -> ToolResult<Value> {
+    // The grants, the targets and the think timers it reads are the host's; a client has none of them.
+    if role.is_some_and(|r| !r.simulates()) {
+        return Err("the host owns NPC plans: ask the host".to_owned());
+    }
+    let args = &call.args;
+    if let Some(angle) = args.angle
+        && !(0.0..=180.0).contains(&angle)
+    {
+        return Err(format!("angle must be 0..180 degrees (is {angle})"));
+    }
+    if let Some(distance) = args.distance
+        && !(distance >= 0.0 && distance.is_finite())
+    {
+        return Err(format!("distance must be >= 0 and finite (is {distance})"));
+    }
+    if args.players == Some(0) {
+        return Err("players must be at least 1 (is 0)".to_owned());
+    }
+    let entity = p.resolve(args.id.0)?;
+    if !p.is_npc(entity) {
+        return Err(format!("{} is not an NPC (it has no Npc component)", args.id));
+    }
+    let what_if = WhatIf { target: args.target.map(|t| t.0), distance: args.distance, angle: args.angle, players: args.players };
+    let report = schedule_report(&p, entity, &what_if, call.caller.scope.allows(Scope::Dev))?;
+    serde_json::to_value(report).map_err(|e| e.to_string())
 }
 
 fn npc_state(In(call): In<Call<NpcStateArgs>>, world: &World) -> ToolResult<Value> {
@@ -300,6 +369,15 @@ fn extras(world: &World, entity: Entity, npc: &Npc, perceived: &Perceived, here:
             .unwrap_or_default();
         let closed: Vec<&String> = gated.iter().filter(|g| !o.allowed.contains(g)).collect();
         out["plan"]["options"] = json!({"open": o.allowed, "closed": closed});
+    }
+    // The repeat gate's count: the newest attack and how many times in a row it was chosen.
+    if let Some(newest) = world.get::<NpcPlan>(entity).and_then(|p| p.history.last().map(|h| (h.name.clone(), repeats_of(&p.history, &h.name))))
+        && world
+            .get_resource::<shards_content::ContentDb>()
+            .and_then(|db| npc.plan.as_deref().and_then(|p| db.peek::<crate::def::AttackPlanDef>(p)))
+            .is_some_and(|p| p.options.iter().any(|o| o.max_repeats.is_some()))
+    {
+        out["plan"]["repeats"] = json!({"name": newest.0, "times": newest.1});
     }
     let def = perception_of(world, npc);
     if let Some(keep) = def.keep_range {

@@ -1,11 +1,11 @@
-//! The engine rules `npc.state_known` and `npc.tokens_within_limit`.
+//! The engine rules `npc.state_known`, `npc.tokens_within_limit` and `npc.plan_sequence`.
 
-use ai_core::{with_query, AiId, Offenders};
+use ai_core::{with_query, AiId, Offenders, SimTick};
 use bevy::prelude::*;
 use shards_content::ContentDb;
 
 use crate::brain::{Npc, NpcBrain};
-use crate::def::{BehaviorDef, DirectorDef};
+use crate::def::{AttackPlanDef, BehaviorDef, DirectorDef};
 use crate::director::{FightingReadOnly, Grant};
 use crate::schedule::{living_players, Players};
 
@@ -161,6 +161,66 @@ pub fn strike_spacing(world: &World) -> Option<String> {
     bad.report()
 }
 
+/// What [`audit_presses`] found on the last tick: the text of a broken sequence rule, or `None`.
+///
+/// Not simulation state: recomputed every tick from that tick's presses, right after the planner
+/// ran, so it is not part of a snapshot, a replay or a replay check. It exists only so that
+/// [`plan_sequence`], which runs at the end of the tick, judges the presses at the moment the
+/// planner made them (the same pattern as [`TokenAudit`]).
+#[derive(Resource, Default, Debug, PartialEq)]
+pub struct PlanAudit(pub Option<String>);
+
+/// Right after [`plan_attacks`](crate::planner::plan_attacks) (the engine adds it only with
+/// `engine_invariants`): for every attack the planner pressed this tick, judges the plan that
+/// chose it (the NPC's current plan: nothing between the planner and this audit changes it)
+/// against the history before the attack (`remember` runs when the attack is seen running, a tick
+/// later at the earliest). Its two rules, `max_repeats` and `forbid_after`, are written out here and
+/// do not call `refusal`, so a planner path that skips it is caught.
+#[allow(clippy::needless_pass_by_value, reason = "a Bevy system")]
+pub(crate) fn audit_presses(
+    mut audit: ResMut<PlanAudit>,
+    tick: Res<SimTick>,
+    db: Res<ContentDb>,
+    npcs: Query<FightingReadOnly>,
+) {
+    let mut bad = Offenders::default();
+    for f in npcs.iter() {
+        let Some(grant) = f.token.held.as_ref().filter(|g| g.pressed == Some(tick.0) && !g.started) else { continue };
+        let Some(name) = grant.attack.as_deref() else { continue };
+        let Some(plan_def) = f.npc.plan.as_deref().and_then(|p| db.peek::<AttackPlanDef>(p)) else { continue };
+        let Some(option) = plan_def.options.iter().find(|o| o.label() == name) else { continue };
+        let history = &f.plan.history;
+        if let Some(max) = option.max_repeats {
+            let times = history.iter().rev().take_while(|past| past.name == name).count() as u32;
+            if times >= max {
+                bad.note(*f.id, || format!("NpcPlan: pressed {name} after {times} in a row (max_repeats {max})"));
+            }
+        }
+        if let Some(last) = history.last()
+            && let Some(tag) = option.forbid_after.iter().find(|t| last.tags.contains(t))
+        {
+            bad.note(*f.id, || format!("NpcPlan: pressed {name} right after {} (forbid_after {tag})", last.name));
+        }
+    }
+    let text = bad.report();
+    if audit.0 != text {
+        audit.0 = text;
+    }
+}
+
+/// The engine rule `npc.plan_sequence`: no NPC presses an attack that the plan which chose it
+/// refuses by `max_repeats` or `forbid_after` against the history before it.
+///
+/// It reports what [`audit_presses`] found right after the planner, judged at the press and not at
+/// the start: between the two the game may swap the plan (a phase change) or reset its memory, and
+/// judged at the start the rule would depend on the new plan. Only the planner's presses are judged
+/// (`Grant::pressed`); a combo continuation or a state hook's press is not a plan choice. Without
+/// the audit (the world has no `PlanAudit`: the engine rules were off when the plugin was built) the
+/// rule passes.
+pub fn plan_sequence(world: &World) -> Option<String> {
+    world.get_resource::<PlanAudit>()?.0.clone()
+}
+
 #[cfg(test)]
 mod tests {
     use ai_core::AiIndex;
@@ -222,6 +282,77 @@ mod tests {
         assert!(text.contains("held by a dead body"), "{text}");
         // The rule reports what the audit found.
         assert_eq!(tokens_within_limit(&w), Some(text));
+    }
+
+    /// A world whose plan `p` limits `light` to once in a row and keeps `heavy` out right after a `zone`.
+    fn plan_world() -> World {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<crate::def::AttackPlanDef>();
+        let plans = shards_content::db::Source {
+            path: "content/p.attack_plan.ron".into(),
+            text: r#"{ "p": (options: [(input: "light", max_repeats: Some(1)), (input: "heavy", forbid_after: ["zone"]), (input: "free")]) }"#.into(),
+        };
+        let mut w = World::new();
+        w.init_resource::<AiIndex>();
+        w.init_resource::<PlanAudit>();
+        w.insert_resource(SimTick(7));
+        w.insert_resource(ContentDb::build(&kinds, &[plans]));
+        w
+    }
+
+    /// An NPC on plan `p` whose history is `history` (name, tags) and that pressed `attack` on tick 7.
+    fn presser(w: &mut World, attack: &str, history: &[(&str, &[&str])]) -> Entity {
+        let mut grant = Grant::for_tests(AiId(999));
+        grant.attack = Some(attack.into());
+        grant.pressed = Some(7);
+        let e = w.spawn((Npc::default().with_plan("p"), Fighter::default(), Transform::default())).id();
+        w.get_mut::<crate::director::AttackToken>(e).unwrap().held = Some(grant);
+        w.get_mut::<crate::planner::NpcPlan>(e).unwrap().history = history
+            .iter()
+            .map(|(name, tags)| crate::planner::PastAttack { name: (*name).into(), tags: tags.iter().map(|t| (*t).to_owned()).collect() })
+            .collect();
+        e
+    }
+
+    fn presses(w: &mut World) -> Option<String> {
+        w.run_system_once(audit_presses).unwrap();
+        plan_sequence(w)
+    }
+
+    /// The control test: a press that the plan which chose it refuses by its two sequence rules is
+    /// found, a press that is allowed is not, and an attack that started was judged at its press.
+    #[test]
+    fn a_press_the_plan_refuses_is_found_and_an_allowed_one_is_not() {
+        type Past<'a> = &'a [(&'a str, &'a [&'a str])];
+        let judged = |attack: &str, history: Past, edit: &dyn Fn(&mut Grant)| {
+            let mut w = plan_world();
+            assert_eq!(presses(&mut w), None, "nobody pressed");
+            let e = presser(&mut w, attack, history);
+            edit(w.get_mut::<crate::director::AttackToken>(e).unwrap().held.as_mut().unwrap());
+            let id = *w.get::<AiId>(e).unwrap();
+            presses(&mut w).map(|text| text.replace(&format!("{id} "), "e "))
+        };
+        let same: &dyn Fn(&mut Grant) = &|_| {};
+        let light: Past = &[("heavy", &["heavy"]), ("light", &["light"])];
+        assert_eq!(judged("light", light, same).as_deref(), Some("e NpcPlan: pressed light after 1 in a row (max_repeats 1)"));
+        assert_eq!(judged("light", &[("light", &["light"]), ("heavy", &["heavy"])], same), None, "one heavy in between");
+        assert_eq!(judged("light", &[], same), None, "nothing before it");
+        let zone: Past = &[("slam", &["slam", "zone"])];
+        assert_eq!(judged("heavy", zone, same).as_deref(), Some("e NpcPlan: pressed heavy right after slam (forbid_after zone)"));
+        assert_eq!(judged("heavy", &[("slam", &["slam", "zone"]), ("free", &["free"])], same), None, "only the newest forbids");
+        assert_eq!(judged("free", zone, same), None, "an option with no gate");
+        // Not judged: an attack that started (judged at its press), a press of another tick, a plan that
+        // names no such option.
+        assert_eq!(judged("light", light, &|g| g.started = true), None);
+        assert_eq!(judged("light", light, &|g| g.pressed = Some(6)), None);
+        assert_eq!(judged("gone", light, same), None);
+        // The rule returns what the audit found, and the books are rewritten every tick.
+        let mut w = plan_world();
+        presser(&mut w, "light", light);
+        let text = presses(&mut w).expect("a breach");
+        assert_eq!(plan_sequence(&w), Some(text));
+        w.insert_resource(SimTick(8));
+        assert_eq!(presses(&mut w), None);
     }
 
     /// A world whose director `arena` spaces strikes 0.7 s apart (42 ticks at 60 Hz).

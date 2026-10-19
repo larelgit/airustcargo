@@ -118,7 +118,7 @@ fn old_files_migrate_and_load() {
     // `save_check` against the old file: the state is what the file says, plus the section it lacks.
     let check = act(&mut app, "save_check", json!({"what": "world", "slot": "old"})).result;
     assert_eq!(check["world"]["file"]["differing"], json!([]), "{check}");
-    assert_eq!(check["world"]["file"]["only_here"], json!(["encounters", "weather"]), "{check}");
+    assert_eq!(check["world"]["file"]["only_here"], json!(["rules", "encounters", "weather"]), "{check}");
 }
 
 #[test]
