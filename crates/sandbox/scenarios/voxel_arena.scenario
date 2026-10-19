@@ -26,7 +26,7 @@ expect result contains "ok: voxel_arena seed 7 v1 (attempt 1, 16 chunks, 6 POIs"
 expect result contains "spawn at (0.5, -399.5)"
 expect journal "region generated: voxel_arena seed 7 v1 (attempt 1, 16 chunks, 6 POIs)"
 expect journal "region loaded: voxel_arena seed 7 v1 (256 x 32 x 256, 2 water boxes, 4 sea boxes"
-expect journal "navmesh: voxel_arena seed 7 v1 (16 chunks, 250097 nodes, 16989 links across edges, 0 navlinks)"
+expect journal "navmesh: voxel_arena seed 7 v1 (16 chunks, 250097 nodes, 16961 links across edges, 0 navlinks)"
 act god
 invariant field e5 Health.current > 0
 # Whatever the body was doing before (an attack winding down) ends; then back on the spawn.

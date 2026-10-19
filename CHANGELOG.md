@@ -177,8 +177,8 @@ Changes that land in the main branch after phases C–E (`0.4.0`) go here.
   route's tile corridor is widened by the chunks around it. Only machines that simulate bake: a co-op client says `not baked: this machine does
   not simulate`. `nav_info` gains `bake` (`in memory, 16 chunks, baked in N ms`), `nav_path`, `path_to`, NPC routes and `npc_state`'s
   `nav.routes` (`navmesh, body agent`) answer on a voxel region as on tiles, `nav_bake` and `--bake-nav` say a voxel region is not made of files, and
-  `--check-content` asks for no bake file of it. The journal line is `navmesh: voxel_arena seed 7 v1 (16 chunks, 250097 nodes, 16989 links across edges, 0 navlinks)`
-  (no longer `navmesh: none for this region`). New in `shards_npc`: `bake_volume`, `prebake_volume`, `Cut`, `ChunkKey`, `VoxelBake`,
+  `--check-content` asks for no bake file of it. The journal line is `navmesh: voxel_arena seed 7 v1 (16 chunks, 250097 nodes, 16961 links across edges, 0 navlinks)`
+  (no longer `navmesh: none for this region`). New in `shards_npc`: `bake_volume`, `prebake_volume`, `Cut`, `ChunkKey`, `VoxelBake`, A corner where four chunks meet is linked once (its diagonals were made by two edge rows).
   `NavBakes::chunks` and `isolated`. Tests: the chunks stitched against the island (and a small volume with a step, a tunnel's mouth and a lake on the
   seams) baked in one piece, node for node and move for move, and 64 routes of the same length; the bake the same on every run; the cache
   keys; carving; a client that does not bake. The sandbox gains `voxel_nav.scenario` (`nav_info`, `nav_path` through the cave and up the steps, the large

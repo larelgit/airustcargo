@@ -24,8 +24,8 @@ act regen region=voxel_arena seed=7
 expect result contains "ok: voxel_arena seed 7 v1 (attempt 1, 16 chunks, 6 POIs"
 expect journal "region loaded: voxel_arena seed 7 v1 (256 x 32 x 256, 2 water boxes, 4 sea boxes"
 # One navmesh per body class, made inside the call that loads the region.
-expect journal "navmesh: voxel_arena seed 7 v1 (16 chunks, 250097 nodes, 16989 links across edges, 0 navlinks)"
-expect journal "navmesh (body large): 16 chunks, 243673 nodes, 16093 links across edges, 0 navlinks"
+expect journal "navmesh: voxel_arena seed 7 v1 (16 chunks, 250097 nodes, 16961 links across edges, 0 navlinks)"
+expect journal "navmesh (body large): 16 chunks, 243673 nodes, 16069 links across edges, 0 navlinks"
 expect !journal "navmesh: none"
 act god
 invariant field e5 Health.current > 0
@@ -36,7 +36,7 @@ step 2
 
 # --- 2. what the navmesh is: baked in memory, 4 x 4 chunks, every chunk edge open
 act nav_info
-expect result contains "\"summary\": \"16 chunks, 250097 nodes, 16989 links across edges, 0 navlinks\""
+expect result contains "\"summary\": \"16 chunks, 250097 nodes, 16961 links across edges, 0 navlinks\""
 expect result contains "in memory, 16 chunks"
 expect result contains "\"closed_edges\": 0"
 expect result contains "\"carved_cells\": 0"

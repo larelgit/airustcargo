@@ -6042,7 +6042,7 @@ chunk), and `nav_bake` / `--bake-nav` do not touch it (`nav_bake` says so when a
   host's, and the journal has `navmesh: not baked: this machine does not simulate`. Hosts, single player, `--verify`, heavy mode and `shards soak` bake.
 - **`nav_info`** is the tile answer plus `bake`: `in memory, 16 chunks, baked in 700 ms` (`, 16 kept from an earlier bake` when the bakes were kept; like `voxel_info`'s build time, both only where timing is reported: a test that compares whole answers gets `in memory, 16 chunks`),
   for the region and for each body class (`bodies[].bake`). The time is the loaded machine's wall clock, never state, and the journal does not
-  carry it: `navmesh: voxel_arena seed 7 v1 (16 chunks, 250097 nodes, 16989 links across edges, 0 navlinks)`, then one line per other body class.
+  carry it: `navmesh: voxel_arena seed 7 v1 (16 chunks, 250097 nodes, 16961 links across edges, 0 navlinks)`, then one line per other body class.
 - **The chunks against one piece.** `bake_volume(world, settings, Cut::Whole)` bakes the grid as one tile. The tests compare it with the chunks
   stitched: every node and every move equal (global column, floor, way of standing, kind, cost), the same areas, the same cells reached from
   the spawn, and the lengths of 64 routes between random cells equal within 0.5 m: on the sandbox island (`the_arenas_sixteen_chunks_are_the_island_baked_in_one_piece`)
