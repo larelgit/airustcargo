@@ -168,7 +168,6 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("shards_npc::invariants::PlanAudit", "what the sequence rule found right after the planner this tick, from that tick's presses: recomputed every tick, read only by the invariant"),
     ("shards_npc::nav::NavPaths", "the path finder, set at build time"),
     ("shards_npc::nav::overlay::", "the navigation overlay: the picture"),
-    ("shards_npc::nav::region::NavFailed", "the region whose navmesh could not be built (or, on a machine that does not simulate, is not baked), so it is not tried every tick: made again with the navmesh by the snapshot rebuild `navmesh`"),
     ("shards_npc::nav::region::NavBakes", "baked navigation tiles by hash (a function of files and content) and a voxel region's chunks by key (a function of its field, its water and the nav settings; never written to files)"),
     ("shards_npc::nav::region::NavRegion", "the active region's navmesh, made again by the snapshot rebuild `navmesh`"),
     ("shards_npc::nav::tools::NavOverlay", "the navigation overlay: the picture"),

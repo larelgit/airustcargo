@@ -102,8 +102,11 @@ fn key(nav: &NavRegion, node: u32) -> Key {
     (gx, gz, local.y_mm, local.swim)
 }
 
-/// Every node, and every move out of every node (to, kind, cost), as keys.
-fn contents(nav: &NavRegion) -> (BTreeSet<Key>, BTreeSet<(Key, Key, u8, u32)>) {
+/// A move as the other bake sees it: from, to, kind, cost.
+type Move = (Key, Key, u8, u32);
+
+/// Every node, and every move out of every node, as keys.
+fn contents(nav: &NavRegion) -> (BTreeSet<Key>, BTreeSet<Move>) {
     let mut nodes = BTreeSet::new();
     let mut links = BTreeSet::new();
     let mut out = Vec::new();

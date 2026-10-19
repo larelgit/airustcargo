@@ -33,8 +33,9 @@ use super::super::bake::{bake_chunk, Frame};
 use super::super::tile::hex;
 use super::*;
 
-/// How many chunk bakes the process keeps for the next region built from the same field.
-const SHARED_SIZE: usize = 256;
+/// How many chunk bakes the process keeps for the next region built from the same field (64: two
+/// islands of 16 chunks and two body classes).
+const SHARED_SIZE: usize = 64;
 
 /// How a volume's grid is cut into bakes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

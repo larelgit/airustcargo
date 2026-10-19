@@ -778,6 +778,15 @@ fn a_client_that_makes_another_volume_or_none_cannot_take_the_hosts_world() {
     let hash = same.world(0).resource::<VoxelTerrain>().hash;
     assert_eq!(same.world(1).get_resource::<VoxelTerrain>().map(|t| t.hash), Some(hash), "the client built the same island: {story:#?}");
     assert_eq!(lines(&story, "net: the host's world again (region isle)").len(), 1, "{story:#?}");
+    // The navmesh is the host's: it baked the chunks (and plans its NPCs' routes on them); the client does not
+    // simulate, bakes nothing and says so (a bake it would not use is a second it would not wait).
+    let host_nav = same.call(0, "nav_info", json!({}));
+    assert!(host_nav.ok && host_nav.result["bake"].as_str().is_some_and(|b| b.starts_with("in memory, 4 chunks, baked in ")), "{}", host_nav.result);
+    let client_nav = same.call(1, "nav_info", json!({}));
+    assert!(client_nav.ok && client_nav.result["bake"] == "not baked: this machine does not simulate", "{}", client_nav.result);
+    assert!(same.world(1).get_resource::<shards::npc::NavRegion>().is_none(), "the client holds no navmesh");
+    assert!(!lines(&story, "navmesh: not baked: this machine does not simulate").is_empty(), "{story:#?}");
+    assert!(same.world(0).get_resource::<shards::npc::NavRegion>().is_some_and(|nav| nav.instances.len() == 4), "the host has its navmesh");
     same.run(130);
     assert_eq!(same.world(0).resource::<NetHost>().desyncs, 0, "{:#?}", journal(same.world(0)));
 

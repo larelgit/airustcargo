@@ -6001,7 +6001,7 @@ chunk), and `nav_bake` / `--bake-nav` do not touch it (`nav_bake` says so when a
   else. The solids placed in the region later (a prop, a collider a scenario spawns) are not in it: they carve the navmesh as they carve a
   tile's, and a node on top of such a solid is not made (only the field has floors). `NavBakes` keeps each bake under its `ChunkKey`
   (region, the FNV of the field and the water, the chunk size in columns, the chunk, the body class and the FNV of the settings it was baked with),
-  and so does a process-wide cache (256 bakes), which is why a snapshot load, a heavy-mode twin or a second game in the process bakes nothing
+  and so does a process-wide cache (64 bakes: two islands of two body classes), which is why a snapshot load, a heavy-mode twin or a second game in the process bakes nothing
   twice. `SHARDS_VOXEL_CACHE=off` (the voxel module's switch) turns the process cache off; `NavBakes::isolated` keeps one world's bakes to itself.
 - **Parallel and ordered.** The chunks that are not kept, of every body class together (32 tasks for the sandbox's two classes), are baked on
   Bevy's compute task pool, each a pure function of the field; the results are put back in chunk order before anything is assembled, so the navmesh does
