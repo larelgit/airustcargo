@@ -39,7 +39,7 @@ use serde_json::Value;
 use shards_content::{ContentAppExt, ContentDb, PrefabDef};
 use shards_core::{CoreSystems, EngineAppExt, EngineState, NetRole};
 
-pub use def::{ClassRules, CostRule, RuleSetDef, RulesDef, SessionRow, TokenRule, NEUTRAL_CLASS};
+pub use def::{ClassRules, CostRule, RuleSetDef, MAX_MODE,RulesDef, SessionRow, TokenRule, NEUTRAL_CLASS};
 pub use guard::{can_change, RulesAppExt, RulesGuard, RulesGuards};
 pub use read::{
     active_set, charge_rules, class_of, class_rules, health_factor, incoming, outgoing, poise_factor, rest_factor, row_factor, rules_def,

@@ -286,9 +286,6 @@ fn generate_again(world: &mut World, id: &str, seed: u64, title: &str, want: u64
 
 // --- rules ------------------------------------------------------------------------------
 
-/// The longest rule set id a save may name (bytes), as a charge name is limited.
-const MAX_MODE: usize = 64;
-
 /// The `rules` section: the rule set the world plays. Always written, in every game: `{"mode": null}` where
 /// the game has no rules (or none in play), and applying that is a strict no-op.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -308,8 +305,8 @@ impl SaveSection for RulesSave {
 
     fn check(&self, _: &World, _: Option<Entity>) -> Result<(), String> {
         match &self.mode {
-            Some(mode) if mode.len() > MAX_MODE || mode.chars().any(char::is_control) => {
-                Err(format!("the rule set is named in at most {MAX_MODE} bytes without control characters"))
+            Some(mode) if mode.len() > shards_rules::MAX_MODE || mode.chars().any(char::is_control) => {
+                Err(format!("the rule set is named in at most {} bytes without control characters", shards_rules::MAX_MODE))
             }
             _ => Ok(()),
         }
