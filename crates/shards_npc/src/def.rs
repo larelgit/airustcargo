@@ -41,7 +41,7 @@ use std::fmt;
 use serde::de::Deserializer;
 use serde::ser::{SerializeTuple, Serializer};
 use serde::{Deserialize, Serialize};
-use shards_action::ActionDef;
+use shards_action::{ActionDef, MovesetDef};
 use shards_content::{ContentDb, ContentDef, Refs};
 
 /// One parameter value: a flag, a number or a word.
@@ -544,6 +544,25 @@ pub struct AttackOption {
     /// success, presses `input` at the start of the action's recovery.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chain: Option<ChainDef>,
+    /// The target's angle off the NPC's facing, degrees, `(min, max)` within 0..=180: 0 is straight
+    /// ahead, 180 straight behind. `(95.0, 180.0)` answers an attack from the flank or the back.
+    /// `None`: any angle. The facing is the one the body has when the planner chooses; how fast it
+    /// turns is the body's turn rate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub angle: Option<(f32, f32)>,
+    /// Living players `(min, max)` for which it may be chosen (`(1, 1)`: solo only; `(2, 3)`:
+    /// co-op only). The engine does not know a game's session cap, so a game's content test checks
+    /// that `max` does not exceed it. `None`: any number.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub players: Option<(u32, u32)>,
+    /// The most times in a row it may be chosen: not while the newest `max_repeats` attacks of the
+    /// NPC's history are all this option. `None`: no limit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_repeats: Option<u32>,
+    /// Not chosen right after an attack carrying one of these tags (the newest history entry; its
+    /// tags are its option's, its action's and its name).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub forbid_after: Vec<String>,
 }
 
 /// A combo continuation of an attack ([`AttackOption::chain`]). The input goes into the press
@@ -586,6 +605,10 @@ impl Default for AttackOption {
             cost: 1.0,
             when: Vec::new(),
             chain: None,
+            angle: None,
+            players: None,
+            max_repeats: None,
+            forbid_after: Vec::new(),
         }
     }
 }
@@ -678,9 +701,12 @@ impl Default for AttackPlanDef {
 }
 
 impl AttackPlanDef {
-    /// How many past attacks the bans look at.
+    /// How many past attacks the plan looks at: the largest of the bans' `within` and the options'
+    /// `max_repeats`, at least 1 (`forbid_after` reads only the newest).
     pub fn memory(&self) -> usize {
-        self.bans.iter().map(|b| b.within as usize).max().unwrap_or(0).max(1)
+        let bans = self.bans.iter().map(|b| b.within as usize);
+        let repeats = self.options.iter().filter_map(|o| o.max_repeats.map(|r| r as usize));
+        bans.chain(repeats).max().unwrap_or(0).max(1)
     }
 }
 
@@ -720,6 +746,24 @@ impl ContentDef for AttackPlanDef {
                     refs.error(format!("{at}.when[{ci}] is a condition without a name"));
                 }
             }
+            if let Some((lo, hi)) = o.angle
+                && !(lo >= 0.0 && hi >= lo && hi <= 180.0)
+            {
+                refs.error(format!(
+                    "{at}.angle ({lo}, {hi}) must be 0 <= min <= max <= 180 degrees (0 ahead, 180 behind); e.g. (95.0, 180.0) for an answer behind"
+                ));
+            }
+            if let Some((lo, hi)) = o.players
+                && !(lo >= 1 && hi >= lo)
+            {
+                refs.error(format!("{at}.players ({lo}, {hi}) must be 1 <= min <= max; e.g. (1, 1) for solo only"));
+            }
+            if o.max_repeats == Some(0) {
+                refs.error(format!("{at}.max_repeats must be at least 1 (1: never twice in a row); leave it out for no limit"));
+            }
+            if o.forbid_after.iter().any(String::is_empty) {
+                refs.error(format!("{at}.forbid_after has an empty tag"));
+            }
             if let Some(chain) = &o.chain {
                 if chain.input.is_empty() {
                     refs.error(format!("{at}.chain names no input; give the moveset input the continuation presses, e.g. (input: \"light\", chance: 0.7)"));
@@ -740,6 +784,30 @@ impl ContentDef for AttackPlanDef {
                 && !(lo >= 0.0 && hi >= lo && hi.is_finite())
             {
                 refs.error(format!("{name} ({lo}, {hi}) must be 0 <= min <= max"));
+            }
+        }
+        if self.options.iter().any(|o| o.forbid_after.iter().any(|t| !t.is_empty())) {
+            // A tag nothing carries never applies: a typo check. A tag any action carries is never an
+            // error (an `input` option's action is not known without a moveset, and a history entry
+            // carries its action's tags); a plan option's tags and name count, every plan's (phase
+            // plans share one history), and so does every moveset input name (the names of `auto`
+            // options).
+            let mut known: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+            known.extend(refs.iter::<ActionDef>().flat_map(|(_, a)| a.tags.iter().map(String::as_str)));
+            for (_, plan) in refs.iter::<AttackPlanDef>() {
+                for o in &plan.options {
+                    known.extend(o.tags.iter().map(String::as_str));
+                    known.insert(o.label());
+                }
+            }
+            known.extend(refs.iter::<MovesetDef>().flat_map(|(_, m)| m.inputs.keys().map(String::as_str)));
+            for (i, o) in self.options.iter().enumerate() {
+                for tag in o.forbid_after.iter().filter(|t| !t.is_empty() && !known.contains(t.as_str())) {
+                    let hint = shards_content::db::closest(tag, known.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
+                    refs.error(format!(
+                        "options[{i}].forbid_after names `{tag}`, which no action, no plan option and no moveset input in the content carries: it never applies{hint}"
+                    ));
+                }
             }
         }
         for (i, b) in self.bans.iter().enumerate() {
@@ -979,6 +1047,91 @@ mod tests {
     fn a_chain_is_neutral_by_default() {
         let neutral = serde_json::to_string(&ChainDef { input: "light".into(), ..Default::default() }).unwrap();
         assert!(!neutral.contains("gate_at_start"), "{neutral}");
+    }
+
+    /// The gates of an option leave an option and a plan that do not use them serializing as they
+    /// did (replays read the JSON), and each one serializes and reads back.
+    #[test]
+    fn the_scheduler_gates_are_neutral_by_default_and_round_trip() {
+        let neutral = serde_json::to_value(AttackOption::default()).unwrap();
+        for field in ["angle", "players", "max_repeats", "forbid_after"] {
+            assert!(neutral.get(field).is_none(), "{field} stays out of an option that does not use it: {neutral}");
+        }
+        assert_eq!(
+            neutral,
+            serde_json::json!({"weight": 1.0, "min": 0.0, "cooldown": 0.0, "cost": 1.0}),
+            "an option serializes as it did before the gates"
+        );
+        let set = AttackOption {
+            input: Some("light".into()),
+            angle: Some((95.0, 180.0)),
+            players: Some((2, 3)),
+            max_repeats: Some(2),
+            forbid_after: vec!["zone".into()],
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&set).unwrap();
+        assert_eq!(json["angle"], serde_json::json!([95.0, 180.0]));
+        assert_eq!(json["players"], serde_json::json!([2, 3]));
+        assert_eq!(json["max_repeats"], 2);
+        assert_eq!(json["forbid_after"], serde_json::json!(["zone"]));
+        assert_eq!(serde_json::from_value::<AttackOption>(json).unwrap(), set);
+        let written: AttackOption = ron(r#"(input: "light", angle: (95.0, 180.0), players: (1, 1), max_repeats: 1, forbid_after: ["zone"])"#);
+        assert_eq!((written.angle, written.players, written.max_repeats), (Some((95.0, 180.0)), Some((1, 1)), Some(1)));
+    }
+
+    #[test]
+    fn a_plans_memory_is_the_longest_of_its_bans_and_its_repeat_limits() {
+        let option = |max_repeats| AttackOption { input: Some("a".into()), max_repeats, ..Default::default() };
+        let ban = |within| SequenceBan { after: vec!["x".into()], then: vec!["y".into()], within };
+        let plan = |options, bans| AttackPlanDef { options, bans, ..Default::default() };
+        assert_eq!(AttackPlanDef::default().memory(), 1, "at least the newest");
+        assert_eq!(plan(vec![option(None)], vec![]).memory(), 1);
+        assert_eq!(plan(vec![option(None)], vec![ban(3)]).memory(), 3, "unchanged without max_repeats");
+        assert_eq!(plan(vec![option(Some(2))], vec![]).memory(), 2);
+        assert_eq!(plan(vec![option(Some(2)), option(Some(5))], vec![ban(3)]).memory(), 5);
+        assert_eq!(plan(vec![option(Some(2))], vec![ban(4)]).memory(), 4);
+    }
+
+    #[test]
+    fn the_gates_validate_with_the_field_and_the_fix() {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<AttackPlanDef>();
+        kinds.register::<ActionDef>();
+        kinds.register::<MovesetDef>();
+        let source = |path: &str, text: &str| shards_content::db::Source { path: path.into(), text: text.into() };
+        let plans = r#"{
+            "p": (options: [
+                (input: "light", angle: Some((180.0, 95.0))),
+                (input: "heavy", angle: Some((-1.0, 90.0)), players: Some((0, 3))),
+                (input: "zap", angle: Some((0.0, 181.0)), players: Some((3, 2)), max_repeats: Some(0)),
+                (input: "slam", tags: ["zone_center"], forbid_after: ["zone_centre", "", "melee", "slam"]),
+                (input: "hit", forbid_after: ["jab"]),
+            ]),
+        }"#;
+        let actions = r#"{ "a": (net_id: 1, phases: [("swing", 0.5)], tags: ["melee"]) }"#;
+        let movesets = r#"{ "m": (inputs: {"jab": "a"}) }"#;
+        let db = ContentDb::build(
+            &kinds,
+            &[source("content/p.attack_plan.ron", plans), source("content/a.action.ron", actions), source("content/m.moveset.ron", movesets)],
+        );
+        let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+        let at = "content/p.attack_plan.ron: attack_plan `p`: ";
+        let expected = [
+            format!("{at}options[0].angle (180, 95) must be 0 <= min <= max <= 180 degrees (0 ahead, 180 behind); e.g. (95.0, 180.0) for an answer behind"),
+            format!("{at}options[1].angle (-1, 90) must be 0 <= min <= max <= 180 degrees (0 ahead, 180 behind); e.g. (95.0, 180.0) for an answer behind"),
+            format!("{at}options[1].players (0, 3) must be 1 <= min <= max; e.g. (1, 1) for solo only"),
+            format!("{at}options[2].angle (0, 181) must be 0 <= min <= max <= 180 degrees (0 ahead, 180 behind); e.g. (95.0, 180.0) for an answer behind"),
+            format!("{at}options[2].players (3, 2) must be 1 <= min <= max; e.g. (1, 1) for solo only"),
+            format!("{at}options[2].max_repeats must be at least 1 (1: never twice in a row); leave it out for no limit"),
+            format!("{at}options[3].forbid_after has an empty tag"),
+            format!(
+                "{at}options[3].forbid_after names `zone_centre`, which no action, no plan option and no moveset input in the content carries: it never applies (did you mean `zone_center`?)"
+            ),
+        ];
+        assert_eq!(errors, expected);
+        // `melee` (an action's tag), `slam` (an option's name) and `jab` (a moveset input) are known.
+        assert!(!errors.iter().any(|e| e.contains("`melee`") || e.contains("`slam`") || e.contains("`jab`")), "{errors:?}");
     }
 
     #[test]

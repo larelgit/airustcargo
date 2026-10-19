@@ -603,6 +603,16 @@ fn a_token_audit_that_found_trouble_stops_the_game() {
 }
 
 #[test]
+fn a_plan_audit_that_found_trouble_stops_the_game() {
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        world.resource_mut::<shards::npc::PlanAudit>().0 = Some("e6 NpcPlan: planted".into());
+    });
+    let line = stops_on(&mut app, "npc.plan_sequence", 2);
+    assert!(line.ends_with("e6 NpcPlan: planted"), "{line}");
+}
+
+#[test]
 fn engine_rules_stay_and_are_rearmed_like_game_rules() {
     let mut app = sandbox::test_app(42);
     let stays = act(&mut app, "assert_remove", json!({"name": "motion.finite"}));
@@ -636,6 +646,7 @@ fn the_engine_registers_its_rules_first_and_the_switch_turns_them_off() {
     let names = app.world().resource::<AiInvariants>().rule_names().join(",");
     assert_eq!(names, "health_in_range,bodies_in_world", "the game's rules stay");
     assert!(app.world().get_resource::<shards::npc::TokenAudit>().is_none(), "and no audit system runs");
+    assert!(app.world().get_resource::<shards::npc::PlanAudit>().is_none(), "nor the plan audit");
     called(&mut app, "set", json!({"id": "e5", "component": "Stamina", "path": "current", "value": -5}));
     assert_eq!(step(&mut app, 5), "ran 5 ticks (0 → 5)", "nothing judges a stamina below 0");
 }

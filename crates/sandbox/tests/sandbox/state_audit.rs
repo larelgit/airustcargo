@@ -165,6 +165,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("shards_npc::brain::NpcActivity", "a hook the game sets at build time"),
     ("shards_npc::brain::NpcHooks", "the NPC conditions and states, registered at build time"),
     ("shards_npc::invariants::TokenAudit", "what the token rule found right after the director this tick: recomputed every tick, read only by the invariant"),
+    ("shards_npc::invariants::PlanAudit", "what the sequence rule found right after the planner this tick, from that tick's presses: recomputed every tick, read only by the invariant"),
     ("shards_npc::nav::NavPaths", "the path finder, set at build time"),
     ("shards_npc::nav::overlay::", "the navigation overlay: the picture"),
     ("shards_npc::nav::region::NavFailed", "the region whose navmesh could not be built (or, on a machine that does not simulate, is not baked), so it is not tried every tick: made again with the navmesh by the snapshot rebuild `navmesh`"),

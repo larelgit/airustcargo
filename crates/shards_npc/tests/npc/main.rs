@@ -13,6 +13,7 @@ mod navmesh;
 mod overlay;
 mod perception;
 mod replay;
+mod schedule;
 mod snapshot;
 mod tools;
 mod voxel_nav;
