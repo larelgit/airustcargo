@@ -35,3 +35,28 @@ expect result contains "props: sword at hand_r"
 # --- 3. a fix for a bad call
 act? animation id=e5 animset=humanoyd
 expect result contains "is not in content"
+
+# --- 4. the pool (motion modes, D1.2): the `mover` moveset's swimmer carries the sword on its back, the
+# arms' layer is off in the water, and a swing afloat is what lowers the model and keeps the sword in hand
+act set id=e5 component=Fighter path=moveset value=mover
+act teleport id=e5 x=61 z=0 y=3.2
+step 40
+act animation id=e5 animset=humanoid
+expect result contains "mode: water (as the controller says)"
+expect result contains "@mode:water applies"
+expect result contains "layers off: upper"
+expect result contains "drop 0.15 m over 0.22 s"
+expect result contains "props: sword at back"
+session --agent bot --scope player
+act use_technique slot=3
+expect result contains "ok: spar_stroke"
+session --agent scenario
+step 10
+act animation id=e5 animset=humanoid
+expect result contains "@mode:water steps aside"
+expect result contains "props: sword at hand_r"
+act teleport id=e5 x=0 z=12 y=0
+act set id=e5 component=Fighter path=moveset value=player
+step 150
+act animation id=e5 animset=humanoid
+expect result contains "mode: ground (as the controller says) · no @mode rules"

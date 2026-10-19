@@ -125,7 +125,7 @@ fn voxel_info(In(call): In<Call<VoxelInfoArgs>>, world: &mut World) -> ToolResul
         "field": json!({"solid_cells": t.field.solid_cells(), "memory_bytes": t.field.memory()}),
         "volume_memory_bytes": v.memory(),
         "cached": t.cached,
-        "nav": "none yet: voxel region, nav not baked yet (NPCs plan over the local grid)",
+        "nav": "baked in memory, chunk by chunk, when the region loads (on machines that simulate): see `nav_info`",
         "terrain": format!("entity `voxel terrain {}` (no AiId): a voxel field, {} solid cells", t.region, t.field.solid_cells()),
     });
     // Wall time differs from run to run: shown only where timing is reported (not in tests

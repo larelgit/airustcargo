@@ -44,12 +44,12 @@
         },
         locomotion: {"idle": "idle", "walk": "walk", "run": "run", "stagger": "stagger", "dead": "death"},
         // The upper body: the spine and everything on it (the head, the arms). The legs are the rest.
-        layers: {"upper": (root: "spine")},
+        layers: {"upper": (root: "spine", off_in: ["water"])},
         // Actions find their clips by their `anim` (light_1, roll, claw, slash, ...) and play on the
         // whole body. The flask's drink is mapped here, and on the layer `upper`: the player drinks
         // while the legs go on walking or running (the drink asks for no `anim`: the action's state
         // is the simulation's, and the picture decides how to show it).
-        actions: {"drink": (clip: "drink", layer: "upper")},
+        actions: {"drink": (clip: "drink", layer: "upper"), "spar_stroke": "light_1"},
         blend: 0.2,
         action_blend: 0.06,
         // The walk's feet keep pace at 2 m/s, the run's at 4.5 m/s.
@@ -67,9 +67,17 @@
             "hip": (bone: "hips", offset: (0.2, 0.0, 0.0), turn: (0.0, 0.0, 180.0)),
             "back": (bone: "spine"),
         },
-        carry: {"player": [(prop: "sword", socket: "hand_r")], "*": []},
+        carry: {"player": [(prop: "sword", socket: "hand_r")], "mover": [(prop: "sword", socket: "hand_r")], "*": []},
         mounts: {
             "drink": (moves: [(prop: "sword", to: Some("hip"), span: Secs(0.1, 0.9))], on_cut: {"sword": 0.05}),
+            // Afloat the sword rides the back (the swimmer's arms are the strokes'), but a swing afloat (the
+            // `mover` moveset's stroke) keeps it in the hand for 1.2 s after it. Leaving the water, it stays
+            // on the back until the body has stood up (1 s, or its fade out of the swimming clip) and is drawn
+            // back to the hand over the next 0.18 s. Spans under `@mode` count from when the rules begin.
+            "@mode:water": (moves: [(prop: "sword", to: Some("back"), span: Secs(0.0, 3600.0))], yield_after: 1.2),
+            "@left:water": (moves: [(prop: "sword", to: Some("back"), span: Secs(0.0, 0.18))], wait: 1.0),
         },
+        // A swing afloat lowers the model by 0.15 m over 0.22 s, and back.
+        drops: {"water": (down: 0.15, seconds: 0.22)},
     ),
 }

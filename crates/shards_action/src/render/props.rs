@@ -22,6 +22,7 @@ use shards_content::ContentDb;
 use shards_look::Look;
 
 use super::bridge::AnimationBound;
+use super::modes::ModeOut;
 use crate::anim::{
     cut_holds, equip_open, mount_places, AnimSet, Animated, MountView, Place, PropDef, PropSwaps,
 };
@@ -166,6 +167,8 @@ pub(crate) struct MountFrame<'a> {
     pub run: Option<RunView<'a>>,
     /// The simulation clock (s), between ticks too.
     pub clock: f64,
+    /// The motion mode's rules that hold now, and those of a mode the body left.
+    pub modes: ModeOut<'a>,
 }
 
 /// What [`step`] reaches into the world with.
@@ -313,6 +316,11 @@ pub(crate) fn step(env: &mut MountEnv, frame: &MountFrame, state: &mut MountStat
         state.end_equip();
     }
 
+    // A motion mode's rules take over from the equip (the strokes: the gear goes to the back).
+    if frame.modes.mode.is_some() {
+        state.end_equip();
+    }
+
     // The equip, while it has something to show.
     let equip = match (set.equip_rules(), state.since(frame.clock)) {
         (Some(rules), Some(since)) if equip_open(rules, since) => Some((rules, since)),
@@ -332,7 +340,15 @@ pub(crate) fn step(env: &mut MountEnv, frame: &MountFrame, state: &mut MountStat
         Some(r) => state.cut.iter().filter(|(_, _, secs)| r.run.t < *secs).map(|(p, place, _)| (p.clone(), place.clone())).collect(),
         None => Vec::new(),
     };
-    let view = MountView { carried: &state.carried, previous: &state.previous, run, equip, cut: &held };
+    let view = MountView {
+        carried: &state.carried,
+        previous: &state.previous,
+        run,
+        equip,
+        mode: frame.modes.mode,
+        left: frame.modes.left,
+        cut: &held,
+    };
     let placed = mount_places(&view);
     state.places = placed.iter().cloned().collect();
 

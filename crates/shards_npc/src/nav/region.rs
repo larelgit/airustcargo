@@ -52,6 +52,9 @@ use shards_world::grid::{rotation, turn, turns_of, Dir};
 use shards_world::manifest::Layout;
 use shards_world::{ActiveRegion, RegionGraph, TileId};
 
+mod volume;
+pub use volume::{bake_volume, chunk_files_sequential, clear_shared_bakes, prebake_volume, ChunkKey, Cut, Prebaked, VoxelBake};
+
 use super::bake::{bake, dijkstra, solid};
 use super::settings::{whole_cells, NavSettings, DEFAULT_BODY};
 use super::tile::{link_cost, NavTile, TileKind, MOVES};
@@ -274,8 +277,47 @@ fn terrain<'a>(physics: &'a PhysicsWorld, settings: &'a NavSettings) -> Terrain<
     Terrain::new(physics, &settings.agent, &movers(physics))
 }
 
-/// A move across a tile edge: `(from, over, to)` columns, `over` for a two-cell hop.
-type EdgeMove = ([i32; 2], Option<[i32; 2]>, [i32; 2]);
+/// Which tile edges are open to walk across.
+#[derive(Clone, Copy)]
+enum Edges<'a> {
+    /// The region's sockets and roads say (tiles and rooms).
+    Graph(&'a RegionGraph),
+    /// Every edge between two chunks of a voxel region: the ground does not have sockets, and a
+    /// chunk's seam is only where one bake ends and the next begins.
+    Open,
+}
+
+impl Edges<'_> {
+    /// Whether the stitch makes the diagonal moves across an edge too: where the edge is only a
+    /// seam between two bakes of one ground, so that the chunks together are the grid baked in
+    /// one piece. (Tiles keep to their stitches: their bakes are the tiles' own, and changing
+    /// them would change every region of tiles.)
+    fn diagonals(self) -> bool {
+        matches!(self, Edges::Open)
+    }
+
+    fn open(self, cell: [i32; 2], dir: Dir) -> bool {
+        match self {
+            Edges::Graph(graph) => graph.open(cell, dir),
+            Edges::Open => true,
+        }
+    }
+}
+
+/// How a move across a tile edge goes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Via {
+    /// Into the facing column.
+    Step,
+    /// A two-cell hop over this column, where the body does not fit.
+    Hop([i32; 2]),
+    /// Into the column diagonally across the edge, never cutting a corner (a voxel region's
+    /// chunks, where a seam is only where one bake ends and the next begins).
+    Diagonal,
+}
+
+/// A move across a tile edge: `(from, via, to)` columns.
+type EdgeMove = ([i32; 2], Via, [i32; 2]);
 
 /// One row across a tile edge: column `a` (west or north of the edge) faces column `b`.
 #[derive(Clone, Copy, Debug)]
@@ -295,11 +337,45 @@ impl EdgeRow {
         [[self.a[0] - dx, self.a[1] - dz], self.a, self.b, [self.b[0] + dx, self.b[1] + dz]]
     }
 
-    /// The moves across it, `(from, over, to)`: into the facing column both ways, and the
-    /// two-cell hops over either edge column both ways.
-    fn moves(&self) -> [EdgeMove; 6] {
+    /// The columns its moves touch: with `diagonals`, also the ones beside the facing pair.
+    fn touched(&self, diagonals: bool) -> Vec<[i32; 2]> {
+        let mut out = self.columns().to_vec();
+        if diagonals {
+            let [px, pz] = self.along();
+            for c in [self.a, self.b] {
+                out.extend([[c[0] + px, c[1] + pz], [c[0] - px, c[1] - pz]]);
+            }
+        }
+        out
+    }
+
+    /// The step along the edge (a unit vector, perpendicular to `step`).
+    fn along(&self) -> [i32; 2] {
+        [self.step[1].abs(), self.step[0].abs()]
+    }
+
+    /// The moves across it, `(from, via, to)`: into the facing column both ways, the two-cell
+    /// hops over either edge column both ways, and with `diagonals` the four diagonal moves
+    /// between the facing columns and the ones beside them.
+    fn moves(&self, diagonals: bool) -> Vec<EdgeMove> {
         let [before, a, b, after] = self.columns();
-        [(a, None, b), (b, None, a), (before, Some(a), b), (a, Some(b), after), (after, Some(b), a), (b, Some(a), before)]
+        let mut out = vec![
+            (a, Via::Step, b),
+            (b, Via::Step, a),
+            (before, Via::Hop(a), b),
+            (a, Via::Hop(b), after),
+            (after, Via::Hop(b), a),
+            (b, Via::Hop(a), before),
+        ];
+        if diagonals {
+            let [px, pz] = self.along();
+            let beside = |c: [i32; 2], sign: i32| [c[0] + sign * px, c[1] + sign * pz];
+            for sign in [1, -1] {
+                out.push((a, Via::Diagonal, beside(b, sign)));
+                out.push((b, Via::Diagonal, beside(a, sign)));
+            }
+        }
+        out
     }
 }
 
@@ -309,6 +385,8 @@ impl EdgeRow {
 struct NavFailed {
     region: u64,
     content: bevy::ecs::change_detection::Tick,
+    /// Whether this machine simulated then: a client that becomes a host tries again.
+    simulating: bool,
 }
 
 /// The navmesh of the region in the world (see the module docs): the one of the body class
@@ -353,13 +431,21 @@ pub struct NavRegion {
     /// per node.
     components: Vec<u32>,
     pub report: NavReport,
+    /// How a voxel region's chunks were baked (`None`: tiles).
+    pub voxel: Option<VoxelBake>,
     carve: Carve,
 }
 
-/// Bakes read or made this run, by hash: a region loaded again bakes nothing twice.
+/// Bakes read or made this run: a region loaded again bakes nothing twice. A tile or room by
+/// its hash; a voxel region's chunk by [`ChunkKey`] (region, field and water, chunk size,
+/// chunk, body class and the settings it was baked with), in memory only: nothing is written.
 #[derive(Resource, Default, Clone)]
 pub struct NavBakes {
     pub tiles: BTreeMap<String, Arc<NavTile>>,
+    pub chunks: BTreeMap<ChunkKey, Arc<NavTile>>,
+    /// Keep chunk bakes to this world: neither read the process's bakes of other games nor leave
+    /// any (tests that bake cold, or that must not see the bakes of tests running beside them).
+    pub isolated: bool,
 }
 
 /// How a tile's bake came to be.
@@ -612,8 +698,9 @@ impl NavRegion {
     /// `64 tiles, 16384 nodes, 896 links across edges, 2 navlinks`.
     pub fn summary(&self) -> String {
         let links = self.navlinks.iter().filter(|l| l.nodes.is_some()).count();
+        let noun = if self.voxel.is_some() { "chunks" } else { "tiles" };
         format!(
-            "{} tiles, {} nodes, {} links across edges, {} navlinks",
+            "{} {noun}, {} nodes, {} links across edges, {} navlinks",
             self.instances.len(),
             self.node_count(),
             self.report.stitched,
@@ -637,14 +724,26 @@ pub fn rebuild(world: &mut World) {
     let Some(region) = world.get_resource::<ActiveRegion>().map(|r| r.hash) else {
         return;
     };
+    // A machine that does not simulate (a co-op client) never plans a route: the host's NPCs
+    // walk, and its own navmesh is the host's business. A voxel region's bake is the one second
+    // it would save.
+    if super::region_is_volume(world) && !super::simulates(world) {
+        let content = content_changed(world);
+        world.insert_resource(NavFailed { region, content, simulating: false });
+        journal::emit(world, JournalKind::Event, format!("navmesh: {}", super::VOXEL_NOT_SIMULATED));
+        return;
+    }
     let classes = NavSettings::all(world.resource::<ContentDb>());
-    match build(world, &classes[0]) {
+    // A voxel region's chunks, of every body class at once, on the compute pool.
+    let pre = if super::region_is_volume(world) { prebake_volume(world, &classes, Cut::Chunks).ok() } else { None };
+    let pre_of = |k: usize| pre.as_ref().map(|(counts, took)| (counts[k], *took));
+    match build(world, &classes[0], pre_of(0)) {
         Ok(mut nav) => {
             let mut lines = vec![(JournalKind::Event, format!("navmesh: {} ({})", nav.title, nav.summary()))];
             report_lines(&nav, "navmesh", &mut lines);
-            for settings in &classes[1..] {
+            for (k, settings) in classes.iter().enumerate().skip(1) {
                 let label = format!("navmesh (body {})", settings.body);
-                match build(world, settings) {
+                match build(world, settings, pre_of(k)) {
                     Ok(class) => {
                         lines.push((JournalKind::Event, format!("{label}: {}", class.summary())));
                         report_lines(&class, &label, &mut lines);
@@ -660,11 +759,8 @@ pub fn rebuild(world: &mut World) {
         }
         Err(why) => {
             let content = content_changed(world);
-            world.insert_resource(NavFailed { region, content });
-            // A voxel region has no navmesh yet by design (its bake is a later change): not a
-            // warning, which `warning` rules and stop conditions would catch on every `regen`.
-            let kind = if super::region_is_volume(world) { JournalKind::Event } else { JournalKind::Warn };
-            journal::emit(world, kind, format!("navmesh: none for this region: {why}; NPCs plan on the local grid"));
+            world.insert_resource(NavFailed { region, content, simulating: super::simulates(world) });
+            journal::emit(world, JournalKind::Warn, format!("navmesh: none for this region: {why}; NPCs plan on the local grid"));
         }
     }
 }
@@ -711,7 +807,7 @@ pub fn refresh(world: &mut World) {
     let Some(region) = world.get_resource::<ActiveRegion>().map(|r| r.hash) else { return };
     if world.get_resource::<NavRegion>().is_none_or(|nav| nav.hash != region) {
         let failed = world.get_resource::<NavFailed>().copied();
-        if failed.is_some_and(|f| f.region == region && f.content == content_changed(world)) {
+        if failed.is_some_and(|f| f.region == region && f.content == content_changed(world) && f.simulating == super::simulates(world)) {
             return;
         }
         rebuild(world);
@@ -728,7 +824,11 @@ pub fn refresh(world: &mut World) {
     let tiles = tile_ids(world);
     let mut nav = world.remove_resource::<NavRegion>().expect("checked above");
     let physics = world.resource::<PhysicsWorld>();
-    let edges = world.get_resource::<ActiveRegion>().and_then(|r| r.graph.as_ref());
+    // A volume's chunks all meet; a region of tiles has the sockets' say.
+    let edges = world.get_resource::<ActiveRegion>().and_then(|r| match r.manifest.layout {
+        Layout::Volume => Some(Edges::Open),
+        _ => r.graph.as_ref().map(Edges::Graph),
+    });
     // Each class with its own body.
     let carve = |class: &mut NavRegion| {
         let settings = class.settings();
@@ -748,11 +848,14 @@ fn tile_ids(world: &mut World) -> BTreeMap<ColliderId, TileId> {
 }
 
 /// The navmesh of the region in the world for the body class of `settings`.
-fn build(world: &mut World, settings: &NavSettings) -> Result<NavRegion, String> {
+fn build(world: &mut World, settings: &NavSettings, prebaked: Option<(Prebaked, std::time::Duration)>) -> Result<NavRegion, String> {
     if super::region_is_volume(world) {
-        // A volume has no tiles to bake: its navigation is its own (an in-memory bake of its
-        // chunks), not built yet; NPCs plan over the local grid.
-        return Err(super::VOXEL_NO_NAV.to_owned());
+        // A volume has no tiles to bake: its navigation is baked in memory, chunk by chunk (the
+        // pool has done the chunks already, when it could).
+        return match prebaked {
+            Some((prebaked, took)) => volume::build(world, settings, Cut::Chunks, prebaked, took),
+            None => bake_volume(world, settings, Cut::Chunks),
+        };
     }
     let region = world.get_resource::<ActiveRegion>().ok_or("no region")?.clone();
     let graph = region.graph.clone().ok_or("content no longer describes every tile of its manifest")?;
@@ -761,7 +864,7 @@ fn build(world: &mut World, settings: &NavSettings) -> Result<NavRegion, String>
         return Err(format!("its tile size {} m is not a whole number of {} m cells (nav settings `cell`)", manifest.tile_size, settings.cell));
     }
     let per = (manifest.tile_size / settings.cell).round() as u32;
-    // Not reached for a volume: refused at the top.
+    // Not reached for a volume: it is baked by `bake_volume`, above.
     debug_assert!(manifest.layout != Layout::Volume, "a voxel region has no tile navmesh");
     let kind = if manifest.layout == Layout::Rooms { TileKind::Room } else { TileKind::Tile };
     let mut report = NavReport::default();
@@ -835,10 +938,11 @@ fn build(world: &mut World, settings: &NavSettings) -> Result<NavRegion, String>
         graph: TileGraph::default(),
         components: Vec::new(),
         report,
+        voxel: None,
         carve: Carve::default(),
     };
     nav.update(physics, settings, &tiles, None);
-    nav.stitch(&terrain(physics, settings), settings, &graph);
+    nav.stitch(&terrain(physics, settings), settings, Edges::Graph(&graph));
     nav.add_navlinks(settings, markers);
     nav.build_graph();
     Ok(nav)
@@ -1034,7 +1138,7 @@ impl NavRegion {
     /// since the last look leaves its zone or enters it, and every node and edge link near
     /// such a change is decided again from the world as it is (see [`Carve`]). Whether
     /// anything changed.
-    fn update(&mut self, physics: &PhysicsWorld, settings: &NavSettings, tiles: &BTreeMap<ColliderId, TileId>, edges: Option<&RegionGraph>) -> bool {
+    fn update(&mut self, physics: &PhysicsWorld, settings: &NavSettings, tiles: &BTreeMap<ColliderId, TileId>, edges: Option<Edges>) -> bool {
         let count = self.node_count() as usize;
         if self.carve.held.len() != count {
             self.carve.held = vec![0; count];
@@ -1128,8 +1232,8 @@ impl NavRegion {
         if changed {
             self.report.carved = self.instances.iter().map(|i| i.disabled.iter().filter(|d| **d).count()).sum();
         }
-        if let Some(graph) = edges {
-            changed |= self.restitch(&terrain, settings, graph, &marked);
+        if let Some(edges) = edges {
+            changed |= self.restitch(&terrain, settings, edges, &marked);
         }
         changed
     }
@@ -1137,7 +1241,7 @@ impl NavRegion {
     /// Every row across the region's tile edges: the facing columns (west/north side first),
     /// the step from the first to the second, whether the sockets leave that edge open, and
     /// which edge it is.
-    fn edge_rows(&self, graph: &RegionGraph) -> Vec<EdgeRow> {
+    fn edge_rows(&self, edges: Edges) -> Vec<EdgeRow> {
         let per = self.per as i32;
         let mut out = Vec::new();
         let mut edge = 0;
@@ -1154,7 +1258,7 @@ impl NavRegion {
                     if a == u32::MAX || b == u32::MAX || a == b {
                         continue;
                     }
-                    let open = graph.open([x, y], dir);
+                    let open = edges.open([x, y], dir);
                     for k in 0..per {
                         let ca = if dir == Dir::E { [(x + 1) * per - 1, y * per + k] } else { [x * per + k, (y + 1) * per - 1] };
                         out.push(EdgeRow { a: ca, b: [ca[0] + dx, ca[1] + dz], step: [dx, dz], open, edge });
@@ -1171,10 +1275,10 @@ impl NavRegion {
     /// the two-cell hop over it where the body does not fit there (a ledge or a drop whose
     /// face lies on the edge), both ways. A link to or from a switched-off node stays, unused
     /// while it is off.
-    fn stitch(&mut self, terrain: &Terrain, settings: &NavSettings, graph: &RegionGraph) {
+    fn stitch(&mut self, terrain: &Terrain, settings: &NavSettings, edges: Edges) {
         let mut extras = Vec::new();
         let mut closed: Vec<usize> = Vec::new();
-        for row in self.edge_rows(graph) {
+        for row in self.edge_rows(edges) {
             if !row.open {
                 // Counted, for the report: both sides have ground, the sockets close it.
                 if !self.nodes_at(row.a).is_empty() && !self.nodes_at(row.b).is_empty() && closed.last() != Some(&row.edge) {
@@ -1182,10 +1286,14 @@ impl NavRegion {
                 }
                 continue;
             }
-            for (from, over, to) in row.moves() {
-                self.link_columns(terrain, settings, from, over, to, &mut extras);
+            for (from, via, to) in row.moves(edges.diagonals()) {
+                self.link_columns(terrain, settings, from, via, to, &mut extras);
             }
         }
+        // A corner where four chunks meet is faced by two rows (the east and the south edge of
+        // one chunk): each diagonal across it is made twice, and kept once.
+        extras.sort_by_key(|e| (e.from, e.to));
+        extras.dedup_by_key(|e| (e.from, e.to));
         self.report.closed_edges = closed.len();
         self.extras.extend(extras);
         self.extras.sort_by_key(|e| (e.from, e.to));
@@ -1194,23 +1302,24 @@ impl NavRegion {
 
     /// The links across open tile edges near `marked` columns, made again in the world as it
     /// is; whether any changed.
-    fn restitch(&mut self, terrain: &Terrain, settings: &NavSettings, graph: &RegionGraph, marked: &[bool]) -> bool {
+    fn restitch(&mut self, terrain: &Terrain, settings: &NavSettings, edges: Edges, marked: &[bool]) -> bool {
         let width = (self.per * self.size[0]) as i32;
         let height = (self.per * self.size[1]) as i32;
         let is_marked = |[x, z]: [i32; 2]| (0..width).contains(&x) && (0..height).contains(&z) && marked[(z * width + x) as usize];
-        let rows: Vec<EdgeRow> = self.edge_rows(graph).into_iter().filter(|r| r.open && r.columns().into_iter().any(is_marked)).collect();
+        let rows: Vec<EdgeRow> = self.edge_rows(edges).into_iter().filter(|r| r.open && r.touched(edges.diagonals()).into_iter().any(is_marked)).collect();
         if rows.is_empty() {
             return false;
         }
         let mut made = Vec::new();
         let mut pairs: Vec<([i32; 2], [i32; 2])> = Vec::new();
         for row in &rows {
-            for (from, over, to) in row.moves() {
-                self.link_columns(terrain, settings, from, over, to, &mut made);
+            for (from, via, to) in row.moves(edges.diagonals()) {
+                self.link_columns(terrain, settings, from, via, to, &mut made);
                 pairs.push((from, to));
             }
         }
         made.sort_by_key(|e| (e.from, e.to));
+        made.dedup_by_key(|e| (e.from, e.to));
         pairs.sort_unstable();
         let in_rows = |nav: &NavRegion, e: &Extra| !e.navlink && pairs.binary_search(&(nav.node_column(e.from), nav.node_column(e.to))).is_ok();
         let old: Vec<Extra> = self.extras.iter().filter(|e| in_rows(self, e)).copied().collect();
@@ -1225,10 +1334,20 @@ impl NavRegion {
         true
     }
 
-    /// The moves from the nodes of column `from` onto column `to`: the next column, or with
-    /// `over`, a two-cell hop over a column where the body does not fit (only a climb, a drop
-    /// or a jump into water, as the bake hops). How many.
-    fn link_columns(&self, terrain: &Terrain, settings: &NavSettings, from: [i32; 2], over: Option<[i32; 2]>, to: [i32; 2], out: &mut Vec<Extra>) -> usize {
+    /// Whether the body at `stance` makes a move into column `col` (one step, never mind where
+    /// it lands): what `Via::Diagonal` asks of both columns it would cut across.
+    fn can_step(&self, terrain: &Terrain, settings: &NavSettings, stance: Stance, col: [i32; 2]) -> bool {
+        let c = self.column_center(col);
+        let dist = Vec2::new(c.x - stance.pos.x, c.z - stance.pos.z).length();
+        let probe = terrain.probe(c.x, c.z, stance.pos.y);
+        step_onto(terrain, stance, (c.x, c.z), probe, dist, settings.safe_drop).is_some()
+    }
+
+    /// The moves from the nodes of column `from` onto column `to`: the next column; with a
+    /// `Via::Hop`, a two-cell hop over a column where the body does not fit (only a climb, a
+    /// drop or a jump into water, as the bake hops); with `Via::Diagonal`, a diagonal step
+    /// that cuts no corner. How many.
+    fn link_columns(&self, terrain: &Terrain, settings: &NavSettings, from: [i32; 2], via: Via, to: [i32; 2], out: &mut Vec<Extra>) -> usize {
         let targets = self.nodes_at(to);
         if targets.is_empty() {
             return 0;
@@ -1240,19 +1359,26 @@ impl NavRegion {
             let local = self.instances[inst as usize].nav.nodes[n as usize];
             let pos = self.node_pos(a);
             let stance = Stance { pos, swimming: local.swim, up: local.up() };
-            let dist = match over {
-                None => self.cell,
-                Some(o) => {
+            let dist = match via {
+                Via::Step => self.cell,
+                Via::Hop(o) => {
                     let o = self.column_center(o);
                     if !matches!(terrain.probe(o.x, o.z, pos.y), Probe::Blocked(Block::Tight)) {
                         continue;
                     }
                     2.0 * self.cell
                 }
+                Via::Diagonal => {
+                    // As the bake moves diagonally: both columns it would cut across are steps.
+                    if !self.can_step(terrain, settings, stance, [to[0], from[1]]) || !self.can_step(terrain, settings, stance, [from[0], to[1]]) {
+                        continue;
+                    }
+                    Vec2::new(c.x - pos.x, c.z - pos.z).length()
+                }
             };
             let probe = terrain.probe(c.x, c.z, pos.y);
             let Some(step) = step_onto(terrain, stance, (c.x, c.z), probe, dist, settings.safe_drop) else { continue };
-            if over.is_some() && !hop_allowed(step.kind, stance.swimming) {
+            if matches!(via, Via::Hop(_)) && !hop_allowed(step.kind, stance.swimming) {
                 continue;
             }
             let found = targets
@@ -1269,10 +1395,12 @@ impl NavRegion {
         made
     }
 
-    /// Whether `e` is a two-cell hop across a tile edge (not a step into the facing column).
+    /// Whether `e` is a stitch that is not a step into the facing column: a two-cell hop across a
+    /// tile edge, or a diagonal step across a chunk seam (a corner where chunks meet). It has no
+    /// portal pair to join: the graph gets its two ends as nodes (as for a navlink).
     fn is_hop(&self, e: &Extra) -> bool {
         let (a, b) = (self.node_column(e.from), self.node_column(e.to));
-        !e.navlink && (a[0] - b[0]).abs() + (a[1] - b[1]).abs() == 2
+        !e.navlink && matches!(((a[0] - b[0]).abs(), (a[1] - b[1]).abs()), (2, 0) | (0, 2) | (1, 1))
     }
 
     /// The node nearest `pos` within `reach` meters (flat), preferring its own height
@@ -1379,7 +1507,8 @@ impl NavRegion {
                 graph.nodes.push(GraphNode { inst: inst as u32, node: node.map(|n| self.base[inst] + n), portal: Some(p as u32) });
             }
         }
-        // Ends of navlinks and of hops across tile edges (they start or land off the edge).
+        // Ends of navlinks, of hops across tile edges (they start or land off the edge) and of
+        // diagonal steps across a chunk seam (they join corners, not the portals of an edge).
         let mut ends: Vec<NodeId> = self.extras.iter().filter(|e| e.navlink || self.is_hop(e)).flat_map(|e| [e.from, e.to]).collect();
         ends.sort_unstable();
         ends.dedup();
@@ -1412,7 +1541,7 @@ impl NavRegion {
                 }
             }
         }
-        // Across tiles: a stitch joins the portals of the two sides; a navlink or a hop its
+        // Across tiles: a stitch joins the portals of the two sides; a navlink, a hop or a diagonal its
         // two ends.
         for extra in &self.extras {
             let pair = if extra.navlink || self.is_hop(extra) {
@@ -1581,6 +1710,7 @@ mod tests {
             graph: TileGraph::default(),
             components: Vec::new(),
             report: NavReport::default(),
+            voxel: None,
             carve: Carve::default(),
         }
     }

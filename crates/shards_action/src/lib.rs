@@ -146,6 +146,7 @@ pub use anim::{
     select_clip_for, select_clip_in, select_layer, select_layer_in, ActionClip, AnimSet, Animated, AnimationCue, BodyStatus,
     Carry, ClipChoice, ClipDef, CueDef, GroundSpeeds, LayerChoice, LayerDef, Locomotion, MountMove, MountRules, MountView, Place,
     PropDef, PropSwaps, SocketDef, EQUIP_EVENTS, EQUIP_KEY, MAX_LAYERS,
+    mode_name, parse_mode, DropDef, ModeLeft, LEFT_KEY, MODES, MODE_KEY,
 };
 pub use combat::{
     bleed_out, deal_damage, deal_ruled_damage, end_break, go_down, grant_grace, kill, kill_with, lethal, poise_damage, react, reset_poise, revive, revive_downed, stagger,

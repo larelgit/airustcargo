@@ -1,6 +1,7 @@
 //! The voxel arena (`content/world/arena.voxel_region.ron`, its steps in
-//! `src/gameplay/terrain.rs`), for what its scenario does not say: an NPC there plans over the
-//! local grid and says why (a voxel region has no navmesh until A2e), and a body that ends up below
+//! `src/gameplay/terrain.rs`), for what its scenarios do not say: an NPC there plans on the
+//! navmesh baked in memory when the region loads (`voxel_nav.scenario` has the chase; the chunks
+//! against one piece and the seams are `shards_npc`'s tests), and a body that ends up below
 //! the sea floor past the grid's edge falls. Nothing is under the sea boxes, and the engine has no
 //! out-of-world rule of its own: the sandbox's `bodies_in_world` stops the game once the body is
 //! below `fall_below`. The scenario cannot show that: the stop would be in its replay.
@@ -27,7 +28,7 @@ fn marker(app: &mut App, name: &str) -> Vec3 {
 }
 
 #[test]
-fn an_npc_in_the_voxel_arena_plans_over_the_local_grid_and_says_why() {
+fn an_npc_in_the_voxel_arena_plans_on_the_baked_navmesh_and_says_so() {
     let mut app = arena();
     let post = marker(&mut app, "post");
     assert_eq!(post, Vec3::new(12.5, 0.0, -399.5), "the post is 12 m east of the spawn, on the floor");
@@ -35,9 +36,9 @@ fn an_npc_in_the_voxel_arena_plans_over_the_local_grid_and_says_why() {
     let id = text(&out).split_whitespace().nth(1).unwrap().to_owned();
     assert!(text(&out).starts_with(&format!("spawned {id} skeleton at (12.5, -399.5)")), "{}", text(&out));
     let state = ok(&mut app, "npc_state", json!({"id": id})).result;
-    assert_eq!(state["nav"]["routes"], "local grid: no navmesh for this region (voxel region, nav not baked yet)", "{state}");
-    let refused = crate::common::fails(&mut app, "nav_path", json!({"to": id}));
-    assert!(refused.contains("no navmesh for this region (voxel region, nav not baked yet): use path_to"), "{refused}");
+    assert_eq!(state["nav"]["routes"], "navmesh, body agent", "{state}");
+    let route = ok(&mut app, "nav_path", json!({"to": id})).result;
+    assert_eq!(route["provider"], "navmesh", "{route}");
 }
 
 #[test]
@@ -53,4 +54,174 @@ fn a_body_below_the_sea_floor_past_the_grid_edge_falls_out_of_the_world() {
     assert!(line.contains("e5 fell out of the world: y = -30."), "{line}");
     let feet = crate::common::player::<Transform>(&mut app).translation;
     assert!((feet.x - 130.0).abs() < 0.01 && (feet.z + 400.0).abs() < 0.01, "it falls straight down: {feet}");
+}
+
+/// Every node (global column, floor in mm, swimming) and every move (to, kind, cost) of a
+/// navmesh, as keys that do not depend on how the grid was cut.
+type Keys = (std::collections::BTreeSet<(i32, i32, i32, bool)>, std::collections::BTreeSet<((i32, i32, i32, bool), (i32, i32, i32, bool), u8, u32)>);
+
+fn keys_of(nav: &shards::npc::NavRegion) -> Keys {
+    let key = |node: u32| {
+        let (inst, n) = nav.split(node);
+        let local = &nav.instances[inst as usize].nav.nodes[n as usize];
+        let [gx, gz] = nav.node_column(node);
+        (gx, gz, local.y_mm, local.swim)
+    };
+    let (mut nodes, mut links, mut out) = (Default::default(), std::collections::BTreeSet::new(), Vec::new());
+    let nodes: &mut std::collections::BTreeSet<_> = &mut nodes;
+    for n in 0..nav.node_count() {
+        nodes.insert(key(n));
+        nav.moves(n, &mut out);
+        for &(to, kind, cost, _) in &out {
+            links.insert((key(n), key(to), kind as u8, cost));
+        }
+    }
+    (std::mem::take(nodes), links)
+}
+
+#[test]
+fn the_arenas_sixteen_chunks_are_the_island_baked_in_one_piece() {
+    use shards::npc::nav::{bake_volume, Cut};
+    use shards::npc::NavQuery;
+    let mut app = arena();
+    let settings = shards::npc::nav::settings::NavSettings::of(app.world().resource::<shards::content::ContentDb>());
+    let chunked = app.world().resource::<shards::npc::NavRegion>().clone();
+    assert_eq!(chunked.instances.len(), 16);
+    let whole = bake_volume(app.world_mut(), &settings, Cut::Whole).expect("the island in one piece");
+    assert_eq!(whole.instances.len(), 1);
+    let (cn, cl) = keys_of(&chunked);
+    let (wn, wl) = keys_of(&whole);
+    assert!(cn.iter().any(|k| k.3) && cn.len() > 10_000, "swim nodes and ground: {} nodes", cn.len());
+    let nodes: Vec<_> = cn.symmetric_difference(&wn).take(10).collect();
+    assert!(nodes.is_empty(), "nodes in one bake only ({} in all): {nodes:?}", cn.symmetric_difference(&wn).count());
+    let links: Vec<_> = cl.symmetric_difference(&wl).take(10).collect();
+    assert!(links.is_empty(), "links in one bake only ({} in all): {links:?}", cl.symmetric_difference(&wl).count());
+    // Same areas up to renumbering, from the spawn's: the nodes that reach the spawn in one
+    // reach it in the other.
+    let spawn = Vec3::new(0.5, 0.0, -399.5);
+    let (a, b) = (chunked.nearest_node(spawn, 1.0, 1.0).unwrap(), whole.nearest_node(spawn, 1.0, 1.0).unwrap());
+    let reach = |nav: &shards::npc::NavRegion, from: u32| -> std::collections::BTreeSet<(i32, i32, i32, bool)> {
+        (0..nav.node_count())
+            .filter(|n| nav.component(*n) == nav.component(from))
+            .map(|n| {
+                let (inst, i) = nav.split(n);
+                let local = &nav.instances[inst as usize].nav.nodes[i as usize];
+                let [gx, gz] = nav.node_column(n);
+                (gx, gz, local.y_mm, local.swim)
+            })
+            .collect()
+    };
+    let (ra, rb) = (reach(&chunked, a), reach(&whole, b));
+    assert!(ra.len() > 10_000, "the spawn's area is the island's walkable ground: {}", ra.len());
+    assert_eq!(ra, rb, "the spawn reaches the same cells");
+    // 64 pairs of cells of that area: routes of the same length, within one cell (0.5 m).
+    let cells: Vec<_> = ra.iter().filter(|k| !k.3).copied().collect();
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let mut pick = |n: usize| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state % n as u64) as usize
+    };
+    let physics = app.world().resource::<shards::motion::PhysicsWorld>();
+    let at = |k: (i32, i32, i32, bool)| Vec3::new(-128.0 + (k.0 as f32 + 0.5) * 0.5, k.2 as f32 / 1000.0, -528.0 + (k.1 as f32 + 0.5) * 0.5);
+    let mut compared = 0;
+    for _ in 0..64 {
+        let (from, to) = (at(cells[pick(cells.len())]), at(cells[pick(cells.len())]));
+        let query = NavQuery { from, to, goal_level: true, radius: 0.4, height: 1.8, step_height: 0.35 };
+        match (chunked.path(physics, &query), whole.path(physics, &query)) {
+            (Ok(c), Ok(w)) => {
+                assert!((c.length - w.length).abs() <= 0.5, "{from} -> {to}: {} m in chunks, {} m in one piece", c.length, w.length);
+                compared += 1;
+            }
+            (c, w) => panic!("{from} -> {to}: chunks {c:?}, one piece {w:?}"),
+        }
+    }
+    assert_eq!(compared, 64);
+}
+
+/// The bake time of the arena's navmesh at 64 x 32 x 64 chunks, for the ledger and the PR: run by
+/// hand, in `--release` on an idle machine for a number to quote:
+/// `cargo test -p sandbox --release --test sandbox -- --ignored --nocapture voxel_nav_bake_time`.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn voxel_nav_bake_time() {
+    use shards::npc::nav::{bake_volume, clear_shared_bakes, Cut};
+    let mut app = arena();
+    let settings = shards::npc::nav::settings::NavSettings::of(app.world().resource::<shards::content::ContentDb>());
+    for round in 0..3 {
+        clear_shared_bakes();
+        app.world_mut().remove_resource::<shards::npc::nav::NavBakes>();
+        let chunks = bake_volume(app.world_mut(), &settings, Cut::Chunks).unwrap();
+        let v = chunks.voxel.unwrap();
+        println!(
+            "round {round}: 16 chunks of 64 m on {} workers: chunks {:.1} ms, whole build {:.1} ms, {} nodes, {} links across seams",
+            v.threads,
+            v.chunks_in.as_secs_f64() * 1e3,
+            v.built_in.as_secs_f64() * 1e3,
+            chunks.node_count(),
+            chunks.report.stitched
+        );
+    }
+    // What a region change pays: the chunks of both body classes on the pool, stitched and
+    // assembled, as `rebuild` does it (the journal lines it writes are not counted).
+    for round in 0..3 {
+        clear_shared_bakes();
+        app.world_mut().remove_resource::<shards::npc::nav::NavBakes>();
+        let started = std::time::Instant::now();
+        shards::npc::nav::rebuild(app.world_mut());
+        println!("round {round}: rebuild of every body class, cold: {:.1} ms", started.elapsed().as_secs_f64() * 1e3);
+    }
+    clear_shared_bakes();
+    app.world_mut().remove_resource::<shards::npc::nav::NavBakes>();
+    let whole = bake_volume(app.world_mut(), &settings, Cut::Whole).unwrap();
+    let v = whole.voxel.unwrap();
+    println!("the island in one piece (single thread): chunk {:.1} ms, whole build {:.1} ms, {} nodes", v.chunks_in.as_secs_f64() * 1e3, v.built_in.as_secs_f64() * 1e3, whole.node_count());
+}
+
+/// What a route costs on the island's chunked navmesh (the corridor widened by the chunks around
+/// it): corner to corner of the walkable ground and a short hop, for the PR. Run by hand like
+/// `voxel_nav_bake_time`:
+/// `cargo test -p sandbox --test sandbox -- --ignored --nocapture voxel_nav_route_time`.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn voxel_nav_route_time() {
+    use shards::npc::NavQuery;
+    let app = arena();
+    let nav = app.world().resource::<shards::npc::NavRegion>().clone();
+    let physics = app.world().resource::<shards::motion::PhysicsWorld>();
+    let spawn = Vec3::new(0.5, 0.0, -399.5);
+    let a = nav.nearest_node(spawn, 1.0, 1.0).unwrap();
+    // The farthest walkable cells of the spawn's area, by straight distance, and a hop of ~12 m.
+    let mut cells: Vec<Vec3> = (0..nav.node_count())
+        .filter(|n| nav.component(*n) == nav.component(a))
+        .map(|n| {
+            let (inst, i) = nav.split(n);
+            let local = &nav.instances[inst as usize].nav.nodes[i as usize];
+            let [gx, gz] = nav.node_column(n);
+            Vec3::new(-128.0 + (gx as f32 + 0.5) * 0.5, local.y_mm as f32 / 1000.0, -528.0 + (gz as f32 + 0.5) * 0.5)
+        })
+        .collect();
+    cells.sort_by(|p, q| (p.x + p.z).total_cmp(&(q.x + q.z)));
+    let (far_a, far_b) = (cells[0], *cells.last().unwrap());
+    for (label, from, to) in [("corner to corner", far_a, far_b), ("spawn to the far corner", spawn, far_b), ("a 12 m hop", spawn, spawn + Vec3::new(12.0, 0.0, 0.0))] {
+        for round in 0..3 {
+            let started = std::time::Instant::now();
+            let route = nav.path(physics, &NavQuery { from, to, goal_level: true, radius: 0.4, height: 1.8, step_height: 0.35 });
+            let took = started.elapsed().as_secs_f64() * 1e3;
+            println!("{label} (round {round}): {:.1} ms, {}", took, route.map_or_else(|e| format!("{e:?}"), |p| format!("{:.1} m", p.length)));
+        }
+    }
+}
+
+#[test]
+fn regenerating_the_island_keeps_the_chunk_bakes_of_the_island_it_has() {
+    let mut app = arena();
+    // This world bakes cold (it takes none from the process's keep), so it holds what it baked.
+    app.world_mut().get_resource_or_init::<shards::npc::nav::NavBakes>().isolated = true;
+    let held = |app: &App| app.world().resource::<shards::npc::nav::NavBakes>().chunks.len();
+    for seed in [8, 9, 10, 11] {
+        ok(&mut app, "regen", json!({"region": "voxel_arena", "seed": seed}));
+        assert_eq!(held(&app), 32, "seed {seed}: 16 chunks of two body classes, the earlier islands' bakes let go");
+    }
 }

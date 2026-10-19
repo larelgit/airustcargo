@@ -8,7 +8,6 @@ use shards::bevy::animation::graph::AnimationGraphHandle;
 use shards::bevy::animation::graph::AnimationNodeIndex;
 use shards::bevy::animation::{AnimationClip, AnimationPlayer, AnimationTargetId};
 use shards::bevy::gltf::Gltf;
-use shards::bevy::gltf::GltfAssetLabel;
 use shards::bevy::world_serialization::WorldAssetRoot;
 use shards::motion::{character, Collider, Shape};
 use shards::prelude::*;
@@ -24,8 +23,20 @@ fn spawn_hero(app: &mut App, at: Vec3) -> Entity {
     spawn_model(app, at, "models/model.gltf")
 }
 
+/// The `Gltf` files the tests loaded whole, kept alive for the app's life.
+#[derive(Resource, Default)]
+struct Loaded(Vec<Handle<Gltf>>);
+
+/// A hero with the model of `file`. The file is loaded whole first and the model is its scene:
+/// a load of `file#Scene0` always reads the file again (bevy#10549), and when the bridge's load of
+/// the same file ends after the model is out, the model is spawned again under the test.
 pub(crate) fn spawn_model(app: &mut App, at: Vec3, file: &'static str) -> Entity {
-    let model = app.world().resource::<AssetServer>().load(GltfAssetLabel::Scene(0).from_asset(file));
+    let gltf: Handle<Gltf> = app.world().resource::<AssetServer>().load(file);
+    update_until(app, &format!("{file} loaded"), |app| {
+        app.world().resource::<AssetServer>().is_loaded_with_dependencies(&gltf)
+    });
+    let model = app.world().resource::<Assets<Gltf>>().get(&gltf).expect("the file is loaded").scenes[0].clone();
+    app.world_mut().get_resource_or_init::<Loaded>().0.push(gltf);
     let (controller, intent, transform) = character("", at);
     app.world_mut()
         .spawn((

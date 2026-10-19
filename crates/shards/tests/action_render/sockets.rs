@@ -21,7 +21,7 @@ fn kit_app(name: &str) -> (App, Entity) {
     kit_app_with(name, KIT, KIT_PROPS, HUMANOID)
 }
 
-fn kit_app_with(name: &str, animsets: &str, props: &str, model: &'static str) -> (App, Entity) {
+pub(crate) fn kit_app_with(name: &str, animsets: &str, props: &str, model: &'static str) -> (App, Entity) {
     let dir = kit_assets(name, animsets);
     std::fs::write(dir.join("content/anim/props.prop.ron"), props).unwrap();
     std::fs::write(dir.join("models/model.gltf"), skinned_gltf(false)).unwrap();
@@ -41,12 +41,12 @@ fn kit_app_with(name: &str, animsets: &str, props: &str, model: &'static str) ->
     (app, hero)
 }
 
-fn bound(app: &App, hero: Entity) -> &AnimationBound {
+pub(crate) fn bound(app: &App, hero: Entity) -> &AnimationBound {
     app.world().get::<AnimationBound>(hero).unwrap()
 }
 
 /// The prop `id`, once it is drawn (waits a few frames for the bridge).
-fn drawn(app: &mut App, hero: Entity, id: &str) -> Entity {
+pub(crate) fn drawn(app: &mut App, hero: Entity, id: &str) -> Entity {
     update_until(app, &format!("prop {id} drawn"), |app| bound(app, hero).prop(id).is_some());
     app.update();
     bound(app, hero).prop(id).unwrap()
@@ -57,7 +57,7 @@ fn name_of(app: &App, entity: Entity) -> String {
 }
 
 /// The name of the bone `prop` hangs from.
-fn hangs_from(app: &App, prop: Entity) -> String {
+pub(crate) fn hangs_from(app: &App, prop: Entity) -> String {
     let parent = app.world().get::<ChildOf>(prop).expect("a prop has a bone").parent();
     name_of(app, parent)
 }
@@ -71,7 +71,7 @@ fn prop_count(app: &mut App) -> usize {
     world.query::<&PropOf>().iter(world).count()
 }
 
-fn frames(app: &mut App, ticks: u32) {
+pub(crate) fn frames(app: &mut App, ticks: u32) {
     ok(app, "step", json!({"ticks": ticks}));
     app.update();
     app.update();

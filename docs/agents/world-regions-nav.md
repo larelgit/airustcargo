@@ -35,6 +35,12 @@ Read this when you touch regions, tiles, levels, the generator, the navmesh or t
   for example, `large` for a big enemy) are each baked into their own folder (`assets/nav/large/`); editing the `locomotion` of any class,
   a new class, or its `radius`/`height`, also means baking again (`--bake-nav` bakes all classes) and committing the class's files.
   `--check-content` names the missing or stale file of each class (``… for the body `large` (nav/large/…)``).
+- **A voxel region's navmesh is baked in memory**, not from files: `shards_npc::nav::bake_volume` bakes each chunk (a square of the grid
+  sampled at its world place, `bake_chunk`) on the compute pool, in chunk order, from the field and the water only, keeps them under `ChunkKey`
+  (`NavBakes`, and a process cache), and stitches the chunks across every edge (diagonals too). `--bake-nav` and `--check-content` do not
+  see it. A change to the ground probe, the step rule or the sampler changes both kinds of bakes: raise `BAKE_VERSION` for the tiles; the
+  chunks have no file to go stale, and the test `chunks_stitched_are_the_grid_baked_in_one_piece` (and the sandbox island's) holds the stitching to the
+  grid baked in one piece. Only machines that simulate bake (`NetRole`). See `docs/manual.md`, "Voxel regions", "Navigation".
 - **World state in the snapshot.** New region, level or navigation state outside entities with `AiId` goes in `add_snapshot_resource`;
   what is built from the saved data (the region from its manifest, the navmesh) goes in `add_snapshot_prepare` / `add_snapshot_rebuild`; what
   the world is built around goes in `add_snapshot_check`. Cover it with a test modelled on `crates/sandbox/tests/sandbox/snapshots.rs`

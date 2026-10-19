@@ -54,6 +54,36 @@ fn a_drink_puts_the_sword_on_the_hip_while_it_lasts() {
 }
 
 #[test]
+fn a_swimmer_has_its_sword_on_the_back_and_a_stroke_keeps_it_in_the_hand() {
+    let mut app = sandbox::test_app(42);
+    ok(&mut app, "set", json!({"id": PLAYER, "component": "Fighter", "path": "moveset", "value": "mover"}));
+    ok(&mut app, "teleport", json!({"id": PLAYER, "x": 61, "z": 0, "y": 3.2}));
+    step(&mut app, 40);
+    let said = text(&ok(&mut app, "animation", json!({"id": PLAYER, "animset": "humanoid"}))).to_owned();
+    for part in [
+        "  mode: water (as the controller says) · @mode:water applies",
+        "layers off: upper",
+        "drop 0.15 m over 0.22 s when an action runs",
+    ] {
+        assert!(said.contains(part), "{part}: {said}");
+    }
+    assert!(said.contains("  props: sword at back"), "{said}");
+    // A stroke is a swing afloat: the sword is in the hand for it, and the model goes down.
+    let player = shards::ai_core::AiId::parse(PLAYER).unwrap();
+    let entity = app.world().resource::<shards::ai_core::AiIndex>().get(player).unwrap();
+    assert!(shards::action::force_action(app.world_mut(), entity, "spar_stroke"));
+    step(&mut app, 10);
+    let said = text(&ok(&mut app, "animation", json!({"id": PLAYER, "animset": "humanoid"}))).to_owned();
+    assert!(said.contains("@mode:water steps aside (an action runs, yield_after 1.2 s)"), "{said}");
+    assert!(said.contains("  props: sword at hand_r"), "{said}");
+    // On the ground there is nothing of it.
+    ok(&mut app, "teleport", json!({"id": PLAYER, "x": 0, "z": 0, "y": 0}));
+    step(&mut app, 120);
+    let said = text(&ok(&mut app, "animation", json!({"id": PLAYER, "animset": "humanoid"}))).to_owned();
+    assert!(said.contains("  mode: ground (as the controller says) · no @mode rules"), "{said}");
+    assert!(said.contains("  props: sword at hand_r"), "{said}");
+}
+#[test]
 fn the_tool_says_how_to_fix_a_bad_call() {
     let mut app = sandbox::test_app(42);
     assert_eq!(

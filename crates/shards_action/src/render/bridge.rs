@@ -65,13 +65,14 @@ use shards_core::Predicted;
 use shards_motion::{MotionState, MoveModifiers};
 
 use crate::anim::{
-    crossed_cues, select_clip_in, select_layer_in, AnimSet, Animated, AnimationCue, BodyStatus, ClipChoice, LayerChoice,
-    LayerDef, PropSwaps, MAX_LAYERS,
+    crossed_cues, mode_name, select_clip_in, select_layer_in, AnimSet, Animated, AnimationCue, BodyStatus, ClipChoice,
+    LayerChoice, ModeLeft, PropSwaps, MAX_LAYERS,
 };
 use crate::def::{ActionDef, MovesetDef};
 use crate::fighter::{Dead, Fighter};
 use crate::machine::ActionState;
 use crate::predict::PredictedAction;
+use crate::render::modes::{self, AnimSystems, ModeFrame, ModeState};
 use crate::render::props::{self, skeleton, MountEnv, MountFrame, MountState, PropOf, RunView};
 
 /// A seeked clip stops this far (seconds) before its end: Bevy's player wraps a time at the
@@ -122,7 +123,8 @@ struct GraphShape {
     /// Per clip: the glTF file and the animation's name in it, the only parts of a clip the graph is built from
     /// (an edit of a speed, a blend or the cues is read in place each frame and keeps the graph).
     clips: BTreeMap<String, (String, String)>,
-    layers: BTreeMap<String, LayerDef>,
+    /// Layer name -> its root bone (an edit of a layer's `off_in` is read in place).
+    layers: BTreeMap<String, String>,
     /// (layer, clip) of every mapping that plays on a layer.
     layered: BTreeSet<(String, String)>,
     /// A layered clip's family renames need nodes of their own.
@@ -136,7 +138,7 @@ impl GraphShape {
         Self {
             source: set.source.clone(),
             clips: set.clips.keys().map(|c| (c.clone(), (set.source_of(c).to_owned(), set.file_name(c).to_owned()))).collect(),
-            layers: set.layers.clone(),
+            layers: set.layers.iter().map(|(name, layer)| (name.clone(), layer.root.clone())).collect(),
             layered: set
                 .actions
                 .values()
@@ -210,7 +212,7 @@ pub struct AnimationBound {
     /// Seconds on that clip's timeline at the last frame, for cues.
     last_time: Option<f32>,
     /// The set's `root_motion` bone under the player and its rest translation, once found.
-    root: Option<(Entity, Vec3)>,
+    pub(crate) root: Option<(Entity, Vec3)>,
     /// The set's layers whose bones the model has: only on these can an action's clip play.
     ready: BTreeSet<String>,
     /// What plays on each layer that has played something lately.
@@ -221,9 +223,29 @@ pub struct AnimationBound {
     held_since: Option<f64>,
     /// The props it carries and what it remembers of them.
     pub(crate) mounts: MountState,
+    /// The motion mode it is drawn in and the clocks that hang on it: the mode's mount rules, the
+    /// draw after leaving it, the drop.
+    pub(crate) modes: ModeState,
 }
 
 impl AnimationBound {
+    /// A binding of `player` to `graph` that has not played anything yet.
+    pub(crate) fn new(player: Entity, graph: AssetId<AnimationGraph>) -> Self {
+        Self {
+            player,
+            graph,
+            clip: None,
+            last_time: None,
+            root: None,
+            ready: BTreeSet::new(),
+            overlays: BTreeMap::new(),
+            held: false,
+            held_since: None,
+            mounts: MountState::default(),
+            modes: ModeState::default(),
+        }
+    }
+
     /// The clip the bridge has playing now.
     pub fn clip(&self) -> Option<&str> {
         self.clip.as_deref()
@@ -276,6 +298,21 @@ impl AnimationBound {
         let since = self.mounts.since(clock)?;
         let rules = set.equip_rules()?;
         crate::anim::equip_open(rules, since).then_some((rules, since))
+    }
+
+    /// Metres the model is lowered now (a swing afloat; the set's `drops`).
+    pub fn drop_depth(&self) -> f32 {
+        self.modes.depth()
+    }
+
+    /// The motion mode the body is drawn in, once the bridge has seen it.
+    pub fn mode(&self) -> Option<shards_motion::MotionMode> {
+        self.modes.mode()
+    }
+
+    /// Whether the `@left` rules of a mode the body left are on: waiting for the draw, or drawing.
+    pub fn left_pending(&self) -> bool {
+        self.modes.left().is_some()
     }
 
     /// The bone socket `socket` rides, once the bridge has found it in the model.
@@ -450,10 +487,15 @@ pub(crate) fn plugin(app: &mut App) {
         .add_observer(retarget_on_ready)
         .add_plugins(props::plugin)
         .add_systems(Update, (build_graphs, bind_players, drive).chain())
-        .add_systems(
+        .configure_sets(
             PostUpdate,
-            hold_root_motion.after(bevy::app::AnimationSystems).before(bevy::transform::TransformSystems::Propagate),
-        );
+            (AnimSystems::Root, AnimSystems::Model)
+                .chain()
+                .after(bevy::app::AnimationSystems)
+                .after(shards_motion::InterpSystems::Blend)
+                .before(bevy::transform::TransformSystems::Propagate),
+        )
+        .add_systems(PostUpdate, (hold_root_motion.in_set(AnimSystems::Root), modes::apply_model.in_set(AnimSystems::Model)));
 }
 
 /// `Update`: loads the glTF files of every animset a character uses and builds its graph once
@@ -573,18 +615,12 @@ pub fn bind_players(
         }
         commands.entity(player).insert((AnimationGraphHandle(graph.clone()), AnimationTransitions::new()));
         commands.entity(entity).insert(AnimationBound {
-            player,
-            graph: graph.id(),
-            clip: None,
-            last_time: None,
-            root: None,
             ready,
-            overlays: BTreeMap::new(),
-            held: false,
-            held_since: None,
             // The props and the equip go over to the new binding: a rebind neither forgets an
             // equip nor leaves a second set of props under the bones.
             mounts: bound.map(|b| b.mounts.taken_over()).unwrap_or_default(),
+            modes: bound.map(|b| b.modes.taken_over()).unwrap_or_default(),
+            ..AnimationBound::new(player, graph.id())
         });
     }
 }
@@ -693,6 +729,7 @@ pub fn drive(
                 // The clocks of the props resume where they stopped.
                 if let Some(since) = bound.held_since.take() {
                     bound.mounts.shift(clock - since);
+                    bound.modes.shift(clock - since);
                 }
             }
         }
@@ -720,15 +757,25 @@ pub fn drive(
         let status = BodyStatus { dead, staggered: staggers, pace: modifiers.map_or(1.0, MoveModifiers::pace) };
         let moveset = fighter.map(|f| f.moveset.as_str());
         let choice = select_clip_in(action, motion.unwrap_or(&standing), status, set, moveset);
-        drive_body(&mut commands, entity, set, built, &clips, &mut bound, &mut player, &mut transitions, &choice, frozen);
+        let switched = drive_body(&mut commands, entity, set, built, &clips, &mut bound, &mut player, &mut transitions, &choice, frozen);
+        if switched {
+            // The fade out of the mode's clip (its nominal blend, a paused clock snaps it but does not
+            // age the wait): a `@left` wait ends with it.
+            bound.modes.note_switch(clock, choice.blend.clamp(0.01, 10.0));
+        }
+        let mode = motion.unwrap_or(&standing).mode;
         if !built.layered.is_empty() || !bound.overlays.is_empty() {
-            let frame = LayerFrame {
-                wanted: select_layer_in(action, status, set, moveset),
-                back_blend: choice.blend,
-                dt: time.delta_secs(),
-                frozen,
-            };
+            // A layer that is off in this mode plays nothing: what played fades out.
+            let wanted = select_layer_in(action, status, set, moveset).filter(|l| !set.layer_off(l.layer, mode));
+            let frame = LayerFrame { wanted, back_blend: choice.blend, dt: time.delta_secs(), frozen };
             drive_layers(&mut commands, entity, set, built, &clips, &mut bound, &mut player, &frame);
+        }
+
+        // The motion mode: the mounts' rules for it and for after leaving it, the drop.
+        let ended = run.zip(action).map(|(r, (key, ..))| (r.instance, set.ends_equip(key)));
+        let moded = bound.modes.advance(&ModeFrame { set, mode, acting: run.is_some(), run: ended, clock });
+        if let Some(left) = moded.fired {
+            commands.trigger(ModeLeft { entity, mode: mode_name(left).to_owned() });
         }
 
         // The props: where they sit now.
@@ -744,6 +791,7 @@ pub fn drive(
             swaps,
             run: run.zip(action).map(|(run, (key, t, _))| RunView { run, def, key, t }),
             clock,
+            modes: moded,
         };
         let began = std::time::Instant::now();
         props::step(&mut mounting, &frame, &mut bound.mounts);
@@ -774,11 +822,11 @@ fn drive_body(
     transitions: &mut AnimationTransitions,
     choice: &ClipChoice,
     frozen: bool,
-) {
-    let Some(clip) = choice.clip else { return };
-    let Some((node, handle)) = built.nodes.get(clip) else { return };
+) -> bool {
+    let Some(clip) = choice.clip else { return false };
+    let Some((node, handle)) = built.nodes.get(clip) else { return false };
     let duration = clips.get(handle).map_or(0.0, |c| c.duration());
-
+    let mut switched = false;
     if bound.clip.as_deref() != Some(clip) {
         if bound.clip.is_none() || frozen {
             // Nothing to blend from, or the clock is stopped (a paused simulation, an agent
@@ -787,16 +835,18 @@ fn drive_body(
             player.stop_all();
             *transitions = AnimationTransitions::new();
             transitions.play(player, *node, Duration::ZERO);
+            switched = true;
         } else {
             // Not zero (Bevy's fade divides by it), not absurd (a typo in content must not
             // overflow a `Duration`).
             let blend = choice.blend.clamp(0.01, 10.0);
             transitions.play(player, *node, Duration::from_secs_f32(blend));
+            switched = true;
         }
         bound.clip = Some(clip.to_owned());
         bound.last_time = None;
     }
-    let Some(active) = player.animation_mut(*node) else { return };
+    let Some(active) = player.animation_mut(*node) else { return switched };
     active.set_repeat(if choice.looping { RepeatAnimation::Forever } else { RepeatAnimation::Never });
     let now = match choice.seek_to {
         Some(progress) => {
@@ -820,6 +870,7 @@ fn drive_body(
         }
     }
     bound.last_time = Some(now);
+    switched
 }
 
 /// What one frame asks of the layers of a character.
@@ -895,7 +946,7 @@ fn drive_layers(
 #[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
 pub fn hold_root_motion(
     db: Option<Res<ContentDb>>,
-    graphs: Res<AnimGraphs>,
+    mut graphs: ResMut<AnimGraphs>,
     gltfs: Res<Assets<Gltf>>,
     gltf_nodes: Option<Res<Assets<GltfNode>>>,
     mut animated: Query<(&Animated, &mut AnimationBound)>,
@@ -911,8 +962,10 @@ pub fn hold_root_motion(
         };
         let (set, bone) = bone;
         if bound.root.is_none_or(|(e, _)| !transforms.contains(e)) {
-            let found = skeleton(bound.player, &children, &props)
-                .into_iter()
+            let bones = skeleton(bound.player, &children, &props);
+            let found = bones
+                .iter()
+                .copied()
                 .find(|e| names.get(*e).is_ok_and(|n| n.as_str() == bone));
             let rest = graphs
                 .libraries
@@ -922,6 +975,13 @@ pub fn hold_root_motion(
                 .and_then(|node| gltf_nodes.as_ref()?.get(node))
                 .map_or(Vec3::ZERO, |node| node.transform.translation);
             bound.root = found.map(|e| (e, rest));
+            // Only once the model has bones: until then the scene is still spawning.
+            if found.is_none() && !bones.is_empty() {
+                graphs.warn_once(
+                    format!("root_motion {} {bone}", set_ref.animset),
+                    format!("animset `{}`: the model has no bone `{bone}` (root_motion); the drop is not drawn", set_ref.animset),
+                );
+            }
         }
         let Some((entity, rest)) = bound.root else { continue };
         if let Ok(mut transform) = transforms.get_mut(entity) {
