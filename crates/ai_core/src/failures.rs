@@ -17,7 +17,13 @@
 //!
 //! Several apps in one process share the queue: each app's handler queues its failures
 //! under the app's [token](crate::process::AppToken), and an app collects only its own
-//! (and untagged ones).
+//! (and untagged ones). The handler cannot capture its app (it is a plain `fn`, and a system runs on
+//! a task-pool thread shared by every app), so [`handler_for`] binds one of `SLOTS` (256) monomorphized
+//! copies to each live app and frees it when the app is dropped. An app past the last slot gets a
+//! handler whose failures are logged and queued for nobody: tagging them with the "active" app, as the
+//! fallback once did, handed the failure to whichever other app happened to be active, which halted an
+//! unrelated test of the same process (`cargo test` runs tests as threads of one process; nextest, a
+//! process per test, never showed it).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -96,31 +102,91 @@ fn handle(mut error: BevyError, ctx: ErrorContext, token: u64) {
     let (kind, name) = (ctx.kind().to_owned(), ctx.name().to_string());
     let verb = if panicked { "panicked" } else { "failed" };
     error!(target: LOG_TARGET, "{kind} `{name}` {verb}: {message}");
+    if token == ORPHAN {
+        error!(target: LOG_TARGET, "that failure belongs to no app (no handler slot left, or its app is gone): it halts nothing");
+        return;
+    }
     if let Ok(mut queue) = QUEUE.lock() {
         queue.push(Queued { token, kind, name, message, panicked });
     }
 }
 
-/// How many apps of one process get a handler bound to them; more fall back to the
-/// active app's token.
-const SLOTS: usize = 32;
+/// How many apps of one process get a handler bound to them. The handler cannot know its app
+/// any other way (it is a plain `fn`, and a system runs on a shared task-pool thread), so an
+/// app past this many live ones gets [`orphan_handler`], never another app's token. A game has
+/// a handful of apps (a stand: a host and its guests), a test binary one per running test
+/// thread and stand, a few hundred at most.
+const SLOTS: usize = 256;
+
+/// The token of a failure no app owns: nobody collects it (see [`orphan_handler`]).
+const ORPHAN: u64 = u64::MAX;
 
 /// Slot → the token of the app that holds it (0: free).
 static SLOT_TOKENS: [AtomicU64; SLOTS] = [const { AtomicU64::new(0) }; SLOTS];
 
 fn slot_handler<const S: usize>(error: BevyError, ctx: ErrorContext) {
-    handle(error, ctx, SLOT_TOKENS[S].load(Ordering::Relaxed));
+    match SLOT_TOKENS[S].load(Ordering::Relaxed) {
+        // The slot was freed (its app is gone): the failure belongs to nobody.
+        0 => handle(error, ctx, ORPHAN),
+        token => handle(error, ctx, token),
+    }
 }
 
-macro_rules! slot_handlers {
-    ($($slot:literal)*) => { [$(slot_handler::<$slot> as ErrorHandler),*] };
+/// Handler of an app that got no slot: logs the failure (as every handler does) and keeps it
+/// out of the queue, since any token it could use would be another app's.
+fn orphan_handler(error: BevyError, ctx: ErrorContext) {
+    handle(error, ctx, ORPHAN);
+}
+
+/// 16 consecutive slot handlers starting at `$k * 16`.
+macro_rules! slot_row {
+    ($k:literal) => {
+        [
+            slot_handler::<{ $k * 16 }> as ErrorHandler,
+            slot_handler::<{ $k * 16 + 1 }>,
+            slot_handler::<{ $k * 16 + 2 }>,
+            slot_handler::<{ $k * 16 + 3 }>,
+            slot_handler::<{ $k * 16 + 4 }>,
+            slot_handler::<{ $k * 16 + 5 }>,
+            slot_handler::<{ $k * 16 + 6 }>,
+            slot_handler::<{ $k * 16 + 7 }>,
+            slot_handler::<{ $k * 16 + 8 }>,
+            slot_handler::<{ $k * 16 + 9 }>,
+            slot_handler::<{ $k * 16 + 10 }>,
+            slot_handler::<{ $k * 16 + 11 }>,
+            slot_handler::<{ $k * 16 + 12 }>,
+            slot_handler::<{ $k * 16 + 13 }>,
+            slot_handler::<{ $k * 16 + 14 }>,
+            slot_handler::<{ $k * 16 + 15 }>,
+        ]
+    };
 }
 
 /// The handler is a plain `fn` that cannot capture its app, but Bevy reads it per world:
 /// one monomorphized copy per slot knows its app's token, whatever thread the failing
-/// system ran on and whichever app was activated last.
-static SLOT_HANDLERS: [ErrorHandler; SLOTS] =
-    slot_handlers!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31);
+/// system ran on and whichever app was activated last. 16 rows of 16.
+static SLOT_HANDLERS: [[ErrorHandler; 16]; SLOTS / 16] = [
+    slot_row!(0),
+    slot_row!(1),
+    slot_row!(2),
+    slot_row!(3),
+    slot_row!(4),
+    slot_row!(5),
+    slot_row!(6),
+    slot_row!(7),
+    slot_row!(8),
+    slot_row!(9),
+    slot_row!(10),
+    slot_row!(11),
+    slot_row!(12),
+    slot_row!(13),
+    slot_row!(14),
+    slot_row!(15),
+];
+
+fn slot_handler_at(slot: usize) -> ErrorHandler {
+    SLOT_HANDLERS[slot / 16][slot % 16]
+}
 
 /// Frees the app's handler slot when its world is dropped.
 #[derive(Resource)]
@@ -133,19 +199,19 @@ impl Drop for HandlerSlot {
 }
 
 /// An error handler that queues this world's failures under its own token: a free slot's
-/// copy, or [`ai_core_error_handler`] when all slots are taken.
+/// copy, or [`orphan_handler`] (failures logged, collected by nobody) when all slots are taken.
 pub fn handler_for(world: &mut World) -> ErrorHandler {
     let token = crate::process::ensure_token(world);
     if let Some(slot) = world.get_resource::<HandlerSlot>() {
-        return SLOT_HANDLERS[slot.0];
+        return slot_handler_at(slot.0);
     }
     for (i, slot) in SLOT_TOKENS.iter().enumerate() {
         if slot.compare_exchange(0, token, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
             world.insert_resource(HandlerSlot(i));
-            return SLOT_HANDLERS[i];
+            return slot_handler_at(i);
         }
     }
-    ai_core_error_handler
+    orphan_handler
 }
 
 /// Failures collected but not reported by a `step` yet, and crash replay settings.
@@ -301,5 +367,67 @@ fn save_crash_files(world: &mut World, failure: &mut SystemFailure) {
         if let Some(mut state) = world.get_resource_mut::<AiFailures>() {
             state.saved.remove(&key);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn game() -> App {
+        let mut app = App::new();
+        app.add_plugins(bevy::time::TimePlugin).add_plugins(crate::AiCorePlugin {
+            remote_port: None,
+            crash_replays: false,
+            sim: crate::SimConfig { start_paused: true, ..Default::default() },
+            ..Default::default()
+        });
+        app.finish();
+        app.cleanup();
+        app
+    }
+
+    /// A system failure of `app`, raised on a thread of its own (as a task-pool thread would).
+    fn fail_on_another_thread(app: &App) {
+        let handler = app.world().resource::<FallbackErrorHandler>().0;
+        std::thread::spawn(move || {
+            let ctx = ErrorContext::System { name: DebugName::borrowed("planted::boom"), last_run: bevy::ecs::change_detection::Tick::new(0) };
+            handler(BevyError::new(Severity::Panic, "boom"), ctx);
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn a_failure_reaches_only_its_own_app_however_many_apps_live_and_whichever_thread_raised_it() {
+        // More live apps than slots, several threads working beside the failing one.
+        let mut apps: Vec<App> = (0..SLOTS + 8).map(|_| game()).collect();
+        let busy: Vec<_> = (0..4)
+            .map(|_| std::thread::spawn(|| (0..6).map(|_| game()).collect::<Vec<_>>().len()))
+            .collect();
+
+        // The first app holds a slot, the last has none (the old code tagged it with the active app).
+        let (first, last) = (0, apps.len() - 1);
+        for victim in [first, last] {
+            // A bystander is the active app of the process.
+            let bystander = 1 + victim % 2 * 10;
+            crate::process::activate(apps[bystander].world());
+            fail_on_another_thread(&apps[victim]);
+            for (i, app) in apps.iter_mut().enumerate() {
+                let mine = i == victim && victim == first;
+                assert_eq!(!collect(app.world_mut()).is_empty(), mine, "app {i}, victim {victim}");
+            }
+            // Nothing is left over for an app built later either.
+            let late = &mut game();
+            assert!(collect(late.world_mut()).is_empty(), "victim {victim}");
+        }
+        for thread in busy {
+            thread.join().unwrap();
+        }
+        // A freed slot is used again, with the new app's token.
+        drop(apps.swap_remove(first));
+        let mut again = game();
+        fail_on_another_thread(&again);
+        assert_eq!(collect(again.world_mut()).len(), 1);
     }
 }
