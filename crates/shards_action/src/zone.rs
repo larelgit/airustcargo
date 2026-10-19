@@ -19,6 +19,7 @@ use shards_motion::{PhysicsWorld, QueryFilter, Shape};
 use crate::def::{ActionDef, HitFlag, HitShape, Local, EPS};
 use crate::fighter::{hostile, Dead, Fighter, Team};
 use crate::machine::ActionState;
+use crate::objects::{living_owner, CombatObject};
 
 /// A hit shape placed in the world: `origin` is its [`HitDef::at`](crate::HitDef)
 /// point, `facing` the action's direction on the ground plane.
@@ -243,27 +244,47 @@ pub struct HitZone {
     /// The telegraph's symbol; `None` for attacks without a telegraph.
     pub symbol: Option<String>,
     pub flags: Vec<HitFlag>,
+    /// A combat object's zone: the owner it hits for (its `attacker_id` is the object's).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner: Option<AiId>,
+    /// A combat object's zone: its action's `tags` (what [`live_tags_at`](crate::objects::live_tags_at)
+    /// reads: a `capture` zone is not laid where one is).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 /// What [`hit_zones`] reads of an attacker.
-type Attacker<'a> = (Entity, Option<&'a AiId>, &'a ActionState, &'a Transform, Option<&'a Team>);
+type Attacker<'a> =
+    (Entity, Option<&'a AiId>, &'a ActionState, &'a Transform, Option<&'a Team>, Option<&'a CombatObject>);
 
-/// Every hit window not over yet, of every fighter in an action, in attacker `AiId`
-/// order then time order. Pure: reads the world, changes nothing.
+/// Every hit window not over yet, of every fighter and combat object in an action (an object
+/// whose owner lives), in attacker `AiId` order then time order. Pure:
+/// reads the world, changes nothing. A boss's attack scheduler reads them too.
 pub fn hit_zones(world: &World) -> Vec<HitZone> {
     let Some(db) = world.get_resource::<ContentDb>() else { return Vec::new() };
-    let Some(mut q) = world.try_query_filtered::<Attacker, (With<Fighter>, Without<Dead>)>() else { return Vec::new() };
-    let mut attackers: Vec<_> = q.iter(world).filter(|(_, _, s, ..)| s.current.is_some()).collect();
+    let filter = world.try_query_filtered::<Attacker, (Or<(With<Fighter>, With<CombatObject>)>, Without<Dead>)>();
+    let Some(mut q) = filter else { return Vec::new() };
+    let mut attackers: Vec<_> = q
+        .iter(world)
+        .filter(|(_, _, s, ..)| s.current.is_some())
+        .filter(|(.., object)| object.is_none_or(|o| living_owner(world, o).is_some()))
+        .collect();
     attackers.sort_by_key(|(e, id, ..)| (id.map_or(u32::MAX, |i| i.0), *e));
     let mut zones = Vec::new();
-    for (entity, id, state, tf, team) in attackers {
+    for (entity, id, state, tf, team, object) in attackers {
         let Some(run) = &state.current else { continue };
         let Some(def) = db.get::<ActionDef>(&run.action) else { continue };
+        let (owner, tags) = match object {
+            Some(o) => (Some(o.owner), def.tags.clone()),
+            None => (None, Vec::new()),
+        };
         zones.extend(action_zones(def, run.t, tf.translation, run.facing).into_iter().map(|z| HitZone {
             attacker: entity,
             attacker_id: id.copied(),
             team: team.cloned(),
             action: run.action.clone(),
+            owner,
+            tags: tags.clone(),
             ..z
         }));
     }
@@ -289,6 +310,8 @@ pub fn action_zones(def: &ActionDef, t: f32, feet: Vec3, facing: Vec3) -> Vec<Hi
         active_for: to - from.max(t),
         symbol: symbol.clone(),
         flags,
+        owner: None,
+        tags: Vec::new(),
     };
     let mut windows: Vec<(usize, (f32, f32))> = def
         .hits
@@ -316,9 +339,11 @@ pub fn action_zones(def: &ActionDef, t: f32, feet: Vec3, facing: Vec3) -> Vec<Hi
 /// out of each.
 pub fn zones_threatening(world: &World, me: Entity, point: Vec3, radius: f32) -> Vec<(HitZone, Vec3)> {
     let team = world.get::<Team>(me);
+    let mine = world.get::<AiId>(me).copied();
     let mut found: Vec<(HitZone, Vec3)> = hit_zones(world)
         .into_iter()
-        .filter(|z| z.attacker != me && hostile(z.team.as_ref(), team))
+        // Its own, and its objects': a combat object never hits its owner.
+        .filter(|z| z.attacker != me && (z.owner.is_none() || z.owner != mine) && hostile(z.team.as_ref(), team))
         .filter_map(|z| {
             let out = z.shape.exit(point, radius)?;
             Some((z, out))
@@ -363,8 +388,10 @@ pub fn threat_indicators(world: &World, viewer: Entity, view_forward: Vec3) -> V
     let radius = body_radius(world, viewer);
     let fwd = flat(view_forward).try_normalize().unwrap_or(Vec3::NEG_Z);
     let right = Vec3::new(-fwd.z, 0.0, fwd.x);
+    let mine = world.get::<AiId>(viewer).copied();
     let mut out: Vec<Indicator> = Vec::new();
-    for z in hit_zones(world).into_iter().filter(|z| z.attacker != viewer && hostile(z.team.as_ref(), team)) {
+    // Its own and its objects', as in `zones_threatening`.
+    for z in hit_zones(world).into_iter().filter(|z| z.attacker != viewer && (z.owner.is_none() || z.owner != mine) && hostile(z.team.as_ref(), team)) {
         if let Some(seen) = out.iter_mut().find(|i| i.source == z.attacker) {
             if z.lands_in < seen.lands_in {
                 seen.lands_in = z.lands_in;

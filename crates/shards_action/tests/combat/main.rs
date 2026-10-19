@@ -12,6 +12,7 @@ mod hits;
 mod lethal;
 mod lock;
 mod modifiers;
+mod objects;
 mod outcome;
 mod parity;
 mod reactions;

@@ -54,7 +54,7 @@ pub use color::parse_color;
 pub use edits::{ContentEdit, ContentEdits};
 pub use db::{check_dir, ContentDb, ContentDef, ContentError, ContentKinds, DefChange, Refs, Summary};
 pub use load::{asset_root, defs_ahead, ContentText};
-pub use prefab::{spawn_prefab, PrefabDef};
+pub use prefab::{spawn_prefab, spawn_prefab_cached, PrefabCache, PrefabDef};
 
 /// The types a game module uses most.
 pub mod prelude {
@@ -215,6 +215,7 @@ impl Plugin for ContentPlugin {
         app.init_asset::<ContentText>()
             .add_content::<PrefabDef>()
             .init_resource::<ContentDb>()
+            .init_resource::<PrefabCache>()
             .init_resource::<load::ContentLoading>()
             .require_loaded("content", load::content_status)
             .add_engine_module("content", env!("CARGO_PKG_VERSION"))

@@ -1,5 +1,5 @@
 //! The engine rules `action.resources_in_range`, `action.running_sane`, `action.protection_sane`,
-//! `action.knockback_sane`, `action.extras_follow_run`, `action.barrier_sane`, `action.damage_taken_sane`, `action.pairs_match`, `action.memory_sane`, `action.leap_follows_run`, `action.ghost_follows_run`, `action.downed_sane` and `action.grace_sane`.
+//! `action.knockback_sane`, `action.extras_follow_run`, `action.barrier_sane`, `action.damage_taken_sane`, `action.pairs_match`, `action.memory_sane`, `action.leap_follows_run`, `action.ghost_follows_run`, `action.objects_sane`, `action.objects_capped`, `action.downed_sane` and `action.grace_sane`.
 
 use ai_core::{with_query, AiId, AiIndex, Offenders, SimTick};
 use bevy::prelude::*;
@@ -11,6 +11,7 @@ use crate::def::ActionDef;
 use crate::combat::{Downed, Grace};
 use crate::fighter::{Dead, Fighter, Health, Knockback, Poise, Protection, Stamina};
 use crate::machine::{ActionState, LeapRun, RunExtras};
+use crate::objects::{CombatObject, Projectile, ProjectileFlight};
 use shards_motion::Ghost;
 
 /// The engine rule `action.resources_in_range`: `Health`, `Stamina` and `Poise` hold finite
@@ -61,8 +62,9 @@ fn out_of_range(name: &str, current: f32, max: f32) -> Option<String> {
 /// is the run's own when that is longer than the definition's: miss recovery and
 /// `extend_recovery` make a run last beyond its phases (`Running::length`).
 ///
-/// Checked for fighters (`Fighter`), the entities the action machine advances; an `ActionState`
-/// on anything else is never advanced or cleared, so it says nothing. The machine clears an
+/// Checked for fighters (`Fighter`), the entities the action machine advances, and combat objects
+/// ([`CombatObject`]), which `run_objects` advances; an `ActionState` on anything else is never
+/// advanced or cleared, so it says nothing. The machine clears an
 /// action the tick its clock reaches the length and drops one whose definition vanished (a hot
 /// reload) the same tick, so the extra tick is generous slack rather than a state the
 /// machine uses. An action with no phases has no phase to compare. Without a `ContentDb` there
@@ -72,7 +74,7 @@ pub fn running_sane(world: &World) -> Option<String> {
     let db = world.get_resource::<ContentDb>()?;
     let tick = world.get_resource::<Time<Fixed>>().map_or(0.0, |t| t.timestep().as_secs_f32());
     let mut bad = Offenders::default();
-    with_query::<(&AiId, &ActionState), With<Fighter>, _>(world, |query| {
+    with_query::<(&AiId, &ActionState), Or<(With<Fighter>, With<CombatObject>)>, _>(world, |query| {
         for (id, state) in query.iter(world) {
             let Some(run) = &state.current else { continue };
             let Some(def) = db.get::<ActionDef>(&run.action) else {
@@ -320,10 +322,74 @@ pub fn ghost_follows_run(world: &World) -> Option<String> {
     bad.report()
 }
 
+/// The engine rule `action.objects_sane`: every combat object ([`CombatObject`]) belongs to an owner
+/// in the world (or one that went in this tick: its objects go on the next), and a projectile holds
+/// finite numbers: `speed`, `lifetime`, `age` at least 0, and a direction of length 1 (or 0 once it
+/// stopped).
+///
+/// `spawn_objects` gives an object its spawner's owner, the owner's death and the objects' own pass
+/// take them away, and flight renormalizes its direction after every turn; a violation names a
+/// writer that set an owner or a flight by hand (a NaN direction would fly nowhere for ever).
+pub fn objects_sane(world: &World) -> Option<String> {
+    let index = world.get_resource::<AiIndex>()?;
+    let now = world.get_resource::<SimTick>().map_or(0, |t| t.0);
+    let mut bad = Offenders::default();
+    with_query::<(&AiId, &CombatObject), (), _>(world, |query| {
+        for (id, o) in query.iter(world) {
+            let just_gone = index.tombstone(o.owner).is_some_and(|t| t.tick == now);
+            if index.get(o.owner).is_none() && !just_gone {
+                bad.note(*id, || format!("combat object of {}, which is not in the world", o.owner));
+            }
+        }
+    });
+    with_query::<(&AiId, &Projectile, &ProjectileFlight), (), _>(world, |query| {
+        for (id, p, f) in query.iter(world) {
+            let numbers = [p.speed, p.lifetime, f.age];
+            if !numbers.iter().all(|v| v.is_finite() && *v >= 0.0) {
+                bad.note(*id, || {
+                    format!("projectile speed = {}, lifetime = {}, age = {}: finite and >= 0", p.speed, p.lifetime, f.age)
+                });
+                continue;
+            }
+            let len = f.dir.length();
+            if !(f.dir.is_finite() && (len == 0.0 || (len - 1.0).abs() <= 1e-3)) {
+                bad.note(*id, || format!("projectile dir = {}: a unit vector, or zero once stopped", f.dir));
+            }
+        }
+    });
+    bad.report()
+}
+
+/// The engine rule `action.objects_capped`: no more combat objects are alive than
+/// `CombatTuning::max_objects`, in a tick that spawned some.
+///
+/// `spawn_objects` lays down only the indices that fit under the caps, and says so in the journal;
+/// a violation names a spawn that went around it (a prefab spawned with a `CombatObject` by hand).
+/// A cap lowered under the objects alive (a hot reload of the tuning) is no violation: they stay,
+/// and the next spawn waits for room, so the rule looks only at ticks that spawned.
+pub fn objects_capped(world: &World) -> Option<String> {
+    let db = world.get_resource::<ContentDb>()?;
+    let cap = crate::def::CombatTuning::of(db).max_objects as usize;
+    let now = world.get_resource::<SimTick>().map_or(0, |t| t.0);
+    let mut live: Vec<AiId> = Vec::new();
+    let mut spawned_now = false;
+    with_query::<(&AiId, &CombatObject), (), _>(world, |query| {
+        for (id, o) in query.iter(world) {
+            live.push(*id);
+            spawned_now |= o.spawned == now;
+        }
+    });
+    if live.len() <= cap || !spawned_now {
+        return None;
+    }
+    live.sort();
+    Some(format!("{} combat objects alive, over max_objects {cap} (the last spawned: {})", live.len(), live[live.len() - 1]))
+}
+
 /// The engine rule `action.downed_sane`: a [`Downed`] body is not [`Dead`] (death takes `Downed`
 /// away), has `Health.current == 0` (going down sets it, a revive takes `Downed` away before it
 /// gives health back) and a bleed-out that is `None` or a finite number of seconds `>= 0`
-/// (`go_down` cleans the one it is given, `tick_downed` stops at `EPS`). A violation names a
+/// (`go_down` cleans the one it is given, `tick_downed` floors at 0). A violation names a
 /// writer that healed, killed or timed a downed body behind the engine's back.
 pub fn downed_sane(world: &World) -> Option<String> {
     let mut bad = Offenders::default();

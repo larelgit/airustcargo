@@ -74,18 +74,21 @@
 //! SimSet::Input    ActionSystems::Orders    Order::Attack → Intent (after core's follow_orders)
 //! SimSet::Act      ActionSystems::Context   guard presses (GuardArm), context bindings (ContextInputs)
 //!                  ActionSystems::Machine   presses → buffer → start/advance → LocomotionInput
-//!                  ActionSystems::Effects   pairs start (start_pairs), heal, stamina, statuses, sounds, game effects
-//! SimSet::Move     (controller)             integrates LocomotionInput, external included
-//! SimSet::Resolve  ActionSystems::Hits      overlaps → damage pipeline → events
+//!                  ActionSystems::Objects   combat objects: delayed starts, their runs step (effects, telegraphs)
+//!                  ActionSystems::Effects   pairs start (start_pairs), heal, stamina, statuses, sounds, spawns, game effects
+//! SimSet::Move     (controller)             integrates LocomotionInput, external included; then projectiles fly
+//! SimSet::Resolve  ActionSystems::Hits      overlaps (a projectile sweeps its flight) → damage pipeline → events;
+//!                                           projectiles that met a target or a wall impact
 //!                  ActionSystems::Fighters  sprint drain, regeneration, cooldowns, memories age, pairs kept or lost,
 //!                                           finished actions end
 //!                  ActionSystems::Statuses  status ticks and expiry
-//!                  ActionSystems::Deaths    fighters at 0 health die
+//!                  ActionSystems::Deaths    combat objects whose action is over go; downed bodies bleed out;
+//!                                           fighters at 0 health die (or a lethal hook spares them)
 //! ```
 //!
 //! Tools: `light_attack`, `heavy_attack`, `block`, `parry`, `dodge`, `use_technique`,
-//! `use_item`, `lock_on`, `attack` (player); `god`, `heal`, `stagger`, `react`, `remember`, `motion_bake` (dev);
-//! `combat_overlay` (dev, with the `render` feature).
+//! `use_item`, `lock_on`, `attack`, `interact` (player); `god`, `heal`, `stagger`, `react`, `remember`, `down`, `motion_bake` (dev);
+//! `combat_overlay` (dev, with the `render` feature). Queries: `combat_objects` (player).
 //!
 //! ## The render feature
 //!
@@ -120,6 +123,7 @@ pub mod leap;
 pub mod lock;
 pub mod machine;
 mod invariants;
+pub mod objects;
 mod orders;
 mod predict;
 #[cfg(feature = "render")]
@@ -178,7 +182,11 @@ pub use status::{
     add_status_buildup, StatusApplied, StatusDef, StatusEffects, StatusExpired, StatusHook, StatusHooks, StatusResist,
     Statuses,
 };
-pub use zone::{hit_zones, threat_indicators, HitZone, Indicator, WorldShape};
+pub use objects::{
+    despawn_objects_of, live_tags_at, objects_of, spawn_objects, CombatObject, ObjectsSpawned, Projectile, ProjectileFlight, RepeatMark,
+    Repeats, SpawnAim, SpawnDef, SpawnPattern,
+};
+pub use zone::{action_zones, hit_zones, threat_indicators, HitZone, Indicator, WorldShape};
 
 /// Version of the action module.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -201,6 +209,9 @@ pub enum ActionSystems {
     Context,
     /// `SimSet::Act`: every fighter's action machine.
     Machine,
+    /// `SimSet::Act`, after the machine: the combat objects' delayed starts and runs
+    /// (`objects::run_objects`; [`objects`] says when they spawn, fly and go).
+    Objects,
     /// `SimSet::Act`, after the machine: effects the actions reached.
     Effects,
     /// `SimSet::Act`, after the effects: pushes (a reaction's knockback) add to the displacement
@@ -388,6 +399,8 @@ impl Plugin for ActionPlugin {
             .add_engine_invariant("action.memory_sane", invariants::memory_sane)
             .add_engine_invariant("action.leap_follows_run", invariants::leap_follows_run)
             .add_engine_invariant("action.ghost_follows_run", invariants::ghost_follows_run)
+            .add_engine_invariant("action.objects_sane", invariants::objects_sane)
+            .add_engine_invariant("action.objects_capped", invariants::objects_capped)
             .add_engine_invariant("action.downed_sane", invariants::downed_sane)
             .add_engine_invariant("action.grace_sane", invariants::grace_sane);
         coverage::plugin(app);
@@ -399,7 +412,7 @@ impl Plugin for ActionPlugin {
                 (
                     ActionSystems::Orders.in_set(SimSet::Input).after(CoreSystems::FollowOrders),
                     ModifierSystems::Reset.after(ActionSystems::Orders),
-                    (ActionSystems::Context, ActionSystems::Machine, ActionSystems::Effects, ActionSystems::Push)
+                    (ActionSystems::Context, ActionSystems::Machine, ActionSystems::Objects, ActionSystems::Effects, ActionSystems::Push)
                         .chain()
                         .in_set(SimSet::Act)
                         .after(MotionSystems::Intent),
@@ -454,6 +467,7 @@ impl Plugin for ActionPlugin {
         tools::register(app);
         bake::register(app);
         cue::plugin(app);
+        objects::plugin(app);
         #[cfg(feature = "render")]
         render::plugin(app);
     }
