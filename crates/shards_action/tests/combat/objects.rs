@@ -896,7 +896,7 @@ fn an_aimed_spawn_with_no_target_says_so() {
     assert!(spawned.is_empty());
     let lines: Vec<String> = app.world().resource::<ai_core::AiJournal>().after(0).0.map(|e| e.text.clone()).collect();
     assert!(
-        lines.iter().any(|l| l.contains("spawn of test skipped: it aims at the lock-on target and there is none (lock_on first)")),
+        lines.iter().any(|l| l.contains("spawn of test skipped: it aims at a target and there is none (provide a target or lock_on first)")),
         "{lines:?}"
     );
 }

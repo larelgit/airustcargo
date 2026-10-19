@@ -821,6 +821,25 @@ fn a_paired_run_aims_at_its_victim_not_at_the_lock() {
 }
 
 #[test]
+fn a_paired_run_started_from_a_moveset_input_aims_at_the_victim_the_select_finds() {
+    // `technique.1` is a hold with no `When::Pair` binding: its victim is found when the run starts (the nearest foe, to the
+    // north), while the lock is on a foe to the east that is farther.
+    let (mut app, hero, near) = arena();
+    put(&mut app, near, Vec3::new(0.0, 0.0, -1.0));
+    let other = foe_at(&mut app, Vec3::new(1.8, 0.0, 0.0));
+    let other_id = *app.world().get::<AiId>(other).unwrap();
+    app.world_mut().get_mut::<Intent>(hero).unwrap().target = Some(other_id);
+    step(&mut app, 1);
+    press(&mut app, hero, "technique.1");
+    step(&mut app, 1);
+    assert_eq!(action(&app, hero), "c_grab", "{:#?}", journal(&app));
+    assert_eq!(app.world().get::<Pairing>(hero).map(|p| p.victim), app.world().get::<AiId>(near).copied());
+    step(&mut app, 2);
+    let facing = app.world().get::<Transform>(hero).unwrap().forward();
+    assert!(facing.dot(Vec3::NEG_Z) > 0.9, "the run faces the victim, not the lock: {facing:?}");
+}
+
+#[test]
 fn a_pairs_angle_can_be_measured_from_what_the_fighter_means() {
     let (mut app, hero, foe) = arena();
     let other = foe_at(&mut app, Vec3::new(0.0, 0.0, 5.0));

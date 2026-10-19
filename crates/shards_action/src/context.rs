@@ -547,15 +547,44 @@ pub(crate) fn start_pairs(world: &mut World) {
             world.get::<Dead>(v).is_none() && world.get::<Health>(v).is_some() && world.get::<Paired>(v).is_none_or(|x| x.by == me)
         };
         let named = p.victim.and_then(|id| world.resource::<AiIndex>().get(id)).filter(|v| free(world, *v));
+        let chosen_here = named.is_none();
         let Some(victim) = named.or_else(|| pair_victim(world, p.attacker, &pair.select)) else { continue };
         let Some(victim_id) = world.get::<AiId>(victim).copied() else { continue };
         world.entity_mut(p.attacker).insert(Pairing { victim: victim_id, action: p.action.clone(), instance: p.instance, broke_once: false });
         world.entity_mut(victim).insert(Paired { by: me, exclusive: pair.exclusive });
+        if chosen_here {
+            aim_at_victim(world, p.attacker, victim, p.instance);
+        }
         if let Some(action) = &pair.victim_action {
             crate::machine::force_action(world, victim, action);
         }
         hold_break(world, victim, pair.hold_break);
         world.trigger(PairStarted { attacker: p.attacker, victim, action: p.action });
+    }
+}
+
+/// A paired run whose victim the machine did not know when it aimed (a moveset input, or a binding without `When::Pair`: the
+/// machine aimed at the lock-on) turns to the victim `select` found, as it would have if the binding had named it: the press's
+/// direction still wins, an action with `turn` spans keeps the body's facing, and a `steer: Move` action keeps its own.
+fn aim_at_victim(world: &mut World, attacker: Entity, victim: Entity, instance: u32) {
+    let Some(there) = world.get::<Transform>(victim).map(|t| t.translation) else { return };
+    let Some(here) = world.get::<Transform>(attacker).map(|t| t.translation) else { return };
+    let intent = world.get::<Intent>(attacker).cloned().unwrap_or_default();
+    let Some(run) = world.get::<ActionState>(attacker).and_then(|s| s.current.as_ref()).filter(|r| r.instance == instance) else { return };
+    let (action, dir, forward) = (run.action.clone(), run.dir, run.facing);
+    let Some(def) = world.resource::<ContentDb>().get::<ActionDef>(&action) else { return };
+    if !def.turn.is_empty() {
+        return;
+    }
+    let facing = crate::machine::steer(&def, dir, &intent, here, forward, Some(there));
+    if let Some(mut state) = world.get_mut::<ActionState>(attacker)
+        && let Some(run) = state.current.as_mut().filter(|r| r.instance == instance)
+    {
+        run.facing = facing;
+    }
+    if let Some(mut extras) = world.get_mut::<crate::machine::RunExtras>(attacker).filter(|x| x.instance == instance) {
+        extras.start_facing = facing;
+        extras.from = facing;
     }
 }
 

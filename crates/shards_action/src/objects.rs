@@ -367,7 +367,7 @@ pub fn spawn_objects(world: &mut World, spawner: Entity, action: &str, def: &Spa
     match def.aim {
         SpawnAim::Facing => {}
         SpawnAim::Target { .. } | SpawnAim::AtTarget if target_feet.is_none() => {
-            let text = format!("{owner} spawn of {action} skipped: it aims at the lock-on target and there is none (lock_on first); nothing spawned");
+            let text = format!("{owner} spawn of {action} skipped: it aims at a target and there is none (provide a target or lock_on first); nothing spawned");
             journal::emit(world, JournalKind::Event, text);
             return Vec::new();
         }
