@@ -18,7 +18,9 @@
 //!   strafe, hold) for those without a token ([`DirectorDef`]).
 //! - **Attack planner** ([`planner`]), for enemies and bosses: weights, distance windows,
 //!   cooldowns and forbidden sequences over the fighter's moveset ([`AttackPlanDef`]); it asks
-//!   the action machine's own rule ([`shards_action::can_start`]) before it presses.
+//!   the action machine's own rule ([`shards_action::can_start`]) before it presses. Why an
+//!   option may not be chosen now is one judge ([`schedule`], [`Refusal`]) that the director's
+//!   grant and the planner share.
 //! - **Duel rules** (all optional, neutral unless a definition asks): strike spacing between the
 //!   NPCs of one director ([`strike`]: [`DirectorDef::min_spacing`], `spacing_exempt_tags`, the
 //!   rule `npc.strike_spacing`), conditional plan options (`AttackOption::when`) and a state's
@@ -102,6 +104,7 @@ pub mod nav;
 pub mod overlay;
 pub mod perception;
 pub mod planner;
+pub mod schedule;
 pub mod strike;
 
 use ai_core::{AiAppExt, SimSet};
@@ -133,6 +136,7 @@ pub use nav::{
 pub use overlay::NpcOverlay;
 pub use perception::{sees, sees_within, sight_clear, HeardAt, Noise, Perceived, Sensed, Sound};
 pub use planner::{banned, choose, pick_weighted, resolve, NpcOptions, NpcPlan, PastAttack, Resolved};
+pub use schedule::Refusal;
 pub use strike::{spacing_ticks, wait_of, NpcStrike};
 
 /// Version of the NPC module.

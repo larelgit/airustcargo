@@ -26,7 +26,7 @@ use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use shards_action::{ActionState, Charges, Cooldowns, Dead, Fighter, FighterView, InputBuffer, LeapSite, Stamina};
 use shards_content::ContentDb;
-use shards_core::{flat, Intent, PlayerId};
+use shards_core::{flat, Intent};
 use shards_motion::{CharacterController, CharacterParams, Collider, MotionState, PhysicsWorld};
 
 use crate::brain::{clamp_to_leash, salt, Home, Npc, NpcBrain, NpcDrive, NpcThink};
@@ -34,7 +34,8 @@ use crate::def::{AttackPlanDef, DirectorDef, Role, WaitRole};
 use crate::perception::Perceived;
 use crate::chain::NpcChain;
 use crate::planner::{feasible, resolve, InFlight, NpcOptions, NpcPlan};
-use crate::strike::{chain_note, note_list, pool, spacing_ticks, waiting, NpcStrike};
+use crate::schedule::{inputs, living_players, FightCx, Players};
+use crate::strike::{chain_note, note_list, pool, NpcStrike};
 
 /// An NPC's attack token, while it holds one, and its place in the queue while it asks.
 #[derive(Component, Reflect, Clone, Debug, PartialEq, Default)]
@@ -241,12 +242,12 @@ pub(crate) fn direct(
     db: Res<ContentDb>,
     index: Res<AiIndex>,
     physics: Res<PhysicsWorld>,
-    players: Query<(), (With<PlayerId>, Without<Dead>)>,
+    players: Players,
     targets: Targets,
     mut npcs: Query<Fighting>,
 ) {
     let dt = time.delta_secs();
-    let players = players.iter().count() as u32;
+    let players = living_players(&players);
     let order = order(&npcs);
     let limit_of = |director: &str| DirectorDef::of(&db, director).limit(players);
 
@@ -398,27 +399,28 @@ pub(crate) fn direct(
         }
     }
     asking.sort();
-    for (_, id, entity) in asking {
+    let cx = FightCx { db: &db, physics: &physics, tick: tick.0, dt };
+    for (_, _, entity) in asking {
+        // Judged on the NPC's read-only view, by the rules the planner chooses by: some option
+        // must pass, distance aside (no token for a strike that would come too soon after
+        // another NPC's, among the rest).
+        let (target, d, limit) = {
+            let Ok(f) = npcs.get(entity) else { continue };
+            let d = pool(&f.npc.director);
+            let limit = limit_of(&d);
+            if held.get(&d) >= limit {
+                continue;
+            }
+            let Some(target) = f.brain.target else { continue };
+            let Some((there, radius)) = target_of(&index, &targets, f.perceived, target) else { continue };
+            let Some(inputs) = inputs(&f, &cx, (target, there, radius), &notes, &inflight) else { continue };
+            let options = resolve(inputs.plan_def, &db, &f.fighter.moveset, radius);
+            if !options.iter().any(|o| feasible(o, &inputs)) {
+                continue;
+            }
+            (target, d, limit)
+        };
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
-        let d = pool(&f.npc.director);
-        let limit = limit_of(&d);
-        if held.get(&d) >= limit {
-            continue;
-        }
-        let Some(target) = f.brain.target else { continue };
-        let Some((there, radius)) = target_of(&index, &targets, f.perceived, target) else { continue };
-        let director = DirectorDef::of(&db, &f.npc.director);
-        let Some(plan_def) = f.npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p)) else { continue };
-        let options = resolve(plan_def, &db, &f.fighter.moveset, radius);
-        let site = npc_site(&physics, &db, f.entity, f.transform, f.intent, f.body, Some((there, radius)));
-        let view = npc_view(&db, f.fighter, f.state, &f.drive.held, f.dead, (f.stamina, f.cooldowns, f.charges), f.motion, site);
-        let (budget, overlapping) = inflight.on(target, id, &director);
-        // No token for a strike that would come too soon after another NPC's.
-        let spaced_out = !plan_def.ignores_spacing && waiting(&notes, id, &d, tick.0, spacing_ticks(director.min_spacing, dt)).is_some();
-        let any = options.iter().any(|o| feasible(o, plan_def, &f.plan, &view, dt, budget, &overlapping, &director, spaced_out, f.options));
-        if !any {
-            continue;
-        }
         f.token.held = Some(Grant::new(target, &d, tick.0));
         f.token.asking_since = None;
         held.add(&d);
