@@ -177,6 +177,30 @@ fn a_chase_of_a_runner_is_not_blocked_but_a_body_stuck_against_a_wall_is() {
 }
 
 #[test]
+fn a_runner_that_pulled_away_and_stopped_is_still_closed_on() {
+    // The runner outpaces the body, so the distance grows past the nearest the body came; then it
+    // stops. The walk to it is progress from where it stopped, not a stall measured from before.
+    let mut app = bare_engine("order_chase_stop");
+    floor(app.world_mut());
+    let e = player(app.world_mut(), Vec3::ZERO);
+    app.world_mut().entity_mut(e).insert(CharacterParams { run_speed: 1.0, walk_speed: 1.0, ..default() });
+    let runner = app.world_mut().spawn((ai_core::AiKind::new("Runner"), Transform::from_xyz(2.0, 0.0, 0.0))).id();
+    step(&mut app, 3);
+    let id = *app.world().get::<ai_core::AiId>(runner).unwrap();
+    ok(&mut app, "move_to", json!({"target": id.to_string(), "within": 0.5}));
+    drive(&mut app, STALL_TICKS * 2, |w| {
+        w.get_mut::<Transform>(runner).unwrap().translation.x += 3.0 / 60.0;
+        true
+    });
+    let gap = app.world().get::<Transform>(runner).unwrap().translation.x - feet(&app, e).x;
+    assert!(gap > 6.0, "the runner pulled away: {gap}");
+    // It stands still now, more than a stretch of walking away: the order must not end as blocked.
+    step(&mut app, STALL_TICKS + 30);
+    assert_eq!(intent(&app, e).orders.len(), 1, "still closing in: {:?} at {}", journal(&app), feet(&app, e));
+    assert!(!journal(&app).iter().any(|l| l.contains("ended: blocked")), "{:?}", journal(&app));
+}
+
+#[test]
 fn a_restored_snapshot_ends_the_order_on_the_same_tick() {
     // The stall count (`OrderProgress`) is a lazy component the snapshot keeps: a game saved
     // 1.5 s into a stall and restored ends the order when the one that went on would have.

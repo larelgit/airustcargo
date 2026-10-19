@@ -143,6 +143,26 @@ fn the_play_tool_says_when_the_only_rule_is_held_to_solo_play() {
     app.insert_resource(NetRole::Host);
     let coop = ok(&mut app, "hitstop_play", play.clone());
     assert!(coop.contains("only in solo play") && coop.contains("in co-op"), "{coop}");
+    // A rule held to solo play and to blows of the local player: the probe counts the local
+    // player in the blow, as a real blow does.
+    let assets = Folder::new("solo_local");
+    assets.put(
+        "content/feel/test.hitstop.ron",
+        r#"{ "t": (max_seconds: 0.12, rules: [(name: "own dodge", when: (event: PerfectEvaded, solo: true, involves_local: true), seconds: 0.10)]) }"#,
+    );
+    let mut local = drawn(&assets);
+    let hero = fighter(local.world_mut(), "hero", "heroes", Vec3::ZERO, Vec3::NEG_Z, 100.0);
+    local.world_mut().entity_mut(hero).insert(LocalPlayer);
+    local.insert_resource(TimeUpdateStrategy::FixedTimesteps(1));
+    local.update();
+    sim::resume(local.world_mut());
+    for _ in 0..10 {
+        local.update();
+    }
+    local.insert_resource(NetRole::Host);
+    let own = json!({"event": "perfect_evaded", "target": id(&local, hero).to_string()});
+    let said = ok(&mut local, "hitstop_play", own);
+    assert!(said.contains("only in solo play"), "{said}");
     // An event no rule names is still just missing.
     let other = ok(&mut app, "hitstop_play", json!({"event": "parried"}));
     assert!(other.contains("no rule of the table gives a hold for parried"), "{other}");

@@ -155,7 +155,9 @@ pub fn end_stalled_orders(
             && flat(here - p.from).length() >= STALL_PROGRESS
             && flat(goal - p.goal_at).length() >= STALL_PROGRESS;
         if closer || chasing {
-            p.best = p.best.min(dist);
+            // A chase starts the distance over: a runner that pulled away and then stopped is
+            // closed on from where it stopped, not from the nearest the body ever came.
+            p.best = if chasing { dist } else { p.best.min(dist) };
             p.from = here;
             p.goal_at = goal;
             p.quiet = 0;
