@@ -336,3 +336,36 @@ fn a_field_without_ground_has_a_navmesh_without_nodes() {
     assert_eq!(nav.node_count(), 0);
     assert!(nav.report.failed.is_empty(), "{:?}", nav.report.failed);
 }
+
+/// Every move out of every node: `(from, to)` pairs, duplicates kept.
+fn all_moves(nav: &NavRegion) -> Vec<(u32, u32)> {
+    let mut out = Vec::new();
+    let mut pairs = Vec::new();
+    for n in 0..nav.node_count() {
+        nav.moves(n, &mut out);
+        pairs.extend(out.iter().map(|m| (n, m.0)));
+    }
+    pairs
+}
+
+#[test]
+fn a_corner_where_four_chunks_meet_is_linked_once() {
+    let mut app = region_app(solid);
+    let settings = settings(&app);
+    let nav = bake_volume(app.world_mut(), &settings, Cut::Chunks).unwrap();
+    let pairs = all_moves(&nav);
+    let unique: BTreeSet<_> = pairs.iter().collect();
+    assert_eq!(pairs.len(), unique.len(), "a move is listed twice");
+    // Stitching again in a world with a box at an interior corner, as a restitch does, counts
+    // what a fresh bake of that world counts.
+    let put = |app: &mut App| wall(app.world_mut(), Vec3::new(-4.4, 1.0, -4.4), Vec3::new(-3.6, 3.0, -3.6));
+    put(&mut app);
+    let carved = bake_volume(app.world_mut(), &settings, Cut::Chunks).unwrap();
+    let mut fresh_app = region_app(solid);
+    put(&mut fresh_app);
+    let fresh = bake_volume(fresh_app.world_mut(), &settings, Cut::Chunks).unwrap();
+    assert_eq!(carved.report.stitched, fresh.report.stitched, "the count depends on history");
+    let pairs = all_moves(&carved);
+    assert_eq!(pairs.len(), pairs.iter().collect::<BTreeSet<_>>().len(), "a move is listed twice");
+    assert_eq!(all_moves(&fresh), pairs);
+}

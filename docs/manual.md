@@ -5815,8 +5815,8 @@ holds only liquid and solid cells. Both are tested against a brute-force referen
 ### What is not here yet
 
 The region kind, spawning, the current and sea boxes and the volume hash in replay and snapshot checks (`voxel.volume`) are in
-"Voxel regions (A2c)"; the voxel field is in `shards_motion` ("Movement (E2)"). Navigation, meshing and the rest of the AI
-tools are the next PRs of the design.
+"Voxel regions (A2c)"; the voxel field is in `shards_motion` ("Movement (E2)"). The navmesh of a voxel region is baked by
+`shards_npc` ("Navigation", A2e). Meshing and the rest of the AI tools are the next PRs of the design.
 
 **Limits.** A shape is checked without being built (`VoxelVolume::check_shape`, also what `GenSpec::problems` calls): at most 2^27 cells, 65 536 chunks and 65 535 cells tall, so a content file with a tiny `chunk` is an error that says to use a bigger one, not an out-of-memory. `sphere`, `tube` and `flatten` are clipped to the volume, so a huge radius from a param costs the volume and not its box. `chunk_uniform` and `chunk_cells` let a mesher skip a one-block chunk without reading its cells. `world_hash` folds in the volume, the palette's semantics (`VoxelPalette::semantics`; `fingerprint` also covers the colours, for the picture) and the step list. Block colours are opaque (`#rrggbbaa` with an alpha is a content error). The finished volume is read-only by convention: hand out `&VoxelVolume`.
 

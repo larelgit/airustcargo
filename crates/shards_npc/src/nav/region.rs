@@ -1290,6 +1290,10 @@ impl NavRegion {
                 self.link_columns(terrain, settings, from, via, to, &mut extras);
             }
         }
+        // A corner where four chunks meet is faced by two rows (the east and the south edge of
+        // one chunk): each diagonal across it is made twice, and kept once.
+        extras.sort_by_key(|e| (e.from, e.to));
+        extras.dedup_by_key(|e| (e.from, e.to));
         self.report.closed_edges = closed.len();
         self.extras.extend(extras);
         self.extras.sort_by_key(|e| (e.from, e.to));
@@ -1315,6 +1319,7 @@ impl NavRegion {
             }
         }
         made.sort_by_key(|e| (e.from, e.to));
+        made.dedup_by_key(|e| (e.from, e.to));
         pairs.sort_unstable();
         let in_rows = |nav: &NavRegion, e: &Extra| !e.navlink && pairs.binary_search(&(nav.node_column(e.from), nav.node_column(e.to))).is_ok();
         let old: Vec<Extra> = self.extras.iter().filter(|e| in_rows(self, e)).copied().collect();
