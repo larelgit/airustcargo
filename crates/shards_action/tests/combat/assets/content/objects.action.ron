@@ -1,0 +1,48 @@
+// Spawned combat objects (tests/combat/objects.rs): flights, impacts, zones and a pulse.
+{
+    // A bolt's flight: the hit window is open the whole flight; where it stops it bursts.
+    "t_fly": (net_id: 300, phases: [("fly", 2.0)], impact: "t_burst",
+              hits: [(span: Phase("fly"), shape: Sphere(radius: 0.3), damage: 10, poise: 5)]),
+    // The same flight with nothing where it stops.
+    "t_fly_plain": (net_id: 301, phases: [("fly", 2.0)],
+                    hits: [(span: Phase("fly"), shape: Sphere(radius: 0.3), damage: 10)]),
+    // A flight whose impact hits around where it stops.
+    "t_fly_blast": (net_id: 302, phases: [("fly", 2.0)], impact: "t_blast",
+                    hits: [(span: Phase("fly"), shape: Sphere(radius: 0.3), damage: 10)]),
+    "t_blast": (net_id: 303, phases: [("blast", 0.2)], hits: [(span: Phase("blast"), shape: Sphere(radius: 2.5), damage: 7)]),
+    // The burst lays a puddle on the floor below.
+    "t_burst": (net_id: 304, phases: [("burst", 0.1)],
+                effects: [(at: 0.0, effect: Spawn((prefab: ["t_zone"], action: ["t_puddle"], ground: 4.0)))]),
+    // A ground zone: no telegraph, 3 s active, hits each target every 0.8 s.
+    "t_puddle": (net_id: 305, phases: [("telegraph", 0.0), ("active", 3.0), ("fade", 0.5)], tags: ["capture"],
+                 hits: [(span: Phase("active"), shape: Sphere(radius: 1.5), at: (up: 0.8), damage: 2, repeat: 0.8,
+                         flags: [Unblockable, NoPerfectEvade])]),
+    // A zone that hits each target once.
+    "t_once": (net_id: 306, phases: [("active", 2.0)],
+               hits: [(span: Phase("active"), shape: Sphere(radius: 1.5), at: (up: 0.8), damage: 3)]),
+    // A telegraphed ring: lands 0.5 s after it starts.
+    "t_ring": (net_id: 307, phases: [("telegraph", 0.5), ("active", 0.5)], tags: ["ring"], telegraph: (symbol: "~"),
+               hits: [(span: Phase("active"), shape: Circle(radius: 1.0), damage: 1)]),
+    // An object that only waits.
+    "t_wait": (net_id: 308, phases: [("wait", 1.0)]),
+    // A summon's pulse: a sound when it starts, again every 0.5 s.
+    "t_pulse": (net_id: 309, phases: [("pulse", 0.5)], then: "t_pulse", effects: [(at: 0.0, effect: Sound("pulse"))]),
+    // A pulse of another length, 0.51 s: 31 ticks.
+    "t_pulse_odd": (net_id: 310, phases: [("pulse", 0.51)], then: "t_pulse_odd", effects: [(at: 0.0, effect: Sound("pulse"))]),
+    // A volley at the lock-on target: three bolts, the middle one homes.
+    "t_volley": (net_id: 311, phases: [("windup", 0.1), ("cast", 0.1)],
+                 effects: [(at: 0.1, effect: Spawn((prefab: ["t_bolt", "t_bolt_homing", "t_bolt"], action: ["t_fly_plain"],
+                            at: (forward: 0.5, up: 1.0), aim: Target(height: 0.9), count: 3, pattern: Fan(spread: 10))))]),
+    // A zone laid 1.5 m ahead at 0.1 s.
+    "t_lay": (net_id: 314, phases: [("cast", 0.2)],
+              effects: [(at: 0.1, effect: Spawn((prefab: ["t_zone"], action: ["t_once"], at: (forward: 1.5))))]),
+    // A bolt shot ahead at 0.1 s, from the chest.
+    "t_shoot": (net_id: 315, phases: [("cast", 0.2)],
+                effects: [(at: 0.1, effect: Spawn((prefab: ["t_bolt"], action: ["t_fly_plain"], at: (forward: 0.5, up: 1.0))))]),
+    // A sweep that hits two targets at most, lowest id first.
+    "t_sweep": (net_id: 316, phases: [("active", 0.1)],
+                hits: [(span: Phase("active"), shape: Circle(radius: 3.0), damage: 1, max_targets: 2)]),
+    // A fighter's action that ends into another one.
+    "t_chain_a": (net_id: 312, phases: [("a", 0.2)], then: "t_chain_b"),
+    "t_chain_b": (net_id: 313, phases: [("b", 0.3)], effects: [(at: 0.0, effect: Sound("chain"))]),
+}

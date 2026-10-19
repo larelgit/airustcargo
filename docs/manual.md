@@ -1870,6 +1870,113 @@ Prediction: the client's predictor searches the landing on its own colliders, la
 the ghost, and adopts the host's scale of the leap; `Ghost` is a predicted component. Engine rules: `motion.launch_sane`,
 `action.leap_follows_run`, `action.ghost_follows_run`.
 
+### Spawned combat objects (B4)
+
+An action can lay down objects that act on their own for its fighter: bolts that fly, zones on the ground, a summon that
+pulses. They are entities with `CombatObject` and an `ActionState`, not fighters: no health, no buffer, no perception, no
+director; `run_objects` advances their actions, and their hit windows go through the same hit detection and damage
+pipeline as a fighter's, credited to the owner. Everything is content, off by default and unserialized at its default
+(content hashes and the reference replays of older content do not change).
+
+```ron
+// content/combat/objects.prefab.ron (the sandbox)
+{
+    "bolt": (components: {"AiKind": ("projectile"), "Projectile": (speed: 15.0, lifetime: 2.4, aim_height: 0.9)}),
+    "bolt_homing": (components: {"AiKind": ("projectile"), "Projectile": (speed: 15.0, lifetime: 2.4, homing: 0.9, aim_height: 0.9)}),
+    "zone": (components: {"AiKind": ("zone")}),
+}
+// content/combat/objects.action.ron (the sandbox; `caster_volley` is the caster moveset's light)
+{
+    "caster_volley": (net_id: 170, phases: [("windup", 1.0), ("cast", 0.22), ("recovery", 0.85)],
+        effects: [(at: 1.0, effect: Spawn((prefab: ["bolt", "bolt_homing", "bolt"], action: ["bolt_fly"],
+                   at: (forward: 0.8, up: 1.2), aim: Target(height: 0.9), count: 3, pattern: Fan(spread: 11))))]),
+    "bolt_fly": (net_id: 171, phases: [("fly", 2.4)], impact: "bolt_burst",
+        hits: [(span: Phase("fly"), shape: Sphere(radius: 0.26), damage: 8, poise: 6, guard_damage: 18, reaction: 1)]),
+    "bolt_burst": (net_id: 172, phases: [("burst", 0.1)],
+        effects: [(at: 0.0, effect: Spawn((prefab: ["zone"], action: ["chill_puddle"], ground: 4.0)))]),
+    "chill_puddle": (net_id: 173, phases: [("telegraph", 0.0), ("active", 3.0), ("fade", 0.5)], tags: ["capture"],
+        hits: [(span: Phase("active"), shape: Sphere(radius: 1.5), at: (up: 0.8), damage: 2, guard_damage: 18,
+                repeat: 0.8, flags: [Unblockable, NoPerfectEvade], status: [("spar_chill", 22)])]),
+}
+```
+
+**Spawning.** `Effect::Spawn(SpawnDef)` spawns `count` objects in `pattern` when the action reaches it (an object's own
+action may spawn too: a bolt's impact lays a puddle). `prefab` and `action` are lists by index, the last entry repeating, so
+which shot of a volley homes is content (the sandbox homes the middle one). `at` is the pattern's point in the spawner's frame
+(forward along its running facing). `aim`: `Facing` (default), `Target(height)` (toward the spawner's lock-on target, `height`
+above its feet; an object's: the target its projectile flies at), `AtTarget` (the pattern is laid around the target's feet);
+with no target nothing is spawned. `pattern`: `Fan(spread)` (all at `at`, index i turned `spread * (i - (count - 1) / 2)`
+degrees, a positive angle turning left: index 0 is the rightmost), `Line(start, step)` (index i at `start + step * i` metres
+ahead), `Radial(lines, start, step)` (`lines` lines evenly around, line k turned `360 k / lines` degrees left, `count` on each,
+spawned line by line; the index lists and `delay` go by the index on a line). `delay`: index i starts its action `delay * i`
+seconds after the spawn and waits idle until then. `random_turn: true` turns the whole pattern by one `SimRng` draw in
+[0, 360). `ground: m` puts each object on the floor found within `m` metres below its point (a miss keeps the point).
+`stay: true` keeps the object when its action ends (a summon); by default it goes then. A game spawns objects with its own
+point and facing through `spawn_objects(world, spawner, action, &def, Some((point, facing)))`.
+
+The owner is the spawner, or the spawner's owner when the spawner is an object. Each object gets `CombatObject { owner,
+spawned, start_in, action, stay }`, the owner's `Team` and an `ActionState`; a prefab with `Projectile` also gets its
+`ProjectileFlight` (a prefab cannot set where it flies). Objects are spawned through `PrefabCache`, which builds a prefab
+from its text on its first spawn and again only when a definition of its `extends` chain changed (`spawn_prefab_cached`).
+A prefab that is not AI-visible (no `AiKind`) is refused at the spawn with an error in the journal. The objects whose
+`start_in` is 0 start their action at once; an object acts from the tick after its spawn (an object spawned by an action's
+effect on tick N steps and hits from tick N + 1). `ObjectsSpawned` is journalled: `e8 spawns 3 x bolt_fly`.
+
+**Caps.** `CombatTuning::max_objects` (256) and `max_objects_per_owner` (96) are content. A spawn checks them before its
+first index and lays down the indices that fit, in index order, and the journal says so:
+`[warn] e8 spawn capped: 2 of 3 bolt_fly (max_objects 256, max_objects_per_owner 96)`. Together with the content check (a
+circle of `Spawn` and `impact` edges is an error, below) and the cache, a typo cannot become a runaway spawner.
+
+**Projectiles.** `Projectile { speed, lifetime, homing, aim_height, pierce }` is the authored part, `ProjectileFlight { dir,
+age, target, from }` the flight. Each tick (`SimSet::Move`, after the controller, in `AiId` order) the age grows; at
+`lifetime` its action is cut (no impact) and it goes. Homing turns `dir` toward the living target's feet plus `aim_height` by
+`clamp(homing * dt, 0, 1)` of the angle (a spherical blend written with `ops`). It flies `speed * dt`; a `LayerMask::WORLD`
+collider on the way stops it 2 cm off the surface (`dir` zero). Its flight action's sphere hit windows sweep the segment
+it flew in the tick (a fast bolt hits what it passed between two ticks); a projectile that does not pierce meets the first
+target along that segment, whatever the ids, and that ends its flight whatever the outcome (a hit, a block, a dodge, an
+ignored hit). Where it stops (a wall, a target) it runs its flight action's `impact`, if any, else it goes; the impact
+action hit-tests from the next tick. Nothing targets a projectile: it has no hurtbox.
+
+**Zones.** A zone is an object whose action has a hit window (the sandbox writes `telegraph`, `active` and `fade` phases).
+`HitDef::repeat: s` hits each target again every `s` seconds of the run, each from its own first hit, instead of once per
+run and group (marks in `Repeats` on the object, sorted by run, group and target); it is 0 or at least 0.05 s. Zones have no
+result cap. `HitDef::max_targets: n` caps a sweep's targets in one tick to the first `n` in `AiId` order that the ledger lets
+through (0: no cap). `hit_zones` lists the objects' zones with `owner` and the action's `tags`; `zones_threatening` leaves out
+a body's own zones and its objects'. `live_tags_at(world, point, margin)` is the sorted tags of the objects' zones still to
+land or landing that a body of `margin` at `point` touches (a planner that lays a `capture` zone asks it first).
+
+**Credit and owners.** An object's hit is its owner's: `DamageCtx::credit` is the owner, events name it as the attacker or
+killer and the object as `source`, and a game's damage hooks read the owner when the hit lands. Guard arcs and pushes are
+measured from the object, and a parry staggers the object (which has no stagger: nothing happens). An object never hits its
+own owner, team or not. When the owner dies (`kill`, any cause) its objects are despawned with it; a dead or gone owner
+spawns nothing (a death action's `Spawn` too), and an object whose owner is dead or gone deals nothing and goes (`despawn_objects_of(world, owner)` does it by hand, for a boss's phase change;
+`objects_of` lists them). Combat objects leave no tombstone in the `AiIndex`: one radial cast would otherwise push the dead
+ids worth remembering out of it.
+
+**Chaining.** `ActionDef::then: "action"` starts that action when this one finishes (its time ran out; not when it is cut),
+in the same tick, after the end's observers (one that started something else keeps it), with its `at: 0` effects and
+telegraph. On fighters and objects alike: a summon's pulse is an action that names itself (`then: "pulse"`), repeating every
+`ceil(60 L)` ticks for a length of `L` seconds (the engine's timer rule). `ActionDef::impact` is the flight action's action
+where it stops. The content check refuses `then`, `impact` and `Spawn` actions that do not exist, and a circle along `then`,
+`impact` and `Spawn` edges that takes an `impact` or `Spawn` edge (`spawns and impacts go round in a circle (a -> Spawn b
+-> Spawn a)`); a circle of `then` alone is a pulse, and allowed.
+
+**Order in a tick.** `ActionSystems::Objects` (`SimSet::Act`, after the machine, before the effects): objects whose owner is
+gone or dead go, delayed ones count down and start, running ones step (effects, telegraphs). `Spawn` effects spawn in
+`ActionSystems::Effects`. Projectiles fly in `SimSet::Move`. In `ActionSystems::Hits` the hits sweep and resolve, then
+`consume_projectiles` runs the impacts of the projectiles that met a target or a wall. Objects whose action is over (started,
+not `stay`, running nothing) go in `ActionSystems::Deaths`, before the deaths. A combat object spawned while a region is
+loaded belongs to it (`RegionPart`): a region change takes it.
+
+**Co-op.** Nothing is predicted: objects are host entities that come over to a client with their `AiId`s, and the events of
+their hits come over like a fighter's (a `source` the client no longer has arrives as `Entity::PLACEHOLDER`).
+
+**For agents.** The describer lines `projectile of e8 15.0m/s -> e5 0.40s` (the time is the distance to the target over the
+speed; `stopped` once it has), `of e8 (chill_puddle)` and `starts in 0.22s`; the conditions `objects_live` and
+`projectile_flying`; the read-only query `combat_objects` (optionally `owner=eN`): each object's id, owner, kind, action,
+phase and the seconds left of it (or `starts_in`), and where it is. Engine rules: `action.objects_sane`,
+`action.objects_capped`; `action.running_sane` covers the objects' runs.
+
 ### Content formats
 
 Seven kinds: `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`. All are checked together with the base, and errors name the file, the field and the nearest id. The sandbox's real files are in `crates/sandbox/assets/content/region/`.
@@ -2845,10 +2952,10 @@ A tool is an argument struct (serde + schemars) and an ordinary Bevy system, `In
 
 | scope | tools |
 |---|---|
-| **Player** (plays fair, only through `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; movement: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; combat: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack; world: region_info, level_info, nav_path, npc_state; settings: settings, settings_set (like the settings menu for a human); sound: audio; Steam (feature `steam`): steam, steam_invite |
+| **Player** (plays fair, only through `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; movement: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; combat: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack, combat_objects; world: region_info, level_info, nav_path, npc_state; settings: settings, settings_set (like the settings menu for a human); sound: audio; Steam (feature `steam`): steam, steam_invite |
 | **Dev** (everything, including time) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset, motion_bake; world: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; sound: sound_play, music_set; mesh looks: looks, look_outlines; foliage: scatter, scatter_set; effects: effects, effect_play, telegraph_decals; Steam (feature `steam`): steam_host, steam_join, achievement_unlock; developer menu and console: dev_menu, console |
 
-The game adds its own (in the template, `taunt` and the conditions `arena_cleared`, `foe_near`, `in_fight`; in the sandbox, the conditions `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`). Modules add conditions for `step --until named:…`: `near_poi` (world, appears with the first region), `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_avoiding`, `npc_engaged`, `npc_near` (NPC). Each
+The game adds its own (in the template, `taunt` and the conditions `arena_cleared`, `foe_near`, `in_fight`; in the sandbox, the conditions `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`). Modules add conditions for `step --until named:…`: `near_poi` (world, appears with the first region), `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_avoiding`, `npc_engaged`, `npc_near` (NPC), `objects_live`, `projectile_flying` (combat objects). Each
 tool has a kind (`kind` in `shards tools`):
 
 - `query` only reads the world: no journal entry and no diff;
@@ -3630,7 +3737,7 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `motion.finite` | every `AiVisible` entity has a finite `Transform` translation and a finite rotation of length 1 ± 1e-3, and a finite `MotionState` (velocity, ground normal, timers, mantle, fall height, water surface, updraft, placed position). Scale is not judged |
 | `voxel.body_in_solid` | no character has its capsule centre in a solid cell of a voxel field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). On by default since the fuzz runs on the voxel arena (see "Voxel fields") |
 | `action.resources_in_range` | `Health`, `Stamina` and `Poise` are finite with `max > 0` and `0 <= current <= max`. Dead bodies are checked too (`current` is 0). A game that wants a buff above `max` raises `max` with it |
-| `action.running_sane` | a running action of a fighter exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. The length is the run's own when that is longer than the definition's (miss recovery and `extend_recovery` lengthen a run, B2a). Without a content database the rule passes |
+| `action.running_sane` | a running action of a fighter or a combat object (B4) exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. The length is the run's own when that is longer than the definition's (miss recovery and `extend_recovery` lengthen a run, B2a). Without a content database the rule passes |
 | `action.protection_sane` | every `Protection` (the reaction and poise timers, B1) holds finite timers, none below 0. A NaN stays a NaN through the countdown and would shield its fighter for ever |
 | `action.barrier_sane` | every `Barrier` (B2b) holds a finite `amount >= 0` and a finite `left`. `grant_barrier` takes the larger pool and a positive time and `hurt` removes an empty one, so a violation names a writer that put a number there by hand (a NaN time never runs out, a negative pool would heal what it absorbs) |
 | `action.damage_taken_sane` | every `DamageTaken` (B2b) holds finite multipliers `>= 0`, finite times and its keys sorted and unique. `set_damage_taken` inserts in key order and replaces a key; two entries under one key would multiply twice and make `clear` leave one behind |
@@ -3639,6 +3746,8 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `motion.launch_sane` | every `Launch` (the one-shot that launches a body up, B2c) asks for a finite height above 0 and sits on a character (`CharacterController`). The controller takes it in the tick it is put and removes it |
 | `action.leap_follows_run` | every `LeapRun` (what a leap keeps, B2c) belongs to the run its fighter is running (the same `instance`) of an action that leaps, with a finite `scale >= 0` |
 | `action.ghost_follows_run` | a fighter carries `Ghost` only while its running action has `ghost` and an `intangible` span open in the tick. On a fighter the ghost is the machine's |
+| `action.objects_sane` | every combat object (`CombatObject`, B4) belongs to an owner in the world, or to one that went in this tick (its objects go on the next), and every projectile holds a finite `speed`, `lifetime` and `age` `>= 0` and a direction of length 1 (0 once it stopped). `spawn_objects` sets the owner and the flight, the owner's death and the objects' own pass take them away |
+| `action.objects_capped` | no more combat objects are alive than `CombatTuning::max_objects`: `spawn_objects` lays down only the indices that fit (and warns in the journal), so more names a spawn that went around it |
 | `action.lock_on_valid` | with a `lock_on` definition, no body's `Intent.target` names an entity that no longer exists or is dead: the lock-on check (`LockSystems::Check`, after `CoreSystems::ClearPresses`) lets go of such a lock at the end of every tick, after the deaths and the engine's despawns of that tick, so a violation names a lock set later in the tick or a body taken away after the check (a game system in `SimSet::Cleanup` after the check: it belongs before it). Without a definition locks are not checked and the rule passes (C6) |
 | `action.pairs_match` | a `Pairing` (a paired action's hold, B3) belongs to the run its fighter is running (the same action and `instance`), its victim (when it still exists) carries `Paired` by that fighter, and every `Paired` whose holder still exists is named by the holder's `Pairing`. The two marks are put in and taken out together (`release_pair`), so one alone is a pair a system broke behind the engine's back |
 | `action.memory_sane` | every `Memory` (what a fighter remembers for a while, B3) is not empty, holds finite times above 0 and keys sorted and unique, and every `GuardArm`'s press is not after the current tick |
@@ -3667,7 +3776,7 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-28 rules, checked after every tick
+30 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
@@ -3684,6 +3793,8 @@ $ shards assert list
   action.memory_sane  engine rule  armed
   action.leap_follows_run  engine rule  armed
   action.ghost_follows_run  engine rule  armed
+  action.objects_sane  engine rule  armed
+  action.objects_capped  engine rule  armed
   action.lock_on_valid  engine rule  armed
   npc.state_known  engine rule  armed
   npc.strike_spacing  engine rule  armed
