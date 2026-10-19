@@ -2,7 +2,8 @@
 # lethal hook spares it: its moveset has a downed pose and other players stand). On c1 the body is
 # down: its own controls refuse, nothing is predicted for it. c2's e16 holds interact next to it; the
 # client does not predict a paired action, so the host starts the revive and, 3 s later, stands
-# e15 up with 30 % health and a second of grace; c1 sees it stand and plays on.
+# e15 up with 30 % health and a second of grace; c1 sees it stand and plays on. Down a second time with
+# nobody near, it bleeds out 20 s later.
 #
 # The three players get the `partner` moveset (`content/combat/downed.*.ron`); they go back at the end.
 #
@@ -99,6 +100,27 @@ step 60
 @c1 expect result contains "\"mispredicted\": 0"
 @c2 act net_status
 @c2 expect result contains "\"mispredicted\": 0"
+
+# --- 3. down again and nobody comes: e15 bleeds out 20 s later, killed by the warden
+@host act heal id=e15
+@host act teleport id=e16 x=6 z=13 y=0
+@host act teleport id=e6 x=0 z=9.5 y=0
+step 30
+@host act lock_on target=e15
+@host expect result contains "ok: locked on e15"
+step 40
+@host act set id=e15 component=Health path=current value=10
+@host act light_attack
+@host expect result contains "ok: slash"
+@host step 60 --until "journal:e15 is down"
+@host expect journal "e15 is down (bleeds out in 20.0s)"
+@host step 1300 --until "journal:e15 died"
+@host expect journal "e15 died (killed by e6)"
+@c1 step 120 --until "journal:e15 died"
+# (the event can come a few ticks before the state that goes with it)
+step 30
+@c1 act inspect id=e15
+@c1 expect result !contains "downed"
 invariant !journal "desync"
 
 # --- the arena as it was: movesets back, nobody locked on, everybody healed

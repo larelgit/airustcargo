@@ -103,7 +103,7 @@ The roll is an ordinary player input: the agent's tools go through the same `Int
 **Gameplay**
 
 - A kinematic character controller (walk, sprint, jump, ledge climb, swim) on a physics layer, an input map for keyboard, mouse and gamepad, a third-person camera.
-- Combat as data: actions with phases, hit windows, invulnerability, cancels and stamina costs; movesets, block, parry, dodge, lock-on, statuses, ground telegraphs.
+- Combat as data: actions with phases, hit windows, invulnerability, cancels and stamina costs; movesets, block, parry, dodge, lock-on, statuses, ground telegraphs; a game has its say before a death (survive, or go down for a partner to revive).
 - Animation from content: a set maps states and actions to the clips of a glTF skeleton; attack and roll displacement is baked from the clips.
 - NPCs with behaviour state machines, sight, hearing and memory, and attack plans, all in content; a leash keeps an enemy near its home.
 - A combat director hands out attack tokens, so a limited number of enemies attack at once.

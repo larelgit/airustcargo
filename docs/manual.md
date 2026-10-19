@@ -392,7 +392,7 @@ FixedUpdate
   SimSet::Resolve  ActionSystems::Hits           attack windows × hitboxes → damage pipeline → events
                    ActionSystems::Fighters       sprint, recovery, cooldowns, end of actions
                    ActionSystems::Statuses       accumulation and duration of statuses
-                   ActionSystems::Deaths         a fighter at 0 health dies
+                   ActionSystems::Deaths         bleed-outs, then a fighter at 0 health dies (or a lethal hook spares it)
   SimSet::Cleanup  CoreSystems::ClearPresses     presses nobody took are cleared
 FixedLast        ai_core: replay checks (world hash), record inputs, journal, failure queue
 ```
@@ -1111,7 +1111,7 @@ The `shards_action` crate. An attack, a block, a parry, a roll and a flask are a
 
 **The machine.** A press from `Intent` waits in the input buffer `CombatTuning::input_buffer` (0.15 s by default) until its action becomes possible; cancel windows let one action be interrupted by another (combos); a held action repeats (a raised block). One rule, `can_start`, answers both the machine and the tools: `ok: light_1`, `ok: queued, light starts in 0.10s`, `not enough stamina: 20/40 (ready in 1.5s)`, `busy: windup light_1 0.17s (ready in 0.27s, when a cancel window opens)`. A press whose time has run out is written to the journal: `e5 light rejected: busy (active light_1 0.10s)`. A cancel window with a `queue` span holds a press made while that span is open until the window opens (the press lives until then plus the buffer time), and a moveset can keep one press at a time by priority (`buffer: SingleSlot(..)`); a cooldown can be shared by several actions (`cost.cooldown_key`). See "Action timeline (B2a)" below.
 
-**Hits** are detected in `SimSet::Resolve` after movement. Attack shapes overlap hurtboxes (colliders with the `HURTBOX` layer; the `Fighter` collider gets it). Attackers and targets are taken in `AiId` order. One target is hit once per action (and once per `group`). The damage pipeline: immortality (`god`) → invulnerability (`Evaded`, `PerfectEvaded` inside a perfect-evade window) → parry (`Parried`, the attacker staggers unless the guard says otherwise) / block (`Blocked`, costs stamina) / guard break (`GuardBroken`) → damage taken (`DamageTaken`, B2b) → armour → game hooks (`add_damage_hook`, in registration order) → barrier and health, statuses, poise (a break is `stagger`; otherwise a reaction of the tier the hit asked for, or the old flinch) → death; see "Hit outcome: reactions, protection, pushes (B1)" below. Events: `Damaged`, `Staggered`, `Died`, `Healed`, `ActionStarted`, `ActionRejected`, `ActionSound` (the `Sound` effect).
+**Hits** are detected in `SimSet::Resolve` after movement. Attack shapes overlap hurtboxes (colliders with the `HURTBOX` layer; the `Fighter` collider gets it). Attackers and targets are taken in `AiId` order. One target is hit once per action (and once per `group`). The damage pipeline: immortality (`god`) → invulnerability (`Evaded`, `PerfectEvaded` inside a perfect-evade window) → parry (`Parried`, the attacker staggers unless the guard says otherwise) / block (`Blocked`, costs stamina) / guard break (`GuardBroken`) → damage taken (`DamageTaken`, B2b) → armour → game hooks (`add_damage_hook`, in registration order) → barrier and health, statuses, poise (a break is `stagger`; otherwise a reaction of the tier the hit asked for, or the old flinch) → death, unless a game's lethal hook turns it into a survive or a downed state (see "Death, downed and revive (B5)" below); see "Hit outcome: reactions, protection, pushes (B1)" below. Events: `Damaged`, `Staggered`, `Died`, `Healed`, `ActionStarted`, `ActionRejected`, `ActionSound` (the `Sound` effect).
 
 **Fighter resources** are components: `Health`; `Stamina` (it regenerates after a delay; sprinting spends it, and once it is drained to zero, sprint does not start again until the button is released); `Poise` (it regenerates after a delay; at 0 the poise breaks and forces a `stagger` action); `Armor`; `Team` (they hit only members of other teams); `Charges` (named consumables, such as the flask); `Cooldowns`; `Dead`.
 
@@ -1218,7 +1218,7 @@ A hit can ask for more than damage: a **reaction tier** (what the target is put 
                reaction_armor: 0, reaction_immunity: 0.2, reaction_protection: 1.0, break_protection: 3.0) }
 ```
 
-**The pipeline after B1.** `detect` (a hit with `LineOfSight` skips a target when a ray from the attacker's chest to the target's meets a `LayerMask::WORLD` collider; the two bodies' own colliders never count; a skipped target is not marked, so it can still be hit later in the same window; the chest is `CombatTuning::sight_height`, 0.6, of the body's height) → `resolve` fills a `DamageCtx` (`credit`, `dir`, `reaction`, `reaction_armor`, `knockback`, `taken`, `guard_mult`, `weight`, `ignore_reason`) → `modifiers` (god mode, i-frames and perfect evades, guards with per-hit costs and shares, `Armor`) → the game's hooks → `apply`. `apply` works out a **plan** first (does the poise break, does the target react), so `Damaged` can carry its `weight` and `reaction` while still being triggered before death, statuses and poise, as it always was. Events name the credited entity (`DamageCtx::credit`) as `attacker` or `killer`; `source` is the combat object that hit (`DamageCtx::attacker`) when it is not the credited entity: a hook that sets `credit` to an owner gets `source` set to the object on `Damaged`, `Blocked`, `GuardBroken`, `Parried`, `Evaded`, `PerfectEvaded` and `Died` (`kill_with` for a game that kills itself; `kill` leaves it `None`). A parry staggers `DamageCtx::attacker`, the object that hit. A status a hook appends to a blocked hit is applied (the block applies whatever is left in the context after the hooks, by default the `status_mult` share). `Damaged::ignore_reason` is `None` for a hit that landed; a hook that sets `Ignored` without a reason prints `ignored`. A hit's `weight` is at least its action's `weight` (a floor, B3; none by default), and a paired action's strike is at least `Finisher`; a game hook may still set it. `IgnoreReason::Downed` is reserved: the engine never sets it, a game hook may.
+**The pipeline after B1.** `detect` (a hit with `LineOfSight` skips a target when a ray from the attacker's chest to the target's meets a `LayerMask::WORLD` collider; the two bodies' own colliders never count; a skipped target is not marked, so it can still be hit later in the same window; the chest is `CombatTuning::sight_height`, 0.6, of the body's height) → `resolve` fills a `DamageCtx` (`credit`, `dir`, `reaction`, `reaction_armor`, `knockback`, `taken`, `guard_mult`, `weight`, `ignore_reason`) → `modifiers` (god mode, i-frames and perfect evades, guards with per-hit costs and shares, `Armor`) → the game's hooks → `apply`. `apply` works out a **plan** first (does the poise break, does the target react), so `Damaged` can carry its `weight` and `reaction` while still being triggered before death, statuses and poise, as it always was. Events name the credited entity (`DamageCtx::credit`) as `attacker` or `killer`; `source` is the combat object that hit (`DamageCtx::attacker`) when it is not the credited entity: a hook that sets `credit` to an owner gets `source` set to the object on `Damaged`, `Blocked`, `GuardBroken`, `Parried`, `Evaded`, `PerfectEvaded` and `Died` (`kill_with` for a game that kills itself; `kill` leaves it `None`). A parry staggers `DamageCtx::attacker`, the object that hit. A status a hook appends to a blocked hit is applied (the block applies whatever is left in the context after the hooks, by default the `status_mult` share). `Damaged::ignore_reason` is `None` for a hit that landed; a hook that sets `Ignored` without a reason prints `ignored`. A hit's `weight` is at least its action's `weight` (a floor, B3; none by default), and a paired action's strike is at least `Finisher`; a game hook may still set it. The engine sets `IgnoreReason::Downed` on a hit that finds a downed body and `IgnoreReason::Grace` on one inside a `Grace` (B5); a game hook may set either.
 
 - **Guard.** The cost of a block is `hit.guard_damage` (else the hit's damage) times `stamina_per_damage`. A perfect guard pays `perfect_cost_mult` of it (`Parried { stamina }`, journal `, -10 stamina` only when above 0); when it cannot pay, the guard breaks, perfect or not, and spends all the stamina. `parry_staggers: false` leaves the attacker alone: the game's `Parried` observer decides (poise through `poise_damage`, a recoil through `react`). A guard break lets `break_damage_mult` (else `damage_mult`) of the damage through, a block `damage_mult`; a block lets `status_mult` of the status buildup through, a break `break_status_mult` (0, the old rule, lets none). A break forces the moveset's `guard_broken` action (then `Staggered { cause: GuardBroken }`), else its `stagger`; `guard_broken_push: (scale, decel)` starts a push at `scale` times the body's current flat velocity. **The guard is decided before the hooks**, from the damage as the hit defines it: a hook that rescales damage must also change `outcome` and `guard_mult` if it wants Blocked versus GuardBroken decided again; the engine does not redo the guard after the hooks.
 - **Perfect evade.** A hit that meets i-frames while a `perfect_iframes` span is also open is `Outcome::PerfectEvaded`: `Evaded`, then `PerfectEvaded`. Not for a hit with `NoPerfectEvade` (ground zones), nor for one that does no damage. The attacker's ledger marks the defender at the first detection, so it is once per swing. Every `perfect_iframes` span must lie inside the i-frames. **`perfect_iframes` and `armor` spans are sampled at the instant of the tick** (`start <= t <= end`), not over the tick: the roll's `Secs(0.105, 0.215)` is open in ticks 7 to 12 (6 ticks at 60 Hz), not 13. Content copied from a source that samples the same way keeps its literal numbers. (`iframes`, `hyper_armor`, guard and hit windows keep the older over-the-tick rule.)
@@ -1507,8 +1507,9 @@ start, and triggers `PairStarted { attacker, victim, action }`. While it lasts:
   hit is such a strike before it runs, with `weight` already raised to `Finisher`: a finisher's formula keys on it;
 - the victim's hold and broken poise refuse every other attacker's reactions, not the holder's;
 - `tend_pairs` (fighter chain, `AiId` order) ends the pair. It is `Cut` when the fighter's run is no longer the pair's. It is
-  `Lost` when the victim is gone or dead (the run goes on with its lunge stopped: the lazy `RunHalted { instance }` zeroes the
-  run's own motion until the run ends), or when the two are farther apart than `break_range` (the run is cut). `cancel_on_hurt`
+  `Lost` when the victim is gone, dead, or down while the pair does not take downed bodies (the run goes on with its lunge stopped: the lazy `RunHalted { instance }` zeroes the
+  run's own motion until the run ends), or when the two are farther apart than `break_range` (the run is cut). It is `Cut` when
+  the fighter itself is dead or down (B5). `cancel_on_hurt`
   cuts the run on damage above 0 to the fighter.
 
 Every end goes through `release_pair(world, attacker, end)`. It takes both marks off, cuts the victim's `victim_action` unless
@@ -1516,9 +1517,10 @@ the pair `Finished` with the victim alive (the strike's reaction already replace
 `PairEnded { attacker, victim, action, end }` (`Finished`, `Lost`, `Cut`; `victim` is `None` when it no longer exists). A
 finisher whose strike kills its victim ends as `Lost` (the victim is dead when `tend_pairs` looks), never `Finished`, and the
 journal says `lets go of e7 (lost)`: a game that keys on the end of a pair (a lane that rewards finishers) listens to `Damaged`
-with `weight: Finisher` or to `Died`, not to `PairEnd::Finished`. When the attacker dies mid-pair the pair is `Cut` and the
-victim's held action is cut with it, so its broken poise ends with that action (the victim is free at once; no ruling asks for
-more).
+with `weight: Finisher` or to `Died`, not to `PairEnd::Finished`. When the attacker dies or goes down mid-pair (B5) the pair is `Cut`. A victim
+whose poise is still broken goes back into its moveset's `stagger` for exactly the rest of its break (`resume_stagger`: the
+break is the one it had, no fresh break, no `Staggered`, not ended early; 13a, "B3 as built"); any other victim's held action is
+cut, so it is free at once.
 `cut_action(world, entity)` ends a run with `ActionEnded { end: Interrupted }`.
 
 **Prediction and co-op.** Bindings, memories, the guard's press and pairs are decided on the host: `ActionSystems::Context` and
@@ -1574,7 +1576,7 @@ inputs.
 **Content checks.** `Recall::Ended`, `Recall::Started` and `Forget::Started` name a tag that some action must carry; a tag no
 `ActionDef` has is a content error (a typo would otherwise never fire). The `remember` tool takes 0 to 600 seconds.
 
-**Not in B3.** A `Downed` pair state (B5) and an "intangible" exclusion (B2c). Two parts of Godot's guard behaviour (design
+**Not in B3.** An "intangible" exclusion (B2c). The `Downed` pair state came with B5 ("Death, downed and revive (B5)"). Two parts of Godot's guard behaviour (design
 13.11) are not built and have no ruling: "a guard press cancels a queued light or heavy" and "a guard cancel from recovery only
 on a fresh press". The ledger rows C26-C28 only settle the arming rule and the press-stamp quirk. They wait for a ruling.
 
@@ -1657,6 +1659,132 @@ status is active for one tick: `StatusApplied`, its `on_apply` (and `on_tick` on
 id= amount= seconds=` (a grant; `amount=0` removes it), `damage_taken id= key= mult= seconds=` (`clear=true` removes the key,
 `keep_later=true` extends). The engine rules `action.barrier_sane` (finite `amount >= 0` and finite `left`) and
 `action.damage_taken_sane` (finite `mult >= 0`, finite times, keys sorted and unique) stop the game on a bad write.
+
+### Death, downed and revive (B5)
+
+A game decides, before a fighter dies in play, whether it dies, survives or goes down. The engine gives it the moment and the
+means; what a "fall", a "spark" or a defeat is stays in the game.
+
+**The lethal hook.** `app.add_lethal_hook(hook)` (`ActionAppExt`) registers a `fn(&mut World, &Lethal) -> Fate`. Hooks are
+asked in registration order and the first answer that is not `Fate::Die` wins; the ones after it are not asked. `Lethal`
+carries the `entity`, the `killer` (the credited entity), the `source` (the combat object that hit, when it is not the killer),
+the `action` and the `cause`: `LethalCause::Hit` (a hit's damage), `Damage` (`deal_damage`, the combat-free damage of a fall, a
+zone or a hazard) or `Health` (health run out some other way, found by `check_deaths`). The enum is `non_exhaustive`, so a game
+that answers `Survive` or `Down` only for a hit matches on `Hit` and lets everything else die: a kill volume or a pit refuses a
+survive that way (ledger E61). The answers:
+
+- `Fate::Die`: the death as it always was (`kill_with` with the same arguments: `Died`, the death action). With no hook, or
+  hooks that all say `Die`, a fighter dies exactly as before B5, and the reference replays did not change.
+- `Fate::Survive { health, grace }`: health is set to `health` (clamped to `(2 * EPS, max]`; a number that is not finite means
+  full), `grace` seconds of `Grace` (a time that is not finite and above 0 gives none), then `Survived { entity, killer, health
+  }`. For a hit the rest of it goes on: its statuses, its poise (a break staggers) and its reaction, as Godot's survive does
+  (combat-actor 4.10).
+- `Fate::Down { bleed }`: `go_down(world, entity, bleed, killer)`; nothing else of the hit applies.
+
+A hook that despawns the entity ends the asking (nothing more is killed). `kill` and `kill_with` (tools, tests, a game's own
+deaths, the template's) skip the hooks: they are outright. `lethal(world, entity, killer, source, action, cause)` is the asking
+itself, public for a game that runs its own damage.
+
+**Down.** `go_down` puts `Downed { bleed, by }` on the body (`by` is the killer's `AiId`), sets its health to 0, clears its
+input buffer and its push, ends its statuses (`StatusExpired` for each active one), triggers `WentDown { entity, killer,
+bleed }` and forces its moveset's `downed` action (a pose; a moveset without one has its action cut). It refuses a body that
+is gone, dead, already down or without `Health`. While a body is down:
+
+- every hit on it is `Ignored` with `IgnoreReason::Downed` (after `Invulnerable`, before i-frames: the hit is used up, as
+  Godot's null result is), `deal_damage` does nothing to it, and no reaction or stagger starts on it;
+- it starts nothing (`Blocker::Downed`: "you are down: a partner can revive you (a dev agent can `heal` you)"), its buffer is
+  dropped every tick, the controller does not walk it (`steer_locomotion` owns the body as for the dead), and the `Heal` effect
+  passes over it;
+- it is no target: perception does not see it (`Standing = (Without<Dead>, Without<Downed>)` is the one filter for "can be
+  fought"), the director counts only standing players for its token limit and takes back a token on it (`target gone`),
+  lock-on drops it and will not take it, an attack order on it ends, a hostile pair selection skips it, and an NPC that is
+  down is inactive (its brain passes it through, as for the dormant and the dead);
+- `check_deaths` passes over it (it has no health and would die at once), and an encounter counts it out (the module's own
+  out rule `downed`), so a wipe counts every incapacitated player.
+
+`bleed` is the time left before it bleeds out (`None`: until it is revived or the game calls `bleed_out`). `tick_downed`
+(`ActionSystems::Deaths`, before `check_deaths`, in `AiId` order) checks, then counts down: a body whose time is out (within
+half a tick of 0, so the drift of a 20 s count cannot move it a tick) bleeds out. `bleed_out(world, entity)` takes `Downed`
+off and kills the body with `kill`, credited to the one who laid it down. A body laid down on tick `N` for `s` seconds dies on
+tick `N + s * 60`. A bleed-out asks no hook: it is the death the downed state stood for.
+
+**Revive.** `revive_downed(world, entity, health_share, grace, by) -> bool` stands a downed body up: `Downed` goes, health is
+`max * health_share` (clamped to `(2 * EPS, max]`), its downed pose is cut, its poise is whole, it gets `grace` seconds of
+`Grace`, then `Revived { entity, by }`. In content a revive is a paired action (B3) held with `while_held` (B2a) and the new
+effect `Revive { health, grace }`, which revives the running action's pair victim if it is down. The pair state `Downed`
+selects downed bodies only (`Broken` and `Any` never select one); `team: Ally` picks one of the fighter's own team. The
+sandbox's:
+
+```ron
+"spar_revive": (
+    net_id: 201,
+    phases: [("revive", 3.0)],
+    while_held: "interact",
+    pair: (select: (team: Ally, state: Downed, range: 1.6, height: 1.2, angle: 180),
+           exclusive: true, break_range: 2.0, cancel_on_hurt: true),
+    effects: [(at: 3.0, effect: Revive(health: 0.3, grace: 1.0))],
+),
+```
+
+Letting go of interact ends it (`while_held`), moving apart past 2 m ends it (`break_range`: `lost`), a hit on the reviver
+ends it (`cancel_on_hurt`); only a revive held to 3 s runs the effect. A content check refuses a `Revive` whose action has no
+pair selecting `Downed`, a `health` outside `(0, 1]` or a `grace` that is not a finite time `>= 0`. The moveset binds it as a
+context binding (`(input: "interact", action: "spar_revive", when: [Pair])`), so a press with no downed ally in reach starts
+nothing. `MovesetDef::downed` names the pose (the sandbox's `spar_down`, 20 s).
+
+**Grace.** `Grace { left }` ignores every hit (`IgnoreReason::Grace`) while `left > EPS`. `grant_grace(world, entity,
+seconds)` gives or lengthens one (it never shortens one). `tick_grace` (`ActionSystems::Fighters`, after the body state)
+counts it down and takes it off within half a tick of 0: `s` seconds granted on tick `N` cover the hits of `s * 60` ticks. The
+survive's protection is content's number, not a constant: Godot's 1.5 s is 1.0 s here until the owner rules (ledger E60, C57).
+
+**A fallen attacker.** An attacker that dies or goes down mid-pair lets go of its victim (`cut`). A victim whose poise is
+still broken goes back into its stagger for exactly the rest of its break (`resume_stagger`): no fresh break, no `Staggered`,
+not ended early (13a, "B3 as built"). A pair whose victim goes down is `lost`, unless the pair takes downed bodies.
+
+**Solo, co-op and the game's choice.** The engine does not know what "solo" is (ledger WN05): a game that lays a body down
+only with a partner asks `NetHost::connected()` (`shards::net`: "no connected peer") or counts its own player bodies. The
+sandbox's hook, `spare` in `src/gameplay/fate.rs`, answers `Down { bleed: <the downed pose's length> }` for
+`LethalCause::Hit` on a fighter whose moveset has a `downed` pose while another player body stands (health above 0, neither
+dead nor down), and `Die` otherwise; it reads the bodies, not the network, so a replay and a client agree with the host. The
+sandbox player's own moveset has no `downed`, so every session made before B5 dies as before; the `partner` moveset
+(`content/combat/downed.*.ron`: the duelist's kit, `downed: "spar_down"`, the revive bound to interact) is the one that goes
+down.
+
+**Prediction and co-op.** The lethal hooks, `tick_downed`, the grace and the revive run on the host only; `Downed` and
+`Grace` replicate like any other component, and `WentDown`, `Revived` and `Survived` travel to clients. A client's own downed
+body is blocked by the shared `can_start` (`FighterView::downed`, from the replicated `Downed`) and held by
+`steer_locomotion`; the predictor snaps on `WentDown` and `Revived` (`net: e15 corrected by 0.0 m (snap: went down)`). The
+revive is a paired action, so it is not predicted: the host starts it. The stand scenario `scenarios/stand/downed.scenario`
+plays a client going down, a partner reviving it and a second fall bleeding out, at 150 ms and 2 % loss, with nothing
+mispredicted.
+
+**Saves.** The downed state is not saved: a body saved while down has no health, so it is saved as dead (design 8.7). A save
+loaded into a downed body ends the downed state: with health in the save the body stands up with it (`revive_downed`), with
+none it dies on the next tick (a `Health` death, which the sandbox's hook never lays down).
+
+**What the AI sees.** Describe: `downed 14.2s` (`downed` without a bleed-out), `grace 0.80s`. Journal: `e7 is down (bleeds
+out in 20.0s)` / `e7 is down`, `e7 revived by e5` / `e7 revived`, `e5 survived a lethal hit (hp 1)`, a bleed-out's usual
+`e7 died (killed by e6)`, and `-0 (hp 0, downed)` or `(hp 1, grace)` on a hit that passed over. Condition `named:downed`
+(some fighter is down). Tools: `interact hold=true|false` (player: the interact button; it starts only what the moveset binds
+to it), `down id= bleed=` (dev: lays a fighter down now, as a hook's `Down` does), and `heal`, which also stands a downed body
+up at full health. The engine rules `action.downed_sane` and `action.grace_sane` (see "Invariants (E11)") stop the game on a
+bad write.
+
+**State.** `Downed` and `Grace` are lazy components of `AiId` entities: snapshots, replay checks and co-op clients get them by
+the default rules. `LethalHooks` is registered at build time and is not simulation state. The reference replay `downed.json`
+(`scenarios/downed.scenario`) plays a downed ally revived, a second fall bleeding out, and a player with no partner dying.
+
+**Deviations from the design, on purpose.** (1) `LethalCause` has a third cause, `Damage`, for `deal_damage` (the design's
+two do not cover a combat-free hazard), and is `non_exhaustive`. (2) `WentDown` is triggered before the downed pose is forced,
+as `kill_with` triggers `Died` before the death action. (3) `deal_damage` and the `Heal` effect do nothing to a downed body.
+(4) A downed NPC is inactive (its token comes back as `dormant`). (5) Lock-on and attack orders treat a downed body as no
+target. (6) The revive is a context binding of a new `partner` moveset, not an `interact` input on `duelist` (the reference
+replay `reactions.json` reads `duelist`, and a plain input would start the revive with no one to revive). (7) The bleed-out
+time is the downed pose's length, read from content. (8) The timers end within half a tick of 0, not at `EPS` (a 20 s count
+drifted past `EPS` and lasted a tick longer). (9) `lethal` and `resume_stagger` are public. (10) The test
+`loaded_zero_health_body_stays_dead` is in the sandbox's `saves.rs`, where the save files are. (11) The encounter module
+registers the `downed` out rule itself (G9), and its tests' stand-in became a game's own rule, `benched`.
+
 
 ## Levels from Blender (E4.2)
 
@@ -2709,7 +2837,9 @@ is not out. Every timer is a count of whole ticks, set and counted down in the s
   standing participant within `radius`: enemies see farther than `within`, and a pack that is being fought is not waiting. A placed pack whose members were all
   out before the start is cleared (and won, if it is the last wave) on its first visit instead of waiting for ever. This holds only until the run has begun once: a corpse or a hurt survivor that stays through a reset or a pull-back does not begin the fight again (only a start condition, or a member hunting a standing participant, does), so a pack with a casualty waits for its start condition after a reset.
 - **Wipe.** The participants are every player body, wherever it stands (solo included). A participant is out when it is dead,
-  or when an out rule registered with `add_encounter_out_rule` says so (a downed state plugs in there). On a wipe the adds are
+  or when an out rule registered with `add_encounter_out_rule` says so. The module registers one itself, `downed`: a body that
+  carries the action module's `Downed` (B5) is out, so a wipe counts every incapacitated player, dead or down; a revive puts it
+  back in. On a wipe the adds are
   despawned; the living members of a spawned wave are despawned silently (no `Died`, no loot, no death cue), their dead entries are
   dropped, and the wave goes back by one; the survivors of a placed wave are pulled back (healed if `pull_back.heal`, sent home) and
   the run remembers that it pulled back (`pulled_back`), so the resume goes to `Idle` and not to a spawn. A wipe between waves
@@ -2799,8 +2929,7 @@ three markers `pack` and the anchor of `yard_pack` (a placed pack of 2 to 3 skel
 
 ### Limitations
 
-- The event director's caps (one large and two small events at once), summon auto-adoption (B4), the downed state as an out rule
-  (B5), the "or readied" start and the reward claim (G8), and the generator's placement of packs (M6) are follow-ups: this module
+- The event director's caps (one large and two small events at once), summon auto-adoption (B4), the "or readied" start and the reward claim (G8), and the generator's placement of packs (M6) are follow-ups: this module
   gives them the anchors, `adopt`, the out rule and the events.
 - The budget is per wave; a per-encounter total, the TDD's required role tags, forbidden combinations, an allow-list of
   combinations and `min/max_threat` are not in the definition. Co-op count scaling (M8) would wrap the count of a group in
@@ -3660,12 +3789,14 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `motion.launch_sane` | every `Launch` (the one-shot that launches a body up, B2c) asks for a finite height above 0 and sits on a character (`CharacterController`). The controller takes it in the tick it is put and removes it |
 | `action.leap_follows_run` | every `LeapRun` (what a leap keeps, B2c) belongs to the run its fighter is running (the same `instance`) of an action that leaps, with a finite `scale >= 0` |
 | `action.ghost_follows_run` | a fighter carries `Ghost` only while its running action has `ghost` and an `intangible` span open in the tick. On a fighter the ghost is the machine's |
+| `action.downed_sane` | every `Downed` body (B5) is not dead too, has no health left (`Health.current` is 0) and a bleed-out that is none or a finite time `>= 0`. `go_down` puts all three in, a revive or a death takes the mark off with them, so a violation names a writer that laid a body down by hand (a downed body with health would stand and take no hits for ever) |
+| `action.grace_sane` | every `Grace` (the hits ignored after a survive or a revive, B5) holds a finite `left >= 0`. `grant_grace` takes only finite times above 0 and the countdown floors at 0, so a NaN or an infinity names a writer that put it there by hand: it would shield its body for ever |
 | `action.lock_on_valid` | with a `lock_on` definition, no body's `Intent.target` names an entity that no longer exists or is dead: the lock-on check (`LockSystems::Check`, after `CoreSystems::ClearPresses`) lets go of such a lock at the end of every tick, after the deaths and the engine's despawns of that tick, so a violation names a lock set later in the tick or a body taken away after the check (a game system in `SimSet::Cleanup` after the check: it belongs before it). Without a definition locks are not checked and the rule passes (C6) |
 | `action.pairs_match` | a `Pairing` (a paired action's hold, B3) belongs to the run its fighter is running (the same action and `instance`), its victim (when it still exists) carries `Paired` by that fighter, and every `Paired` whose holder still exists is named by the holder's `Pairing`. The two marks are put in and taken out together (`release_pair`), so one alone is a pair a system broke behind the engine's back |
 | `action.memory_sane` | every `Memory` (what a fighter remembers for a while, B3) is not empty, holds finite times above 0 and keys sorted and unique, and every `GuardArm`'s press is not after the current tick |
 | `npc.state_known` | `NpcBrain.state` is a state of the NPC's behaviour. Three carve-outs, each a state the engine itself leaves behind: an empty state (before the NPC's first decided tick), an inactive NPC (dormant or dead: the brain passes it through, so a state a hot reload removed stays until it wakes), and an NPC whose behaviour is not in content (that is reported once as a content problem) |
 | `npc.strike_spacing` | two NPCs of one director whose `min_spacing` is set never began strikes less than that apart (in whole ticks), for the starts that went through the spacing rule: the planner's presses and checked combo continuations (`NpcStrike::gated`). Judged from the last strike each NPC noted. Three carve-outs: an NPC whose plan has `ignores_spacing` is not the one held to the rule (its starts still hold the others), a strike a state hook pressed itself is noted but neither held to the rule nor held against other NPCs (the hook may or may not have asked `strike_ready`, and may start between another NPC's planned press and its start), and an action with one of the director's `spacing_exempt_tags` is not noted at all. A director without a `min_spacing` is never judged |
-| `npc.tokens_within_limit` | after the director ran, no token is held by a dead body, and each director holds no more tokens than its limit for the living players, unless every holder beyond the limit has its attack in flight (an attack under way keeps its token to its end). It is judged right after the director, not at the end of the tick: a holder that dies in `Resolve` keeps its token until the next tick's director takes it back, so the end of the tick would fire on every kill. A small system next to the director writes what it found to the resource `TokenAudit`, which the rule reads; it is recomputed every tick and is not part of a snapshot or a replay |
+| `npc.tokens_within_limit` | after the director ran, no token is held by a dead body, and each director holds no more tokens than its limit for the standing players (living and not down, B5), unless every holder beyond the limit has its attack in flight (an attack under way keeps its token to its end). It is judged right after the director, not at the end of the tick: a holder that dies in `Resolve` keeps its token until the next tick's director takes it back, so the end of the tick would fire on every kill. A small system next to the director writes what it found to the resource `TokenAudit`, which the rule reads; it is recomputed every tick and is not part of a snapshot or a replay |
 | `hitstop.no_ticks_inside` | no simulation tick has run since the real-time clock was stopped for a hit stop, and none ran inside a hold that has ended (`ClockHold`): a hold consumes zero ticks, and a violation names a system that ran the fixed schedule while the clock was held. Hit stop is the picture's, never the simulation's; alone with a picture only, since nothing else ever holds the clock |
 
 Each rule reports the lowest id first and `(+N more)`, in the style `e6 Health.current = 700 outside 0..=600`, and
@@ -3688,7 +3819,7 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-29 rules, checked after every tick
+31 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
@@ -3706,6 +3837,8 @@ $ shards assert list
   action.memory_sane  engine rule  armed
   action.leap_follows_run  engine rule  armed
   action.ghost_follows_run  engine rule  armed
+  action.downed_sane  engine rule  armed
+  action.grace_sane  engine rule  armed
   action.lock_on_valid  engine rule  armed
   npc.state_known  engine rule  armed
   npc.strike_spacing  engine rule  armed
@@ -4453,7 +4586,7 @@ app.save_component::<Bag>(SaveKind::Character, "bag", 1)        // component on 
    .autosave_on::<CampRested>(SaveWhat::All);                    // written at the end of the tick
 ```
 
-- **Sections.** `SaveSection`: `NAME`, `VERSION`, `KIND`, `capture`, `check`, `apply`, `missing`. Sections are applied in the order they were registered. **`check` and `apply`.** `check(&self, &World, body)` (accepts by default) is the place for each refusal that must leave the world untouched: content that the manifest names, a body that must exist, a number outside its range. It gets `&World`, so it cannot change the world, and it sees the world as it was before the load (a refusal that depends on what the section does earlier stays in `apply`). All the `check`s of all loaded kinds run after all the files are read and before the first `apply`; a refusal means "nothing was applied", and no write call is made, however late in the load the section comes. `apply` and `missing` check nothing in advance: an error from them always means the section was running and the world may have changed (the load says so, restarts the write, and tells the co-op host that the world was rebuilt). `check` does not run for a section that is not in the file: `missing` has no data. `apply_sections` (a guest's character in co-op) also calls `check` before `apply`. A section unknown to the file gets `missing()`; one unknown to the game is skipped with a warning. A chain of migrations with a gap (a step missing from `add_save_migration`) crashes the app at build time, naming the section. The registry is the tool `save_registry`. The engine registers its own: `region` (world, version 2: the region, seed, generator version, manifest hash and the manifest itself; a world saved outside a region (in the arena) unloads nothing on load: the current region stays until `regen` or `change_region` replaces it, unlike a snapshot, which replaces the whole world and unloads the region; more below, "Region in a save"), `position` (the position and rotation of the body; in another region the body stays where it is, and the journal says why) and `vitals` (health, stamina, charges). A loaded `vitals` brings back to life a body that died after the save (`shards_action::revive`, as the dev-`heal` does, and the `Healed` event, so the game can undo what its `Died` did); a save with zero health leaves it dead (`check_deaths`).
+- **Sections.** `SaveSection`: `NAME`, `VERSION`, `KIND`, `capture`, `check`, `apply`, `missing`. Sections are applied in the order they were registered. **`check` and `apply`.** `check(&self, &World, body)` (accepts by default) is the place for each refusal that must leave the world untouched: content that the manifest names, a body that must exist, a number outside its range. It gets `&World`, so it cannot change the world, and it sees the world as it was before the load (a refusal that depends on what the section does earlier stays in `apply`). All the `check`s of all loaded kinds run after all the files are read and before the first `apply`; a refusal means "nothing was applied", and no write call is made, however late in the load the section comes. `apply` and `missing` check nothing in advance: an error from them always means the section was running and the world may have changed (the load says so, restarts the write, and tells the co-op host that the world was rebuilt). `check` does not run for a section that is not in the file: `missing` has no data. `apply_sections` (a guest's character in co-op) also calls `check` before `apply`. A section unknown to the file gets `missing()`; one unknown to the game is skipped with a warning. A chain of migrations with a gap (a step missing from `add_save_migration`) crashes the app at build time, naming the section. The registry is the tool `save_registry`. The engine registers its own: `region` (world, version 2: the region, seed, generator version, manifest hash and the manifest itself; a world saved outside a region (in the arena) unloads nothing on load: the current region stays until `regen` or `change_region` replaces it, unlike a snapshot, which replaces the whole world and unloads the region; more below, "Region in a save"), `position` (the position and rotation of the body; in another region the body stays where it is, and the journal says why) and `vitals` (health, stamina, charges). A loaded `vitals` brings back to life a body that died after the save (`shards_action::revive`, as the dev-`heal` does, and the `Healed` event, so the game can undo what its `Died` did); a save with zero health leaves it dead (`check_deaths`). The downed state (B5) is not saved: a body saved while down has no health, so it is saved as dead; a load into a downed body ends the downed state (`revive_downed` with the saved health, or, with none, the body dies on the next tick).
 - **File** `<save_dir>/<kind>/<slot>.save`: the first line is `shards-save/1 crc32=<hex> len=<bytes>`, then canonical JSON (keys in alphabetical order) with `{kind, slot, label, game, engine, tick, sections: {name: {version, data}}}`.
 - **Writing** is atomic: `.tmp`, `sync_all`, rotation `.bak1`→`.bak2`→`.bak3`, `rename`, fsync of the folder. Three copies are enough to keep the three previous saves. A broken main file does not become a copy: it goes to `.damaged`.
 - **Reading.** The main file is read. On any damage (checksum, truncated, not JSON, migration failed), the first good copy is read instead; the main file is rewritten from it, and the journal says: `save: world/slot1.save is damaged (checksum mismatch); restored from

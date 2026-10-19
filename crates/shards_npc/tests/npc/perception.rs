@@ -300,7 +300,7 @@ fn a_kept_target_is_still_hidden_by_a_wall() {
 
 /// A downed body (B5) is no target: not perceived (only remembered), and an NPC's focus leaves it.
 #[test]
-fn a_downed_body_is_not_perceived() {
+fn downed_is_no_target_for_npcs() {
     let mut app = app();
     let (watcher, hero) = watcher_and_hero(&mut app, Vec3::new(0.0, 0.0, -6.0));
     step(&mut app, 1);

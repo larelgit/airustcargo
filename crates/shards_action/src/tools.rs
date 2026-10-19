@@ -622,8 +622,9 @@ fn down_tool(In(call): In<Call<DownArgs>>, world: &mut World) -> ToolResult {
     })
 }
 
-/// Interact: press (or hold) the interact button. With a moveset action for `interact` (a revive
-/// of a downed ally next to you) it starts that action, which goes on only while the button is
+/// Interact: press (or hold) the interact button. It starts an action only where the moveset binds
+/// one to `interact`, usually a context binding that holds only next to the right body (a
+/// revive: a downed ally within reach); that action goes on only while the button is
 /// held: `hold=true` keeps it held, `hold=false` lets go. Answers `ok`, `ok: queued` or why not.
 fn interact(In(call): In<Call<HoldArgs>>, world: &mut World) -> ToolResult {
     press_held(world, &call.caller, INTERACT, None, "", call.args.hold)

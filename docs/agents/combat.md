@@ -18,3 +18,10 @@ Read this when you drive a fight through `dodge`, `light_attack`, `block`, `use_
   every body an agent drives through `lock_on`, a monster too. A game system that sets `Intent.target` or despawns a body that may
   be locked on to goes before `LockSystems::Check` (`SimSet::Cleanup`, after `CoreSystems::ClearPresses`), or the rule
   `action.lock_on_valid` stops the game.
+- Down, not dead (B5): where the game's lethal hook spares a body (the sandbox: a `partner` moveset while another player
+  stands), a lethal hit lays it down (`e7 is down (bleeds out in 20.0s)`, `observe`/`inspect` show `downed 14.2s`). A downed
+  body starts nothing (`you are down`), hits pass over it (`-0 (hp 0, downed)`) and nobody targets it; `attack` and `lock_on`
+  refuse it. To stand an ally up, stand within reach and hold interact (`interact hold=true`) for the revive's time
+  (`ok: spar_revive`, then `e7 revived by e5`); letting go, moving away or being hit ends it. Wait with
+  `step --until "journal:revived"` or `--until named:downed`. A dev agent's `heal` stands a body up at once and `down id= bleed=`
+  lays one down.
