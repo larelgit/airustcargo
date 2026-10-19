@@ -25,6 +25,10 @@ pub const NO_RULES: &str =
     "this game has no rules: add `content/**/*.rules.ron` with the definition `default` and a `*.rule_set.ron` for each mode it lists";
 /// `rules_set` outside a world.
 pub const IN_A_WORLD: &str = "the rules belong to a world: start or continue a game first (`new_game`, `continue_game`)";
+/// `rules_set` while a region loads (the world is there, between two regions).
+pub const REGION_LOADING: &str = "a region is loading: the rules change in the game; call it again once `ai/status` says `engine.state` `InGame`";
+/// `rules_set` on a co-op client that has no forwarder to refuse it first (the route says the same, with the host).
+pub const ON_THE_HOST_ONLY: &str = "`rules_set` runs on the host only: the host chooses the rules: call it on the host";
 /// `rules_set force=true` from a player's session.
 pub const FORCE_IS_DEV: &str =
     "`force` skips the out-of-combat check and is for dev sessions (`session --scope dev`): a player changes the rules out of combat";
@@ -36,7 +40,8 @@ pub(crate) fn register(world: &mut World) {
 
 /// The rules: the rule set in play (its name and summary, the factors it gives each class, with the session
 /// table's at the session size), the modes in order, the session size, the generation, whether a change is
-/// allowed now and who decides. `mode` describes that rule set instead, without session factors.
+/// allowed now and who decides. `mode` describes that rule set instead, without session factors; `playing`
+/// always names the one in play.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct RulesArgs {
     /// A rule set to describe (`gentle`); default: the one in play.
@@ -102,14 +107,20 @@ pub(crate) fn shown(mode: &str) -> &str {
     if mode.is_empty() { "none" } else { mode }
 }
 
-fn in_game(world: &World) -> bool {
-    world.get_resource::<State<EngineState>>().is_some_and(|s| *s.get() == EngineState::InGame)
+fn state(world: &World) -> Option<EngineState> {
+    world.get_resource::<State<EngineState>>().map(|s| *s.get())
 }
 
 /// What `rules_set` does, for a caller with `scope`: the answer, or why it refused (changing nothing).
 pub fn change(world: &mut World, args: &RulesSetArgs, scope: Scope) -> Result<String, String> {
-    if !in_game(world) {
-        return Err(IN_A_WORLD.to_owned());
+    // The route refuses a client first (`NetRoute::HostOnly`) when it has a forwarder; this holds without one.
+    if !crate::decides(world) {
+        return Err(ON_THE_HOST_ONLY.to_owned());
+    }
+    match state(world) {
+        Some(EngineState::InGame) => {}
+        Some(EngineState::RegionLoading) => return Err(REGION_LOADING.to_owned()),
+        _ => return Err(IN_A_WORLD.to_owned()),
     }
     let Some(db) = world.get_resource::<ContentDb>() else { return Err(NO_RULES.to_owned()) };
     let Some(def) = peek_rules_def(db) else { return Err(NO_RULES.to_owned()) };
@@ -241,8 +252,10 @@ fn change_now(world: &World) -> String {
     if world.get_resource::<NetRole>() == Some(&NetRole::Client) {
         return "the host chooses".to_owned();
     }
-    if !in_game(world) {
-        return "refused now: the rules belong to a world (start or continue a game first)".to_owned();
+    match state(world) {
+        Some(EngineState::InGame) => {}
+        Some(EngineState::RegionLoading) => return "refused now: a region is loading (it changes once the game is back)".to_owned(),
+        _ => return "refused now: the rules belong to a world (start or continue a game first)".to_owned(),
     }
     match can_change(world) {
         Ok(()) => "allowed now".to_owned(),
@@ -281,6 +294,8 @@ pub fn describe(world: &World, mode: Option<&str>) -> Result<Value, String> {
     let role = world.get_resource::<NetRole>().copied().unwrap_or_default();
     Ok(json!({
         "mode": shown_mode,
+        // What the world plays, whatever `mode` asked about (`session` and `generation` are its).
+        "playing": active.filter(|r| !r.is_neutral()).map(|r| r.mode.clone()),
         "name": set.map(|s| shards_locale::resolve(world, &s.name)),
         "summary": set.filter(|s| !s.summary.is_empty()).map(|s| shards_locale::resolve(world, &s.summary)),
         "modes": def.modes,
@@ -291,6 +306,7 @@ pub fn describe(world: &World, mode: Option<&str>) -> Result<Value, String> {
         "attack_tokens": tokens,
         "attack_rest": num(rest_factor(set)),
         "change": change_now(world),
+        // By role (the core knows no peer count): a co-op host, peers or none yet, and its clients say `host`.
         "decides": if role == NetRole::Single { "this machine" } else { "host" },
     }))
 }
@@ -377,8 +393,22 @@ mod tests {
         let mut world = self::world();
         world.remove_resource::<ContentDb>();
         assert_eq!(refused(&mut world, set(Some("harsh"), None, false), Scope::Player), NO_RULES);
+        world.insert_resource(State::new(EngineState::RegionLoading));
+        assert_eq!(refused(&mut world, set(Some("harsh"), None, false), Scope::Player), REGION_LOADING, "the world is there: wait for it");
         world.insert_resource(State::new(EngineState::MainMenu));
         assert_eq!(refused(&mut world, set(Some("harsh"), None, false), Scope::Player), IN_A_WORLD, "the game state comes first");
+        // A client without a forwarder (the route refuses it before the tool runs when there is one).
+        world.insert_resource(NetRole::Client);
+        assert_eq!(refused(&mut world, set(Some("harsh"), None, true), Scope::Dev), ON_THE_HOST_ONLY, "before everything else");
+        assert_eq!(ON_THE_HOST_ONLY, format!("`rules_set` runs on the host only: {}", crate::HOST_DECIDES));
+        let mut world = self::world();
+        world.insert_resource(NetRole::Client);
+        assert_eq!(refused(&mut world, set(Some("harsh"), None, true), Scope::Dev), ON_THE_HOST_ONLY);
+        assert_eq!(world.resource::<ActiveRules>().mode, "plain", "a client never writes the host's rules");
+        assert_eq!(
+            REGION_LOADING,
+            "a region is loading: the rules change in the game; call it again once `ai/status` says `engine.state` `InGame`"
+        );
         assert_eq!(
             IN_A_WORLD,
             "the rules belong to a world: start or continue a game first (`new_game`, `continue_game`)"
@@ -433,13 +463,22 @@ mod tests {
             })
         );
         assert_eq!((&gentle["name"], &gentle["summary"], &gentle["attack_rest"]), (&json!("Gentle"), &json!("Half the damage"), &json!(1.0)));
+        assert_eq!(gentle["playing"], "gentle");
         let harsh = describe(&world, Some("harsh")).unwrap();
+        assert_eq!((&harsh["mode"], &harsh["playing"]), (&json!("harsh"), &json!("gentle")), "`playing` says what the world plays");
         assert_eq!(harsh["classes"]["brute"], json!({"max_health": 1.5}), "a named set: no session factors");
         assert_eq!((&harsh["attack_tokens"], &harsh["attack_rest"]), (&json!({"shift": 1, "min": 1}), &json!(0.5)));
         assert_eq!(describe(&world, Some("gentel")).unwrap_err(), "unknown rule set `gentel` (did you mean `gentle`?); this game's rule sets: gentle, plain, harsh");
+        world.insert_resource(NetRole::Host);
+        assert_eq!(describe(&world, None).unwrap()["decides"], "host", "by role: a host with no peer yet says `host` too");
+        world.insert_resource(State::new(EngineState::RegionLoading));
+        assert_eq!(describe(&world, None).unwrap()["change"], "refused now: a region is loading (it changes once the game is back)");
+        world.insert_resource(State::new(EngineState::InGame));
         world.insert_resource(NetRole::Client);
         let client = describe(&world, None).unwrap();
         assert_eq!((&client["change"], &client["decides"]), (&json!("the host chooses"), &json!("host")));
+        world.resource_mut::<ActiveRules>().mode.clear();
+        assert_eq!(describe(&world, None).unwrap()["playing"], Value::Null, "neutral: nothing in play");
         world.remove_resource::<ContentDb>();
         assert_eq!(describe(&world, None).unwrap_err(), NO_RULES);
     }

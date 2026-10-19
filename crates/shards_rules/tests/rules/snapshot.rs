@@ -4,17 +4,27 @@
 use shards::ai_core::{replay, snapshot, JournalKind};
 use shards::motion::{Collider, Shape};
 use shards::prelude::*;
-use shards::rules::{replay_check, ActiveRules};
+use shards::rules::{replay_check, ActiveRules, RuleClass};
 
 use crate::*;
+
+/// Health `(current, max)` of the bodies of class `brute`.
+fn brutes(app: &mut App) -> Vec<(f32, f32)> {
+    let world = app.world_mut();
+    world.query::<(&Health, &RuleClass)>().iter(world).filter(|(_, c)| c.0 == "brute").map(|(h, _)| (h.current, h.max)).collect()
+}
 
 #[test]
 fn a_snapshot_with_rules_loads_back_equal_and_rescales_nothing() {
     let folder = Folder::new("snapshot");
     let mut app = game(&folder);
     body(&mut app, 0, 40.0);
+    // `harsh` gives `brute` health ×1.5: the body that would show a second scale.
+    app.world_mut().spawn((Name::new("brute"), AiKind::new("brute"), RuleClass("brute".into()), Health::new(40.0), Transform::default()));
     step(&mut app, 2);
     ok(&mut app, "rules_set", serde_json::json!({"mode": "harsh"}));
+    // One tick at `harsh`: the bodies are brought to it (from C3.3a on) before the snapshot is taken.
+    step(&mut app, 1);
     let taken = snapshot::capture(app.world()).unwrap();
     ok(&mut app, "rules_set", serde_json::json!({"mode": "gentle"}));
     step(&mut app, 3);
@@ -27,6 +37,10 @@ fn a_snapshot_with_rules_loads_back_equal_and_rescales_nothing() {
     let world = app.world_mut();
     let health: Vec<(f32, f32)> = world.query_filtered::<&Health, With<PlayerId>>().iter(world).map(|h| (h.current, h.max)).collect();
     assert_eq!(health, [(40.0, 40.0)], "no rescale");
+    // C3.1a has no body pass yet: the brute keeps its 40. From C3.3a on the snapshot holds it at 60/60 (40 × 1.5,
+    // scaled once at `harsh` with its key) and the load and the 10 ticks keep 60/60: C3.3a changes this to
+    // [(60.0, 60.0)], never 90 (a second scale).
+    assert_eq!(brutes(&mut app), [(40.0, 40.0)], "the snapshot's body, scaled no second time");
     assert_eq!(rules(&app), playing("harsh", 2, 1), "the same session, the same key");
     assert_eq!(lines(&app, JournalKind::Event, "(save)"), Vec::<String>::new(), "a snapshot load is no change of rules");
 }

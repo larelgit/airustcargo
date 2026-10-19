@@ -1,22 +1,45 @@
 //! The rules' state: a new world, the main menu, a region trip, `rules_set` and its refusals,
 //! content edits, the session count.
 
-use serde_json::json;
-use shards::ai_core::{configure_session, AiConditions, AiReplay, JournalKind, Scope, SessionChange};
+use serde_json::{json, Value};
+use shards::ai_core::{configure_session, AiConditions, AiReplay, AiTools, ForwardedCall, Forwarder, JournalKind, NetRoute, Scope, SessionChange, ToolResult};
 use shards::prelude::*;
 use shards::rules::tools::FORCE_IS_DEV;
-use shards::rules::{replay_check, ActiveRules, RulesGuards, SessionFilter};
+use shards::rules::{replay_check, ActiveRules, RulesCause, RulesChanged, RulesGuards, SessionFilter, HOST_DECIDES};
 
 use crate::*;
 
 const HARSH: &str = "player: incoming damage ×1.5, charge flask 2; brute: health ×1.5; attack tokens +1 (at least 1); attack rest ×0.5";
 
+/// The `RulesChanged` events seen, in order.
+#[derive(Resource, Default)]
+struct Changes(Vec<RulesChanged>);
+
+/// [`game`] with an observer that keeps every `RulesChanged`.
+fn watched(folder: &Folder) -> App {
+    let mut app = game(folder);
+    app.init_resource::<Changes>().add_observer(|event: On<RulesChanged>, mut seen: ResMut<Changes>| seen.0.push((*event).clone()));
+    app
+}
+
+fn changes(app: &App) -> Vec<(String, String, RulesCause)> {
+    app.world().resource::<Changes>().0.iter().map(|c| (c.from.clone(), c.to.clone(), c.cause)).collect()
+}
+
+fn change(from: &str, to: &str, cause: RulesCause) -> (String, String, RulesCause) {
+    (from.to_owned(), to.to_owned(), cause)
+}
+
 #[test]
 fn a_new_world_plays_start_and_the_main_menu_ends_it() {
     let folder = Folder::new("start");
-    let mut app = game(&folder);
+    let mut app = watched(&folder);
     assert_eq!(rules(&app), playing("plain", 1, 0));
     assert_eq!(lines(&app, JournalKind::Event, "rules:"), ["rules: a new world plays `plain`"]);
+    go(&mut app, EngineState::MainMenu);
+    go(&mut app, EngineState::InGame);
+    assert_eq!(changes(&app), [], "a new world triggers no event (no banner)");
+    assert_eq!(rules(&app), playing("plain", 1, 0));
     assert_eq!(status(&app), json!("plain · session 0 · generation 1"));
     assert!(ok(&mut app, "rules_set", json!({"mode": "harsh"})).starts_with("rules: plain → harsh"));
 
@@ -45,6 +68,56 @@ fn a_host_sets_the_rules_neutral_at_the_main_menu_and_a_client_starts_none() {
     app.world_mut().insert_resource(NetRole::Client);
     go(&mut app, EngineState::InGame);
     assert_eq!(rules(&app), None);
+    // Its copy of the host's rules is not its own to write: the main menu drops it (never neutral), so a
+    // later world of this machine's starts at `start`.
+    app.world_mut().insert_resource(ActiveRules { mode: "harsh".into(), generation: 7, players: 2 });
+    go(&mut app, EngineState::MainMenu);
+    assert_eq!(rules(&app), None, "a client's copy goes with the session");
+    app.world_mut().insert_resource(NetRole::Single);
+    go(&mut app, EngineState::InGame);
+    assert_eq!(rules(&app), playing("plain", 1, 0));
+}
+
+fn host_forward(_: &mut World, _: ForwardedCall) -> ToolResult<Value> {
+    Err("the forwarder must not see `rules_set`".to_owned())
+}
+
+#[test]
+fn a_client_is_refused_rules_set_by_the_route_and_by_the_tool() {
+    let folder = Folder::new("client");
+    let mut app = game(&folder);
+    let route = app.world().resource::<AiTools>().get("rules_set").unwrap().spec.net;
+    assert_eq!(route, NetRoute::HostOnly(HOST_DECIDES));
+    assert_eq!(app.world().resource::<AiTools>().get("rules").unwrap().spec.net, NetRoute::Local, "the query runs on a client");
+
+    // With a forwarder (a client of a session), the route refuses before the tool runs.
+    app.world_mut().insert_resource(NetRole::Client);
+    app.world_mut().resource_mut::<AiTools>().set_forwarder(Some(Forwarder { forward: host_forward, host: "127.0.0.1:7777".into() }));
+    assert_eq!(
+        refused(&mut app, "rules_set", json!({"mode": "harsh"})),
+        "`rules_set` runs on the host only: the host chooses the rules: call it on the host (127.0.0.1:7777)"
+    );
+    // Without one, the tool refuses by itself and writes nothing.
+    app.world_mut().resource_mut::<AiTools>().set_forwarder(None);
+    assert_eq!(
+        refused(&mut app, "rules_set", json!({"mode": "harsh", "force": true})),
+        "`rules_set` runs on the host only: the host chooses the rules: call it on the host"
+    );
+    assert_eq!(rules(&app), playing("plain", 1, 0), "the client's copy is untouched");
+    let view = testing::ok(&mut app, "rules", json!({})).result;
+    assert_eq!((&view["change"], &view["decides"]), (&json!("the host chooses"), &json!("host")));
+}
+
+#[test]
+fn the_dev_entry_runs_the_next_rule_set() {
+    let folder = Folder::new("dev");
+    let mut app = watched(&folder);
+    let answer = ok(&mut app, "dev_menu", json!({"run": "rules_next"}));
+    assert!(answer.starts_with(&format!("rules: plain → harsh at tick 0: bodies are brought to it at the start of the next tick; {HARSH}")), "{answer}");
+    assert_eq!(changes(&app), [change("plain", "harsh", RulesCause::Call)]);
+    let list = ok(&mut app, "dev_menu", json!({}));
+    let line = list.lines().find(|l| l.trim_start().starts_with("rules_next")).unwrap();
+    assert!(line.ends_with("rules_set cycle=1 force=true"), "{line}");
 }
 
 #[test]
@@ -108,7 +181,7 @@ fn refusals_record_nothing_and_a_same_mode_call_changes_nothing() {
 #[test]
 fn cycle_wraps_both_ways() {
     let folder = Folder::new("cycle");
-    let mut app = game(&folder);
+    let mut app = watched(&folder);
     assert_eq!(
         ok(&mut app, "rules_set", json!({"cycle": 1})),
         format!("rules: plain → harsh at tick 0: bodies are brought to it at the start of the next tick; {HARSH}")
@@ -122,6 +195,11 @@ fn cycle_wraps_both_ways() {
         lines(&app, JournalKind::Event, " (call)"),
         ["rules: plain → harsh (call)", "rules: harsh → gentle (call)", "rules: gentle → harsh (call)", "rules: harsh → plain (call)"]
     );
+    let call = RulesCause::Call;
+    assert_eq!(
+        changes(&app),
+        [change("plain", "harsh", call), change("harsh", "gentle", call), change("gentle", "harsh", call), change("harsh", "plain", call)]
+    );
 }
 
 /// `content_get`'s definition of `kind/id`.
@@ -133,28 +211,34 @@ fn def(app: &mut App, kind: &str, id: &str) -> serde_json::Value {
 fn a_content_edit_adds_to_the_generation_and_a_vanished_mode_falls_back() {
     const ANSWER: &str = "rules: content changed; bodies are brought to it at the next tick";
     let folder = Folder::new("content");
-    let mut app = game(&folder);
+    let mut app = watched(&folder);
     let gentle = def(&mut app, "rule_set", "gentle");
     let mut softer = gentle.clone();
     softer["summary"] = json!("A third of the damage");
     let answer = ok(&mut app, "content_apply", json!({"changes": [{"kind": "rule_set", "id": "gentle", "def": softer, "before": gentle}]}));
     assert!(answer.contains(ANSWER), "{answer}");
     assert_eq!(rules(&app), playing("plain", 2, 0), "every body is brought to the new numbers at the next tick");
+    assert_eq!(changes(&app), [], "a content edit that keeps the mode is no change of rules");
 
     ok(&mut app, "rules_set", json!({"mode": "harsh"}));
     let rules_def = def(&mut app, "rules", "default");
     let mut fewer = rules_def.clone();
     fewer["modes"] = json!(["gentle", "plain"]);
     let harsh = def(&mut app, "rule_set", "harsh");
-    let changes = json!([
+    let edits = json!([
         {"kind": "rules", "id": "default", "def": fewer, "before": rules_def},
         {"kind": "rule_set", "id": "harsh", "before": harsh},
     ]);
-    let answer = ok(&mut app, "content_apply", json!({"changes": changes}));
+    let answer = ok(&mut app, "content_apply", json!({"changes": edits}));
     assert!(answer.contains(ANSWER), "{answer}");
     assert_eq!(rules(&app), playing("plain", 4, 0), "back to `start`");
     assert_eq!(lines(&app, JournalKind::Warn, "rules:"), ["rules: the rule set `harsh` is gone from content: playing `plain`"]);
     assert_eq!(lines(&app, JournalKind::Event, "→ plain"), Vec::<String>::new(), "the warning says it; no `(call)` line");
+    assert_eq!(
+        changes(&app),
+        [change("plain", "harsh", RulesCause::Call), change("harsh", "plain", RulesCause::Content)],
+        "the fall back is an event, once"
+    );
 }
 
 #[test]

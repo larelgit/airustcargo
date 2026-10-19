@@ -54,8 +54,14 @@ pub fn class_rules<'a>(set: &'a RuleSetDef, class: &str) -> &'a ClassRules {
 /// seats. A corpse that keeps its `PlayerId` beside the player's new body counts once; dead and downed
 /// players count. Without a filter every body is seated.
 pub fn session_size(world: &World) -> u32 {
-    let seated = world.get_resource::<SessionFilter>().copied().unwrap_or_default();
     let Some(mut bodies) = world.try_query::<(Entity, &PlayerId)>() else { return 0 };
+    count_seated(world, &mut bodies)
+}
+
+/// [`session_size`] through a query state the caller keeps (a system's own: building one walks every
+/// archetype of the world).
+pub fn count_seated(world: &World, bodies: &mut QueryState<(Entity, &'static PlayerId)>) -> u32 {
+    let seated = world.get_resource::<SessionFilter>().copied().unwrap_or_default();
     let players: BTreeSet<u8> = bodies.iter(world).filter(|(e, _)| (seated.0)(world, *e)).map(|(_, p)| p.0).collect();
     players.len() as u32
 }
@@ -274,6 +280,11 @@ mod tests {
         assert_eq!(session_size(&world), 1, "a body the filter leaves out is not counted");
         world.insert_resource(SessionFilter::default());
         assert_eq!(session_size(&world), 2);
+        // A kept query state sees the bodies that spawn after it was built.
+        let mut kept = world.query::<(Entity, &PlayerId)>();
+        assert_eq!(count_seated(&world, &mut kept), 2);
+        world.spawn((PlayerId(2), Name::new("late")));
+        assert_eq!(count_seated(&world, &mut kept), 3, "a new archetype is picked up");
     }
 
     #[test]

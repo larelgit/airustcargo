@@ -350,6 +350,10 @@ impl ContentDef for RulesDef {
                 let hint = closest(class, names.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
                 refs.error(format!("`session` row `{class}` is not a class{hint}: {}", names.join(", ")));
             }
+            // A column left out and an empty one read the same: a row needs one with entries (1 to 8).
+            if row.columns().iter().all(|(_, list)| list.is_empty()) {
+                refs.error(format!("`session.{class}` gives no column: give `max_health`, `max_poise` or `outgoing_damage`, or remove the row"));
+            }
             for (column, list) in row.columns() {
                 if list.len() > MAX_SESSION_ENTRIES {
                     refs.error(format!(
@@ -404,8 +408,16 @@ pub fn check_prefab(prefab: &PrefabDef, _id: &str, refs: &mut Refs) {
         if !is_rule_class(refs, name) {
             continue;
         }
-        // A value that does not read is the prefab's own error.
-        let Ok(class) = ron::from_str::<RuleClass>(value.get_ron()) else { continue };
+        // A value that does not read is the prefab's own error where there is a type registry to read it by;
+        // without one (a bare `check_dir`) nobody else reads it, so it is said here.
+        let class = match ron::from_str::<RuleClass>(value.get_ron()) {
+            Ok(class) => class,
+            Err(_) if refs.type_registry().is_some() => continue,
+            Err(e) => {
+                refs.error(format!("RuleClass: {e}: a class is a string in parentheses (`(\"brute\")`)"));
+                continue;
+            }
+        };
         let Some(rules) = refs.get::<RulesDef>(RULES_ID) else {
             refs.error(format!("RuleClass needs `content/**/*.rules.ron` (definition `{RULES_ID}`) naming the class"));
             continue;
@@ -413,7 +425,7 @@ pub fn check_prefab(prefab: &PrefabDef, _id: &str, refs: &mut Refs) {
         if !rules.knows_class(&class.0) {
             let names = rules.class_names();
             let hint = closest(&class.0, names.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
-            refs.error(format!("RuleClass `{}` is not a class of `rules/{RULES_ID}`{hint}", class.0));
+            refs.error(format!("RuleClass `{}` is not a class of `rules/{RULES_ID}`{hint}: {}", class.0, names.join(", ")));
         }
     }
 }
@@ -601,6 +613,18 @@ mod tests {
     }
 
     #[test]
+    fn a_session_row_gives_a_column() {
+        let rules = RULES.replace("session: {\"brute\": (max_health: [1.0, 1.5])}", "session: {\"brute\": (), \"player\": (max_poise: [])}");
+        assert_eq!(
+            errors(&[(RULES_FILE, &rules), (SETS_FILE, SETS)]),
+            [
+                "content/r.rules.ron: rules `default`: `session.brute` gives no column: give `max_health`, `max_poise` or `outgoing_damage`, or remove the row",
+                "content/r.rules.ron: rules `default`: `session.player` gives no column: give `max_health`, `max_poise` or `outgoing_damage`, or remove the row",
+            ]
+        );
+    }
+
+    #[test]
     fn a_prefab_names_a_class_the_rules_know() {
         let prefabs = r#"{
             "rules_brute": (components: {"RuleClass": ("brute")}),
@@ -609,8 +633,13 @@ mod tests {
         }"#;
         assert_eq!(
             errors(&[(RULES_FILE, RULES), (SETS_FILE, SETS), ("content/p.prefab.ron", prefabs)]),
-            ["content/p.prefab.ron: prefab `rules_typo`: RuleClass `brut` is not a class of `rules/default` (did you mean `brute`?)"]
+            ["content/p.prefab.ron: prefab `rules_typo`: RuleClass `brut` is not a class of `rules/default` (did you mean `brute`?): player, brute"]
         );
+        // Without a type registry (a bare check) nobody else reads the value: the check says it does not read.
+        let unread = errors(&[(RULES_FILE, RULES), (SETS_FILE, SETS), ("content/p.prefab.ron", r#"{"rules_five": (components: {"RuleClass": (5)})}"#)]);
+        assert_eq!(unread.len(), 1, "{unread:?}");
+        assert!(unread[0].starts_with("content/p.prefab.ron: prefab `rules_five`: RuleClass: "), "{unread:?}");
+        assert!(unread[0].ends_with(": a class is a string in parentheses (`(\"brute\")`)"), "{unread:?}");
         assert_eq!(
             errors(&[("content/p.prefab.ron", r#"{"rules_brute": (components: {"RuleClass": ("brute")})}"#)]),
             ["content/p.prefab.ron: prefab `rules_brute`: RuleClass needs `content/**/*.rules.ron` (definition `default`) naming the class"]

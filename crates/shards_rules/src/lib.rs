@@ -14,12 +14,14 @@
 //! - **The state.** [`ActiveRules`] (the mode in play, a generation that counts changes, the session size),
 //!   a snapshot resource, replicated; [`RuleClass`] (authored: the class of a body; `player` for a body
 //!   with `PlayerId`); [`RuleScaled`] (what the rules did to a body).
-//! - **When it changes.** A new world plays `start` ([`start_rules`]); the main menu ends it
-//!   ([`end_rules`]); a content change adds to the generation, or falls back to `start` when the mode is
-//!   gone ([`rules_content_applied`]); a snapshot puts back what it holds (the prepare `rules`); `rules_set`
-//!   changes it, out of combat ([`RulesGuards`]) and only on the host. [`RulesChanged`] says so.
-//! - **Each tick** (`RulesSystems::Apply`, first in `SimSet::Input`, while `ActiveRules` exists),
-//!   [`count_session`] counts the players seated in the session ([`SessionFilter`]).
+//! - **When it changes.** A new world plays `start` ([`start_rules`], in `RulesSystems::Start`); the main
+//!   menu ends it ([`end_rules`]); a content change adds to the generation, or falls back to `start` when
+//!   the mode is gone ([`rules_content_applied`]); a snapshot puts back what it holds (the prepare `rules`);
+//!   `rules_set` changes it, out of combat ([`RulesGuards`]) and only on the host. [`RulesChanged`] says so.
+//! - **Each tick** (`RulesSystems::Apply`, in `SimSet::Input` before the engine's other sets there, while
+//!   `ActiveRules` exists), [`count_session`] counts the players seated in the session ([`SessionFilter`]).
+//!   A game's own `SimSet::Input` system that reads the rules goes `.after(RulesSystems::Apply)`: nothing
+//!   orders it against the set otherwise.
 //! - **Agents.** `rules` (what the rules in play say), `rules_set` (change them), the condition
 //!   `rules_changeable`, `ai/status` → `rules`, the engine rule `rules.mode_known`, the dev entry "Next
 //!   rule set".
@@ -58,9 +60,14 @@ pub const HOST_DECIDES: &str = "the host chooses the rules: call it on the host"
 /// The rules' systems, for ordering against them.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RulesSystems {
-    /// First in `SimSet::Input`, before `CoreSystems::FollowOrders`, while [`ActiveRules`] exists: the
-    /// session count ([`count_session`]), then the bodies brought to the rules.
+    /// In `SimSet::Input`, before `CoreSystems::FollowOrders` and the world's zones (so before every engine
+    /// set of `SimSet::Input`), while [`ActiveRules`] exists: the session count ([`count_session`]), then the
+    /// bodies brought to the rules. A game's `SimSet::Input` system that reads the rules orders itself
+    /// `.after(RulesSystems::Apply)`.
     Apply,
+    /// In `OnEnter(EngineState::InGame)`: [`start_rules`]. A game whose own `OnEnter(InGame)` systems must
+    /// see the new world's rules goes `.after(RulesSystems::Start)`.
+    Start,
 }
 
 /// The rules in play changed.
@@ -106,7 +113,7 @@ impl Plugin for RulesPlugin {
             .add_optional_replay_check("rules", replay_check)
             .add_snapshot_prepare_after("rules", "content", &[], prepare)
             .on_content_applied(rules_content_applied)
-            .add_systems(OnEnter(EngineState::InGame), start_rules)
+            .add_systems(OnEnter(EngineState::InGame), start_rules.in_set(RulesSystems::Start))
             .add_systems(OnExit(EngineState::InGame), end_rules)
             .configure_sets(
                 FixedUpdate,
@@ -119,27 +126,41 @@ impl Plugin for RulesPlugin {
             .add_engine_invariant("rules.mode_known", mode_known)
             .add_ai_condition("rules_changeable", tools::changeable)
             .add_ai_status("rules", status)
-            .add_dev_entry("rules", "rules_next", "Next rule set", DevCommand::Run("rules_set cycle=1 force=true".into()))
+            .add_dev_entry("rules", "rules_next", "Next rule set", DevCommand::Live(dev_next))
             .journal_event::<RulesChanged>(journal_line);
         tools::register(app.world_mut());
         app.net_route("rules_set", NetRoute::HostOnly(HOST_DECIDES));
     }
 }
 
+/// The dev entry "Next rule set": `rules_set cycle=1 force=true`, or why it does nothing here (a game
+/// without rules, a co-op client).
+fn dev_next(world: &World, _: &ai_core::Caller) -> Result<String, String> {
+    if world.get_resource::<ContentDb>().and_then(read::peek_rules_def).is_none() {
+        return Err(tools::NO_RULES.to_owned());
+    }
+    if !decides(world) {
+        return Err(HOST_DECIDES.to_owned());
+    }
+    Ok("rules_set cycle=1 force=true".to_owned())
+}
+
 /// Whether this machine decides the rules: not a co-op client.
-fn decides(world: &World) -> bool {
+pub(crate) fn decides(world: &World) -> bool {
     world.get_resource::<NetRole>() != Some(&NetRole::Client)
 }
 
-/// Whether removing [`ActiveRules`] is how this machine ends them: alone (no role, or `Single`). A co-op
-/// host sets them neutral instead (a removal does not travel to its clients).
-fn alone(world: &World) -> bool {
-    matches!(world.get_resource::<NetRole>(), None | Some(NetRole::Single))
+/// Whether this machine hosts a co-op session: there the rules end neutral (a removal does not travel to
+/// its clients).
+fn hosts(world: &World) -> bool {
+    world.get_resource::<NetRole>() == Some(&NetRole::Host)
 }
 
-/// Ends the rules on this machine: removed alone, neutral (the mode cleared, the generation kept) in co-op.
+/// Ends the rules on this machine. A co-op host sets them neutral (the mode cleared, the generation kept).
+/// Alone they are removed, and so is a client's copy: it is the host's, not this machine's, it goes with the
+/// session, and nothing of it may stay to block the start of a later world of this machine's own.
 fn end(world: &mut World) {
-    if alone(world) {
+    if !hosts(world) {
         world.remove_resource::<ActiveRules>();
     } else if let Some(mut rules) = world.get_resource_mut::<ActiveRules>() {
         rules.mode.clear();
@@ -172,8 +193,8 @@ pub fn start_rules(world: &mut World) {
     }
 }
 
-/// `OnExit(EngineState::InGame)` (back to the main menu): alone the resource is removed; a co-op host sets it
-/// neutral. The next world starts at `start`.
+/// `OnExit(EngineState::InGame)` (back to the main menu): a co-op host sets the resource neutral; alone it is
+/// removed, and so is a client's copy of the host's. The next world starts at `start`.
 pub fn end_rules(world: &mut World) {
     end(world);
 }
@@ -238,7 +259,7 @@ pub fn prepare(world: &mut World, snapshot: &Snapshot) -> Result<Option<String>,
         }
         None => match current {
             None => Ok(None),
-            Some(rules) if rules.is_neutral() && !alone(world) => Ok(None),
+            Some(rules) if rules.is_neutral() && hosts(world) => Ok(None),
             Some(_) => {
                 end(world);
                 Ok(Some("none, as the snapshot was taken without them".to_owned()))
@@ -269,20 +290,22 @@ pub fn replay_check(world: &World) -> Option<u64> {
 /// `RulesSystems::Apply`, first: the session size is the number of distinct players seated in the session
 /// ([`session_size`]); when it moves it is written into [`ActiveRules::players`], and, if the rules have a
 /// session table, journaled with the table's factors at the new size (`rules: 2 players: brute health ×1.5`).
-pub fn count_session(world: &mut World) {
-    let n = session_size(world);
+/// The query state is the system's own, kept between ticks (building one walks every archetype).
+pub fn count_session(world: &mut World, bodies: &mut QueryState<(Entity, &'static shards_core::PlayerId)>) {
+    let n = read::count_seated(world, bodies);
     match world.get_resource_mut::<ActiveRules>() {
         Some(mut rules) if rules.players != n => rules.players = n,
         _ => return,
     }
-    let line = world.get_resource::<ContentDb>().and_then(rules_def).filter(|d| !d.session.is_empty()).map(|def| session_line(def, n));
+    let line = world.get_resource::<ContentDb>().and_then(rules_def).and_then(|def| session_line(def, n));
     if let Some(line) = line {
         journal::emit(world, JournalKind::Event, line);
     }
 }
 
-/// `rules: 2 players: brute health ×1.5`: the session table's factors at `players`.
-fn session_line(def: &RulesDef, players: u32) -> String {
+/// `rules: 2 players: brute health ×1.5`: the session table's factors at `players`; `None` when the table
+/// gives none (no row, or only rows without a column, which validation refuses).
+fn session_line(def: &RulesDef, players: u32) -> Option<String> {
     let factors: Vec<String> = def
         .session
         .keys()
@@ -293,8 +316,11 @@ fn session_line(def: &RulesDef, players: u32) -> String {
             })
         })
         .collect();
+    if factors.is_empty() {
+        return None;
+    }
     let noun = if players == 1 { "player" } else { "players" };
-    format!("rules: {players} {noun}: {}", factors.join(", "))
+    Some(format!("rules: {players} {noun}: {}", factors.join(", ")))
 }
 
 /// The engine rule `rules.mode_known`: while [`ActiveRules`] exists, its mode is empty or a rule set in
@@ -358,8 +384,31 @@ mod tests {
     #[test]
     fn the_session_line_gives_the_table_at_the_new_size() {
         let mut def = RulesDef { modes: vec!["plain".into()], start: "plain".into(), classes: vec!["brute".into()], session: default(), blocked: String::new(), host_only: String::new() };
+        assert_eq!(session_line(&def, 2), None, "no table: no line");
         def.session.insert("brute".into(), SessionRow { max_health: vec![1.0, 1.5], outgoing_damage: vec![1.0, 1.25, 1.5], ..default() });
-        assert_eq!(session_line(&def, 2), "rules: 2 players: brute health ×1.5, brute damage ×1.25");
-        assert_eq!(session_line(&def, 1), "rules: 1 player: brute health ×1, brute damage ×1");
+        // A row without a column (validation refuses it) adds nothing to the line.
+        def.session.insert("ghost".into(), SessionRow::default());
+        assert_eq!(session_line(&def, 2).as_deref(), Some("rules: 2 players: brute health ×1.5, brute damage ×1.25"));
+        assert_eq!(session_line(&def, 1).as_deref(), Some("rules: 1 player: brute health ×1, brute damage ×1"));
+        def.session.remove("brute");
+        assert_eq!(session_line(&def, 2), None, "only rows without a column: no line");
+    }
+
+    #[test]
+    fn the_dev_entry_says_why_it_does_nothing_here() {
+        let mut world = World::new();
+        let caller = ai_core::Caller { agent: "dev".into(), scope: ai_core::Scope::Dev, subject: None, subject_id: None, player: None };
+        assert_eq!(dev_next(&world, &caller), Err(tools::NO_RULES.to_owned()), "no content");
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<RuleSetDef>();
+        kinds.register::<RulesDef>();
+        let sources = [
+            shards_content::db::Source { path: "content/r.rules.ron".into(), text: r#"{"default": (modes: ["plain"], start: "plain")}"#.into() },
+            shards_content::db::Source { path: "content/s.rule_set.ron".into(), text: r#"{"plain": (name: "Plain")}"#.into() },
+        ];
+        world.insert_resource(ContentDb::build(&kinds, &sources));
+        assert_eq!(dev_next(&world, &caller).as_deref(), Ok("rules_set cycle=1 force=true"));
+        world.insert_resource(NetRole::Client);
+        assert_eq!(dev_next(&world, &caller), Err(HOST_DECIDES.to_owned()), "a client: the host chooses");
     }
 }
