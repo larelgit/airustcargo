@@ -1032,7 +1032,7 @@ leaves its effect on). Two systems that want the same field must be combined by 
 | tool | what it does |
 |---|---|
 | `move_to` | walk to an entity or to a point `{x, z}`; `within`, `queue`; `path=true` follows the route from `path_to` |
-| `move`, `stop` | walk N metres by compass (N = −Z, E = +X); stop. `move`, `move_to`, `stop`, `jump`, `sprint` and `glide` refuse a dead body with the text every action tool gives (`you are dead; a dev agent can `heal` you`), and a death drops the orders the body held (`Intent.orders`, and the `move_dir` they set; a body with no orders keeps its `Intent`, which its keyboard or brain rewrites every tick), so nothing runs after a `heal` |
+| `move`, `stop` | walk N metres by compass (N = −Z, E = +X); stop. `move`, `move_to`, `stop`, `jump`, `sprint` and `glide` refuse a dead body with the text every action tool gives (`you are dead; a dev agent can `heal` you`), and a death drops the orders the body held (`Intent.orders`, and the `move_dir` they set; a body with no orders keeps its `Intent`, which its keyboard or brain rewrites every tick), so nothing runs after a `heal`; a downed body (B5) is refused them with its own words (`you are down: ...`) and drops its orders when it goes down, so nothing runs after a revive |
 | `jump`, `sprint`, `glide` | jump (out of water, onto the shore); sprint and glide as a state that is on (`on=false` turns it off) |
 | `clearance` | query: how far in the eight directions, and what will stop you |
 | `move_info` | query: what modifies a character's movement (slow, caps, root, stance, rates, sprint cost), the walk, run, sprint and swim speeds they leave, and the wading depth |

@@ -16,9 +16,10 @@
 //!                    else Blocked (chip damage, stamina per hit)
 //! armor            → less damage
 //! game hooks       → crits, weaknesses, ... (`add_damage_hook`, registration order)
-//! apply            → health, statuses, death (the game's lethal hooks may veto it: survive
-//!                    or go down); poise: a break staggers, else a reaction of the tier the
-//!                    hit asked for, or the old flinch
+//! apply            → health; the game's lethal hooks are asked if it ran out (survive, go
+//!                    down or die), before the event, so its weight follows the answer; the
+//!                    event; the fate carried out; statuses; poise: a break staggers, else a
+//!                    reaction of the tier the hit asked for, or the old flinch
 //! ```
 //!
 //! A guarded hit carries no status buildup beyond the guard's shares, nor does a killing
