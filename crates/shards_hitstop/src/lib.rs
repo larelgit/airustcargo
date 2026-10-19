@@ -158,32 +158,33 @@ impl Plugin for HitstopPlugin {
                     action: Some(e.action.clone()),
                     ignored: e.invulnerable || e.ignore_reason.is_some(),
                     local: false,
+                    solo: false,
                 };
                 blow(c, info, vec![e.attacker, e.target]);
             })
             .add_observer(|e: On<Blocked>, c: Commands| {
                 let e = e.event();
-                let info = HitInfo { event: EventKind::Blocked, weight: Some(Weight::of(e.weight)), reaction: None, cause: None, action: Some(e.action.clone()), ignored: false, local: false };
+                let info = HitInfo { event: EventKind::Blocked, weight: Some(Weight::of(e.weight)), reaction: None, cause: None, action: Some(e.action.clone()), ignored: false, local: false, solo: false };
                 blow(c, info, vec![e.attacker, e.defender]);
             })
             .add_observer(|e: On<Parried>, c: Commands| {
                 let e = e.event();
-                let info = HitInfo { event: EventKind::Parried, weight: None, reaction: None, cause: None, action: Some(e.action.clone()), ignored: false, local: false };
+                let info = HitInfo { event: EventKind::Parried, weight: None, reaction: None, cause: None, action: Some(e.action.clone()), ignored: false, local: false, solo: false };
                 blow(c, info, vec![e.attacker, e.defender]);
             })
             .add_observer(|e: On<PerfectEvaded>, c: Commands| {
                 let e = e.event();
-                let info = HitInfo { event: EventKind::PerfectEvaded, weight: None, reaction: None, cause: None, action: Some(e.action.clone()), ignored: false, local: false };
+                let info = HitInfo { event: EventKind::PerfectEvaded, weight: None, reaction: None, cause: None, action: Some(e.action.clone()), ignored: false, local: false, solo: false };
                 blow(c, info, vec![e.attacker, e.defender]);
             })
             .add_observer(|e: On<GuardBroken>, c: Commands| {
                 let e = e.event();
-                let info = HitInfo { event: EventKind::GuardBroken, weight: Some(Weight::of(e.weight)), reaction: None, cause: None, action: Some(e.action.clone()), ignored: false, local: false };
+                let info = HitInfo { event: EventKind::GuardBroken, weight: Some(Weight::of(e.weight)), reaction: None, cause: None, action: Some(e.action.clone()), ignored: false, local: false, solo: false };
                 blow(c, info, vec![e.attacker, e.defender]);
             })
             .add_observer(|e: On<Staggered>, c: Commands| {
                 let e = e.event();
-                let info = HitInfo { event: EventKind::Staggered, weight: None, reaction: None, cause: Some(Cause::of(e.cause)), action: None, ignored: false, local: false };
+                let info = HitInfo { event: EventKind::Staggered, weight: None, reaction: None, cause: Some(Cause::of(e.cause)), action: None, ignored: false, local: false, solo: false };
                 blow(c, info, vec![e.entity]);
             });
         tools::register(app.world_mut());
@@ -217,6 +218,7 @@ fn blow(mut commands: Commands, info: HitInfo, bodies: Vec<Entity>) {
 pub fn trigger(world: &mut World, info: &HitInfo, bodies: &[Entity]) -> Option<HitStopped> {
     let mut info = info.clone();
     info.local = info.local || bodies.iter().any(|b| world.get::<LocalPlayer>(*b).is_some());
+    info.solo = world.get_resource::<NetRole>().copied().unwrap_or_default() == NetRole::Single;
     let def = table(world)?;
     let (index, rule) = def.select(&info)?;
     let seconds = def.hold(rule);

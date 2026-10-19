@@ -162,7 +162,7 @@ fn hitstop_play(In(call): In<Call<HitstopPlayArgs>>, world: &mut World) -> ToolR
             crate::stop(world, event, 0, "manual".to_owned(), s.min(ceiling), &bodies)
         }
         None => {
-            let info = HitInfo { event, weight, reaction, cause, action, ignored: false, local: false };
+            let info = HitInfo { event, weight, reaction, cause, action, ignored: false, local: false, solo: false };
             trigger(world, &info, &bodies)
         }
     };

@@ -8,7 +8,8 @@
 // (`accessibility.hit_stop`, 0 turns it off) and `max_seconds` bound every hold.
 //
 // `involves_local: true` keeps a rule to the blows the local player is in: a fight between two
-// others, a hazard tick or a crowd far away holds nothing.
+// others, a hazard tick or a crowd far away holds nothing. `solo: true` keeps a rule to a machine that
+// is not in a co-op session (here the perfect dodge: its hold is for solo play; online it holds nothing).
 {
     "sandbox": (
         max_seconds: 0.12,
@@ -22,7 +23,7 @@
             (name: "hit", when: (event: Damaged, involves_local: true), seconds: 0.06),
             (name: "block", when: (event: Blocked, involves_local: true), seconds: 0.06),
             (name: "parry", when: (event: Parried, involves_local: true), seconds: 0.10),
-            (name: "perfect dodge", when: (event: PerfectEvaded, involves_local: true), seconds: 0.10),
+            (name: "perfect dodge", when: (event: PerfectEvaded, involves_local: true, solo: true), seconds: 0.10),
         ],
     ),
 }

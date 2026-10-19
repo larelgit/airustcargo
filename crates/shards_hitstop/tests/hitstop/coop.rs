@@ -90,3 +90,36 @@ fn the_local_filter_holds_only_the_blows_the_local_player_is_in() {
     let held: Vec<_> = app.world().resource::<PresentationHolds>().held(now).collect();
     assert_eq!(held.len(), 2, "the local player and the one that hit them");
 }
+
+#[test]
+fn a_solo_rule_matches_alone_and_a_machine_in_co_op_falls_through_to_the_next() {
+    let assets = Folder::new("solo_rule");
+    assets.put(
+        "content/feel/test.hitstop.ron",
+        r#"{ "t": (max_seconds: 0.12, rules: [
+            (name: "slow dodge", when: (event: PerfectEvaded, solo: true), seconds: 0.10),
+            (name: "dodge", when: (event: PerfectEvaded), seconds: 0.04),
+        ]) }"#,
+    );
+    let mut app = drawn(&assets);
+    let hero = fighter(app.world_mut(), "hero", "heroes", Vec3::ZERO, Vec3::NEG_Z, 100.0);
+    let brute = fighter(app.world_mut(), "brute", "monsters", Vec3::new(0.0, 0.0, -1.5), Vec3::Z, 100.0);
+    app.insert_resource(TimeUpdateStrategy::FixedTimesteps(1));
+    app.update();
+    sim::resume(app.world_mut());
+    for _ in 0..10 {
+        app.update();
+    }
+    let (h, b) = (id(&app, hero), id(&app, brute));
+    let play = format!("{{\"event\": \"perfect_evaded\", \"attacker\": \"{b}\", \"target\": \"{h}\"}}");
+    let play: Value = serde_json::from_str(&play).unwrap();
+    // Alone: the first rule.
+    let alone = ok(&mut app, "hitstop_play", play.clone());
+    assert!(alone.starts_with("slow dodge 0.10 s (perfect_evaded)"), "{alone}");
+    // Hosting is co-op even with nobody joined, and a client is in co-op: the rule is passed over.
+    for role in [NetRole::Host, NetRole::Client] {
+        app.insert_resource(role);
+        let coop = ok(&mut app, "hitstop_play", play.clone());
+        assert!(coop.starts_with("dodge 0.04 s (perfect_evaded): pictures held"), "{role:?}: {coop}");
+    }
+}

@@ -5362,7 +5362,7 @@ When a blow lands, the picture stands still for a beat (60-100 ms). It is what m
             (name: "hit", when: (event: Damaged), seconds: 0.06),
             (name: "block", when: (event: Blocked), seconds: 0.06),
             (name: "parry", when: (event: Parried), seconds: 0.10),
-            (name: "perfect dodge", when: (event: PerfectEvaded), seconds: 0.10),
+            (name: "perfect dodge", when: (event: PerfectEvaded, solo: true), seconds: 0.10),
         ],
     ),
 }
@@ -5379,6 +5379,7 @@ When a blow lands, the picture stands still for a beat (60-100 ms). It is what m
 | `action` | all but `Staggered` | the id of the action that hit |
 | `ignored` | `Damaged` | by default a rule matches only a hit that landed; `ignored: true` matches one that was ignored (god mode, i-frames) |
 | `involves_local` | all | `true`: only a blow the local player is in (attacker, target or defender) matches; a fight between two others, a hazard tick or a crowd far away then holds nothing. Put it on the rules of a game that should never stutter for the fights around the player (the sandbox does); the setting `hit_stop_local_only` does the same for every rule |
+| `solo` | all | `true`: only a machine that is **not in a co-op session** (`NetRole::Single`) matches. Hosting counts as co-op even before anyone has joined, and so does being a client: such a machine holds the pictures of the bodies and never the clock, and a picture hold in co-op is still a hold, so a rule for solo play only is how a game gives a hold to solo and none online (or, with a second rule after it, a shorter one). Off by default, and left out of the file at its default (the hit stop kind is outside the content hash anyway). The sandbox's perfect dodge uses it. A rule with `solo` is shadowed by an earlier rule without it, not the other way round (the content check names that) |
 
 So "finisher, then poise break, then counter, then a heavy reaction, then the rest" is five rules in that order, and a game that wants a different order writes it. `max_seconds` (at most 0.5 s, the engine's own ceiling) bounds every hold whatever a rule says, and `cooldown` (s) keeps a flurry of hits from turning into a stutter: a hold does not start within that time after the last one ended. Holds that overlap **merge by the later end**: a hold asked for while one runs lasts as long as the longer of the two has left. The content check names what cannot work: a second table, a rule longer than `max_seconds`, a rule the ones before it cover (it can never match), a `weight_at_least` on a parry (it has no weight), a `reaction_at_least` or a `cause` on the wrong event.
 
