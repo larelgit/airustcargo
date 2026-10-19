@@ -126,6 +126,7 @@ pub mod machine;
 mod invariants;
 pub mod objects;
 mod orders;
+pub mod parts;
 mod predict;
 #[cfg(feature = "render")]
 pub mod render;
@@ -190,6 +191,9 @@ pub use status::{
 pub use objects::{
     despawn_objects_of, live_tags_at, objects_of, spawn_objects, AimTarget, CombatObject, ObjectsSpawned, Projectile, ProjectileFlight, RepeatMark,
     Repeats, SpawnAim, SpawnDef, SpawnPattern,
+};
+pub use parts::{
+    break_part, part_of, parts_of, set_part, BodyParts, Part, PartBroken, PartDef, PartHealth, PartHit, PartTurn, PartsDef, SpawnedParts,
 };
 pub use zone::{action_zones, hit_zones, threat_indicators, HitZone, Indicator, WorldShape};
 
@@ -419,7 +423,8 @@ impl Plugin for ActionPlugin {
             .add_engine_invariant("action.objects_sane", invariants::objects_sane)
             .add_engine_invariant("action.objects_capped", invariants::objects_capped)
             .add_engine_invariant("action.downed_sane", invariants::downed_sane)
-            .add_engine_invariant("action.grace_sane", invariants::grace_sane);
+            .add_engine_invariant("action.grace_sane", invariants::grace_sane)
+            .add_engine_invariant("action.parts_sane", invariants::parts_sane);
         coverage::plugin(app);
         app
             // The machine runs after motion's `Intent → LocomotionInput` step: it
@@ -491,6 +496,7 @@ impl Plugin for ActionPlugin {
         bake::register(app);
         cue::plugin(app);
         objects::plugin(app);
+        parts::plugin(app);
         #[cfg(feature = "render")]
         render::plugin(app);
     }

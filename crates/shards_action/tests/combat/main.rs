@@ -15,6 +15,7 @@ mod modifiers;
 mod objects;
 mod outcome;
 mod parity;
+mod parts;
 mod reactions;
 mod timeline;
 mod replay;

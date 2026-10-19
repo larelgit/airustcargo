@@ -1,0 +1,19 @@
+// A 6 m stone colossus that stands where it is put (no brain): a body hit only through its parts
+// (`combat/colossus.parts.ron`). Spawned by the `parts` scenario (`spawn_prefab id=colossus`), never
+// by the arena, so the arena's ids stay as they are.
+{
+    "colossus": (
+        components: {
+            "Name": "Colossus",
+            "AiKind": ("Colossus"),
+            "AiImportance": (8.0),
+            "Team": ("monsters"),
+            "Fighter": (moveset: "warden"),
+            "Health": (current: 1200.0, max: 1200.0),
+            "Poise": (current: 200.0, max: 200.0, regen: 20.0, delay: 3.0, since_hit: 3.0, broken: 0.0),
+            "CharacterController": (params: "colossus"),
+            "BodyParts": ("colossus"),
+            "LockOnTarget": (),
+        },
+    ),
+}

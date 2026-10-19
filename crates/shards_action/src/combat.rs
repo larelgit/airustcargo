@@ -47,6 +47,7 @@ use crate::objects::{despawn_objects_of, living_owner, CombatObject, MetProjecti
 use crate::fighter::{
     grant_protection, hostile, set_reaction_immunity, Armor, Dead, Fighter, Health, Invulnerable, Knockback, Poise, Protection, Stamina, Team,
 };
+use crate::parts::{break_part_entity, hurt_part, PartHit};
 use crate::machine::{force_action, intangible, interrupted, ActionEnd, ActionEnded, ActionState, InputBuffer, RunExtras};
 use crate::status::{add_status_buildup_from, clear_statuses};
 use crate::zone::WorldShape;
@@ -168,6 +169,12 @@ pub struct DamageCtx {
     /// `Finisher` and force the pair's reaction whatever the hooks do to the other fields. A
     /// finisher's damage hook keys on this.
     pub pair: bool,
+    /// The body part the hit landed on ([`crate::parts`]); `None` for a hit on the body's own
+    /// collider. Its `damage` and `poise` factors are already in `damage` and `poise` (a hook that
+    /// rebuilds damage from `base` folds `damage` in), its tags are in `tags`. `apply` takes
+    /// `damage * to_body` off the body's health and `damage` off the part's. A hook may change
+    /// `to_body`, or set this to `None` to hit the body alone.
+    pub part: Option<PartHit>,
 }
 
 /// A game's step in the damage pipeline: `app.add_damage_hook(crits)`.
@@ -218,6 +225,8 @@ pub struct Damaged {
     pub absorbed: f32,
     /// The combat object that hit, when it is not the credited attacker.
     pub source: Option<Entity>,
+    /// The body part the hit landed on ([`crate::parts`]); `amount` is what the body lost.
+    pub part: Option<Entity>,
 }
 
 #[derive(Event, Reflect, Clone, Debug, PartialEq)]
@@ -397,6 +406,8 @@ pub type Standing = (Without<Dead>, Without<Downed>);
 struct Detected {
     attacker: Entity,
     target: Entity,
+    /// The body part the hit landed on ([`crate::parts`]).
+    part: Option<Entity>,
     action: String,
     instance: u32,
     hit: usize,
@@ -472,24 +483,27 @@ fn detect(world: &mut World) -> Vec<Detected> {
                 }
                 _ => shape.overlapping(physics, attacker),
             };
-            let mut targets: Vec<((u32, u32), Entity)> = overlapping
+            // A part stands for its body (one entry per body, through its nearest part): nearest the
+            // middle of the shape (a cone's is half way up its axis, not the feet it starts from), or the
+            // start of a flight's segment (the first part along the way).
+            let near = start.unwrap_or_else(|| shape.physics().1);
+            let mut targets: Vec<((u32, u32), Entity, Option<Entity>)> = crate::parts::hit_bodies(world, overlapping, near)
                 .into_iter()
-                .filter(|t| world.get::<Health>(*t).is_some() && world.get::<Dead>(*t).is_none())
-                .filter(|t| Some(*t) != owner)
-                .filter(|t| hostile(team, world.get::<Team>(*t)))
-                .filter(|t| may_hit(world, attacker, run.instance, *t))
+                .filter(|(t, _)| world.get::<Health>(*t).is_some() && world.get::<Dead>(*t).is_none())
+                .filter(|(t, _)| Some(*t) != owner)
+                .filter(|(t, _)| hostile(team, world.get::<Team>(*t)))
+                .filter(|(t, _)| may_hit(world, attacker, run.instance, *t))
                 // Burrowed: nothing to hit, so no hit, no mark (it may be hit once it is out, still in the window).
-                .filter(|t| !intangible(world, *t))
-                .map(|t| (order_key(world, t), t))
+                .filter(|(t, _)| !intangible(world, *t))
+                .map(|(t, part)| (order_key(world, t), t, part))
                 .collect();
             targets.sort();
-            targets.dedup();
             let limit = match flight {
                 Some((p, f)) if !p.pierce => {
-                    // The first along its flight, whatever the ids.
+                    // The first along its flight, whatever the ids: a body's part where it met one.
                     let from = start.unwrap_or(f.from);
                     let along = |t: Entity| world.get::<Transform>(t).map_or(0.0, |tf| (tf.translation - from).dot(shape.origin - from));
-                    targets.sort_by(|a, b| along(a.1).total_cmp(&along(b.1)).then(a.0.cmp(&b.0)));
+                    targets.sort_by(|a, b| along(a.2.unwrap_or(a.1)).total_cmp(&along(b.2.unwrap_or(b.1))).then(a.0.cmp(&b.0)));
                     1usize.saturating_sub(flown)
                 }
                 // A sweep's cap: the first ones in `AiId` order that pass the ledger, this tick.
@@ -497,7 +511,7 @@ fn detect(world: &mut World) -> Vec<Detected> {
                 _ => usize::MAX,
             };
             let mut taken = 0;
-            for (_, target) in targets {
+            for (_, target, part) in targets {
                 if taken >= limit {
                     break;
                 }
@@ -528,7 +542,7 @@ fn detect(world: &mut World) -> Vec<Detected> {
                 }
                 taken += 1;
                 flown += 1;
-                found.push(Detected { attacker, target, action: run.action.clone(), instance: run.instance, hit: i });
+                found.push(Detected { attacker, target, part, action: run.action.clone(), instance: run.instance, hit: i });
             }
         }
         if flight.is_some() && found.last().is_some_and(|d| d.attacker == attacker) {
@@ -624,7 +638,15 @@ fn resolve(world: &mut World, d: Detected) {
         rules: 1.0,
         weight: if pair { def.weight.unwrap_or_default().max(HitWeight::Finisher) } else { def.weight.unwrap_or_default() },
         pair,
+        part: None,
     };
+    // A hit through a part: its factors scale the hit before the body's own modifiers see it.
+    if let Some((part, tags)) = d.part.and_then(|p| crate::parts::part_hit(world, d.target, p)) {
+        ctx.damage *= part.damage;
+        ctx.poise *= part.poise;
+        ctx.tags.extend(tags);
+        ctx.part = Some(part);
+    }
     modifiers(world, &mut ctx);
     let hooks = world.resource::<DamageHooks>().0.clone();
     for hook in hooks {
@@ -810,6 +832,9 @@ fn apply(world: &mut World, mut ctx: DamageCtx) {
     }
     let plan = plan(world, &ctx, strike.as_ref());
     let weight = weight_of(&ctx, plan.breaks);
+    // Through a part: the body loses its share, the part all of it (and breaks when its health runs out).
+    let part = ctx.part.as_ref().map(|p| p.entity);
+    let (body_damage, part_damage) = (ctx.part.as_ref().map_or(ctx.damage, |p| ctx.damage * p.to_body), ctx.damage);
     match ctx.outcome {
         Outcome::Ignored => {
             let hp_left = world.get::<Health>(target).map_or(0.0, |h| h.current);
@@ -826,6 +851,7 @@ fn apply(world: &mut World, mut ctx: DamageCtx) {
                 reaction: None,
                 absorbed: 0.0,
                 source,
+                part,
             });
         }
         Outcome::Evaded => world.trigger(Evaded { attacker: credit, defender: target, action, source }),
@@ -848,20 +874,24 @@ fn apply(world: &mut World, mut ctx: DamageCtx) {
             if let Some(mut s) = world.get_mut::<Stamina>(target) {
                 s.spend(stamina);
             }
-            let (hp_left, absorbed) = hurt(world, target, ctx.damage);
+            let (hp_left, absorbed) = hurt(world, target, body_damage);
+            let broke = part.filter(|p| hurt_part(world, *p, part_damage));
             let fate = decide_fate(world, target, credit, &action, source);
             let weight = weight_of(&ctx, plan.breaks && !fells(fate));
             world.trigger(Blocked {
                 attacker: credit,
                 defender: target,
                 action: action.clone(),
-                amount: ctx.damage,
+                amount: body_damage,
                 stamina,
                 hp_left,
                 weight,
                 absorbed,
                 source,
             });
+            if let Some(p) = broke {
+                break_part_entity(world, p, Some(credit));
+            }
             if !finish_if_dead(world, target, credit, &action, source, fate) {
                 apply_statuses(world, target, credit, &ctx.status);
                 take_poise(world, target, ctx.poise);
@@ -872,32 +902,37 @@ fn apply(world: &mut World, mut ctx: DamageCtx) {
                 let all = s.current;
                 s.spend(all);
             }
-            let (hp_left, absorbed) = hurt(world, target, ctx.damage);
+            let (hp_left, absorbed) = hurt(world, target, body_damage);
+            let broke = part.filter(|p| hurt_part(world, *p, part_damage));
             let fate = decide_fate(world, target, credit, &action, source);
             world.trigger(GuardBroken {
                 attacker: credit,
                 defender: target,
                 action: action.clone(),
-                amount: ctx.damage,
+                amount: body_damage,
                 hp_left,
                 weight,
                 absorbed,
                 source,
             });
+            if let Some(p) = broke {
+                break_part_entity(world, p, Some(credit));
+            }
             if !finish_if_dead(world, target, credit, &action, source, fate) {
                 apply_statuses(world, target, credit, &ctx.status);
                 guard_break(world, target);
             }
         }
         Outcome::Hit => {
-            let (hp_left, absorbed) = hurt(world, target, ctx.damage);
+            let (hp_left, absorbed) = hurt(world, target, body_damage);
+            let broke = part.filter(|p| hurt_part(world, *p, part_damage));
             let fate = decide_fate(world, target, credit, &action, source);
             let weight = weight_of(&ctx, plan.breaks && !fells(fate));
             world.trigger(Damaged {
                 attacker: credit,
                 target,
                 action: action.clone(),
-                amount: ctx.damage,
+                amount: body_damage,
                 poise: ctx.poise,
                 hp_left,
                 invulnerable: false,
@@ -906,7 +941,11 @@ fn apply(world: &mut World, mut ctx: DamageCtx) {
                 reaction: plan.reacts,
                 absorbed,
                 source,
+                part,
             });
+            if let Some(p) = broke {
+                break_part_entity(world, p, Some(credit));
+            }
             if finish_if_dead(world, target, credit, &action, source, fate) {
                 return;
             }

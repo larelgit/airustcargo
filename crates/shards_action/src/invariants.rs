@@ -12,6 +12,7 @@ use crate::combat::{Downed, Grace};
 use crate::fighter::{Dead, Fighter, Health, Knockback, Poise, Protection, Stamina};
 use crate::machine::{ActionState, LeapRun, RunExtras};
 use crate::objects::{CombatObject, Projectile, ProjectileFlight};
+use crate::parts::{Part, PartHealth, SpawnedParts};
 use shards_motion::Ghost;
 
 /// The engine rule `action.resources_in_range`: `Health`, `Stamina` and `Poise` hold finite
@@ -415,6 +416,37 @@ pub fn grace_sane(world: &World) -> Option<String> {
         for (id, g) in query.iter(world) {
             if !(g.left.is_finite() && g.left >= 0.0) {
                 bad.note(*id, || format!("Grace.left = {} is not a finite number >= 0", g.left));
+            }
+        }
+    });
+    bad.report()
+}
+
+/// The engine rule `action.parts_sane`: every body part belongs to a body that lists it (a body
+/// that went this tick takes its parts on the next), a broken part is off, and a part's health is
+/// a finite number in `0..=max` with `max > 0`.
+pub fn parts_sane(world: &World) -> Option<String> {
+    let index = world.get_resource::<AiIndex>()?;
+    let now = world.get_resource::<SimTick>().map_or(0, |t| t.0);
+    let mut bad = Offenders::default();
+    with_query::<(&AiId, &Part, Option<&PartHealth>), (), _>(world, |query| {
+        for (id, p, health) in query.iter(world) {
+            match index.get(p.body) {
+                Some(body) => {
+                    if !world.get::<SpawnedParts>(body).is_some_and(|s| s.0.contains(id)) {
+                        bad.note(*id, || format!("part {} of {}, which does not list it", p.id, p.body));
+                    }
+                }
+                None if index.tombstone(p.body).is_some_and(|t| t.tick == now) => {}
+                None => bad.note(*id, || format!("part {} of {}, which is not in the world", p.id, p.body)),
+            }
+            if p.broken && p.on {
+                bad.note(*id, || format!("part {} is broken and on", p.id));
+            }
+            if let Some(h) = health
+                && !(h.max > 0.0 && h.max.is_finite() && h.current.is_finite() && (0.0..=h.max).contains(&h.current))
+            {
+                bad.note(*id, || format!("part {} health {}/{}: 0 <= current <= max, max > 0", p.id, h.current, h.max));
             }
         }
     });

@@ -1,0 +1,17 @@
+{
+    // A body hit only through its parts (its own capsule takes nothing), all in front of its
+    // middle: an arm before its right shoulder with its own 60 hp, which doubles a hit and passes
+    // half of it to the body; a left leg without health that triples poise; a weak spot that starts
+    // off; a crown out of a sword's reach.
+    "giant": (
+        body_hurtbox: false,
+        parts: {
+            "arm": (shape: Sphere(radius: 0.4), at: (forward: 0.8, up: 1.0, right: 0.5), health: Some(60), damage: 2.0, to_body: 0.5),
+            "crown": (shape: Sphere(radius: 0.5), at: (up: 6.0), health: Some(10)),
+            "leg": (shape: Capsule(half_height: 0.4, radius: 0.3), at: (forward: 0.5, up: 0.7, right: -0.5), poise: 3.0),
+            "spot": (shape: Sphere(radius: 0.3), at: (forward: 0.9, up: 1.0), tags: ["weak"], enabled: false),
+        },
+    ),
+    // One part on a body whose own capsule still takes hits.
+    "open": (parts: {"arm": (shape: Sphere(radius: 0.3), at: (forward: 0.8, up: 1.0, right: 0.5))}),
+}
