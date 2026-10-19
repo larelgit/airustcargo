@@ -28,18 +28,19 @@
 //! wants Blocked versus GuardBroken decided again: the engine does not redo the guard after
 //! the hooks.
 
-use ai_core::AiId;
+use ai_core::{AiId, SimTick};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_content::ContentDb;
 use shards_core::{flat, NetRole};
 use shards_motion::{
-    Collider, ColliderId, LayerMask, MotionState, PhysicsWorld, QueryFilter,
+    Collider, ColliderId, LayerMask, MotionState, PhysicsWorld, QueryFilter, Shape,
 };
 
 use crate::context::{held_by, in_victim_action, may_hit, strike as pair_strike, Pairing, Strike};
 use crate::body::{Barrier, DamageTaken};
-use crate::def::{touches, ActionDef, CombatTuning, HitFlag, MovesetDef, EPS};
+use crate::def::{touches, ActionDef, CombatTuning, HitFlag, HitShape, MovesetDef, EPS};
+use crate::objects::{despawn_objects_of, living_owner, CombatObject, MetProjectiles, Projectile, ProjectileFlight, RepeatMark, Repeats};
 use crate::fighter::{
     grant_protection, hostile, set_reaction_immunity, Armor, Dead, Fighter, Health, Invulnerable, Knockback, Poise, Protection, Stamina, Team,
 };
@@ -309,7 +310,7 @@ pub(crate) fn resolve_hits(world: &mut World) {
 
 fn detect(world: &mut World) -> Vec<Detected> {
     let mut attackers: Vec<((u32, u32), Entity)> = world
-        .query_filtered::<(Entity, &ActionState), (With<Fighter>, Without<Dead>)>()
+        .query_filtered::<(Entity, &ActionState), (Or<(With<Fighter>, With<CombatObject>)>, Without<Dead>)>()
         .iter(world)
         .filter(|(_, s)| s.current.is_some())
         .map(|(e, _)| e)
@@ -320,23 +321,55 @@ fn detect(world: &mut World) -> Vec<Detected> {
     attackers.sort();
     let mut found = Vec::new();
     let mut marks: Vec<(Entity, u8, Entity)> = Vec::new();
+    let mut repeats: Vec<(Entity, RepeatMark)> = Vec::new();
+    let mut met: Vec<Entity> = Vec::new();
+    let tick = world.resource::<SimTick>().0;
     let (db, physics) = (world.resource::<ContentDb>(), world.resource::<PhysicsWorld>());
     let sight = CombatTuning::of(db).sight_height;
     for &(_, attacker) in &attackers {
         let Some(run) = world.get::<ActionState>(attacker).and_then(|s| s.current.as_ref()) else { continue };
         let Some(def) = db.get::<ActionDef>(&run.action) else { continue };
         let Some(feet) = world.get::<Transform>(attacker).map(|t| t.translation) else { continue };
+        // A combat object hits from the tick after its spawn, for its living owner, never the owner.
+        let object = world.get::<CombatObject>(attacker);
+        let owner = match object {
+            Some(o) if o.spawned == tick => continue,
+            Some(o) => match living_owner(world, o) {
+                Some(owner) => Some(owner),
+                None => continue,
+            },
+            None => None,
+        };
+        // A projectile in its flight action: its spheres sweep the segment it flew this tick, and
+        // unless it pierces it meets one target, the first along the way.
+        let flight = object
+            .filter(|o| o.action == run.action)
+            .and_then(|_| world.get::<Projectile>(attacker).zip(world.get::<ProjectileFlight>(attacker)));
         let team = world.get::<Team>(attacker);
+        let ledger = world.get::<Repeats>(attacker);
+        // Targets a non-piercing flight has taken over all its hit windows: it meets one in all.
+        let mut flown = 0usize;
         let mut seen: Vec<(u8, Entity)> = Vec::new();
         for (i, hit) in def.hits.iter().enumerate() {
             if !def.span(&hit.span).is_some_and(|w| touches(w, run.prev, run.t)) {
                 continue;
             }
             let shape = WorldShape::new(hit.shape, hit.at, feet, run.facing);
-            let mut targets: Vec<((u32, u32), Entity)> = shape
-                .overlapping(physics, attacker)
+            let start = flight.map(|(_, f)| f.from + (shape.origin - feet));
+            let overlapping = match (hit.shape, start) {
+                (HitShape::Sphere { radius }, Some(start)) if start.distance_squared(shape.origin) > 1e-8 => {
+                    let along = shape.origin - start;
+                    let rot = Quat::from_rotation_arc(Vec3::Y, along.normalize());
+                    let capsule = Shape::Capsule { half_height: along.length() * 0.5, radius };
+                    let filter = QueryFilter::new(LayerMask::HURTBOX).excluding(attacker);
+                    physics.overlaps(&capsule, start + along * 0.5, rot, &filter)
+                }
+                _ => shape.overlapping(physics, attacker),
+            };
+            let mut targets: Vec<((u32, u32), Entity)> = overlapping
                 .into_iter()
                 .filter(|t| world.get::<Health>(*t).is_some() && world.get::<Dead>(*t).is_none())
+                .filter(|t| Some(*t) != owner)
                 .filter(|t| hostile(team, world.get::<Team>(*t)))
                 .filter(|t| may_hit(world, attacker, run.instance, *t))
                 // Burrowed: nothing to hit, so no hit, no mark (it may be hit once it is out, still in the window).
@@ -345,18 +378,55 @@ fn detect(world: &mut World) -> Vec<Detected> {
                 .collect();
             targets.sort();
             targets.dedup();
+            let limit = match flight {
+                Some((p, f)) if !p.pierce => {
+                    // The first along its flight, whatever the ids.
+                    let from = start.unwrap_or(f.from);
+                    let along = |t: Entity| world.get::<Transform>(t).map_or(0.0, |tf| (tf.translation - from).dot(shape.origin - from));
+                    targets.sort_by(|a, b| along(a.1).total_cmp(&along(b.1)).then(a.0.cmp(&b.0)));
+                    1usize.saturating_sub(flown)
+                }
+                // A sweep's cap: the first ones in `AiId` order that pass the ledger, this tick.
+                _ if hit.max_targets > 0 => hit.max_targets as usize,
+                _ => usize::MAX,
+            };
+            let mut taken = 0;
             for (_, target) in targets {
+                if taken >= limit {
+                    break;
+                }
                 let key = (hit.group, target);
-                if run.hit.contains(&key) || seen.contains(&key) {
-                    continue;
+                // A repeating hit keeps a time per target ([`Repeats`]) instead of the run's ledger.
+                let repeat = world.get::<AiId>(target).copied().filter(|_| hit.repeat > 0.0);
+                match repeat {
+                    Some(id) => {
+                        let waits = ledger.is_some_and(|l| !l.allows(run.instance, hit.group, id, run.t));
+                        let again = repeats.iter().any(|(a, m)| *a == attacker && m.group == hit.group && m.target == id);
+                        if waits || again {
+                            continue;
+                        }
+                    }
+                    None if run.hit.contains(&key) || seen.contains(&key) => continue,
+                    None => {}
                 }
                 // Behind a wall: skipped, and not marked, so it may still be hit later in the window.
                 if hit.flags.contains(&HitFlag::LineOfSight) && !clear_line(world, physics, attacker, target, sight) {
                     continue;
                 }
-                seen.push(key);
+                match repeat {
+                    Some(id) => repeats.push((
+                        attacker,
+                        RepeatMark { instance: run.instance, group: hit.group, target: id, next: run.t + hit.repeat },
+                    )),
+                    None => seen.push(key),
+                }
+                taken += 1;
+                flown += 1;
                 found.push(Detected { attacker, target, action: run.action.clone(), instance: run.instance, hit: i });
             }
+        }
+        if flight.is_some() && found.last().is_some_and(|d| d.attacker == attacker) {
+            met.push(attacker);
         }
         marks.extend(seen.into_iter().map(|(group, target)| (attacker, group, target)));
     }
@@ -364,6 +434,19 @@ fn detect(world: &mut World) -> Vec<Detected> {
         if let Some(run) = world.get_mut::<ActionState>(attacker).and_then(|s| s.into_inner().current.as_mut()) {
             run.hit.push((group, target));
         }
+    }
+    for (attacker, mark) in repeats {
+        match world.get_mut::<Repeats>(attacker) {
+            Some(mut ledger) => ledger.write(mark),
+            None => {
+                world.entity_mut(attacker).insert(Repeats(vec![mark]));
+            }
+        }
+    }
+    if !met.is_empty()
+        && let Some(mut m) = world.get_resource_mut::<MetProjectiles>()
+    {
+        m.0.extend(met);
     }
     found
 }
@@ -393,6 +476,15 @@ fn resolve(world: &mut World, d: Detected) {
     if !swinging || world.get::<Dead>(d.target).is_some() || world.get::<Dead>(d.attacker).is_some() {
         return;
     }
+    // A combat object's hit is its owner's, and an owner that died (or went) earlier in the tick
+    // deals nothing.
+    let credit = match world.get::<CombatObject>(d.attacker) {
+        Some(o) => match living_owner(world, o) {
+            Some(owner) => owner,
+            None => return,
+        },
+        None => d.attacker,
+    };
     let Some(def) = world.resource::<ContentDb>().get::<ActionDef>(&d.action).cloned() else { return };
     let hit = &def.hits[d.hit];
     let facing = world.get::<ActionState>(d.attacker).and_then(|s| s.current.as_ref()).map(|r| r.facing);
@@ -405,7 +497,7 @@ fn resolve(world: &mut World, d: Detected) {
     let pair = pair_strike(world, d.attacker, d.target, &d.action).is_some();
     let mut ctx = DamageCtx {
         attacker: d.attacker,
-        credit: d.attacker,
+        credit,
         target: d.target,
         action: d.action,
         hit: d.hit,
@@ -1143,6 +1235,12 @@ pub fn kill_with(
                 world.trigger(ActionEnded::of(entity, &run, ActionEnd::Interrupted));
             }
         }
+    }
+    // Its combat objects go with it (a co-op client's go when the host's do).
+    if world.get_resource::<NetRole>().is_none_or(|r| r.simulates())
+        && let Some(id) = world.get::<AiId>(entity).copied()
+    {
+        despawn_objects_of(world, id);
     }
 }
 

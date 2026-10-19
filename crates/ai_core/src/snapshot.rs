@@ -59,7 +59,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::id::{AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible, Tombstone};
+use crate::id::{AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible, NoTombstone, Tombstone};
 use crate::journal::{self, JournalKind};
 use crate::rng::SimSeed;
 use crate::session::Scope;
@@ -1273,6 +1273,7 @@ pub(crate) fn plugin(app: &mut App) {
         .register_type::<AiLandmark>()
         .register_type::<AiImportance>()
         .register_type::<AiPlayer>()
+        .register_type::<NoTombstone>()
         .register_type::<AiOccluder>()
         .register_type::<AiId>()
         // A snapshot without positions is none: apps that do not add Bevy's transform plugin

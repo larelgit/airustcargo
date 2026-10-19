@@ -81,7 +81,7 @@ pub struct Phase(pub String, pub f32);
 
 /// A point in the actor's frame at the start of the action: meters forward (where it
 /// faces), up (from the feet) and to the right.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
+#[derive(Serialize, Deserialize, Reflect, Clone, Copy, Debug, PartialEq, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct Local {
     pub forward: f32,
@@ -268,6 +268,15 @@ pub struct HitDef {
     /// hit's damage (the old rule).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guard_damage: Option<f32>,
+    /// At most this many targets in one tick, lowest `AiId` first among those the ledger lets
+    /// through (a sweep's result cap); 0: every one. A projectile that does not pierce takes the
+    /// first along its flight whatever this says.
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub max_targets: u8,
+    /// Seconds before the window may hit the same target again (a ground zone's pulse); 0: once per
+    /// action and group (the old rule). Each target from its own first hit; at least 0.05 s.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub repeat: f32,
 }
 
 /// A guard (block) window, with an optional perfect-guard (parry) window inside.
@@ -413,6 +422,10 @@ pub enum Effect {
         #[serde(default, skip_serializing_if = "is_false")]
         of_max: bool,
     },
+    /// Combat objects for the actor's owner (projectiles, ground zones, summons), each running its
+    /// own action: `Spawn((prefab: ["bolt"], action: ["bolt_fly"], at: (forward: 0.8, up: 1.2)))`
+    /// ([`SpawnDef`](crate::objects::SpawnDef)).
+    Spawn(crate::objects::SpawnDef),
     /// A game hook registered with `add_action_effect`: `Custom("spawn_fireball")`.
     Custom(String),
 }
@@ -761,6 +774,15 @@ pub struct ActionDef {
     /// While intangible the body also passes through other characters ([`Ghost`](shards_motion::Ghost)).
     #[serde(default, skip_serializing_if = "is_false")]
     pub ghost: bool,
+    /// The action that starts when this one finishes (its time ran out; not when it is cut): a
+    /// summon's pulse loops on itself, a zone's phases chain. Its `at: 0` effects come on the
+    /// start, in the tick this one ends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub then: Option<String>,
+    /// A projectile's flight action: the action it runs where it stops (a wall, the first target
+    /// it meets, unless it pierces). None: it ends there. Not at its lifetime's end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impact: Option<String>,
 }
 
 /// A paired action ([`ActionDef::pair`]): when it starts, the fighter takes a victim that
@@ -1143,6 +1165,9 @@ impl ContentDef for ActionDef {
                 check.refs.require::<StatusDef>(status, &format!("{at}.status"));
                 check.number(&format!("{at}.status `{status}`"), *amount);
             }
+            if hit.repeat != 0.0 && !(hit.repeat >= MIN_REPEAT && hit.repeat.is_finite()) {
+                check.refs.error(format!("{at}.repeat must be 0 (once per run) or at least {MIN_REPEAT} s (is {})", hit.repeat));
+            }
         }
         for (i, span) in self.iframes.iter().enumerate() {
             check.window(&format!("iframes[{i}]"), span);
@@ -1240,9 +1265,21 @@ impl ContentDef for ActionDef {
                         }
                     }
                 }
+                Effect::Spawn(spawn) => check.spawn(&format!("effects[{i}] Spawn"), spawn),
                 // The sound is checked where the mixer is (`AudioDef`), as a telegraph's is.
                 Effect::Sound(_) | Effect::Custom(_) => {}
             }
+        }
+        if let Some(then) = &self.then {
+            check.refs.require::<ActionDef>(then, "then");
+        }
+        if let Some(impact) = &self.impact {
+            check.refs.require::<ActionDef>(impact, "impact");
+        }
+        if let Some(circle) = spawn_circle(id, check.refs) {
+            check.refs.error(format!(
+                "spawns and impacts go round in a circle ({circle}): each would start the next for ever; break the circle"
+            ));
         }
         if let Some(telegraph) = &self.telegraph {
             check.time("telegraph.at", telegraph.at);
@@ -1274,7 +1311,149 @@ struct Check<'d, 'r, 'a> {
     hold: Option<(f32, f32)>,
 }
 
+/// The shortest repeat of a hit ([`HitDef::repeat`]): three ticks.
+pub const MIN_REPEAT: f32 = 0.05;
+
+/// A circle from action `id` back to itself along `then`, `impact` and `Spawn` edges that takes at
+/// least one `impact` or `Spawn` edge (a loop of `then` alone is one object pulsing, and allowed):
+/// `a -> Spawn b -> Spawn a`. The shortest one, the edges taken in their order in the definitions.
+fn spawn_circle(id: &str, refs: &Refs) -> Option<String> {
+    // Breadth first over (action, has the path taken a spawn or impact edge yet).
+    let mut seen: Vec<(String, bool)> = vec![(id.to_owned(), false)];
+    let mut came: Vec<Option<(usize, String)>> = vec![None];
+    let mut at = 0;
+    while at < seen.len() {
+        let (node, spawned) = seen[at].clone();
+        if let Some(def) = refs.get::<ActionDef>(&node) {
+            let spawns = def.effects.iter().filter_map(|e| match &e.effect {
+                Effect::Spawn(s) => Some(s.action.iter()),
+                _ => None,
+            });
+            let edges = def
+                .then
+                .iter()
+                .map(|t| ("then", t, spawned))
+                .chain(def.impact.iter().map(|t| ("impact", t, true)))
+                .chain(spawns.flatten().map(|t| ("Spawn", t, true)));
+            for (edge, next, flag) in edges {
+                if next == id && flag {
+                    let mut path = vec![format!("{edge} {next}")];
+                    let mut back = at;
+                    while let Some((from, edge)) = &came[back] {
+                        path.push(format!("{edge} {}", seen[back].0));
+                        back = *from;
+                    }
+                    path.push(id.to_owned());
+                    path.reverse();
+                    return Some(path.join(" -> "));
+                }
+                if !seen.iter().any(|(n, f)| n == next && *f == flag) {
+                    seen.push((next.clone(), flag));
+                    came.push(Some((at, edge.to_owned())));
+                }
+            }
+        }
+        at += 1;
+    }
+    None
+}
+
+/// Whether prefab `id` (or one it extends) has a component named `name` (`Projectile` or a path
+/// ending in `::Projectile`).
+fn prefab_has(refs: &Refs, id: &str, name: &str) -> bool {
+    let mut at = id.to_owned();
+    for _ in 0..16 {
+        let Some(prefab) = refs.get::<shards_content::PrefabDef>(&at) else { return false };
+        if prefab.components.keys().any(|k| k == name || k.ends_with(&format!("::{name}"))) {
+            return true;
+        }
+        match &prefab.extends {
+            Some(next) => at = next.clone(),
+            None => return false,
+        }
+    }
+    false
+}
+
 impl Check<'_, '_, '_> {
+    /// A [`Spawn`](Effect::Spawn) effect's fields.
+    fn spawn(&mut self, at: &str, def: &crate::objects::SpawnDef) {
+        use crate::objects::{SpawnAim, SpawnPattern};
+        if def.prefab.is_empty() {
+            self.refs.error(format!("{at}.prefab is empty; name the prefab each object is spawned from"));
+        }
+        for prefab in &def.prefab {
+            self.refs.require::<shards_content::PrefabDef>(prefab, &format!("{at}.prefab"));
+        }
+        if def.action.is_empty() {
+            self.refs.error(format!("{at}.action is empty; name the action each object runs"));
+        }
+        for action in &def.action {
+            self.refs.require::<ActionDef>(action, &format!("{at}.action"));
+        }
+        if def.count == 0 {
+            self.refs.error(format!("{at}.count must be at least 1"));
+        }
+        self.number(&format!("{at}.delay"), def.delay);
+        if let Some(depth) = def.ground
+            && !(depth > 0.0 && depth.is_finite())
+        {
+            self.refs.error(format!("{at}.ground must be a number above 0 (is {depth})"));
+        }
+        let mut finite = vec![("at.forward", def.at.forward), ("at.up", def.at.up), ("at.right", def.at.right)];
+        if let SpawnAim::Target { height } = def.aim {
+            finite.push(("aim.height", height));
+        }
+        match def.pattern {
+            SpawnPattern::Fan { spread } => finite.push(("pattern.spread", spread)),
+            SpawnPattern::Line { start, step } => finite.extend([("pattern.start", start), ("pattern.step", step)]),
+            SpawnPattern::Radial { lines, start, step } => {
+                if lines == 0 {
+                    self.refs.error(format!("{at}.pattern.lines must be at least 1"));
+                }
+                finite.extend([("pattern.start", start), ("pattern.step", step)]);
+            }
+        }
+        for (name, v) in finite {
+            if !v.is_finite() {
+                self.refs.error(format!("{at}.{name} must be a number (is {v})"));
+            }
+        }
+        self.spawn_counts(at, def);
+        self.flight_shapes(at, def);
+    }
+
+    /// One spawn must fit under the caps in `CombatTuning`: more than `max_objects_per_owner` (or
+    /// `max_objects`) in one `Spawn` is always cut short, so it is a content mistake.
+    fn spawn_counts(&mut self, at: &str, def: &crate::objects::SpawnDef) {
+        let tuning = self.refs.get::<CombatTuning>(CombatTuning::ID).cloned().unwrap_or_default();
+        let cap = tuning.max_objects.min(tuning.max_objects_per_owner) as usize;
+        if def.total() > cap {
+            self.refs.error(format!(
+                "{at} spawns {} objects at once, over the caps of the combat tuning ({cap} = the smaller of max_objects and max_objects_per_owner); lower count or lines",
+                def.total()
+            ));
+        }
+    }
+
+    /// A projectile's hit windows sweep the segment it flew only when they are spheres; any other
+    /// shape of its flight action would be tested where it stands and let it through at speed.
+    fn flight_shapes(&mut self, at: &str, def: &crate::objects::SpawnDef) {
+        let pairs = def.prefab.len().max(def.action.len());
+        for i in 0..pairs {
+            let (Some(prefab), Some(action)) = (def.prefab.get(i).or(def.prefab.last()), def.action.get(i).or(def.action.last())) else { continue };
+            if !prefab_has(self.refs, prefab, "Projectile") {
+                continue;
+            }
+            let Some(flight) = self.refs.get::<ActionDef>(action) else { continue };
+            if let Some((n, _)) = flight.hits.iter().enumerate().find(|(_, h)| !matches!(h.shape, HitShape::Sphere { .. })) {
+                self.refs.error(format!(
+                    "{at}: `{action}` is the flight of the projectile `{prefab}`, and its hits[{n}] is not a Sphere; only spheres sweep the segment a projectile flies (use a Sphere, or an `impact` action for a burst)"
+                ));
+            }
+        }
+    }
+
     fn number(&mut self, field: &str, v: f32) {
         if !(v >= 0.0 && v.is_finite()) {
             self.refs.error(format!("{field} must be a number >= 0 (is {v})"));
@@ -1970,6 +2149,13 @@ pub struct CombatTuning {
     /// Share of a body's height where a `LineOfSight` hit's ray starts and ends (a chest).
     #[serde(skip_serializing_if = "is_default_sight_height")]
     pub sight_height: f32,
+    /// Combat objects (projectiles, zones, summons) alive at once in the world: a spawn past it
+    /// lays down the indices that fit and says so in the journal.
+    #[serde(skip_serializing_if = "is_default_max_objects")]
+    pub max_objects: u32,
+    /// Combat objects alive at once of one owner.
+    #[serde(skip_serializing_if = "is_default_max_objects_per_owner")]
+    pub max_objects_per_owner: u32,
 }
 
 fn is_on_release(v: &SprintResume) -> bool {
@@ -1983,6 +2169,18 @@ fn is_default_sight_height(v: &f32) -> bool {
     *v == SIGHT_HEIGHT
 }
 
+/// The combat objects alive at once unless the tuning says otherwise: in the world, of one owner.
+const MAX_OBJECTS: u32 = 256;
+const MAX_OBJECTS_PER_OWNER: u32 = 96;
+
+fn is_default_max_objects(v: &u32) -> bool {
+    *v == MAX_OBJECTS
+}
+
+fn is_default_max_objects_per_owner(v: &u32) -> bool {
+    *v == MAX_OBJECTS_PER_OWNER
+}
+
 impl Default for CombatTuning {
     fn default() -> Self {
         Self {
@@ -1993,6 +2191,8 @@ impl Default for CombatTuning {
             free_sprint_regen_hold: None,
             lock_on_range: 20.0,
             sight_height: SIGHT_HEIGHT,
+            max_objects: MAX_OBJECTS,
+            max_objects_per_owner: MAX_OBJECTS_PER_OWNER,
         }
     }
 }
@@ -2479,6 +2679,10 @@ mod tests {
             "intangible",
             "ghost",
             "only_in",
+            "then",
+            "impact",
+            "max_targets",
+            "repeat",
         ] {
             assert!(!json.contains(&format!("\"{new}\"")), "`{new}` leaked into {json}");
         }
@@ -2525,7 +2729,7 @@ mod tests {
         let json = serde_json::to_string(&moveset).unwrap();
         assert_eq!(json, r#"{"inputs":{"light":"a"},"stagger":"s"}"#);
         let tuning = serde_json::to_string(&CombatTuning::default()).unwrap();
-        assert!(!tuning.contains("sight_height"), "{tuning}");
+        assert!(!tuning.contains("sight_height") && !tuning.contains("max_objects"), "{tuning}");
         // And a field set to something else does show.
         let set: MovesetDef = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME).from_str(r#"(inputs: {}, reaction_immunity: 0.2)"#).unwrap();
         assert!(serde_json::to_string(&set).unwrap().contains("reaction_immunity"));

@@ -1,0 +1,154 @@
+# Spawned combat objects (B4): a caster's volley at the player (three bolts in a fan, the middle
+# one homing: it meets the player once; a side bolt stops at a pillar and leaves a puddle there),
+# the puddle of the bolt that met the player hits it every 0.8 s while it stands in it, a roll
+# toward a bolt evades it (the bolt is spent all the same), and the caster's line and rings of
+# zones telegraph and land in order.
+#
+# The skeleton e8 is borrowed as the caster: it gets the `caster` moveset (`content/combat/
+# caster.moveset.ron`, `objects.*.ron`) and goes back at the end. Its presses come from a dev agent
+# possessing it (`session --subject e8`, its behaviour kept `calm`), the player's from a
+# player-scope agent through the same controls a human has.
+
+seed 42
+
+# --- the arena as the game spawns it, whatever was played in it before: everyone stands down
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+# (a dead player is brought back first: its own controls refuse a dead body)
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god on=false
+step 150
+act heal id=e5
+act heal id=e6
+act heal id=e8
+act set id=e6 component=Boss path=phase value=1
+act set id=e8 component=Fighter path=moveset value=caster
+act teleport id=e5 x=5.5 z=0 y=0
+act teleport id=e8 x=5.5 z=-15 y=0
+act teleport id=e6 x=-14 z=-14 y=0
+act teleport id=e7 x=-16 z=8 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+step 2
+invariant field e5 Health.current > 0
+
+session --agent caster --scope dev --subject e8
+act lock_on target=e5
+expect result contains "ok: locked on e5"
+session --agent bot --scope player
+session --agent scenario
+# (the locked body turns to its target at the lock turn speed)
+step 31
+
+# --- 1. the volley: three bolts, the middle one homing, the player hit once
+mark
+session --agent caster
+act light_attack
+expect result contains "ok: caster_volley"
+session --agent scenario
+step 120 --until "journal:e8 spawns 3 x bolt_fly"
+expect journal "e8 spawns 3 x bolt_fly"
+act combat_objects owner=e8
+expect result contains "bolt_fly"
+observe
+expect result contains "projectile of e8"
+# a side bolt stops at the pillar at (7, -7) and bursts at its foot
+step 60 --until "journal:e8 spawns 1 x chill_puddle"
+expect journal "e8 spawns 1 x chill_puddle"
+mark
+# the middle bolt meets the player and bursts there: a puddle under the player, which hits from the next tick
+step 80 --until "journal:e8 -> e5 bolt_fly"
+expect journal "e8 -> e5 bolt_fly -8"
+expect journal "e8 spawns 1 x chill_puddle"
+step 2
+expect journal "e8 -> e5 chill_puddle -2"
+act combat_objects owner=e8
+expect result contains "chill_puddle"
+
+# --- 2. the player stands in the puddle: hit again every 0.8 s, by the caster, the chill building up
+mark
+step 100
+expect journal "e8 -> e5 chill_puddle -2"
+expect !journal "e8 -> e5 bolt_fly"
+act inspect id=e5
+expect result contains "spar_chill"
+# every object of the volley is gone once its action is over
+step 220
+act combat_objects owner=e8
+expect result !contains "bolt_fly"
+expect result !contains "chill_puddle"
+
+# --- 3. a roll toward the next volley's bolt evades it; the bolt is spent all the same
+act heal id=e5
+act teleport id=e5 x=5.5 z=0 y=0
+step 2
+mark
+session --agent caster
+act light_attack
+expect result contains "ok: caster_volley"
+session --agent scenario
+step 120 --until "journal:e8 spawns 3 x bolt_fly"
+step 48
+session --agent bot
+act dodge dir=N
+expect result contains "ok: roll"
+session --agent scenario
+step 20
+expect journal "e5 evaded e8 bolt_fly"
+expect !journal "e8 -> e5 bolt_fly"
+step 260
+expect !journal "e8 -> e5 bolt_fly"
+
+# --- 4. a line of six zones ahead of the caster, landing one after another
+act heal id=e5
+act teleport id=e5 x=5.5 z=0 y=0
+step 2
+mark
+session --agent caster
+act heavy_attack
+expect result contains "ok: caster_line"
+session --agent scenario
+step 80 --until "journal:e8 spawns 6 x line_zone_0"
+expect journal "e8 spawns 6 x line_zone_0"
+expect journal "winds up line_zone_0 (0.35s) ^"
+expect journal "winds up line_zone_5 (1.15s) ^"
+act combat_objects owner=e8
+expect result contains "line_zone_5"
+step 90
+act combat_objects owner=e8
+expect result !contains "line_zone"
+
+# --- 5. eight lines of four zones around the caster, turned at random, landing from the inside out
+mark
+session --agent caster
+act use_technique slot=1
+expect result contains "ok: caster_radial"
+session --agent scenario
+step 80 --until "journal:e8 spawns 32 x ring_zone_0"
+expect journal "e8 spawns 32 x ring_zone_0"
+expect journal "winds up ring_zone_0 (0.50s) o"
+expect journal "winds up ring_zone_3 (1.16s) o"
+step 100
+act combat_objects owner=e8
+expect result !contains "ring_zone"
+
+# --- the arena as it was: the moveset back, nobody locked on, everybody healed, every object gone
+session --agent caster
+act lock_on off=true
+session --agent scenario
+act set id=e8 component=Fighter path=moveset value=skeleton
+act heal id=e5
+act heal id=e6
+act heal id=e8
+act teleport id=e5 x=0 z=12 y=0
+act teleport id=e7 x=-12 z=2 y=0
+act teleport id=e6 x=0 z=-6 y=0
+act teleport id=e8 x=12 z=-2 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+step 300
+act combat_objects
+expect result !contains "owner"
