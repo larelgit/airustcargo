@@ -64,7 +64,7 @@ fn the_player_is_the_local_player() {
 #[test]
 fn the_sandbox_content_is_clean() {
     let mut app = sandbox::test_app(42);
-    assert_eq!(text(&ok(&mut app, "content_check", json!({}))), "ok: 215 definitions in 64 files");
+    assert_eq!(text(&ok(&mut app, "content_check", json!({}))), "ok: 216 definitions in 65 files");
     let light = ok(&mut app, "content_get", json!({"kind": "action", "id": "light_1"})).result;
     assert_eq!(light["def"]["hits"][0]["damage"], json!(20.0));
     assert_eq!(light["file"], "content/combat/player.action.ron");
@@ -72,7 +72,7 @@ fn the_sandbox_content_is_clean() {
     for kind in ["action", "moveset", "prefab", "locomotion", "layout", "combat_tuning", "behavior", "perception", "director", "attack_plan", "tile", "region", "poi", "nav", "level", "sound", "music", "audio", "perf", "look", "scatter", "effect", "fx", "encounter", "encounter_rules", "hitstop", "rule_set", "rules", "prop", "flash"] {
         assert!(kinds.contains(kind), "{kind} missing: {kinds}");
     }
-    assert!(events(&app).contains(&"0 content loaded: 215 definitions in 64 files".to_owned()), "{:?}", events(&app));
+    assert!(events(&app).contains(&"0 content loaded: 216 definitions in 65 files".to_owned()), "{:?}", events(&app));
 }
 
 #[test]
@@ -238,4 +238,20 @@ fn prefabs_spawn_the_sandbox_characters() {
         "{}",
         text(&refused)
     );
+}
+
+/// The plan audit (N8e) on the sandbox's own warden: without a moveset it names the one the warden's
+/// prefab fights with, and with it the plan's pairs and hits come from the content.
+#[test]
+fn the_wardens_plan_is_audited_with_the_moveset_its_prefab_names() {
+    let mut app = sandbox::test_app(42);
+    let err = fails(&mut app, "plan_audit", json!({"plan": "warden"}));
+    assert!(err.contains("plan_audit needs moveset=<id>; the plan's NPCs use: warden"), "{err}");
+    let out = ok(&mut app, "plan_audit", json!({"plan": "warden", "moveset": "warden", "min_gap": 0.7})).result;
+    let pairs = out["pairs"].as_array().unwrap();
+    assert!(!pairs.is_empty() && out["short"].is_array(), "{out}");
+    // The warden's plan bans two zone attacks in a row.
+    assert!(pairs.iter().all(|p| !(p["a"] == "heavy" && p["b"] == "heavy")), "{out}");
+    assert!(out["hits"].as_array().unwrap().len() >= 4, "every attack's hits: {out}");
+    assert_eq!(out["unreachable"], json!([]));
 }

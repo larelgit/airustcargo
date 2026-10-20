@@ -38,6 +38,13 @@ is_default!(shift_is_default, f32, 0.12);
 is_default!(pitch_deg_is_default, f32, 2.0);
 is_default!(yaw_deg_is_default, f32, 2.0);
 is_default!(roll_deg_is_default, f32, 3.0);
+is_default!(fit_margin_is_default, f32, 0.15);
+is_default!(tilt_max_is_default, f32, 0.6);
+is_default!(fit_rate_is_default, f32, 6.0);
+is_default!(delay_is_default, f32, 1.5);
+is_default!(centre_rate_is_default, f32, 2.5);
+is_default!(min_speed_is_default, f32, 0.5);
+is_default!(max_turn_is_default, f32, 150.0);
 
 fn is_false(v: &bool) -> bool {
     !*v
@@ -67,11 +74,76 @@ pub struct FramingTuning {
     /// framing: the direction to it is not defined. 0: always frames.
     #[serde(skip_serializing_if = "zero_f32")]
     pub min_horizontal: f32,
+    /// Keeping the player and the locked target in frame together (R4). `None` (the default):
+    /// the camera looks at the focus, and a target high on a big body may leave the top of
+    /// the frame.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fit: Option<FitTuning>,
 }
 
 impl Default for FramingTuning {
     fn default() -> Self {
-        Self { yaw_rate: 7.0, pitch_rate: 7.0, pitch_target: None, pitch_clamp: (0.15, 0.7), min_horizontal: 0.0 }
+        Self { yaw_rate: 7.0, pitch_rate: 7.0, pitch_target: None, pitch_clamp: (0.15, 0.7), min_horizontal: 0.0, fit: None }
+    }
+}
+
+/// The view of a camera locked on to a target high on a big body (R4). The camera still
+/// stands where the framing puts it, but the view turns up from the focus as far as it
+/// takes to keep the target inside the frame's top margin, and never so far that the
+/// player's feet leave the bottom margin: when both cannot be kept, the player is. Never
+/// down: a target below the focus is framed as before.
+#[derive(Reflect, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[reflect(Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct FitTuning {
+    /// How far inside the top and bottom edges the target and the feet are kept, as a share
+    /// of half the frame's height (0 at the edge, below 1).
+    #[serde(skip_serializing_if = "fit_margin_is_default")]
+    pub margin: f32,
+    /// The most the view turns up from the focus (radians).
+    #[serde(skip_serializing_if = "tilt_max_is_default")]
+    pub tilt_max: f32,
+    /// How fast the turn catches up, and goes back to 0 after the lock (1/s, exact exponential).
+    #[serde(skip_serializing_if = "fit_rate_is_default")]
+    pub rate: f32,
+}
+
+impl Default for FitTuning {
+    fn default() -> Self {
+        Self { margin: 0.15, tilt_max: 0.6, rate: 6.0 }
+    }
+}
+
+/// How a free-look camera turns back behind the body it follows when the player leaves the look
+/// alone and walks (K2). Only while the player's `controls.camera_auto_centre` is on
+/// (`CameraSettings::auto_centre`); a lock frames as it does.
+#[derive(Reflect, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[reflect(Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct AutoCentreTuning {
+    /// How long the look must be left alone first (real seconds).
+    #[serde(skip_serializing_if = "delay_is_default")]
+    pub delay_s: f32,
+    /// How fast the camera turns behind the body (1/s, exact exponential).
+    #[serde(skip_serializing_if = "centre_rate_is_default")]
+    pub rate: f32,
+    /// The body must move at least this fast on the ground (m/s, as it is drawn): one standing
+    /// still keeps the view the player left.
+    #[serde(skip_serializing_if = "min_speed_is_default")]
+    pub min_speed: f32,
+    /// A body facing more than this from the camera's forward (degrees) does not swing it round:
+    /// one walking toward the camera keeps the view.
+    #[serde(skip_serializing_if = "max_turn_is_default")]
+    pub max_turn_deg: f32,
+    /// A tilt to ease toward with the yaw (radians, positive looks down). `None`: the pitch is
+    /// left as the player set it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pitch: Option<f32>,
+}
+
+impl Default for AutoCentreTuning {
+    fn default() -> Self {
+        Self { delay_s: 1.5, rate: 2.5, min_speed: 0.5, max_turn_deg: 150.0, pitch: None }
     }
 }
 
@@ -221,6 +293,9 @@ pub struct CameraTuning {
     /// The shake.
     #[serde(skip_serializing_if = "TraumaTuning::is_default")]
     pub trauma: TraumaTuning,
+    /// Turning back behind the body when the player leaves the look alone (K2).
+    #[serde(skip_serializing_if = "AutoCentreTuning::is_default")]
+    pub auto_centre: AutoCentreTuning,
 }
 
 impl Default for CameraTuning {
@@ -235,6 +310,7 @@ impl Default for CameraTuning {
             arm: ArmTuning::default(),
             flick: FlickTuning::default(),
             trauma: TraumaTuning::default(),
+            auto_centre: AutoCentreTuning::default(),
         }
     }
 }
@@ -248,7 +324,7 @@ macro_rules! impl_is_default {
         }
     )*};
 }
-impl_is_default!(FramingTuning, ArmTuning, FlickTuning, TraumaTuning);
+impl_is_default!(FramingTuning, ArmTuning, FlickTuning, TraumaTuning, AutoCentreTuning);
 
 impl ContentDef for CameraTuning {
     const KIND: &'static str = "camera";
@@ -325,6 +401,15 @@ impl CameraTuning {
         if clamp_ok && clamp_lo > clamp_hi {
             out.push(format!("framing.pitch_clamp ({clamp_lo}, {clamp_hi}) has its low end above its high end"));
         }
+        if let Some(fit) = &framing.fit {
+            if finite("framing.fit.margin", fit.margin, &mut out) && !(0.0..1.0).contains(&fit.margin) {
+                out.push(format!("framing.fit.margin {} must be in [0, 1): a share of half the frame's height", fit.margin));
+            }
+            if finite("framing.fit.tilt_max", fit.tilt_max, &mut out) && !(0.0..=limit).contains(&fit.tilt_max) {
+                out.push(format!("framing.fit.tilt_max {} must be within [0, {limit:.2}] radians", fit.tilt_max));
+            }
+            positive_rate("framing.fit.rate", fit.rate, &mut out);
+        }
         // A clamp wider than the pitch limits is fine: the framed pitch is held to them afterwards,
         // like any pitch, so narrowing `pitch` does not also need a narrower clamp.
         let arm = &self.arm;
@@ -360,6 +445,19 @@ impl CameraTuning {
                 out.push(format!("trauma.{name} is {v} degrees, more than 45 is not a shake"));
             }
         }
+        let centre = &self.auto_centre;
+        non_negative("auto_centre.delay_s", centre.delay_s, &mut out);
+        positive_rate("auto_centre.rate", centre.rate, &mut out);
+        non_negative("auto_centre.min_speed", centre.min_speed, &mut out);
+        if finite("auto_centre.max_turn_deg", centre.max_turn_deg, &mut out) && !(0.0..=180.0).contains(&centre.max_turn_deg) {
+            out.push(format!("auto_centre.max_turn_deg {} must be within [0, 180] degrees", centre.max_turn_deg));
+        }
+        if let Some(pitch) = centre.pitch
+            && finite("auto_centre.pitch", pitch, &mut out)
+            && (pitch < lo || pitch > hi)
+        {
+            out.push(format!("auto_centre.pitch {pitch} is outside the pitch limits ({lo}, {hi})"));
+        }
         out
     }
 }
@@ -368,16 +466,16 @@ impl CameraTuning {
 /// them, every frame.
 ///
 /// **Who owns a value.** The system that writes a field owns it: it sets the value on every
-/// frame it wants an effect, and puts it back to the neutral one (`0.0`, `None`) itself when it
-/// is done. The camera only reads: it never decays, sums or resets an offset, so a value
-/// stays as its writer left it (a writer that stops without resetting leaves its effect on),
+/// frame it wants an effect, and puts it back to the neutral one (`0.0`, `None`, `false`)
+/// itself when it is done. The camera only reads: it never decays, sums or resets an offset, so
+/// a value stays as its writer left it (a writer that stops without resetting leaves its effect on),
 /// and two systems that both want the same field must be combined by the game into one
 /// writer (add their parts, then write once).
 /// Write before `CameraSystems::Orbit` (`PostUpdate`) to be seen the same frame.
 ///
 /// Offsets are presentation: they change the picture only, never the stored `yaw`/`pitch`
-/// (apart from the pitch limits, which clamp the stored pitch as a swimming camera needs) and
-/// never `ThirdPersonCamera::focus`.
+/// (apart from the pitch limits, which clamp the stored pitch as a swimming camera needs, and
+/// `aiming`, which sets how fast the look turns them) and never `ThirdPersonCamera::focus`.
 #[derive(Resource, Reflect, Clone, Copy, Debug, PartialEq, Default)]
 #[reflect(Resource, Default)]
 pub struct CameraOffsets {
@@ -393,6 +491,9 @@ pub struct CameraOffsets {
     /// A lower highest tilt (radians) than the tuning's: a swimming camera that must stay above
     /// the water. The stored pitch is clamped to it.
     pub pitch_max: Option<f32>,
+    /// The player aims (a ranged attack, a zoom: what aiming is, is the game's): free look turns
+    /// by the player's `aim_sensitivity` instead of `sensitivity` (K1). A lock frames as it does.
+    pub aiming: bool,
 }
 
 impl CameraOffsets {
@@ -417,6 +518,7 @@ mod tests {
         assert_eq!((t.release_factor, t.framing.yaw_rate, t.framing.pitch_rate), (1.3, 7.0, 7.0));
         assert_eq!((t.arm.radius, t.arm.min_distance), (0.25, 0.7));
         assert_eq!((t.flick.cooldown_s, t.trauma.decay), (0.35, 1.4));
+        assert_eq!((t.auto_centre.delay_s, t.auto_centre.rate, t.auto_centre.max_turn_deg), (1.5, 2.5, 150.0));
         assert!(errors(&t).is_empty(), "{:?}", errors(&t));
     }
 
@@ -454,5 +556,9 @@ mod tests {
         assert!(bad(|t| t.framing.pitch_clamp = (0.7, 0.15))[0].contains("pitch_clamp"));
         assert!(bad(|t| t.trauma.roll_deg = 90.0)[0].contains("roll_deg"));
         assert!(bad(|t| t.flick.mouse_decay_px_s = Some(f32::NAN))[0].contains("finite"));
+        assert!(bad(|t| t.auto_centre.rate = 0.0)[0].contains("auto_centre.rate"));
+        assert!(bad(|t| t.auto_centre.delay_s = -1.0)[0].contains("auto_centre.delay_s"));
+        assert!(bad(|t| t.auto_centre.max_turn_deg = 200.0)[0].contains("auto_centre.max_turn_deg"));
+        assert!(bad(|t| t.auto_centre.pitch = Some(1.5))[0].contains("auto_centre.pitch 1.5 is outside the pitch limits"));
     }
 }

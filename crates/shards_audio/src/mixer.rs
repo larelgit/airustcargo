@@ -69,7 +69,7 @@ pub struct Voice {
     /// Where it is heard from; `None`: everywhere the same.
     pub position: Option<Vec3>,
     pub falloff: Option<Falloff>,
-    /// The sound's own volume.
+    /// The sound's own volume, times the gain it was played at ([`play_scaled`]: a clip cue's strength).
     pub volume: f32,
     /// When it started, on its clock (the simulation's; real time on the `Ui` bus).
     pub started: f64,
@@ -174,6 +174,14 @@ pub fn bus_volume(world: &World, bus: Bus) -> f32 {
 /// `max_instances`, the weakest voice when all are taken and it is stronger, or nothing (out
 /// of earshot, or weaker than every voice). An unknown sound is an error naming the closest.
 pub fn play(world: &mut World, sound: &str, at: SoundAt) -> Result<Played, String> {
+    play_scaled(world, sound, at, 1.0)
+}
+
+/// [`play`] at `gain`, a linear factor on the sound's own volume (a clip cue's strength: 0.5 is
+/// half as loud as authored, above 1 louder, before the bus and the distance). 1 is [`play`]; 0, or
+/// a value that is not a number, starts no voice (`Played::Dropped`, not counted as a drop).
+pub fn play_scaled(world: &mut World, sound: &str, at: SoundAt, gain: f32) -> Result<Played, String> {
+    let gain = if gain.is_finite() { gain.max(0.0) } else { 0.0 };
     let def = world.get_resource::<ContentDb>().and_then(|db| db.get::<SoundDef>(sound)).cloned();
     let Some(def) = def else {
         let db = world.get_resource::<ContentDb>();
@@ -183,6 +191,9 @@ pub fn play(world: &mut World, sound: &str, at: SoundAt) -> Result<Played, Strin
     };
     if def.files.is_empty() {
         return Err(format!("sound `{sound}` names no file"));
+    }
+    if gain == 0.0 {
+        return Ok(Played::Dropped(format!("its gain is 0 (`{sound}` would be silent)")));
     }
     refresh_listener(world);
     let limit = voice_limit(world) as usize;
@@ -203,7 +214,7 @@ pub fn play(world: &mut World, sound: &str, at: SoundAt) -> Result<Played, Strin
         source_id,
         position,
         falloff: def.spatial,
-        volume: def.volume,
+        volume: def.volume * gain,
         started: 0.0,
         length: 0.0,
         gain: 0.0,
@@ -275,7 +286,12 @@ pub fn play(world: &mut World, sound: &str, at: SoundAt) -> Result<Played, Strin
 /// [`play`] for what the engine hears (a cue, an event): an unknown sound is journaled once and
 /// otherwise ignored.
 pub(crate) fn play_quietly(world: &mut World, sound: &str, at: SoundAt, why: &str) {
-    if let Err(e) = play(world, sound, at)
+    play_quietly_scaled(world, sound, at, 1.0, why);
+}
+
+/// [`play_quietly`] at `gain`, as [`play_scaled`] takes it.
+pub(crate) fn play_quietly_scaled(world: &mut World, sound: &str, at: SoundAt, gain: f32, why: &str) {
+    if let Err(e) = play_scaled(world, sound, at, gain)
         && world.resource_mut::<Mixer>().unknown.insert(sound.to_owned())
     {
         journal::emit(world, JournalKind::Warn, format!("audio: {why}: {e}"));

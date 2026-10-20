@@ -77,9 +77,25 @@
 //! While the action runs, the layer's bones follow its clip, seeked to the action's progress
 //! like any other, and every other bone keeps its locomotion clip. The blends are the usual
 //! ones: into the action's clip over that clip's `blend` (or `action_blend`), back to
-//! locomotion over the locomotion clip's. [`select_layer`] says what plays on a layer;
+//! locomotion over the locomotion clip's, or over the mapping's own `blend_out` (`(clip:
+//! "drink", layer: "upper", blend_out: 0.075)`). [`select_layer`] says what plays on a layer;
 //! [`select_clip_for`] chooses as if the action did not run. Picture only, like the rest of
 //! the set.
+//!
+//! ## Event overlays
+//!
+//! An engine event that names a body ([`OVERLAY_EVENTS`]: a hit it blocked or took, a parry, a
+//! guard broken, a stagger, a part broken, a landing) can play a clip on a layer for a while, over
+//! whatever the layer plays:
+//!
+//! ```ron
+//! //     overlays: {"damaged": (clip: "flinch", layer: "upper", fade_out: (0.2, 0.35), strength: 0.7)},
+//! ```
+//!
+//! The clip plays from its start on the simulation's clock, comes in over `fade_in` (0 by default),
+//! fades out between the two ages of `fade_out` and ends at the second; it takes at most `strength`
+//! of the layer's bones ([`OverlayDef::share`]), and the action's own clip there goes on under it.
+//! The same event again starts it over.
 //!
 //! ## Root motion
 //!
@@ -90,6 +106,48 @@
 //! ([`crate::bake`]). The picture then keeps that bone in place: the model does not walk off
 //! its body. A content check with the asset folder reads the files: a clip the file lacks, a
 //! root bone it lacks, a baked curve that no longer matches its clip are errors.
+//!
+//! ## Phases on the clip
+//!
+//! An action's clip is seeked evenly over the run by default: 40 % of the run shows 40 % of the
+//! clip. A clip made for one action and played by another with other timings (an enemy's slow
+//! swing on the hero's quick one) then shows its strike before the strike lands. A clip that says
+//! which phases it was timed to (`phases`, in clip seconds, as an action's are written) is seeked
+//! phase by phase instead: each phase of an action with the same phases (the same names in the
+//! same order) shows its own stretch of the clip, however long the action's phase lasts.
+//!
+//! ```ron
+//! //     clips: {"light_1": (phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)])},
+//! // an action with phases [("windup", 0.6), ("active", 0.15), ("recovery", 0.8)] shows the
+//! // clip's first 0.2 s over its 0.6 s windup, and the strike when its active phase starts.
+//! ```
+//!
+//! A phase of open length is no stretch: name it in `loops` (`loops: ["down"]`) and its stretch of
+//! the clip repeats at the authored speed for as long as the action's phase lasts (a toppled body
+//! breathing for 4 s on a 1.5 s breath); the next phase starts at its own start.
+//!
+//! Time a run gains past its phases (a miss's longer recovery) stretches its last phase. An
+//! action whose phases are not the clip's plays it evenly, as one without `phases` does;
+//! the content check refuses one that shares some of the clip's phase names but not all, in
+//! order (a typo or a phase left out). With the asset folder, a clip's `phases` must match the
+//! file's: its `phases` extra when it has one, else its length. [`phase_seek`] is the mapping.
+//!
+//! ## Facing
+//!
+//! A body that faces a target (a lock-on, an aim point) can move away from where it faces. Its
+//! gait then shows the clip of its heading from its facing ([`Heading`]: four quarters, with
+//! [`HEADING_SLACK`] at their edges), and standing still it shows a combat idle:
+//!
+//! ```ron
+//! //     locomotion: {"walk": "walk", "walk.back": "backstep", "walk.left": "strafe_l",
+//! //                  "walk.right": "strafe_r", "idle": "idle", "idle.facing": "guard_idle"},
+//! ```
+//!
+//! With no clip for a heading, `back` plays the gait's clip backward and `left` and `right` play it
+//! as it is. A switch from one gait's clip to another starts the new one at the old one's place in
+//! the stride ([`carry_phase`]). A whole-body mapping can turn the model to the heading of a run
+//! that keeps the body's facing (`face: Keep`): `actions: {"dodge": (clip: "roll", turn: 0.08)}`
+//! ([`ActionClip::turn`]; written on the `root_motion` bone).
 //!
 //! ## Sockets and props
 //!
@@ -134,6 +192,12 @@
 //! event fires for the entity. Cues are for effects and sound (a footstep, a whoosh, a
 //! spark), never for gameplay: hits, i-frames and cancels come from the action's own
 //! timeline.
+//!
+//! A cue may name a `bone` of the model (`(at: 0.0, cue: "footstep", bone: "foot.L")`): the event
+//! then carries the bone's world position at the moment it fires, and the effect and the sound
+//! play there instead of at the body's feet. `strength` (default 1, left out of the file at its
+//! default) scales the effect's particles, in number and in size, and the sound's volume; a cue
+//! of strength 0 plays nothing. Both are picture and sound only, like the cue itself.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -143,7 +207,7 @@ use shards_content::{ContentDef, Refs};
 use shards_motion::{MotionMode, MotionState};
 
 use crate::clipfile::ClipFile;
-use crate::def::{ActionDef, MovesetDef, Span, EPS};
+use crate::def::{ActionDef, Face, MovesetDef, Phase, Span, EPS};
 
 /// Marks a character the animation bridge drives: `animset` is the id of its
 /// [`AnimSet`]. The glTF scene is a child entity. Presentation only: replays ignore it, so
@@ -177,6 +241,22 @@ pub struct AnimationCue {
     pub cue: String,
     /// The clip (our name for it) that fired it.
     pub clip: String,
+    /// The bone the cue names ([`CueDef::bone`]), if any.
+    pub bone: Option<String>,
+    /// Where that bone was in the world when the cue fired (its `GlobalTransform`, as of the last
+    /// frame that was drawn): `None` for a cue without a bone, or when the model has no bone of
+    /// that name. Effects and sound play here instead of at the body's feet.
+    pub at: Option<Vec3>,
+    /// How strong the cue is ([`CueDef::strength`]): 1 plays as authored, less is a smaller burst
+    /// and a quieter sound, 0 plays nothing.
+    pub strength: f32,
+}
+
+impl AnimationCue {
+    /// A cue of `clip` for `entity`, at the body, at full strength.
+    pub fn new(entity: Entity, cue: impl Into<String>, clip: impl Into<String>) -> Self {
+        Self { entity, cue: cue.into(), clip: clip.into(), bone: None, at: None, strength: 1.0 }
+    }
 }
 
 /// A moment of a clip for effects or sound.
@@ -186,6 +266,37 @@ pub struct CueDef {
     /// Seconds into the clip, on the clip's own timeline.
     pub at: f32,
     pub cue: String,
+    /// A bone of the model (a node name: `foot.L`): the cue then plays where that bone is when it
+    /// fires ([`AnimationCue::at`]), not at the body's feet. Left out, the cue is the body's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bone: Option<String>,
+    /// How strong the cue is, 0 or more: it scales the effect's particles (their number and size)
+    /// and the sound's volume. 1 plays as authored, 0 plays nothing.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub strength: f32,
+}
+
+impl CueDef {
+    /// A cue `cue` at `at` seconds, at the body, at full strength.
+    pub fn new(at: f32, cue: impl Into<String>) -> Self {
+        Self { at, cue: cue.into(), bone: None, strength: 1.0 }
+    }
+
+    /// The same cue at the bone `bone`.
+    pub fn at_bone(mut self, bone: impl Into<String>) -> Self {
+        self.bone = Some(bone.into());
+        self
+    }
+
+    /// The same cue at `strength`.
+    pub fn with_strength(mut self, strength: f32) -> Self {
+        self.strength = strength;
+        self
+    }
+}
+
+fn one() -> f32 {
+    1.0
 }
 
 /// One clip of an animset's library.
@@ -207,11 +318,20 @@ pub struct ClipDef {
     /// Effects and sound on its timeline.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub cues: Vec<CueDef>,
+    /// The phases the clip was timed to, in clip seconds (`[("windup", 0.2), ("active", 0.1),
+    /// ("recovery", 0.3)]`): an action with the same phases is seeked phase by phase (see
+    /// "Phases on the clip" in the [module](self)). Empty: every action plays it evenly.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub phases: Vec<Phase>,
+    /// Phases of `phases` whose stretch of the clip repeats at the authored speed while the action's
+    /// phase lasts (a breath while a body lies toppled), instead of being stretched over it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub loops: Vec<String>,
 }
 
 impl Default for ClipDef {
     fn default() -> Self {
-        Self { name: None, source: None, speed: 1.0, blend: None, cues: Vec::new() }
+        Self { name: None, source: None, speed: 1.0, blend: None, cues: Vec::new(), phases: Vec::new(), loops: Vec::new() }
     }
 }
 
@@ -302,10 +422,72 @@ impl DropDef {
     }
 }
 
+/// The engine's events an animset's `overlays` can answer, and the body each one plays on.
+pub const OVERLAY_EVENTS: [(&str, &str); 7] = [
+    ("blocked", "a hit met the body's guard"),
+    ("parried", "the body parried a hit"),
+    ("damaged", "a hit landed on the body"),
+    ("guard_broken", "the body's guard broke"),
+    ("staggered", "the body staggered"),
+    ("part_broken", "one of the body's parts broke"),
+    ("landed", "the body came down from a fall or a jump"),
+];
+
+/// A clip played on one of the set's layers for a while when an engine event names the body (an
+/// animset's `overlays`, by [`OVERLAY_EVENTS`]): `"damaged": (clip: "flinch", layer: "upper",
+/// fade_out: (0.2, 0.35), strength: 0.7)`. It plays from the clip's start on the simulation's clock
+/// (a pause holds it, a `step` moves it), over whatever the layer plays: the running action's own
+/// clip there goes on under it and is back as it fades. The same event again starts it over.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct OverlayDef {
+    /// Our name of the clip.
+    pub clip: String,
+    /// The layer it plays on (a key of the set's `layers`).
+    pub layer: String,
+    /// Seconds it takes to come in (linearly); 0, the default: at once.
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub fade_in: f32,
+    /// Seconds after the event between which it fades out (smoothly); it ends at the second.
+    pub fade_out: (f32, f32),
+    /// The most of the layer's bones it takes: above 0, at most 1 (the default).
+    #[serde(default = "full_strength", skip_serializing_if = "is_one")]
+    pub strength: f32,
+}
+
+fn full_strength() -> f32 {
+    1.0
+}
+
+impl OverlayDef {
+    /// Its share of the layer's bones `age` seconds after the event: `strength`, faded in from
+    /// `from` (0 to 1: 0, or the part of `strength` it had when the same event came again) and out.
+    pub fn share(&self, age: f32, from: f32) -> f32 {
+        let (out_from, out_to) = self.fade_out;
+        if self.ended(age) {
+            return 0.0;
+        }
+        let age = age.max(0.0);
+        let rise = if self.fade_in > 0.0 { (from + age / self.fade_in).min(1.0) } else { 1.0 };
+        let fall = if age <= out_from {
+            1.0
+        } else {
+            let x = ((age - out_from) / (out_to - out_from)).min(1.0);
+            1.0 - x * x * (3.0 - 2.0 * x)
+        };
+        rise * fall * self.strength
+    }
+
+    /// Whether it is over `age` seconds after the event.
+    pub fn ended(&self, age: f32) -> bool {
+        age >= self.fade_out.1
+    }
+}
+
 /// What an action shows (a value of an animset's `actions` or `tags`): a clip of the library,
 /// on the whole body or on one of the set's layers. Written `"swing_1"` for the whole body, or
-/// `(clip: "drink", layer: "upper")`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// `(clip: "drink", layer: "upper")`, or `(clip: "roll", turn: 0.08)`.
+#[derive(Clone, Debug, PartialEq)]
 pub struct ActionClip {
     /// Our name of the clip.
     pub clip: String,
@@ -315,17 +497,26 @@ pub struct ActionClip {
     /// sockets). Default: true for a whole-body mapping, false for a layered one; written only
     /// when it differs from that default.
     pub ends_equip: bool,
+    /// Seconds the model takes to turn to the run's heading, and back after it, for an action that
+    /// keeps the body's facing (`face: Keep`): a roll to the side under lock-on rolls the model that
+    /// way while the body still looks at its target. 0 (the default, not written): the model faces
+    /// where the body faces. Whole body only; needs `root_motion` (the turn is written on that bone).
+    pub turn: f32,
+    /// Seconds its clip on a layer takes to leave when the action ends (or another action's clip takes
+    /// the layer). `None` (the default, not written): the blend of what the body shows next. Layered
+    /// mappings only.
+    pub blend_out: Option<f32>,
 }
 
 impl ActionClip {
     /// `clip` on the whole body.
     pub fn body(clip: impl Into<String>) -> Self {
-        Self { clip: clip.into(), layer: None, ends_equip: true }
+        Self { clip: clip.into(), layer: None, ends_equip: true, turn: 0.0, blend_out: None }
     }
 
     /// `clip` on `layer`.
     pub fn on(clip: impl Into<String>, layer: impl Into<String>) -> Self {
-        Self { clip: clip.into(), layer: Some(layer.into()), ends_equip: false }
+        Self { clip: clip.into(), layer: Some(layer.into()), ends_equip: false, turn: 0.0, blend_out: None }
     }
 }
 
@@ -339,17 +530,26 @@ impl Serialize for ActionClip {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
         let default_ends = self.layer.is_none();
+        let turns = self.turn != 0.0;
         match &self.layer {
-            None if self.ends_equip == default_ends => serializer.serialize_str(&self.clip),
+            None if self.ends_equip == default_ends && !turns && self.blend_out.is_none() => serializer.serialize_str(&self.clip),
             layer => {
                 let extra = self.ends_equip != default_ends;
-                let mut s = serializer.serialize_struct("ActionClip", 1 + usize::from(layer.is_some()) + usize::from(extra))?;
+                let fields =
+                    1 + usize::from(layer.is_some()) + usize::from(extra) + usize::from(turns) + usize::from(self.blend_out.is_some());
+                let mut s = serializer.serialize_struct("ActionClip", fields)?;
                 s.serialize_field("clip", &self.clip)?;
                 if let Some(layer) = layer {
                     s.serialize_field("layer", layer)?;
                 }
                 if extra {
                     s.serialize_field("ends_equip", &self.ends_equip)?;
+                }
+                if turns {
+                    s.serialize_field("turn", &self.turn)?;
+                }
+                if let Some(out) = self.blend_out {
+                    s.serialize_field("blend_out", &out)?;
                 }
                 s.end()
             }
@@ -375,16 +575,20 @@ impl<'de> Deserialize<'de> for ActionClip {
 
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<ActionClip, A::Error> {
                 let (mut clip, mut layer, mut ends_equip): (Option<String>, Option<String>, Option<bool>) = (None, None, None);
+                let (mut turn, mut blend_out) = (0.0, None);
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "clip" => clip = Some(map.next_value()?),
                         "layer" => layer = map.next_value()?,
                         "ends_equip" => ends_equip = Some(map.next_value()?),
-                        other => return Err(A::Error::unknown_field(other, &["clip", "layer", "ends_equip"])),
+                        "turn" => turn = map.next_value()?,
+                        "blend_out" => blend_out = map.next_value()?,
+                        other => return Err(A::Error::unknown_field(other, &["clip", "layer", "ends_equip", "turn", "blend_out"])),
                     }
                 }
                 let ends_equip = ends_equip.unwrap_or(layer.is_none());
-                Ok(ActionClip { clip: clip.ok_or_else(|| A::Error::missing_field("clip"))?, layer, ends_equip })
+                let clip = clip.ok_or_else(|| A::Error::missing_field("clip"))?;
+                Ok(ActionClip { clip, layer, ends_equip, turn, blend_out })
             }
         }
         deserializer.deserialize_any(Reader)
@@ -446,6 +650,10 @@ pub struct AnimSet {
     /// swing afloat). Written on the `root_motion` bone, so the set needs one.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub drops: BTreeMap<String, DropDef>,
+    /// Event overlays: engine event ([`OVERLAY_EVENTS`]) -> the clip that plays on a layer for a
+    /// while when the event names the body (a flinch on the upper body when it is hit).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub overlays: BTreeMap<String, OverlayDef>,
 }
 
 fn is_zero(v: &Vec3) -> bool {
@@ -658,6 +866,107 @@ impl Locomotion {
             Mantle => &[Air, Idle],
         }
     }
+
+    /// A gait on the ground: walk, run or sprint (the states that have headings and carry their
+    /// phase from one clip to the next).
+    pub fn is_gait(self) -> bool {
+        matches!(self, Locomotion::Walk | Locomotion::Run | Locomotion::Sprint)
+    }
+}
+
+/// Which way a body that faces a target moves, seen from where it faces ([`BodyStatus::facing`]):
+/// four quarters of 90° around its forward.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Heading {
+    #[default]
+    Forward,
+    Back,
+    /// To the body's left.
+    Left,
+    /// To the body's right.
+    Right,
+}
+
+/// Degrees a body may move past the edge of its heading's quarter before it takes the next one: a
+/// diagonal does not flicker between two clips.
+pub const HEADING_SLACK: f32 = 10.0;
+
+impl Heading {
+    pub const ALL: [Heading; 4] = [Heading::Forward, Heading::Back, Heading::Left, Heading::Right];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Heading::Forward => "forward",
+            Heading::Back => "back",
+            Heading::Left => "left",
+            Heading::Right => "right",
+        }
+    }
+
+    /// The middle of the quarter, in degrees from forward, clockwise seen from above (right +90).
+    fn centre(self) -> f32 {
+        match self {
+            Heading::Forward => 0.0,
+            Heading::Right => 90.0,
+            Heading::Back => 180.0,
+            Heading::Left => -90.0,
+        }
+    }
+
+    /// The heading of `velocity` for a body whose forward is `forward` (both read on the ground
+    /// plane): the quarter it falls in, except that `prev` is kept up to [`HEADING_SLACK`] degrees
+    /// past its edge. A body that barely moves (or faces nowhere) keeps `prev`.
+    pub fn of(forward: Vec3, velocity: Vec3, prev: Heading) -> Heading {
+        let forward = Vec3::new(forward.x, 0.0, forward.z);
+        let v = Vec3::new(velocity.x, 0.0, velocity.z);
+        if forward.length_squared() < EPS || v.length_squared() < EPS {
+            return prev;
+        }
+        // Bevy's right is +x when forward is -z: (-forward.z, 0, forward.x).
+        let right = Vec3::new(-forward.z, 0.0, forward.x);
+        let degrees = ops::atan2(v.dot(right), v.dot(forward)).to_degrees();
+        let off = |h: Heading| ((degrees - h.centre() + 180.0).rem_euclid(360.0) - 180.0).abs();
+        if off(prev) <= 45.0 + HEADING_SLACK {
+            return prev;
+        }
+        Heading::ALL.into_iter().min_by(|a, b| off(*a).total_cmp(&off(*b))).unwrap_or(prev)
+    }
+}
+
+/// The keys of `locomotion` a body that faces a target looks up first: a gait's heading (none
+/// authored: `back` plays the gait's own clip backward, `left` and `right` play it as it is) and
+/// the combat idle (none: `idle`).
+pub const FACING_KEYS: [&str; 10] = [
+    "idle.facing",
+    "walk.back",
+    "walk.left",
+    "walk.right",
+    "run.back",
+    "run.left",
+    "run.right",
+    "sprint.back",
+    "sprint.left",
+    "sprint.right",
+];
+
+/// The key of `locomotion` for `state` seen from a body that faces a target and moves toward
+/// `heading`: `walk.back`, `run.left`, `idle.facing`. `None`: forward, or a state without one.
+pub fn facing_key(state: Locomotion, heading: Heading) -> Option<&'static str> {
+    use Heading::*;
+    use Locomotion::*;
+    Some(match (state, heading) {
+        (Idle, _) => "idle.facing",
+        (Walk, Back) => "walk.back",
+        (Walk, Left) => "walk.left",
+        (Walk, Right) => "walk.right",
+        (Run, Back) => "run.back",
+        (Run, Left) => "run.left",
+        (Run, Right) => "run.right",
+        (Sprint, Back) => "sprint.back",
+        (Sprint, Left) => "sprint.left",
+        (Sprint, Right) => "sprint.right",
+        _ => return None,
+    })
 }
 
 impl AnimSet {
@@ -701,6 +1010,30 @@ impl AnimSet {
     /// The clip for exactly this state, no fallbacks.
     fn exact(&self, state: Locomotion) -> Option<&str> {
         self.locomotion.get(state.name()).and_then(|clip| self.known(clip))
+    }
+
+    /// Our clip for `state` (as [`locomotion_clip`](Self::locomotion_clip) resolved it) on a body
+    /// that faces a target and moves toward `heading`: the set's `walk.back`, `run.left`,
+    /// `idle.facing` ([`facing_key`]), if it has one.
+    pub fn facing_clip(&self, state: Locomotion, heading: Heading) -> Option<&str> {
+        self.locomotion.get(facing_key(state, heading)?).and_then(|clip| self.known(clip))
+    }
+
+    /// The mapping an action looked up by `key` shows, found the way [`action_shown`](Self::action_shown)
+    /// finds it; `None` for a key that is a clip's own name (an action's `anim`), which has none.
+    pub fn mapping(&self, key: &str) -> Option<&ActionClip> {
+        let known = |m: &&ActionClip| self.clips.contains_key(&m.clip);
+        match self.actions.get(key).filter(known) {
+            Some(m) => Some(m),
+            None if self.clips.contains_key(key) => None,
+            None => self.tags.get(key).filter(known),
+        }
+    }
+
+    /// Seconds the model takes to turn to the heading of a run shown by `key` ([`ActionClip::turn`]);
+    /// 0 when it does not turn (no mapping, or one on a layer).
+    pub fn turn_of(&self, key: &str) -> f32 {
+        self.mapping(key).filter(|m| m.layer.is_none()).map_or(0.0, |m| m.turn)
     }
 
     /// `clip` if the library has it.
@@ -1019,20 +1352,40 @@ pub struct ClipChoice<'a> {
     pub blend: f32,
     /// Loops (locomotion) or plays once and holds its last pose.
     pub looping: bool,
+    /// A gait's clip (walk, run, sprint, any heading): a switch from one to another starts the new
+    /// clip where the old one was in its stride.
+    pub gait: bool,
+    /// The stretch of a seeked clip that a looping phase repeats (`loops`), 0..1 of its length,
+    /// while the seek is in it: going back inside it starts the stretch over, and the cues say so.
+    pub repeats: Option<(f32, f32)>,
 }
 
 impl<'a> ClipChoice<'a> {
     fn none(set: &AnimSet) -> Self {
-        Self { clip: None, seek_to: None, speed: 1.0, blend: set.blend.max(0.0), looping: false }
+        Self { clip: None, seek_to: None, speed: 1.0, blend: set.blend.max(0.0), looping: false, gait: false, repeats: None }
     }
 
-    fn seeked(set: &AnimSet, clip: &'a str, progress: f32, action: bool) -> Self {
+    fn seeked(set: &AnimSet, clip: &'a str, (progress, repeats): (f32, Option<(f32, f32)>), action: bool) -> Self {
         Self {
             clip: Some(clip),
             seek_to: Some(progress),
             speed: 0.0,
             blend: set.blend_into(clip, action),
             looping: false,
+            gait: false,
+            repeats,
+        }
+    }
+
+    /// The stretch going back inside which is a wrap for the cues, in seconds of a clip `duration`
+    /// long: a looping phase's, or the whole of a looping clip.
+    pub fn wraps(&self, duration: f32) -> Option<(f32, f32)> {
+        if duration <= 0.0 {
+            return None;
+        }
+        match self.repeats {
+            Some((start, end)) => Some((start * duration, end * duration)),
+            None => self.looping.then_some((0.0, duration)),
         }
     }
 }
@@ -1047,11 +1400,16 @@ pub struct BodyStatus {
     /// The factor the body's speeds are scaled by (`MoveModifiers::pace`): a slowed run is
     /// still a run, played slower, not a walk. 1: no modifier.
     pub pace: f32,
+    /// The body faces a target (a lock-on, an aim point: `LocomotionInput::face`) and moves this
+    /// way from where it faces ([`Heading::of`]): a gait shows its heading's clip (`walk.back`;
+    /// none: `back` plays the gait's clip backward, `left` and `right` play it as it is) and
+    /// standing still shows `idle.facing` (none: `idle`). `None`: it faces where it goes.
+    pub facing: Option<Heading>,
 }
 
 impl Default for BodyStatus {
     fn default() -> Self {
-        Self { dead: false, staggered: false, pace: 1.0 }
+        Self { dead: false, staggered: false, pace: 1.0, facing: None }
     }
 }
 
@@ -1105,6 +1463,109 @@ fn ground_scale(state: Locomotion, motion: &MotionState, speeds: &GroundSpeeds) 
     (v / authored).clamp(speeds.min_scale, speeds.max_scale.max(speeds.min_scale))
 }
 
+/// A running action as the animation reads it: the key [`AnimSet::action_key`] chose, seconds into
+/// the run, the run's length (a miss's longer recovery included) and the action's phases.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ActionTime<'a> {
+    pub key: &'a str,
+    pub t: f32,
+    pub length: f32,
+    /// The action's phases; empty: every clip plays it evenly.
+    pub phases: &'a [Phase],
+}
+
+impl<'a> ActionTime<'a> {
+    pub fn new(key: &'a str, t: f32, length: f32, phases: &'a [Phase]) -> Self {
+        Self { key, t, length, phases }
+    }
+
+    /// An action whose clips play evenly (`t / length`): no phases to match.
+    pub fn even(key: &'a str, t: f32, length: f32) -> Self {
+        Self::new(key, t, length, &[])
+    }
+}
+
+/// `t / length`, 0 to 1; 1 for a run of no length.
+fn even_progress(t: f32, length: f32) -> f32 {
+    if length > EPS { (t / length).clamp(0.0, 1.0) } else { 1.0 }
+}
+
+/// Whether an action timed to `action` and a clip timed to `clip` have the same phases by name, in
+/// the same order (their seconds may differ).
+fn timed_alike(action: &[Phase], clip: &[Phase]) -> bool {
+    !action.is_empty() && action.len() == clip.len() && action.iter().zip(clip).all(|(a, c)| a.0 == c.0)
+}
+
+/// The phases as `windup 0.2, active 0.1, recovery 0.3`.
+fn phases_text(phases: &[Phase]) -> String {
+    phases.iter().map(|p| format!("{} {}", p.0, p.1)).collect::<Vec<_>>().join(", ")
+}
+
+/// Where a clip timed to `clip` shows an action timed to `action`, `t` seconds into a run of
+/// `length` seconds, as a fraction of the clip (0 to 1): the action's phase that `t` falls in is
+/// found, and the same fraction of the clip's phase of that name is the place. A phase named in
+/// `loops` repeats its stretch of the clip at the authored speed instead (`t - start` modulo its clip
+/// seconds). Time the run has past the action's phases (a miss's longer recovery) stretches the last
+/// phase. `None` when the two are not timed alike (other names, another order, a clip of no length):
+/// the clip plays evenly then. See "Phases on the clip" in the [module](self).
+pub fn phase_seek(action: &[Phase], clip: &[Phase], loops: &[String], t: f32, length: f32) -> Option<f32> {
+    phase_place(action, clip, loops, t, length).map(|(at, _)| at)
+}
+
+/// [`phase_seek`] with the stretch of the clip that repeats: `Some((start, end))`, fractions of the
+/// clip, while `t` is in a phase named in `loops`. Going back inside it is the stretch starting
+/// over, not the clip ([`crossed_cues_in`]).
+pub fn phase_place(action: &[Phase], clip: &[Phase], loops: &[String], t: f32, length: f32) -> Option<(f32, Option<(f32, f32)>)> {
+    if !timed_alike(action, clip) {
+        return None;
+    }
+    let clip_total: f32 = clip.iter().map(|p| p.1).sum();
+    if clip_total <= EPS {
+        return None;
+    }
+    let action_total: f32 = action.iter().map(|p| p.1).sum();
+    let extra = (length - action_total).max(0.0);
+    let t = t.clamp(0.0, action_total + extra);
+    let last = action.len() - 1;
+    let (mut from, mut clip_from) = (0.0, 0.0);
+    for (i, (a, c)) in action.iter().zip(clip).enumerate() {
+        let lasts = if i == last { a.1 + extra } else { a.1 };
+        let to = from + lasts;
+        if t <= to || i == last {
+            let into = (t - from).max(0.0);
+            let looped = c.1 > EPS && loops.contains(&c.0);
+            let on_clip = if looped {
+                into % c.1
+            } else if lasts > EPS {
+                (into / lasts).min(1.0) * c.1
+            } else {
+                c.1
+            };
+            let stretch = looped.then(|| (clip_from / clip_total, ((clip_from + c.1) / clip_total).min(1.0)));
+            return Some((((clip_from + on_clip) / clip_total).clamp(0.0, 1.0), stretch));
+        }
+        from = to;
+        clip_from += c.1;
+    }
+    None
+}
+
+impl AnimSet {
+    /// Where on `clip` the running `action` is, 0 to 1: phase by phase when the clip is timed to the
+    /// action's phases ([`phase_seek`]), else evenly over the run.
+    pub fn progress(&self, clip: &str, action: &ActionTime) -> f32 {
+        self.place(clip, action).0
+    }
+
+    /// [`AnimSet::progress`] with the stretch of the clip a looping phase repeats while the action
+    /// is in it, fractions of the clip ([`phase_place`]).
+    pub fn place(&self, clip: &str, action: &ActionTime) -> (f32, Option<(f32, f32)>) {
+        let even = || (even_progress(action.t, action.length), None);
+        let Some(def) = self.clips.get(clip) else { return even() };
+        phase_place(action.phases, &def.phases, &def.loops, action.t, action.length).unwrap_or_else(even)
+    }
+}
+
 /// The clip a character should show, as a pure function of the action machine and the
 /// controller. `action` is the running action as `(key, t, length)` in seconds, the key
 /// being what [`AnimSet::action_key`] chose. Same as [`select_clip_for`] for a body that is
@@ -1119,7 +1580,8 @@ pub fn select_clip<'a>(action: Option<(&str, f32, f32)>, motion: &MotionState, s
 
 /// [`select_clip`] with the body's status: a dead body shows the `dead` clip (seeked while
 /// its death action runs, then held on its last pose; no clip: the pose it has stays), a
-/// staggered one the `stagger` clip seeked to the stagger action's progress.
+/// staggered one the `stagger` clip seeked to the stagger action's progress, and one that faces a
+/// target its heading's clips ([`BodyStatus::facing`]).
 ///
 /// An action whose clip plays on a layer is not the body's: this chooses as if it did not run
 /// ([`select_layer`] says what plays on the layer).
@@ -1141,16 +1603,31 @@ pub fn select_clip_in<'a>(
     set: &'a AnimSet,
     moveset: Option<&str>,
 ) -> ClipChoice<'a> {
-    let action = action.filter(|(id, ..)| !set.is_layered(id));
-    let progress = action.map(|(_, t, len)| if len > EPS { (t / len).clamp(0.0, 1.0) } else { 1.0 });
-    if let Some((id, ..)) = action
-        && let Some(clip) = set.action_clip(id)
+    select_clip_timed(action.map(|(key, t, length)| ActionTime::even(key, t, length)), motion, status, set, moveset)
+}
+
+/// [`select_clip_in`] with the action's phases: a clip timed to them is seeked phase by phase
+/// ([`AnimSet::progress`]), the action's clip as well as the dead and stagger clips.
+pub fn select_clip_timed<'a>(
+    action: Option<ActionTime>,
+    motion: &MotionState,
+    status: BodyStatus,
+    set: &'a AnimSet,
+    moveset: Option<&str>,
+) -> ClipChoice<'a> {
+    let action = action.filter(|a| !set.is_layered(a.key));
+    let seeked = |clip: &'a str, a: &ActionTime| {
+        let clip = set.family(moveset, clip);
+        ClipChoice::seeked(set, clip, set.place(clip, a), true)
+    };
+    if let Some(a) = &action
+        && let Some(clip) = set.action_clip(a.key)
     {
-        return ClipChoice::seeked(set, set.family(moveset, clip), progress.unwrap_or(0.0), true);
+        return seeked(clip, a);
     }
     if status.dead {
-        return match (set.exact(Locomotion::Dead), progress) {
-            (Some(clip), Some(p)) => ClipChoice::seeked(set, set.family(moveset, clip), p, true),
+        return match (set.exact(Locomotion::Dead), &action) {
+            (Some(clip), Some(a)) => seeked(clip, a),
             (Some(clip), None) => {
                 let clip = set.family(moveset, clip);
                 ClipChoice {
@@ -1159,30 +1636,41 @@ pub fn select_clip_in<'a>(
                     speed: set.clip_speed(clip),
                     blend: set.blend_into(clip, false),
                     looping: false,
+                    gait: false,
+                    repeats: None,
                 }
             }
             (None, _) => ClipChoice::none(set),
         };
     }
     if status.staggered
-        && let (Some(clip), Some(p)) = (set.exact(Locomotion::Stagger), progress)
+        && let (Some(clip), Some(a)) = (set.exact(Locomotion::Stagger), &action)
     {
-        return ClipChoice::seeked(set, set.family(moveset, clip), p, true);
+        return seeked(clip, a);
     }
     let state = locomotion_state_at(motion, &set.speeds, status.pace);
     let Some((resolved, clip)) = set.locomotion_clip(state) else { return ClipChoice::none(set) };
-    let clip = set.family(moveset, clip);
     if resolved == Locomotion::Mantle
         && let Some(mantle) = &motion.mantle
     {
-        return ClipChoice::seeked(set, clip, mantle.t.clamp(0.0, 1.0), false);
+        return ClipChoice::seeked(set, set.family(moveset, clip), (mantle.t.clamp(0.0, 1.0), None), false);
     }
+    // Facing a target: the heading's clip, or the gait's own (backward for `back`).
+    let (clip, backward) = match status.facing.map(|h| (h, set.facing_clip(resolved, h))) {
+        Some((_, Some(faced))) => (faced, false),
+        Some((heading, None)) => (clip, heading == Heading::Back && resolved.is_gait()),
+        None => (clip, false),
+    };
+    let clip = set.family(moveset, clip);
+    let speed = ground_scale(resolved, motion, &set.speeds) * set.clip_speed(clip);
     ClipChoice {
         clip: Some(clip),
         seek_to: None,
-        speed: ground_scale(resolved, motion, &set.speeds) * set.clip_speed(clip),
+        speed: if backward { -speed } else { speed },
         blend: set.blend_into(clip, false),
         looping: true,
+        gait: resolved.is_gait(),
+        repeats: None,
     }
 }
 
@@ -1193,6 +1681,8 @@ pub struct LayerChoice<'a> {
     pub layer: &'a str,
     /// The clip on it, always seeked to the action's progress: gameplay leads here too.
     pub choice: ClipChoice<'a>,
+    /// Seconds the clip takes to leave the layer ([`ActionClip::blend_out`]), if the mapping says.
+    pub blend_out: Option<f32>,
 }
 
 /// The clip that plays on a layer now, if the running action is mapped to one. `action` is the
@@ -1209,13 +1699,24 @@ pub fn select_layer_in<'a>(
     set: &'a AnimSet,
     moveset: Option<&str>,
 ) -> Option<LayerChoice<'a>> {
+    select_layer_timed(action.map(|(key, t, length)| ActionTime::even(key, t, length)), status, set, moveset)
+}
+
+/// [`select_layer_in`] with the action's phases: a clip timed to them is seeked phase by phase.
+pub fn select_layer_timed<'a>(
+    action: Option<ActionTime>,
+    status: BodyStatus,
+    set: &'a AnimSet,
+    moveset: Option<&str>,
+) -> Option<LayerChoice<'a>> {
     if status.dead || status.staggered {
         return None;
     }
-    let (id, t, len) = action?;
-    let (clip, Some(layer)) = set.action_shown(id)? else { return None };
-    let progress = if len > EPS { (t / len).clamp(0.0, 1.0) } else { 1.0 };
-    Some(LayerChoice { layer, choice: ClipChoice::seeked(set, set.family(moveset, clip), progress, true) })
+    let a = action?;
+    let (clip, Some(layer)) = set.action_shown(a.key)? else { return None };
+    let blend_out = set.mapping(a.key).and_then(|m| m.blend_out);
+    let clip = set.family(moveset, clip);
+    Some(LayerChoice { layer, choice: ClipChoice::seeked(set, clip, set.place(clip, &a), true), blend_out })
 }
 
 /// The cues the animation passed going from `prev` to `now` (seconds on the clip's
@@ -1228,21 +1729,59 @@ pub fn select_layer_in<'a>(
 ///   rest of the last pass and the start of the new one. Anything else restarted: cues up
 ///   to `now` fire again.
 pub fn crossed_cues(cues: &[CueDef], prev: Option<f32>, now: f32, wrap_at: Option<f32>) -> Vec<&CueDef> {
+    crossed_cues_in(cues, prev, now, wrap_at.map(|length| (0.0, length)))
+}
+
+/// [`crossed_cues`] for a clip that repeats the stretch `wraps` (`(start, end)` in seconds: a
+/// looping phase's, [`ClipChoice::wraps`]; a looping clip's is `(0, length)`). Going back from inside
+/// the stretch to inside it is a wrap: the rest of the stretch, then its start up to `now`; the cues of
+/// earlier phases do not fire again. Going back from anywhere else is a restart.
+pub fn crossed_cues_in(cues: &[CueDef], prev: Option<f32>, now: f32, wraps: Option<(f32, f32)>) -> Vec<&CueDef> {
+    let inside = |at: f32, (start, end): (f32, f32)| at >= start - EPS && at <= end + EPS;
+    let wrap = wraps.filter(|&stretch| prev.is_some_and(|p| now < p && inside(p, stretch) && inside(now, stretch)));
     let mut found: Vec<&CueDef> = cues
         .iter()
-        .filter(|c| match prev {
-            None => c.at <= now + EPS,
-            Some(p) if now >= p => c.at > p + EPS && c.at <= now + EPS,
-            Some(p) => match wrap_at {
-                Some(len) => (c.at > p + EPS && c.at <= len + EPS) || c.at <= now + EPS,
-                None => c.at <= now + EPS,
-            },
+        .filter(|c| match (prev, wrap) {
+            (None, _) => c.at <= now + EPS,
+            (Some(p), _) if now >= p => c.at > p + EPS && c.at <= now + EPS,
+            (Some(p), Some((start, end))) => (c.at > p + EPS && c.at <= end + EPS) || (c.at >= start - EPS && c.at <= now + EPS),
+            (Some(_), None) => c.at <= now + EPS,
         })
         .collect();
     // After a wrap, the cues at or before `now` are the new pass's head: they come last.
-    let wrapped = wrap_at.is_some() && prev.is_some_and(|p| now < p);
-    let head = |c: &CueDef| wrapped && c.at <= now + EPS;
+    let head = |c: &CueDef| wrap.is_some() && c.at <= now + EPS;
     found.sort_by(|a, b| head(a).cmp(&head(b)).then(a.at.total_cmp(&b.at)));
+    found
+}
+
+/// Where a gait's new clip of `new_len` seconds starts when the one before it, `old_len` seconds
+/// long, was `at` seconds in: the same share of the stride, so the feet do not skip. `None` when
+/// either clip has no length.
+pub fn carry_phase(at: f32, old_len: f32, new_len: f32) -> Option<f32> {
+    (old_len > EPS && new_len > EPS && at.is_finite()).then(|| (at / old_len).rem_euclid(1.0) * new_len)
+}
+
+/// [`crossed_cues`] for a clip played backward (a gait's clip on a body backing away, at a negative
+/// speed): the cues passed going down from `prev` to `now`, in the order they were passed.
+///
+/// - `prev` `None`: the clip just started; it has passed nothing yet.
+/// - `now <= prev`: cues in `[now, prev)`.
+/// - `now > prev`: a looping clip (`wrap_at`: its length) wrapped below its start: the cues in
+///   `[0, prev)`, then those in `[now, length]`. Anything else restarted: nothing fires.
+pub fn crossed_cues_back(cues: &[CueDef], prev: Option<f32>, now: f32, wrap_at: Option<f32>) -> Vec<&CueDef> {
+    let Some(prev) = prev else { return Vec::new() };
+    let wrapped = now > prev && wrap_at.is_some();
+    let mut found: Vec<&CueDef> = cues
+        .iter()
+        .filter(|c| match wrap_at {
+            _ if now <= prev => c.at >= now - EPS && c.at < prev - EPS,
+            Some(len) => c.at < prev - EPS || (c.at >= now - EPS && c.at <= len + EPS),
+            None => false,
+        })
+        .collect();
+    // After a wrap, the cues at or after `now` are the new pass's head: they come last.
+    let head = |c: &CueDef| wrapped && c.at >= now - EPS;
+    found.sort_by(|a, b| head(a).cmp(&head(b)).then(b.at.total_cmp(&a.at)));
     found
 }
 
@@ -1253,7 +1792,8 @@ fn is_gltf(path: &str) -> bool {
 
 impl AnimSet {
     /// With an asset folder: every file the set names can be read, has the animations its
-    /// clips name and, with `root_motion`, that bone, unturned by its parents.
+    /// clips name, the bones their cues name and, with `root_motion`, that bone, unturned by its
+    /// parents.
     fn check_files(&self, refs: &mut Refs) {
         let Some(root) = refs.asset_root() else { return };
         for source in self.sources() {
@@ -1274,10 +1814,24 @@ impl AnimSet {
                 let wanted = self.file_name(name);
                 if !file.has_animation(wanted) {
                     refs.error(format!("clips.{name} -> `{source}` has no animation `{wanted}`; it has: {have}"));
+                } else {
+                    check_phases_in_file(refs, name, source, wanted, &file, &self.clips[name].phases);
                 }
             }
             if source != self.source {
                 continue;
+            }
+            // A cue's bone is found under the model, whichever file its clip comes from.
+            for (name, clip) in &self.clips {
+                for (i, cue) in clip.cues.iter().enumerate() {
+                    if let Some(bone) = cue.bone.as_deref().filter(|b| !b.is_empty())
+                        && !file.has_node(bone)
+                    {
+                        refs.error(format!(
+                            "clips.{name}.cues[{i}].bone -> `{source}` has no node `{bone}`; name a bone of the model"
+                        ));
+                    }
+                }
             }
             if let Some(bone) = self.root_motion.as_deref().filter(|b| !b.is_empty()) {
                 if !file.has_node(bone) {
@@ -1308,9 +1862,85 @@ impl AnimSet {
         }
     }
 
+    /// `field.turn` of an action's mapping: a number of seconds, on the whole body, with a bone to
+    /// write it on.
+    fn check_turn(&self, refs: &mut Refs, field: &str, mapping: &ActionClip) {
+        let turn = mapping.turn;
+        if !(turn >= 0.0 && turn.is_finite()) {
+            refs.error(format!("{field}.turn must be >= 0 seconds (is {turn})"));
+            return;
+        }
+        if turn == 0.0 {
+            return;
+        }
+        if let Some(layer) = &mapping.layer {
+            refs.error(format!(
+                "{field}.turn turns the whole model, and the clip plays on layer `{layer}`; leave `turn` out or play \
+                 the clip on the whole body"
+            ));
+        }
+        if self.root_motion.is_none() {
+            refs.error(format!(
+                "{field}.turn needs `root_motion`: the turn is written on that bone; name the root bone, e.g. \
+                 `root_motion: \"root\"`"
+            ));
+        }
+    }
+
+    /// `field.blend_out` of an action's mapping: a number of seconds, for a clip on a layer.
+    fn check_blend_out(refs: &mut Refs, field: &str, mapping: &ActionClip) {
+        let Some(out) = mapping.blend_out else { return };
+        if !(out >= 0.0 && out.is_finite()) {
+            refs.error(format!("{field}.blend_out must be >= 0 seconds (is {out})"));
+        }
+        if mapping.layer.is_none() {
+            refs.error(format!(
+                "{field}.blend_out is how a clip leaves its layer, and the clip plays on the whole body (the blend of \
+                 what the body shows next takes it over); leave `blend_out` out or give the mapping a `layer`"
+            ));
+        }
+    }
+
+    /// `overlays`: known events, clips and layers, an envelope that ends, a strength that shows.
+    fn check_overlays(&self, refs: &mut Refs, names: &[&str]) {
+        let events: Vec<&str> = OVERLAY_EVENTS.iter().map(|(event, _)| *event).collect();
+        for (event, overlay) in &self.overlays {
+            let field = format!("overlays.{event}");
+            if !events.contains(&event.as_str()) {
+                let hint =
+                    shards_content::db::closest(event, events.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
+                refs.error(format!("overlays has an unknown event `{event}`{hint}; events: {}", events.join(", ")));
+            }
+            if !self.clips.contains_key(&overlay.clip) {
+                unknown_clip(refs, names, &field, &overlay.clip);
+            }
+            self.check_layer_name(refs, &field, &overlay.layer);
+            let fade_in = overlay.fade_in;
+            if !(fade_in >= 0.0 && fade_in.is_finite()) {
+                refs.error(format!("{field}.fade_in must be >= 0 seconds (is {fade_in})"));
+            }
+            let (from, to) = overlay.fade_out;
+            if !(from >= 0.0 && to > 0.0 && from <= to && to.is_finite()) {
+                refs.error(format!(
+                    "{field}.fade_out must be (start, end) in seconds after the event, 0 <= start <= end and end > 0 \
+                     (is ({from}, {to})); the overlay fades out between them and ends at `end`"
+                ));
+            }
+            let strength = overlay.strength;
+            if !(strength > 0.0 && strength <= 1.0) {
+                refs.error(format!("{field}.strength must be above 0 and at most 1 (is {strength})"));
+            }
+        }
+    }
+
     /// `field.layer` of an action's mapping names one of the set's layers.
     fn check_layer(&self, refs: &mut Refs, field: &str, mapping: &ActionClip) {
         let Some(layer) = mapping.layer.as_deref() else { return };
+        self.check_layer_name(refs, field, layer);
+    }
+
+    /// `field.layer` names one of the set's layers.
+    fn check_layer_name(&self, refs: &mut Refs, field: &str, layer: &str) {
         if self.layers.contains_key(layer) {
             return;
         }
@@ -1326,6 +1956,147 @@ impl AnimSet {
             .map(|c| format!(" (did you mean `{c}`?)"))
             .unwrap_or_default();
         refs.error(format!("{field}.layer -> unknown layer `{layer}`{hint}; layers: {}", names.join(", ")));
+    }
+}
+
+/// `clips.NAME.phases`: each named, once, lasting >= 0 s, and some length in all; `loops` names
+/// some of them.
+fn check_clip_phases(refs: &mut Refs, name: &str, clip: &ClipDef) {
+    let phases = &clip.phases;
+    let names: Vec<&str> = phases.iter().map(|p| p.0.as_str()).collect();
+    for looped in &clip.loops {
+        if names.is_empty() {
+            refs.error(format!(
+                "clips.{name}.loops names `{looped}`, but the clip has no `phases`; give the phases it was timed to, \
+                 e.g. `phases: [(\"{looped}\", 1.0)]`"
+            ));
+            break;
+        }
+        if !names.contains(&looped.as_str()) {
+            let hint = shards_content::db::closest(looped, names.iter().copied())
+                .map(|c| format!(" (did you mean `{c}`?)"))
+                .unwrap_or_default();
+            refs.error(format!("clips.{name}.loops names an unknown phase `{looped}`{hint}; phases: {}", names.join(", ")));
+        }
+    }
+    if phases.is_empty() {
+        return;
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    for Phase(phase, secs) in phases {
+        if phase.is_empty() {
+            refs.error(format!("clips.{name}.phases has a phase with no name"));
+        } else if seen.contains(&phase.as_str()) {
+            refs.error(format!("clips.{name}.phases has `{phase}` twice; an action's phase finds the clip's by its name"));
+        }
+        seen.push(phase);
+        if !(*secs >= 0.0 && secs.is_finite()) {
+            refs.error(format!("clips.{name}.phases: `{phase}` must last >= 0 s (is {secs})"));
+        }
+    }
+    let valid = phases.iter().all(|p| p.1 >= 0.0 && p.1.is_finite());
+    if valid && phases.iter().map(|p| p.1).sum::<f32>() <= EPS {
+        refs.error(format!("clips.{name}.phases last 0 s in all; give the seconds the clip was timed to"));
+    }
+}
+
+/// `clips.NAME.phases` against animation `wanted` of `file` (shown as `source`): the phases its
+/// `phases` extra names, to half a tick of [`SAMPLE_HZ`](crate::bake::SAMPLE_HZ) (as a bake reads
+/// them), or without one its length.
+fn check_phases_in_file(refs: &mut Refs, name: &str, source: &str, wanted: &str, file: &ClipFile, phases: &[Phase]) {
+    if phases.is_empty() {
+        return;
+    }
+    let half_tick = 0.5 / crate::bake::SAMPLE_HZ;
+    match file.phases(wanted) {
+        Some(Err(e)) => refs.error(format!("clips.{name}.phases: animation `{wanted}` of `{source}`: {e}")),
+        Some(Ok(theirs)) => {
+            let same = theirs.len() == phases.len()
+                && theirs.iter().zip(phases).all(|(f, p)| f.0 == p.0 && (f.1 - p.1).abs() <= half_tick);
+            if !same {
+                let theirs: Vec<Phase> = theirs.into_iter().map(|(n, s)| Phase(n, s)).collect();
+                refs.error(format!(
+                    "clips.{name}.phases ({}) are not the phases animation `{wanted}` of `{source}` was timed to ({}); \
+                     write the file's",
+                    phases_text(phases),
+                    phases_text(&theirs)
+                ));
+            }
+        }
+        None => {
+            let total: f32 = phases.iter().map(|p| p.1).sum();
+            if let Some(lasts) = file.duration(wanted)
+                && (lasts - total).abs() > half_tick
+            {
+                refs.error(format!(
+                    "clips.{name}.phases last {} s in all, animation `{wanted}` of `{source}` {} s; make them add up \
+                     to the clip's length",
+                    crate::bake::number(total, 4),
+                    crate::bake::number(lasts, 4)
+                ));
+            }
+        }
+    }
+}
+
+impl AnimSet {
+    /// Every action the set shows on a clip timed to phases (its clip, and that clip's family in each
+    /// `by_moveset`; for a moveset's stagger and death actions without a clip of their own, the
+    /// `stagger` and `dead` clips) has the same phases in the same order, or none of their names (the
+    /// clip plays evenly then). One that shares some of the names has a typo or a phase left out.
+    fn check_timing(&self, refs: &mut Refs) {
+        let actions: Vec<(&str, &ActionDef)> = refs.iter::<ActionDef>().collect();
+        // Each clip an action shows, once: its own mapping and the families of it, then for a
+        // moveset's stagger and death actions that map no clip of their own, the set's `stagger` and
+        // `dead` clips (in that moveset's family), which are seeked by those actions' phases too.
+        let mut shown: Vec<(&str, &str, &ActionDef)> = Vec::new();
+        for &(id, def) in &actions {
+            let key = self.action_key(id, def.anim.as_deref(), &def.tags);
+            if def.face == Face::Run && self.turn_of(key) > 0.0 {
+                let field = if self.actions.contains_key(key) { "actions" } else { "tags" };
+                refs.error(format!(
+                    "{field}.{key}.turn turns the model to the heading of a run that keeps the body's facing, and \
+                     action `{id}` turns the body itself (`face: Run`); give it `face: Keep` or leave `turn` out"
+                ));
+            }
+            let Some((clip, _)) = self.action_shown(key) else { continue };
+            self.show_timed(&mut shown, clip, id, def);
+            for renamed in self.by_moveset.values().filter_map(|table| table.get(clip)) {
+                self.show_timed(&mut shown, renamed, id, def);
+            }
+        }
+        for (moveset, m) in refs.iter::<MovesetDef>() {
+            for (action, state) in [(&m.stagger, Locomotion::Stagger), (&m.death, Locomotion::Dead)] {
+                let (Some(action), Some(clip)) = (action.as_deref(), self.exact(state)) else { continue };
+                let Some(&(id, def)) = actions.iter().find(|(id, _)| *id == action) else { continue };
+                if self.action_shown(self.action_key(id, def.anim.as_deref(), &def.tags)).is_none() {
+                    self.show_timed(&mut shown, self.family(Some(moveset), clip), id, def);
+                }
+            }
+        }
+        for (clip, id, def) in shown {
+            let timed = &self.clips[clip].phases;
+            let shared: Vec<&str> = timed.iter().map(|c| c.0.as_str()).filter(|n| def.phases.iter().any(|a| a.0 == *n)).collect();
+            if shared.is_empty() || timed_alike(&def.phases, timed) {
+                continue;
+            }
+            refs.error(format!(
+                "clips.{clip}.phases ({}) and action `{id}`, which plays it ({}), share {} but are not the same phases \
+                 in the same order; give the clip the action's phase names (or none of them, and it plays evenly)",
+                phases_text(timed),
+                phases_text(&def.phases),
+                shared.join(", ")
+            ));
+        }
+    }
+
+    /// `clip` (when the set has it) shown by action `id`, added to `shown` once.
+    fn show_timed<'s>(&self, shown: &mut Vec<(&'s str, &'s str, &'s ActionDef)>, clip: &'s str, id: &'s str, def: &'s ActionDef) {
+        if let Some(clip) = self.known(clip)
+            && !shown.iter().any(|(c, i, _)| *c == clip && *i == id)
+        {
+            shown.push((clip, id, def));
+        }
     }
 }
 
@@ -1407,15 +2178,28 @@ impl ContentDef for AnimSet {
                 if cue.cue.is_empty() {
                     refs.error(format!("clips.{name}.cues[{i}].cue has no name"));
                 }
+                if cue.bone.as_deref().is_some_and(str::is_empty) {
+                    refs.error(format!(
+                        "clips.{name}.cues[{i}].bone is empty; name a bone of the model (`bone: \"foot.L\"`) or leave it out"
+                    ));
+                }
+                if !(cue.strength >= 0.0 && cue.strength.is_finite()) {
+                    refs.error(format!("clips.{name}.cues[{i}].strength must be a number, 0 or more (is {})", cue.strength));
+                }
             }
+            check_clip_phases(refs, name, clip);
         }
         let states: Vec<&str> = Locomotion::ALL.iter().map(|s| s.name()).collect();
         for (state, clip) in &self.locomotion {
-            if Locomotion::parse(state).is_none() {
-                let hint = shards_content::db::closest(state, states.iter().copied())
+            if Locomotion::parse(state).is_none() && !FACING_KEYS.contains(&state.as_str()) {
+                let hint = shards_content::db::closest(state, states.iter().chain(FACING_KEYS.iter()).copied())
                     .map(|c| format!(" (did you mean `{c}`?)"))
                     .unwrap_or_default();
-                refs.error(format!("locomotion has an unknown state `{state}`{hint}; states: {}", states.join(", ")));
+                refs.error(format!(
+                    "locomotion has an unknown state `{state}`{hint}; states: {}; facing a target: a gait's heading \
+                     (`walk.back`, `run.left`, `sprint.right`) or `idle.facing`",
+                    states.join(", ")
+                ));
             }
             if !known(clip) {
                 unknown_clip(refs, &names, &format!("locomotion.{state}"), clip);
@@ -1445,6 +2229,8 @@ impl ContentDef for AnimSet {
                 unknown_clip(refs, &names, &format!("actions.{action}"), &mapping.clip);
             }
             self.check_layer(refs, &format!("actions.{action}"), mapping);
+            self.check_turn(refs, &format!("actions.{action}"), mapping);
+            Self::check_blend_out(refs, &format!("actions.{action}"), mapping);
         }
         for (tag, mapping) in &self.tags {
             if tag.is_empty() {
@@ -1454,7 +2240,11 @@ impl ContentDef for AnimSet {
                 unknown_clip(refs, &names, &format!("tags.{tag}"), &mapping.clip);
             }
             self.check_layer(refs, &format!("tags.{tag}"), mapping);
+            self.check_turn(refs, &format!("tags.{tag}"), mapping);
+            Self::check_blend_out(refs, &format!("tags.{tag}"), mapping);
         }
+        self.check_overlays(refs, &names);
+        self.check_timing(refs);
         for (field, v) in [("blend", self.blend), ("action_blend", self.action_blend)] {
             if !(v >= 0.0 && v.is_finite()) {
                 refs.error(format!("{field} must be >= 0 (is {v})"));
@@ -1911,6 +2701,119 @@ mod tests {
         assert_eq!(select_clip_for(None, &moving(0.0), status, &set).clip, Some("idle"));
     }
 
+    fn phases(list: &[(&str, f32)]) -> Vec<Phase> {
+        list.iter().map(|(n, s)| Phase((*n).to_owned(), *s)).collect()
+    }
+
+    #[test]
+    fn a_clip_timed_to_the_actions_phases_is_seeked_phase_by_phase() {
+        let quick = phases(&[("windup", 0.2), ("active", 0.1), ("recovery", 0.3)]);
+        let slow = phases(&[("windup", 0.6), ("active", 0.15), ("recovery", 0.8)]);
+        let at = |t, length| phase_seek(&slow, &quick, &[], t, length).unwrap();
+        // The slow windup shows the quick one's 0.2 s, and the strike comes as its active phase starts.
+        assert!(close(at(0.3, 1.55), 0.1 / 0.6), "{}", at(0.3, 1.55));
+        assert!(close(at(0.6, 1.55), 0.2 / 0.6), "{}", at(0.6, 1.55));
+        assert!(close(at(0.675, 1.55), 0.25 / 0.6), "halfway through the active phase: {}", at(0.675, 1.55));
+        assert!(close(at(1.55, 1.55), 1.0) && close(at(9.0, 1.55), 1.0) && close(at(-1.0, 1.55), 0.0));
+        // Evenly, 0.6 s in is 39 % of the clip, past the strike that starts at 33 %: it shows early.
+        assert!(even_progress(0.6, 1.55) > at(0.6, 1.55));
+        // A run longer than the phases (a miss's longer recovery) stretches the last phase.
+        assert!(close(at(0.75 + 0.65, 2.05), (0.3 + 0.15) / 0.6), "{}", at(1.4, 2.05));
+        // The same timings seek as evenly.
+        assert!(close(phase_seek(&quick, &quick, &[], 0.15, 0.6).unwrap(), even_progress(0.15, 0.6)));
+        // Not timed alike: other names, another order, fewer phases, none, a clip of no length.
+        assert_eq!(phase_seek(&phases(&[("stroke", 0.5)]), &quick, &[], 0.1, 0.5), None);
+        let swapped = phases(&[("active", 0.1), ("windup", 0.2), ("recovery", 0.3)]);
+        assert_eq!(phase_seek(&swapped, &quick, &[], 0.1, 0.6), None);
+        assert_eq!(phase_seek(&quick[..2], &quick, &[], 0.1, 0.3), None);
+        assert_eq!(phase_seek(&[], &quick, &[], 0.1, 0.6), None);
+        assert_eq!(phase_seek(&quick, &phases(&[("windup", 0.0), ("active", 0.0), ("recovery", 0.0)]), &[], 0.1, 0.6), None);
+    }
+
+    #[test]
+    fn a_looped_phase_repeats_its_stretch_of_the_clip() {
+        let clip = phases(&[("fall", 0.5), ("down", 1.5), ("rise", 1.0)]);
+        let action = phases(&[("fall", 0.5), ("down", 4.0), ("rise", 1.0)]);
+        let loops = ["down".to_owned()];
+        let at = |t| phase_seek(&action, &clip, &loops, t, 5.5).unwrap();
+        // The breath repeats at its own speed: 2 s into the phase is 0.5 s into its second pass.
+        assert!(close(at(2.5), (0.5 + 0.5) / 3.0), "{}", at(2.5));
+        assert!(close(at(0.5 + 1.5 * 2.0 + 0.25), (0.5 + 0.25) / 3.0));
+        // The rise starts at its own start and is stretched as usual.
+        assert!(close(at(4.75), 2.25 / 3.0) && close(at(5.5), 1.0));
+        // Without `loops` the breath is stretched over the 4 s.
+        assert!(close(phase_seek(&action, &clip, &[], 2.5, 5.5).unwrap(), (0.5 + 0.75) / 3.0));
+    }
+
+    #[test]
+    fn a_looped_phase_fires_its_own_cues_on_each_pass_and_no_earlier_ones() {
+        let clip = phases(&[("fall", 0.5), ("down", 1.5), ("rise", 1.0)]);
+        let action = phases(&[("fall", 0.5), ("down", 4.0), ("rise", 1.0)]);
+        let loops = ["down".to_owned()];
+        let place = |t| phase_place(&action, &clip, &loops, t, 5.5).unwrap();
+        // The stretch is said while the action is in the looped phase, and only then.
+        assert_eq!(place(0.25).1, None);
+        let (start, end) = place(2.5).1.unwrap();
+        assert!(close(start, 0.5 / 3.0) && close(end, 2.0 / 3.0), "{start} {end}");
+        assert_eq!(place(4.75).1, None);
+        assert_eq!(phase_place(&action, &clip, &[], 2.5, 5.5).unwrap().1, None, "no `loops`, no stretch");
+
+        // On a 3 s clip: a thud as it falls, a breath in the down stretch (0.5 s to 2 s).
+        let cues = [CueDef::new(0.3, "thud"), CueDef::new(1.2, "breath")];
+        let fired = |prev, now, wraps| -> Vec<&str> { crossed_cues_in(&cues, prev, now, wraps).iter().map(|c| c.cue.as_str()).collect() };
+        let down = Some((0.5, 2.0));
+        assert!(fired(Some(1.9), 0.7, down).is_empty(), "the stretch starts over: no thud again");
+        assert_eq!(fired(Some(1.9), 1.3, down), ["breath"], "the breath once on the new pass");
+        assert_eq!(fired(Some(1.0), 0.6, down), ["breath"], "the rest of the last pass");
+        assert_eq!(fired(Some(1.9), 0.7, None), ["thud"], "the old rule: a restart");
+        // Going back from outside the stretch (a new run of the action) is a restart.
+        assert_eq!(fired(Some(2.5), 1.3, down), ["thud", "breath"]);
+        // The whole clip looping is the stretch from 0: as `crossed_cues` with `wrap_at`.
+        assert_eq!(fired(Some(2.9), 0.4, Some((0.0, 3.0))), ["thud"]);
+    }
+
+    #[test]
+    fn the_played_clip_decides_how_an_action_is_seeked() {
+        let mut set = set();
+        let quick = phases(&[("windup", 0.2), ("active", 0.1), ("recovery", 0.3)]);
+        let slow = phases(&[("windup", 0.6), ("active", 0.15), ("recovery", 0.8)]);
+        let slow_at = |t| Some(ActionTime::new("light_1", t, 1.55, &slow));
+        let idle = moving(0.0);
+        let alive = BodyStatus::default();
+        // Without phases on the clip, the timed choice is the even one, bit for bit.
+        for t in [0.0, 0.3, 0.6, 1.0, 1.55, 2.0] {
+            let timed = select_clip_timed(slow_at(t), &idle, alive, &set, None);
+            assert_eq!(timed, select_clip_in(Some(("light_1", t, 1.55)), &idle, alive, &set, None), "t {t}");
+        }
+        set.clips.get_mut("swing_1").unwrap().phases = quick.clone();
+        let c = select_clip_timed(slow_at(0.6), &idle, alive, &set, None);
+        assert_eq!(c.clip, Some("swing_1"));
+        assert!(close(c.seek_to.unwrap(), 0.2 / 0.6), "{c:?}");
+        // An action with no phases (the old call) still plays it evenly.
+        let even = select_clip_in(Some(("light_1", 0.6, 1.55)), &idle, alive, &set, None);
+        assert!(close(even.seek_to.unwrap(), 0.6 / 1.55), "{even:?}");
+        // A moveset's family clip is seeked by its own phases: `block` has none, so evenly.
+        set.by_moveset.insert("brute".into(), [("swing_1".to_owned(), "block".to_owned())].into());
+        let family = select_clip_timed(slow_at(0.6), &idle, alive, &set, Some("brute"));
+        assert_eq!(family.clip, Some("block"));
+        assert!(close(family.seek_to.unwrap(), 0.6 / 1.55), "{family:?}");
+        // The stagger and dead clips follow the running action's phases too.
+        set.clips.get_mut("hit").unwrap().phases = phases(&[("reel", 0.2), ("recover", 0.4)]);
+        let reel = phases(&[("reel", 0.4), ("recover", 0.4)]);
+        let staggered = BodyStatus { staggered: true, ..default() };
+        let c = select_clip_timed(Some(ActionTime::new("stagger", 0.4, 0.8, &reel)), &idle, staggered, &set, None);
+        assert_eq!(c.clip, Some("hit"));
+        assert!(close(c.seek_to.unwrap(), 0.2 / 0.6), "the reel ends where the clip's does: {c:?}");
+        // And so does a clip on a layer.
+        set.layers.insert("upper".into(), LayerDef::at("spine"));
+        set.actions.insert("drink".into(), ActionClip::on("swing_1", "upper"));
+        let drink = Some(ActionTime::new("drink", 0.6, 1.55, &slow));
+        let layer = select_layer_timed(drink, alive, &set, None).unwrap();
+        assert_eq!((layer.layer, layer.choice.clip), ("upper", Some("swing_1")));
+        assert!(close(layer.choice.seek_to.unwrap(), 0.2 / 0.6), "{layer:?}");
+        assert!(close(select_layer_in(Some(("drink", 0.6, 1.55)), alive, &set, None).unwrap().choice.seek_to.unwrap(), 0.6 / 1.55));
+    }
+
     #[test]
     fn an_empty_set_chooses_nothing() {
         let mut set = set();
@@ -1966,7 +2869,7 @@ mod tests {
 
     #[test]
     fn a_wrapped_loop_fires_the_rest_of_the_last_pass_before_the_new_one() {
-        let cues = [CueDef { at: 0.1, cue: "head".into() }, CueDef { at: 0.95, cue: "tail".into() }];
+        let cues = [CueDef::new(0.1, "head"), CueDef::new(0.95, "tail")];
         let at = |prev, now, wrap_at| -> Vec<f32> { crossed_cues(&cues, prev, now, wrap_at).iter().map(|c| c.at).collect() };
         assert_eq!(at(Some(0.9), 0.2, Some(1.0)), [0.95, 0.1], "the order they were passed in");
         // Everything else stays in time order.
@@ -2030,6 +2933,364 @@ mod tests {
     }
 
     #[test]
+    fn a_clips_phases_are_checked_and_an_action_must_share_all_of_them_or_none() {
+        let set = r#"{ "h": (source: "models/h.glb", clips: {
+                "swing": (phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)]),
+                "heavy": (phases: [("windup", 0.5), ("strike", 0.1), ("recovery", 0.3)]),
+                "bad": (phases: [("", 0.1), ("a", -1.0), ("a", 0.0)]),
+                "bare": (loops: ["x"]),
+                "breath": (phases: [("in", 1.0)], loops: ["inn"]),
+                "still": (phases: [("still", 0.0)]),
+            },
+            actions: {"spar": "swing"}, by_moveset: {"brute": {"swing": "heavy"}}) }"#;
+        let actions = r#"{
+            "light": (net_id: 1, phases: [("windup", 0.6), ("active", 0.15), ("recovery", 0.8)], anim: "swing"),
+            "spar": (net_id: 2, phases: [("stroke", 0.5)]),
+            "typo": (net_id: 3, phases: [("windup", 0.2), ("actve", 0.1), ("recovery", 0.3)], anim: "swing"),
+        }"#;
+        let mut kinds = ContentKinds::default();
+        kinds.register::<ActionDef>();
+        kinds.register::<AnimSet>();
+        kinds.register::<crate::def::MovesetDef>();
+        kinds.register::<crate::status::StatusDef>();
+        let sources = [
+            shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
+            shards_content::db::Source { path: "content/h.animset.ron".into(), text: set.into() },
+            shards_content::db::Source { path: "content/m.moveset.ron".into(), text: r#"{ "brute": (inputs: {}) }"#.into() },
+        ];
+        let errors: Vec<String> = ContentDb::build(&kinds, &sources).errors().map(ToString::to_string).collect();
+        let h = "content/h.animset.ron: animset `h`: ";
+        assert_eq!(
+            errors,
+            [
+                format!("{h}clips.bad.phases has a phase with no name"),
+                format!("{h}clips.bad.phases: `a` must last >= 0 s (is -1)"),
+                format!("{h}clips.bad.phases has `a` twice; an action's phase finds the clip's by its name"),
+                format!(
+                    "{h}clips.bare.loops names `x`, but the clip has no `phases`; give the phases it was timed to, \
+                     e.g. `phases: [(\"x\", 1.0)]`"
+                ),
+                format!("{h}clips.breath.loops names an unknown phase `inn` (did you mean `in`?); phases: in"),
+                format!("{h}clips.still.phases last 0 s in all; give the seconds the clip was timed to"),
+                format!(
+                    "{h}clips.heavy.phases (windup 0.5, strike 0.1, recovery 0.3) and action `light`, which plays it (windup 0.6, \
+                     active 0.15, recovery 0.8), share windup, recovery but are not the same phases in the same order; give \
+                     the clip the action's phase names (or none of them, and it plays evenly)"
+                ),
+                format!(
+                    "{h}clips.swing.phases (windup 0.2, active 0.1, recovery 0.3) and action `typo`, which plays it (windup 0.2, \
+                     actve 0.1, recovery 0.3), share windup, recovery but are not the same phases in the same order; give \
+                     the clip the action's phase names (or none of them, and it plays evenly)"
+                ),
+                format!(
+                    "{h}clips.heavy.phases (windup 0.5, strike 0.1, recovery 0.3) and action `typo`, which plays it (windup 0.2, \
+                     actve 0.1, recovery 0.3), share windup, recovery but are not the same phases in the same order; give \
+                     the clip the action's phase names (or none of them, and it plays evenly)"
+                ),
+            ],
+            "`light` matches `swing`; the spar's stroke shares nothing and plays evenly"
+        );
+    }
+
+    #[test]
+    fn the_heading_is_the_quarter_the_body_moves_in_and_keeps_its_slack_at_the_edges() {
+        let ahead = Vec3::NEG_Z;
+        let at = |degrees: f32| {
+            let (s, c) = ops::sin_cos(degrees.to_radians());
+            // Clockwise from forward seen from above: +90 is the body's right (+x).
+            Vec3::new(s, 0.0, -c)
+        };
+        assert_eq!(Heading::of(ahead, at(0.0), Heading::Back), Heading::Forward);
+        assert_eq!(Heading::of(ahead, at(90.0), Heading::Forward), Heading::Right);
+        assert_eq!(Heading::of(ahead, at(-90.0), Heading::Forward), Heading::Left);
+        assert_eq!(Heading::of(ahead, at(180.0), Heading::Forward), Heading::Back);
+        // A diagonal: the heading it had stays until 10 degrees past the edge.
+        assert_eq!(Heading::of(ahead, at(50.0), Heading::Forward), Heading::Forward);
+        assert_eq!(Heading::of(ahead, at(50.0), Heading::Right), Heading::Right);
+        assert_eq!(Heading::of(ahead, at(40.0), Heading::Right), Heading::Right);
+        assert_eq!(Heading::of(ahead, at(56.0), Heading::Forward), Heading::Right);
+        assert_eq!(Heading::of(ahead, at(-140.0), Heading::Left), Heading::Left);
+        assert_eq!(Heading::of(ahead, at(-150.0), Heading::Left), Heading::Back);
+        // Turned bodies: the quarter is the body's, not the world's.
+        assert_eq!(Heading::of(Vec3::X, Vec3::NEG_Z, Heading::Forward), Heading::Left);
+        assert_eq!(Heading::of(Vec3::X, Vec3::NEG_X, Heading::Forward), Heading::Back);
+        // Standing still keeps what it had.
+        assert_eq!(Heading::of(ahead, Vec3::ZERO, Heading::Left), Heading::Left);
+    }
+
+    #[test]
+    fn a_body_facing_a_target_shows_its_headings_clips_and_backs_away_on_its_gait_played_backward() {
+        let mut set = set();
+        for clip in ["walk_back", "strafe_left", "guard_idle"] {
+            set.clips.insert(clip.into(), ClipDef::default());
+        }
+        set.locomotion.insert("walk.back".into(), "walk_back".into());
+        set.locomotion.insert("walk.left".into(), "strafe_left".into());
+        set.locomotion.insert("idle.facing".into(), "guard_idle".into());
+        let facing = |h: Heading| BodyStatus { facing: Some(h), ..default() };
+        let back = select_clip_for(None, &moving(2.0), facing(Heading::Back), &set);
+        assert_eq!((back.clip, back.gait), (Some("walk_back"), true));
+        assert!(close(back.speed, 1.0), "authored: plays forward at the walk's pace: {back:?}");
+        assert_eq!(select_clip_for(None, &moving(2.0), facing(Heading::Left), &set).clip, Some("strafe_left"));
+        // No `walk.right`: the walk as it is.
+        let right = select_clip_for(None, &moving(2.0), facing(Heading::Right), &set);
+        assert_eq!(right.clip, Some("walk"));
+        assert!(close(right.speed, 1.0), "{right:?}");
+        // No `run.back`: the run played backward, at the run's pace.
+        let run_back = select_clip_for(None, &moving(5.0), facing(Heading::Back), &set);
+        assert_eq!((run_back.clip, run_back.gait, run_back.looping), (Some("run"), true, true));
+        assert!(close(run_back.speed, -1.1), "{run_back:?}");
+        // Standing: the combat idle; facing no target, the plain one.
+        let idle = select_clip_for(None, &moving(0.0), facing(Heading::Back), &set);
+        assert_eq!((idle.clip, idle.gait), (Some("guard_idle"), false));
+        assert_eq!(select_clip_for(None, &moving(0.0), BodyStatus::default(), &set).clip, Some("idle"));
+        // Facing no target, a backward walk is the walk: the body turns to where it goes.
+        assert_eq!(select_clip_for(None, &moving(2.0), BodyStatus::default(), &set).clip, Some("walk"));
+        // An action still leads, and the air has no heading.
+        let acting = select_clip_for(Some(("light_1", 0.1, 0.6)), &moving(2.0), facing(Heading::Back), &set);
+        assert_eq!((acting.clip, acting.gait), (Some("swing_1"), false));
+        let falling = MotionState { mode: MotionMode::Air, ..moving(2.0) };
+        let air = select_clip_for(None, &falling, facing(Heading::Back), &set);
+        assert!(air.clip == Some("fall") && air.speed > 0.0 && !air.gait, "{air:?}");
+        // Families rename the heading's clip too.
+        set.by_moveset.insert("brute".into(), BTreeMap::from([("walk_back".to_owned(), "strafe_left".to_owned())]));
+        assert_eq!(select_clip_in(None, &moving(2.0), facing(Heading::Back), &set, Some("brute")).clip, Some("strafe_left"));
+        assert_eq!(facing_key(Locomotion::Swim, Heading::Back), None);
+        assert_eq!(facing_key(Locomotion::Walk, Heading::Forward), None);
+        assert_eq!(FACING_KEYS.len(), 10);
+    }
+
+    #[test]
+    fn a_clip_played_backward_passes_its_cues_going_down() {
+        let cues: Vec<CueDef> = ron::from_str(r#"[(at: 0.1, cue: "a"), (at: 0.4, cue: "b"), (at: 0.7, cue: "c")]"#).unwrap();
+        fn names(found: Vec<&CueDef>) -> Vec<&str> {
+            found.into_iter().map(|c| c.cue.as_str()).collect()
+        }
+        assert_eq!(names(crossed_cues_back(&cues, None, 0.9, Some(1.0))), Vec::<&str>::new(), "just started: nothing passed");
+        assert_eq!(names(crossed_cues_back(&cues, Some(0.8), 0.3, Some(1.0))), ["c", "b"]);
+        assert_eq!(names(crossed_cues_back(&cues, Some(0.4), 0.35, Some(1.0))), Vec::<&str>::new(), "left the cue's moment, never reached it");
+        assert_eq!(names(crossed_cues_back(&cues, Some(0.5), 0.4, Some(1.0))), ["b"], "reached it");
+        // Wrapped below the start: the rest of this pass, then the end of the next.
+        assert_eq!(names(crossed_cues_back(&cues, Some(0.2), 0.6, Some(1.0))), ["a", "c"]);
+        assert_eq!(names(crossed_cues_back(&cues, Some(0.2), 0.6, None)), Vec::<&str>::new(), "not looping: a restart");
+        // Forward play is unchanged: a backward step there reads as a wrap.
+        assert_eq!(names(crossed_cues(&cues, Some(0.8), 0.3, Some(1.0))), ["a"]);
+    }
+
+    #[test]
+    fn a_gaits_stride_is_carried_to_the_next_clip() {
+        assert!(close(carry_phase(0.25, 1.0, 0.8).unwrap(), 0.2));
+        assert!(close(carry_phase(1.5, 1.0, 2.0).unwrap(), 1.0), "a time past the end is its place in the stride");
+        assert_eq!(carry_phase(0.25, 0.0, 0.8), None);
+        assert_eq!(carry_phase(0.25, 1.0, 0.0), None);
+    }
+
+    #[test]
+    fn the_facing_keys_and_the_turn_are_checked() {
+        let set = r#"{
+            "h": (source: "models/h.glb", clips: {"idle": (), "walk": (), "roll": (), "drink": ()},
+                locomotion: {"idle": "idle", "walk.bak": "walk", "idle.facing": "idle", "run.left": "walk"},
+                layers: {"upper": (root: "spine")},
+                actions: {"dodge": (clip: "roll", turn: 0.1), "lunge": (clip: "roll", turn: -1.0),
+                          "sip": (clip: "drink", layer: "upper", turn: 0.2)},
+                tags: {"evade": (clip: "roll", turn: 0.1)}),
+            "rooted": (source: "models/h.glb", clips: {"roll": ()}, actions: {"dodge": (clip: "roll", turn: 0.1)}, root_motion: "root"),
+        }"#;
+        let actions = r#"{
+            "dodge": (net_id: 1, phases: [("roll", 0.4)], face: Keep),
+            "lunge": (net_id: 2, phases: [("roll", 0.4)], face: Keep),
+            "sip": (net_id: 3, phases: [("sip", 1.0)]),
+            "spin": (net_id: 4, phases: [("roll", 0.4)], tags: ["evade"]),
+        }"#;
+        let mut kinds = ContentKinds::default();
+        kinds.register::<ActionDef>();
+        kinds.register::<AnimSet>();
+        kinds.register::<crate::def::MovesetDef>();
+        kinds.register::<crate::status::StatusDef>();
+        let sources = [
+            shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
+            shards_content::db::Source { path: "content/h.animset.ron".into(), text: set.into() },
+        ];
+        let errors: Vec<String> = ContentDb::build(&kinds, &sources).errors().map(ToString::to_string).collect();
+        let h = "content/h.animset.ron: animset `h`: ";
+        let needs_root = |field: &str| {
+            format!(
+                "{h}{field}.turn needs `root_motion`: the turn is written on that bone; name the root bone, e.g. \
+                 `root_motion: \"root\"`"
+            )
+        };
+        assert_eq!(
+            errors,
+            [
+                format!(
+                    "{h}locomotion has an unknown state `walk.bak` (did you mean `walk.back`?); states: idle, walk, run, sprint, \
+                     air, swim, glide, mantle, stagger, dead; facing a target: a gait's heading (`walk.back`, `run.left`, \
+                     `sprint.right`) or `idle.facing`"
+                ),
+                needs_root("actions.dodge"),
+                format!("{h}actions.lunge.turn must be >= 0 seconds (is -1)"),
+                format!(
+                    "{h}actions.sip.turn turns the whole model, and the clip plays on layer `upper`; leave `turn` out or play \
+                     the clip on the whole body"
+                ),
+                needs_root("actions.sip"),
+                needs_root("tags.evade"),
+                format!(
+                    "{h}tags.evade.turn turns the model to the heading of a run that keeps the body's facing, and action \
+                     `spin` turns the body itself (`face: Run`); give it `face: Keep` or leave `turn` out"
+                ),
+            ],
+            "`rooted` is fine; `sip` plays on a layer, so it has no turn to refuse for `face: Run`"
+        );
+        // The turn is written only when there is one.
+        let parse = |text: &str| -> ActionClip {
+            ron::Options::default()
+                .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+                .from_str(text)
+                .unwrap_or_else(|e| panic!("{text}: {e}"))
+        };
+        let turned = parse(r#"(clip: "roll", turn: 0.08)"#);
+        assert_eq!(serde_json::to_value(&turned).unwrap(), serde_json::json!({"clip": "roll", "turn": 0.08f32}));
+        assert_eq!(serde_json::to_value(parse(r#"(clip: "roll", turn: 0.0)"#)).unwrap(), serde_json::json!("roll"));
+    }
+
+    #[test]
+    fn an_overlay_comes_in_holds_its_strength_and_fades_out_smoothly() {
+        let def = OverlayDef { clip: "hit".into(), layer: "upper".into(), fade_in: 0.1, fade_out: (0.3, 0.5), strength: 0.8 };
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-5;
+        assert!(near(def.share(0.0, 0.0), 0.0));
+        assert!(near(def.share(0.05, 0.0), 0.4), "half way in, linearly");
+        assert!(near(def.share(0.2, 0.0), 0.8), "all in: its strength");
+        // A quarter of the way out the smoothstep has taken 0.15625 of it, half way a half.
+        assert!(near(def.share(0.35, 0.0), 0.8 * (1.0 - 0.15625)), "{}", def.share(0.35, 0.0));
+        assert!(near(def.share(0.4, 0.0), 0.4));
+        assert!(!def.ended(0.49) && def.ended(0.5));
+        assert!(near(def.share(0.5, 0.0), 0.0), "over at the end of its fade out");
+        assert!(near(def.share(0.0, 0.5), 0.4), "the same event again picks up from where it was");
+        let at_once = OverlayDef { fade_in: 0.0, fade_out: (0.2, 0.2), ..def };
+        assert!(near(at_once.share(0.0, 0.0), 0.8) && near(at_once.share(0.19, 0.0), 0.8));
+        assert!(at_once.ended(0.2), "a fade out with no length ends at once");
+    }
+
+    #[test]
+    fn overlays_and_blend_out_are_checked() {
+        let set = r#"{
+            "h": (source: "models/h.glb", clips: {"idle": (), "hit": (), "drink": ()},
+                layers: {"upper": (root: "spine")},
+                actions: {"sip": (clip: "drink", layer: "upper", blend_out: 0.075), "gulp": (clip: "drink", blend_out: -1.0)},
+                overlays: {
+                    "damaged": (clip: "hit", layer: "upper", fade_out: (0.2, 0.35), strength: 0.7),
+                    "damage": (clip: "hitt", layer: "uper", fade_in: -0.1, fade_out: (0.3, 0.2), strength: 1.5),
+                }),
+        }"#;
+        let actions = r#"{
+            "sip": (net_id: 1, phases: [("sip", 1.0)]),
+            "gulp": (net_id: 2, phases: [("gulp", 1.0)]),
+        }"#;
+        let mut kinds = ContentKinds::default();
+        kinds.register::<ActionDef>();
+        kinds.register::<AnimSet>();
+        kinds.register::<crate::def::MovesetDef>();
+        kinds.register::<crate::status::StatusDef>();
+        let sources = [
+            shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
+            shards_content::db::Source { path: "content/h.animset.ron".into(), text: set.into() },
+        ];
+        let db = ContentDb::build(&kinds, &sources);
+        let errors: Vec<String> = db.errors().map(ToString::to_string).collect();
+        let h = "content/h.animset.ron: animset `h`: ";
+        assert_eq!(
+            errors,
+            [
+                format!("{h}actions.gulp.blend_out must be >= 0 seconds (is -1)"),
+                format!(
+                    "{h}actions.gulp.blend_out is how a clip leaves its layer, and the clip plays on the whole body (the blend \
+                     of what the body shows next takes it over); leave `blend_out` out or give the mapping a `layer`"
+                ),
+                format!(
+                    "{h}overlays has an unknown event `damage` (did you mean `damaged`?); events: blocked, parried, damaged, \
+                     guard_broken, staggered, part_broken, landed"
+                ),
+                format!("{h}overlays.damage -> unknown clip `hitt` (did you mean `hit`?); clips: drink, hit, idle"),
+                format!("{h}overlays.damage.layer -> unknown layer `uper` (did you mean `upper`?); layers: upper"),
+                format!("{h}overlays.damage.fade_in must be >= 0 seconds (is -0.1)"),
+                format!(
+                    "{h}overlays.damage.fade_out must be (start, end) in seconds after the event, 0 <= start <= end and end > 0 \
+                     (is (0.3, 0.2)); the overlay fades out between them and ends at `end`"
+                ),
+                format!("{h}overlays.damage.strength must be above 0 and at most 1 (is 1.5)"),
+            ],
+            "`sip` and `damaged` are fine"
+        );
+        // Written only when they are not the defaults.
+        let set = db.get::<AnimSet>("h").unwrap();
+        assert_eq!(
+            serde_json::to_value(&set.actions["sip"]).unwrap(),
+            serde_json::json!({"clip": "drink", "layer": "upper", "blend_out": 0.075f32})
+        );
+        assert_eq!(
+            serde_json::to_value(&set.overlays["damaged"]).unwrap(),
+            serde_json::json!({"clip": "hit", "layer": "upper", "fade_out": [0.2f32, 0.35f32], "strength": 0.7f32})
+        );
+    }
+
+    #[test]
+    fn the_stagger_and_dead_clips_are_checked_against_the_movesets_stagger_and_death_actions() {
+        // A moveset's stagger or death action that maps no clip of its own is seeked on the set's
+        // `stagger` or `dead` clip (in that moveset's family) by its phases: a typo there is the same error.
+        let set = r#"{ "h": (source: "models/h.glb", clips: {
+                "idle": (),
+                "hit": (phases: [("reel", 0.2), ("recover", 0.4)]),
+                "big_hit": (phases: [("reel", 0.3), ("recover", 0.5)]),
+                "death": (phases: [("fall", 0.5), ("down", 1.0)]),
+                "kneel": (phases: [("fall", 0.5), ("down", 1.0)]),
+            },
+            locomotion: {"idle": "idle", "stagger": "hit", "dead": "death"},
+            actions: {"kneel": "kneel"}, by_moveset: {"brute": {"hit": "big_hit"}}) }"#;
+        let actions = r#"{
+            "reel": (net_id: 1, phases: [("reel", 0.4), ("recoverr", 0.4)]),
+            "die": (net_id: 2, phases: [("fall", 0.6), ("down", 2.0)]),
+            "kneel": (net_id: 3, phases: [("fall", 0.5), ("dwn", 1.0)]),
+        }"#;
+        let movesets = r#"{
+            "hero": (inputs: {}, stagger: "reel", death: "die"),
+            "brute": (inputs: {}, stagger: "reel", death: "kneel"),
+        }"#;
+        let mut kinds = ContentKinds::default();
+        kinds.register::<ActionDef>();
+        kinds.register::<AnimSet>();
+        kinds.register::<crate::def::MovesetDef>();
+        kinds.register::<crate::status::StatusDef>();
+        let sources = [
+            shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
+            shards_content::db::Source { path: "content/h.animset.ron".into(), text: set.into() },
+            shards_content::db::Source { path: "content/m.moveset.ron".into(), text: movesets.into() },
+        ];
+        let errors: Vec<String> = ContentDb::build(&kinds, &sources).errors().map(ToString::to_string).collect();
+        let fix = "but are not the same phases in the same order; give the clip the action's phase names (or none of them, \
+                   and it plays evenly)";
+        let h = "content/h.animset.ron: animset `h`: ";
+        assert_eq!(
+            errors,
+            [
+                format!(
+                    "{h}clips.kneel.phases (fall 0.5, down 1) and action `kneel`, which plays it (fall 0.5, dwn 1), share fall {fix}"
+                ),
+                format!(
+                    "{h}clips.big_hit.phases (reel 0.3, recover 0.5) and action `reel`, which plays it (reel 0.4, recoverr 0.4), \
+                     share reel {fix}"
+                ),
+                format!(
+                    "{h}clips.hit.phases (reel 0.2, recover 0.4) and action `reel`, which plays it (reel 0.4, recoverr 0.4), \
+                     share reel {fix}"
+                ),
+            ],
+            "the brute's stagger shows its family's `big_hit`, the hero's the `hit`; the brute's death has a clip of its \
+             own (checked once, as an action); the hero's `die` matches the `death` clip"
+        );
+    }
+
+    #[test]
     fn the_example_in_the_docs_is_valid_content() {
         // The RON of the module docs, with the actions it names.
         let docs = include_str!("anim.rs");
@@ -2051,6 +3312,74 @@ mod tests {
     }
 
     #[test]
+    fn a_cue_without_a_bone_or_strength_keeps_its_json() {
+        // The content hash feeds the co-op handshake: a cue that uses neither new field is the
+        // JSON it was before D1.7.
+        let plain = CueDef::new(0.5, "swoosh");
+        assert_eq!(serde_json::to_value(&plain).unwrap(), serde_json::json!({"at": 0.5, "cue": "swoosh"}));
+        // The old form parses to the defaults: at the body, at full strength.
+        let read = read_set(r#"(source: "models/h.glb", clips: {"walk": (cues: [(at: 0.5, cue: "footstep")])})"#);
+        assert_eq!(read.clips["walk"].cues, [CueDef { at: 0.5, cue: "footstep".into(), bone: None, strength: 1.0 }]);
+        assert_eq!(serde_json::to_value(&read.clips["walk"]).unwrap()["cues"], serde_json::json!([{"at": 0.5, "cue": "footstep"}]));
+        // A strength of exactly 1 written out is left out again; a bone and any other strength stay.
+        let read = read_set(
+            r#"(source: "models/h.glb", clips: {"walk": (cues: [
+                (at: 0.0, cue: "footstep", bone: "foot.L", strength: 1.0),
+                (at: 0.5, cue: "footstep", bone: "foot.R", strength: 0.5),
+                (at: 0.75, cue: "thud", strength: 0),
+            ])})"#,
+        );
+        let cues = &read.clips["walk"].cues;
+        assert_eq!(cues[0], CueDef::new(0.0, "footstep").at_bone("foot.L"));
+        assert_eq!(cues[1], CueDef::new(0.5, "footstep").at_bone("foot.R").with_strength(0.5));
+        assert_eq!(cues[2], CueDef::new(0.75, "thud").with_strength(0.0), "a strength of 0 is written, not left out");
+        assert_eq!(
+            serde_json::to_value(cues).unwrap(),
+            serde_json::json!([
+                {"at": 0.0, "cue": "footstep", "bone": "foot.L"},
+                {"at": 0.5, "cue": "footstep", "bone": "foot.R", "strength": 0.5},
+                {"at": 0.75, "cue": "thud", "strength": 0.0},
+            ])
+        );
+        // A set written out and read again is the same.
+        assert_eq!(read_set(&ron::to_string(&read).unwrap()), read);
+        // A misspelt field is a parse error, like any other field of an animset.
+        let errors = build(r#"{ "h": (source: "models/h.glb", clips: {"walk": (cues: [(at: 0.5, cue: "x", bones: "foot.L")])}) }"#);
+        assert!(errors.len() == 1 && errors[0].contains("bones") && errors[0].contains("`bone`"), "{errors:#?}");
+    }
+
+    #[test]
+    fn a_cues_bone_and_strength_are_checked() {
+        let errors = build(
+            r#"{
+            "h": (source: "models/h.glb", clips: {
+                "idle": (),
+                "walk": (cues: [
+                    (at: 0.0, cue: "footstep", bone: "foot.L", strength: 0.5),
+                    (at: 0.4, cue: "footstep", bone: ""),
+                    (at: 0.5, cue: "footstep", strength: -1),
+                    (at: 0.6, cue: "footstep", strength: inf),
+                    (at: 0.7, cue: "footstep", bone: "", strength: -0.25),
+                    (at: 0.8, cue: "silent", strength: 0),
+                ]),
+            }),
+        }"#,
+        );
+        assert_eq!(
+            errors,
+            [
+                "content/h.animset.ron: animset `h`: clips.walk.cues[1].bone is empty; name a bone of the model \
+                 (`bone: \"foot.L\"`) or leave it out",
+                "content/h.animset.ron: animset `h`: clips.walk.cues[2].strength must be a number, 0 or more (is -1)",
+                "content/h.animset.ron: animset `h`: clips.walk.cues[3].strength must be a number, 0 or more (is inf)",
+                "content/h.animset.ron: animset `h`: clips.walk.cues[4].bone is empty; name a bone of the model \
+                 (`bone: \"foot.L\"`) or leave it out",
+                "content/h.animset.ron: animset `h`: clips.walk.cues[4].strength must be a number, 0 or more (is -0.25)",
+            ]
+        );
+    }
+
+    #[test]
     fn validation_names_the_field_and_the_fix() {
         let errors = build(
             r#"{
@@ -2067,7 +3396,7 @@ mod tests {
             "content/h.animset.ron: animset `bad`: clips.walk.blend must be >= 0 (is -1)",
             "content/h.animset.ron: animset `bad`: clips.walk.cues[0].at must be >= 0 (is -1)",
             "content/h.animset.ron: animset `bad`: clips.walk.cues[0].cue has no name",
-            "content/h.animset.ron: animset `bad`: locomotion has an unknown state `idel` (did you mean `idle`?); states: idle, walk, run, sprint, air, swim, glide, mantle, stagger, dead",
+            "content/h.animset.ron: animset `bad`: locomotion has an unknown state `idel` (did you mean `idle`?); states: idle, walk, run, sprint, air, swim, glide, mantle, stagger, dead; facing a target: a gait's heading (`walk.back`, `run.left`, `sprint.right`) or `idle.facing`",
             "content/h.animset.ron: animset `bad`: locomotion.walk -> unknown clip `wlak` (did you mean `walk`?); clips: idle, walk",
             "content/h.animset.ron: animset `bad`: actions -> unknown action `light_2` (did you mean `light_1`?)",
             "content/h.animset.ron: animset `bad`: actions.roll -> unknown clip `dance`; clips: idle, walk",
@@ -2235,7 +3564,7 @@ mod tests {
         };
         let errors = build_with(TWO_ACTIONS, &set(r#"(clip: "idle", lyer: "upper")"#));
         assert_eq!(errors.len(), 1, "{errors:#?}");
-        assert!(errors[0].contains("Unexpected field named `lyer`") && errors[0].contains("expected one of `clip`, `layer`, or `ends_equip`"), "{errors:#?}");
+        assert!(errors[0].contains("Unexpected field named `lyer`") && errors[0].contains("expected one of `clip`, `layer`, `ends_equip`, `turn`, or `blend_out`"), "{errors:#?}");
         let errors = build_with(TWO_ACTIONS, &set(r#"(layer: "upper")"#));
         assert!(errors.len() == 1 && errors[0].contains("missing field named `clip`"), "{errors:#?}");
         let errors = build_with(TWO_ACTIONS, &set("7"));

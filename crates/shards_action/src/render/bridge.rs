@@ -14,14 +14,19 @@
 //! - **Following.** [`drive`] switches clips with a blend (`AnimationTransitions`), seeks an
 //!   action's clip to the action's progress each frame (the player's own clock stopped:
 //!   speed 0), lets locomotion clips loop at the speed the velocity asks for, and fires
-//!   [`AnimationCue`]s as clips pass their cue times. Between two ticks it looks one step
-//!   ahead (`Time<Fixed>` overstep) so the pose moves smoothly at any frame rate.
+//!   [`AnimationCue`]s as clips pass their cue times (a cue that names a bone carries the bone's
+//!   world position as of the last frame, found by node name under the player, never below a
+//!   prop). Between two ticks it looks one step ahead (`Time<Fixed>` overstep) so the pose moves
+//!   smoothly at any frame rate.
 //! - **Root motion in place.** [`hold_root_motion`] puts the set's `root_motion` bone back
 //!   where it rests along the ground after the clips are applied: the body already moves by
 //!   the action's `displacement`, baked from that bone.
 //! - **Layers.** An action the set maps to a layer (`actions: {"drink": (clip: "drink", layer:
 //!   "upper")}`) plays on that part of the body only; the rest keeps its locomotion clip (see
 //!   "Layers" below).
+//! - **Event overlays.** An engine event that names a drawn body (a hit it blocked, a landing:
+//!   [`OVERLAY_EVENTS`](crate::OVERLAY_EVENTS)) plays the clip the set's `overlays` give that event,
+//!   on a layer, over what the layer plays.
 //!
 //! ## Layers
 //!
@@ -40,6 +45,12 @@
 //! reach 1 ([`LAYER_FULL`]): the last 0.001% of locomotion on the arms is below what a pose can
 //! show.
 //!
+//! An event overlay plays on its layer in a node of its own, over the action's clip there: with
+//! share `e` it takes `e` of the layer's bones and the clips under it keep their shares times
+//! `1 - e`, so the pose is locomotion's, then the action's, then the overlay's, each over the last.
+//! Its share is its envelope (`fade_in`, `fade_out`, `strength`) at its age on the simulation's
+//! clock, and its clip is seeked to that age: a pause holds it, a `step` moves it.
+//!
 //! The character is `Animated` plus a child with the model:
 //!
 //! ```ignore
@@ -55,24 +66,28 @@ use bevy::animation::transition::AnimationTransitions;
 use bevy::animation::{AnimatedBy, AnimationClip, AnimationPlayer, AnimationTargetId, RepeatAnimation};
 use bevy::asset::LoadState;
 use bevy::ecs::query::QueryData;
+use bevy::ecs::system::SystemParam;
 use bevy::gltf::{Gltf, GltfNode};
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 use ai_core::{AiId, PresentationHolds};
 use shards_content::ContentDb;
 use shards_core::Predicted;
-use shards_motion::{MotionState, MoveModifiers};
+use shards_motion::{LocomotionInput, MotionState, MoveModifiers};
 
 use crate::anim::{
-    crossed_cues, mode_name, select_clip_in, select_layer_in, AnimSet, Animated, AnimationCue, BodyStatus, ClipChoice,
-    LayerChoice, ModeLeft, PropSwaps, MAX_LAYERS,
+    carry_phase, crossed_cues, crossed_cues_back, crossed_cues_in, mode_name, select_clip_timed, select_layer_timed, ActionTime, AnimSet,
+    Animated, AnimationCue, BodyStatus, ClipChoice, CueDef, Heading, LayerChoice, ModeLeft, OverlayDef, PropSwaps, MAX_LAYERS,
 };
-use crate::def::{ActionDef, MovesetDef};
+use crate::combat::{Blocked, Damaged, GuardBroken, Parried, Staggered};
+use crate::def::{ActionDef, Face, MovesetDef};
 use crate::fighter::{Dead, Fighter};
+use crate::parts::PartBroken;
 use crate::machine::ActionState;
 use crate::predict::PredictedAction;
 use crate::render::modes::{self, AnimSystems, ModeFrame, ModeState};
 use crate::render::props::{self, skeleton, MountEnv, MountFrame, MountState, PropOf, RunView};
+use crate::render::turn::{yaw_between, Turn};
 
 /// A seeked clip stops this far (seconds) before its end: Bevy's player wraps a time at the
 /// duration back to zero, which would show the first pose in place of the last.
@@ -89,6 +104,9 @@ pub struct Built {
     nodes: Nodes,
     /// Layer name -> our clip name -> the node that plays the clip on that layer only.
     layered: HashMap<String, Nodes>,
+    /// The same for the event overlays' clips: nodes of their own, so an overlay plays over the
+    /// action's clip on its layer even when the two are one clip.
+    overlaid: HashMap<String, Nodes>,
 }
 
 /// Our clip name -> its node in the graph and its clip asset.
@@ -104,6 +122,11 @@ impl Built {
     /// that clip on that layer.
     pub fn layer_node(&self, layer: &str, clip: &str) -> Option<AnimationNodeIndex> {
         self.layered.get(layer)?.get(clip).map(|(n, _)| *n)
+    }
+
+    /// The graph node playing clip `clip` on layer `layer` for an event overlay.
+    pub fn overlay_node(&self, layer: &str, clip: &str) -> Option<AnimationNodeIndex> {
+        self.overlaid.get(layer)?.get(clip).map(|(n, _)| *n)
     }
 
     /// Names of the clips the graph has, sorted.
@@ -126,6 +149,8 @@ struct GraphShape {
     layers: BTreeMap<String, String>,
     /// (layer, clip) of every mapping that plays on a layer.
     layered: BTreeSet<(String, String)>,
+    /// (layer, clip) of every event overlay (an edit of its fades or strength is read in place).
+    overlaid: BTreeSet<(String, String)>,
     /// A layered clip's family renames need nodes of their own.
     by_moveset: BTreeMap<String, BTreeMap<String, String>>,
     /// The bone held in place is found once per binding, so an edit of it rebinds.
@@ -144,6 +169,7 @@ impl GraphShape {
                 .chain(set.tags.values())
                 .filter_map(|m| Some((m.layer.clone()?, m.clip.clone())))
                 .collect(),
+            overlaid: set.overlays.values().map(|o| (o.layer.clone(), o.clip.clone())).collect(),
             by_moveset: set.by_moveset.clone(),
             root_motion: set.root_motion.clone(),
         }
@@ -208,8 +234,16 @@ pub struct AnimationBound {
     graph: AssetId<AnimationGraph>,
     /// The clip (our name) playing as the main one.
     clip: Option<String>,
+    /// That clip is a gait's: the next gait's clip starts where it was in its stride.
+    gait: bool,
     /// Seconds on that clip's timeline at the last frame, for cues.
     last_time: Option<f32>,
+    /// That clip was set to play backward at the last frame. Bevy moves a clip after [`drive`], so
+    /// the time it went since then went the way set then, whatever this frame sets.
+    backward: bool,
+    /// Which way the body moved from where it faced at the last frame (kept for the slack at the
+    /// quarters' edges; forward while it faces no target).
+    heading: Heading,
     /// The set's `root_motion` bone under the player and its rest translation, once found.
     pub(crate) root: Option<(Entity, Vec3)>,
     /// The set's layers whose bones the model has: only on these can an action's clip play.
@@ -225,6 +259,11 @@ pub struct AnimationBound {
     /// The motion mode it is drawn in and the clocks that hang on it: the mode's mount rules, the
     /// draw after leaving it, the drop.
     pub(crate) modes: ModeState,
+    /// How far the model is turned from the body's facing (a run's `turn`).
+    pub(crate) turn: Turn,
+    /// Engine events that named the body since the last frame, and the simulation clock at each:
+    /// their overlays start in [`drive`].
+    pending: Vec<(String, f64)>,
 }
 
 impl AnimationBound {
@@ -234,7 +273,10 @@ impl AnimationBound {
             player,
             graph,
             clip: None,
+            gait: false,
             last_time: None,
+            backward: false,
+            heading: Heading::Forward,
             root: None,
             ready: BTreeSet::new(),
             overlays: BTreeMap::new(),
@@ -242,6 +284,8 @@ impl AnimationBound {
             held_since: None,
             mounts: MountState::default(),
             modes: ModeState::default(),
+            turn: Turn::default(),
+            pending: Vec::new(),
         }
     }
 
@@ -256,9 +300,21 @@ impl AnimationBound {
         self.overlays.get(layer)?.main.as_ref().map(|m| m.clip.as_str())
     }
 
-    /// How much of `layer`'s bones the action's clip has, 0 to 1: the fade in and out.
+    /// How much of `layer`'s bones the clips on it have, 0 to 1: the action's fade in and out, and
+    /// an event overlay over it.
     pub fn layer_share(&self, layer: &str) -> f32 {
         self.overlays.get(layer).map_or(0.0, Overlay::share)
+    }
+
+    /// The event overlay playing on `layer` now, as of the last frame.
+    pub fn overlay_on(&self, layer: &str) -> Option<&OverlayPlay> {
+        self.overlays.get(layer)?.event.as_ref()
+    }
+
+    /// Engine event `event` named the body at `at` on the simulation clock: its overlay, if the
+    /// set has one, starts at the next frame, aged from then.
+    pub(crate) fn note_event(&mut self, event: &str, at: f64) {
+        self.pending.push((event.to_owned(), at));
     }
 
     /// The entity showing prop `prop` (a key of the set's `carry`), once it is drawn.
@@ -304,6 +360,17 @@ impl AnimationBound {
         self.modes.depth()
     }
 
+    /// Radians the model is turned by from the body's facing, about the world's up (a run's `turn`).
+    pub fn model_turn(&self) -> f32 {
+        self.turn.yaw()
+    }
+
+    /// Which way the body moves from where it faces, as its gait's clip was last chosen (forward
+    /// while it faces no target).
+    pub fn heading(&self) -> Heading {
+        self.heading
+    }
+
     /// The motion mode the body is drawn in, once the bridge has seen it.
     pub fn mode(&self) -> Option<shards_motion::MotionMode> {
         self.modes.mode()
@@ -321,8 +388,8 @@ impl AnimationBound {
 }
 
 /// What plays on one layer: the clip of the action there (`main`), the clips fading out after
-/// it, and the share of the layer's bones they have between them. The rest is locomotion's.
-/// Pure bookkeeping; [`drive`] applies it to the player.
+/// it, an event overlay over them, and the share of the layer's bones they have between them.
+/// The rest is locomotion's. Pure bookkeeping; [`drive`] applies it to the player.
 #[derive(Debug, Default)]
 struct Overlay {
     main: Option<OverlayMain>,
@@ -330,6 +397,8 @@ struct Overlay {
     fading: Vec<OverlayFade>,
     /// Seconds on the main clip's timeline at the last frame, for cues.
     last_time: Option<f32>,
+    /// The event overlay playing over the rest (D1.6).
+    event: Option<OverlayPlay>,
     /// The share of the layer's bones all the clips had at the last step.
     total: f32,
 }
@@ -344,6 +413,29 @@ struct OverlayMain {
     rise: f32,
     /// Its share of the layer's bones now: the ramp, or what the clips fading out leave.
     share: f32,
+    /// Seconds it takes to leave (its mapping's `blend_out`), if not the blend of what comes next.
+    out: Option<f32>,
+}
+
+/// An event overlay (an animset's `overlays`) playing on a layer: its clip from the start, on the
+/// simulation's clock, over what else the layer plays, by the share its envelope gives.
+#[derive(Debug)]
+pub struct OverlayPlay {
+    /// The event that started it (a key of the set's `overlays`).
+    pub event: String,
+    /// Our name of the clip it plays (the moveset's family applied).
+    pub clip: String,
+    /// Seconds since the event, on the simulation's clock, at the last frame.
+    pub age: f32,
+    /// Its share of the layer's bones at the last frame.
+    pub share: f32,
+    node: AnimationNodeIndex,
+    /// The simulation clock at the event.
+    started: f64,
+    /// Where its fade in started (0 to 1): the same event again picks up from what it had.
+    from: f32,
+    /// Seconds on its clip's timeline at the last frame, for cues.
+    last_time: Option<f32>,
 }
 
 #[derive(Debug)]
@@ -363,52 +455,82 @@ impl Overlay {
 
     /// Nothing plays or fades.
     fn idle(&self) -> bool {
-        self.main.is_none() && self.fading.is_empty()
+        self.main.is_none() && self.fading.is_empty() && self.event.is_none()
     }
 
-    /// The layer shows `want` (our clip name and its node) from now on, or no clip (`None`: the
-    /// action ended). What was the main clip fades out over `blend` seconds, or `snap`s out when
-    /// the clock is stopped and no fade would advance. Nodes that must stop playing go to
-    /// `stopped`.
+    /// The layer shows `want` (our clip name, its node and its own `blend_out`) from now on, or no
+    /// clip (`None`: the action ended). What was the main clip fades out over its `blend_out`, else
+    /// over `blend` seconds, or `snap`s out when the clock is stopped and no fade would advance.
+    /// Nodes that must stop playing go to `stopped`.
     fn switch(
         &mut self,
-        want: Option<(&str, AnimationNodeIndex)>,
+        want: Option<(&str, AnimationNodeIndex, Option<f32>)>,
         blend: f32,
         snap: bool,
         stopped: &mut Vec<AnimationNodeIndex>,
     ) {
-        if self.main.as_ref().map(|m| m.node) == want.map(|(_, node)| node) {
+        if self.main.as_ref().map(|m| m.node) == want.map(|(_, node, _)| node) {
             return;
         }
         if let Some(old) = self.main.take() {
             if snap {
                 stopped.push(old.node);
             } else {
-                self.fading.push(OverlayFade { node: old.node, left: old.share, fall: 1.0 / blend });
+                // Taken over, it leaves no faster than the new clip comes in, or the walk would show
+                // through the layer in between.
+                let own = old.out.map_or(blend, |o| o.clamp(0.01, 10.0));
+                let out = if want.is_some() { own.max(blend) } else { own };
+                self.fading.push(OverlayFade { node: old.node, left: old.share, fall: 1.0 / out });
             }
         }
         if snap {
             stopped.extend(self.fading.drain(..).map(|f| f.node));
         }
-        if let Some((clip, node)) = want {
+        if let Some((clip, node, out)) = want {
             // Back to a clip that was fading out: it starts again, as `AnimationTransitions` does.
             self.fading.retain(|f| f.node != node);
             let ramp = if snap { 1.0 } else { 0.0 };
-            self.main = Some(OverlayMain { clip: clip.to_owned(), node, ramp, rise: 1.0 / blend, share: ramp });
+            self.main = Some(OverlayMain { clip: clip.to_owned(), node, ramp, rise: 1.0 / blend, share: ramp, out });
         }
         self.last_time = None;
     }
 
+    /// Event `event`'s overlay (`def`) starts on this layer, `at` on the simulation clock, playing
+    /// `clip` on `node`. The same clip again starts over from the share it has; another overlay's
+    /// clip leaves as this one comes in.
+    fn start_event(&mut self, event: &str, clip: &str, node: AnimationNodeIndex, def: &OverlayDef, at: f64) {
+        let mut from = 0.0;
+        if let Some(old) = self.event.take() {
+            if old.node == node {
+                from = (old.share / def.strength).clamp(0.0, 1.0);
+            } else {
+                self.fading.push(OverlayFade { node: old.node, left: old.share, fall: 1.0 / def.fade_in.max(0.01) });
+            }
+        }
+        // Its node was fading out after an earlier overlay: it plays again as this one.
+        self.fading.retain(|f| f.node != node);
+        let share = def.share(0.0, from);
+        self.event = Some(OverlayPlay { event: event.to_owned(), clip: clip.to_owned(), age: 0.0, share, node, started: at, from, last_time: None });
+    }
+
+    /// The picture was held for `secs` of the simulation's clock: the event overlay resumes where it stopped.
+    fn shift(&mut self, secs: f64) {
+        if let Some(play) = &mut self.event {
+            play.started += secs;
+        }
+    }
+
     /// `dt` seconds on: the weight each node plays with. The clips fading out come first, newest
-    /// first, each with what is left of its share of what is not yet taken (as
-    /// `AnimationTransitions` does it); the main clip gets its ramp, or what the others leave.
+    /// first, each with what is left of its share, at most what is not yet taken (a fade's `left`
+    /// is the share of the layer it had, so a clip taken over in the middle of its own ramp keeps
+    /// the share it showed); the main clip gets its ramp, or what the others leave.
     /// Nodes that have faded out go to `stopped`.
     fn advance(&mut self, dt: f32, stopped: &mut Vec<AnimationNodeIndex>) -> Vec<(AnimationNodeIndex, f32)> {
         let mut shares = Vec::with_capacity(self.fading.len() + 1);
         let mut free = 1.0;
         for fade in self.fading.iter_mut().rev() {
             fade.left = (fade.left - fade.fall * dt).max(0.0);
-            let share = fade.left * free;
+            let share = fade.left.min(free);
             free -= share;
             shares.push((fade.node, share));
         }
@@ -423,6 +545,15 @@ impl Overlay {
             main.ramp = (main.ramp + main.rise * dt).min(1.0);
             main.share = main.ramp.min(free);
             shares.push((main.node, main.share));
+        }
+        // An event overlay plays over the rest of the layer: they keep what it leaves of the bones
+        // (the pose is locomotion's, then the action's, then the overlay's, each over the last).
+        if let Some(play) = &self.event {
+            let over = play.share.clamp(0.0, LAYER_FULL);
+            for (_, share) in &mut shares {
+                *share *= 1.0 - over;
+            }
+            shares.push((play.node, over));
         }
         // Locomotion's weights add up to 1, so a share `s` of the layer's bones takes the weight
         // `s / (1 - s)`; the shares may not reach 1 (see `LAYER_FULL`).
@@ -439,6 +570,7 @@ pub struct GraphBuild {
     pub graph: AnimationGraph,
     nodes: Nodes,
     layered: HashMap<String, Nodes>,
+    overlaid: HashMap<String, Nodes>,
     /// `(file, animation)` of the animations the set wants and its files lack.
     pub missing: Vec<(String, String)>,
 }
@@ -447,7 +579,8 @@ pub struct GraphBuild {
 /// (it gets the clip's file and the animation's name in it), in the order of the clip names;
 /// then, for each clip an action or tag plays on a layer, another node of the same clip that
 /// leaves out the bones outside the layer (its mask is the layer's group: the layer's position
-/// among the set's layers; [`bind_players`] fills the group).
+/// among the set's layers; [`bind_players`] fills the group); then the same for each event
+/// overlay's clip, in nodes of their own.
 pub fn build_graph(set: &AnimSet, mut find: impl FnMut(&str, &str) -> Option<Handle<AnimationClip>>) -> GraphBuild {
     let mut graph = AnimationGraph::new();
     let mut nodes = HashMap::new();
@@ -462,29 +595,43 @@ pub fn build_graph(set: &AnimSet, mut find: impl FnMut(&str, &str) -> Option<Han
             None => missing.push((source.to_owned(), name.to_owned())),
         }
     }
+    let mappings = set.actions.values().chain(set.tags.values()).filter_map(|m| Some((m.layer.as_deref()?, &m.clip)));
+    let layered = layer_nodes(set, &mut graph, &nodes, mappings);
+    let overlaid = layer_nodes(set, &mut graph, &nodes, set.overlays.values().map(|o| (o.layer.as_str(), &o.clip)));
+    GraphBuild { graph, nodes, layered, overlaid, missing }
+}
+
+/// For each `(layer, clip)` of `plays`, a node of the clip (and of the clips the families show in
+/// its place) masked to the layer, once each.
+fn layer_nodes<'a>(
+    set: &AnimSet,
+    graph: &mut AnimationGraph,
+    nodes: &Nodes,
+    plays: impl Iterator<Item = (&'a str, &'a String)>,
+) -> HashMap<String, Nodes> {
+    let root = graph.root;
     let mut layered: HashMap<String, Nodes> = HashMap::new();
-    for mapping in set.actions.values().chain(set.tags.values()) {
-        let Some(layer) = mapping.layer.as_deref() else { continue };
+    for (layer, clip) in plays {
         let Some(index) = set.layer_index(layer).filter(|i| *i < MAX_LAYERS) else { continue };
         // The clip, and the clips the families show in its place.
-        let renamed = set.by_moveset.values().filter_map(|table| table.get(&mapping.clip));
-        for clip in std::iter::once(&mapping.clip).chain(renamed) {
+        let renamed = set.by_moveset.values().filter_map(|table| table.get(clip));
+        for clip in std::iter::once(clip).chain(renamed) {
             let Some((_, handle)) = nodes.get(clip) else { continue };
             let on_layer = layered.entry(layer.to_owned()).or_default();
             if !on_layer.contains_key(clip) {
-                let node = graph.add_clip_with_mask(handle.clone(), 1 << index, 1.0, graph.root);
+                let node = graph.add_clip_with_mask(handle.clone(), 1 << index, 1.0, root);
                 on_layer.insert(clip.clone(), (node, handle.clone()));
             }
         }
     }
-    GraphBuild { graph, nodes, layered, missing }
+    layered
 }
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<AnimGraphs>()
         .init_resource::<AnimStats>()
         .add_observer(retarget_on_ready)
-        .add_plugins(props::plugin)
+        .add_plugins((overlay_events, props::plugin))
         .add_systems(Update, (build_graphs, bind_players, drive).chain())
         .configure_sets(
             PostUpdate,
@@ -495,6 +642,40 @@ pub(crate) fn plugin(app: &mut App) {
                 .before(bevy::transform::TransformSystems::Propagate),
         )
         .add_systems(PostUpdate, (hold_root_motion.in_set(AnimSystems::Root), modes::apply_model.in_set(AnimSystems::Model)));
+}
+
+/// The engine's events an animset's `overlays` answer ([`OVERLAY_EVENTS`](crate::anim::OVERLAY_EVENTS)), each on the body it
+/// names. They only note the event for the picture, so they need no `simulates` guard.
+fn overlay_events(app: &mut App) {
+    app.add_observer(|e: On<Blocked>, mut q: Overlaid| q.note(e.defender, "blocked"))
+        .add_observer(|e: On<Parried>, mut q: Overlaid| q.note(e.defender, "parried"))
+        // A hit the body ignored (god mode, a grace period) did not land.
+        .add_observer(|e: On<Damaged>, mut q: Overlaid| {
+            if !e.invulnerable {
+                q.note(e.target, "damaged");
+            }
+        })
+        .add_observer(|e: On<GuardBroken>, mut q: Overlaid| q.note(e.defender, "guard_broken"))
+        .add_observer(|e: On<Staggered>, mut q: Overlaid| q.note(e.entity, "staggered"))
+        .add_observer(|e: On<PartBroken>, mut q: Overlaid| q.note(e.body, "part_broken"))
+        .add_observer(|e: On<shards_motion::Landed>, mut q: Overlaid| q.note(e.entity, "landed"));
+}
+
+/// What an event observer needs to note an event for a drawn body's overlays.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Overlaid<'w, 's> {
+    fixed: Res<'w, Time<Fixed>>,
+    bodies: Query<'w, 's, &'static mut AnimationBound>,
+}
+
+impl Overlaid<'_, '_> {
+    /// Event `event` named `body`, now on the simulation clock (the tick it came in).
+    fn note(&mut self, body: Entity, event: &str) {
+        let at = self.fixed.elapsed_secs_f64();
+        if let Ok(mut bound) = self.bodies.get_mut(body) {
+            bound.note_event(event, at);
+        }
+    }
 }
 
 /// `Update`: loads the glTF files of every animset a character uses and builds its graph once
@@ -542,7 +723,7 @@ pub fn build_graphs(
         if files.len() < set.sources().len() {
             continue; // still loading (or failed: warned); the clips come together
         }
-        let GraphBuild { graph, nodes, layered, missing } =
+        let GraphBuild { graph, nodes, layered, overlaid, missing } =
             build_graph(set, |source, name| files.get(source).and_then(|g| g.named_animations.get(name).cloned()));
         for source in set.sources() {
             let lacks: Vec<String> = missing.iter().filter(|(s, _)| s == source).map(|(_, m)| format!("`{m}`")).collect();
@@ -562,7 +743,7 @@ pub fn build_graphs(
         }
         let graph = graph_assets.add(graph);
         if let Some(entry) = state.sets.get_mut(id) {
-            entry.built = Some(Built { graph, nodes, layered });
+            entry.built = Some(Built { graph, nodes, layered, overlaid });
         }
     }
 }
@@ -619,6 +800,7 @@ pub fn bind_players(
             // equip nor leaves a second set of props under the bones.
             mounts: bound.map(|b| b.mounts.taken_over()).unwrap_or_default(),
             modes: bound.map(|b| b.modes.taken_over()).unwrap_or_default(),
+            turn: bound.map(|b| b.turn.taken_over()).unwrap_or_default(),
             ..AnimationBound::new(player, graph.id())
         });
     }
@@ -658,6 +840,56 @@ fn mask_layer(
     true
 }
 
+/// Where the bones the cues name are: a bone of a body's skeleton found by its node name (the
+/// walk the props' sockets make, below the model and never below a prop), and its place in the
+/// world as of the last frame. Presentation only; nothing here writes to a body.
+#[derive(SystemParam)]
+#[doc(hidden)]
+pub struct CueBones<'w, 's> {
+    children: Query<'w, 's, &'static Children>,
+    names: Query<'w, 's, &'static Name>,
+    props: Query<'w, 's, (), With<PropOf>>,
+    places: Query<'w, 's, &'static GlobalTransform>,
+    /// Cues whose bone the model lacks, said once each.
+    warned: Local<'s, BTreeSet<String>>,
+}
+
+impl CueBones<'_, '_> {
+    /// Where the bone `bone` of the skeleton under `player` is in the world (its `GlobalTransform`).
+    fn place(&self, player: Entity, bone: &str) -> Option<Vec3> {
+        let found = skeleton(player, &self.children, &self.props)
+            .into_iter()
+            .find(|e| self.names.get(*e).is_ok_and(|n| n.as_str() == bone))?;
+        self.places.get(found).ok().map(GlobalTransform::translation)
+    }
+
+    /// Fires an [`AnimationCue`] of `clip` for the body `entity` (its model's player is `player`)
+    /// for each cue the clip passed: a cue that names a bone carries where the bone is now, and
+    /// is the body's own, at its feet, when the model has no such bone.
+    fn fire(&mut self, commands: &mut Commands, entity: Entity, player: Entity, clip: &str, passed: Vec<&CueDef>) {
+        for cue in passed {
+            let at = cue.bone.as_deref().and_then(|bone| {
+                let at = self.place(player, bone);
+                if at.is_none() && self.warned.insert(format!("{clip} {} {bone}", cue.cue)) {
+                    warn!(
+                        "clip `{clip}`: cue `{}` names bone `{bone}`, which the model does not have; it plays at the body's feet",
+                        cue.cue
+                    );
+                }
+                at
+            });
+            commands.trigger(AnimationCue {
+                entity,
+                cue: cue.cue.clone(),
+                clip: clip.to_owned(),
+                bone: cue.bone.clone(),
+                at,
+                strength: cue.strength,
+            });
+        }
+    }
+}
+
 /// What [`drive`] reads of a character.
 #[derive(QueryData)]
 #[query_data(mutable)]
@@ -672,6 +904,10 @@ pub struct Driven {
     /// For [`PresentationHolds`].
     id: Option<&'static AiId>,
     motion: Option<&'static MotionState>,
+    /// Whether the body faces a target (`face`), for the heading's clips.
+    loco: Option<&'static LocomotionInput>,
+    /// Where the body faces.
+    transform: Option<&'static Transform>,
     modifiers: Option<&'static MoveModifiers>,
     fighter: Option<&'static Fighter>,
     dead: Has<Dead>,
@@ -689,9 +925,11 @@ pub fn drive(
     db: Option<Res<ContentDb>>,
     graphs: Res<AnimGraphs>,
     clips: Res<Assets<AnimationClip>>,
-    mut animated: Query<Driven>,
+    // Disjoint from the props' transforms (`mounting`): a character is never a prop.
+    mut animated: Query<Driven, Without<PropOf>>,
     mut players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
     mut mounting: MountEnv,
+    mut bones: CueBones,
     all: Query<(), With<Animated>>,
     stats: Option<ResMut<AnimStats>>,
 ) {
@@ -700,12 +938,26 @@ pub fn drive(
     // The simulation's clock, between ticks too: a pause freezes the props' clocks, a `step` moves them.
     let clock = fixed.elapsed_secs_f64() + f64::from(overstep);
     let mut spent = std::time::Duration::ZERO;
-    let (mut bound_bodies, mut props_drawn, mut plays) = (0usize, 0usize, 0usize);
+    let (mut bound_bodies, mut props_drawn, mut plays, mut overlays_started) = (0usize, 0usize, 0usize, 0usize);
     let now = real.elapsed();
     let frozen = time.delta_secs() <= 0.0;
     let standing = MotionState::default();
-    for DrivenItem { entity, animated: set_ref, mut bound, state, shown, predicted, id, motion, modifiers, fighter, dead, swaps } in
-        &mut animated
+    for DrivenItem {
+        entity,
+        animated: set_ref,
+        mut bound,
+        state,
+        shown,
+        predicted,
+        id,
+        motion,
+        loco,
+        transform,
+        modifiers,
+        fighter,
+        dead,
+        swaps,
+    } in &mut animated
     {
         let (Some(set), Some(built)) = (db.get::<AnimSet>(&set_ref.animset), graphs.built(&set_ref.animset)) else {
             continue;
@@ -714,6 +966,22 @@ pub fn drive(
             continue; // `bind_players` takes it over to the rebuilt graph next
         }
         let Ok((mut player, mut transitions)) = players.get_mut(bound.player) else { continue };
+
+        // Engine events that named the body since the last frame: their overlays start, aged from
+        // the event (a hit stop that holds the picture now holds them too). None on a dead body, or
+        // on a layer the model lacks or that is off in the body's motion mode.
+        let moveset = fighter.map(|f| f.moveset.as_str());
+        let mode = motion.unwrap_or(&standing).mode;
+        for (event, at) in std::mem::take(&mut bound.pending) {
+            let Some(def) = set.overlays.get(&event) else { continue };
+            if dead || !bound.ready.contains(&def.layer) || set.layer_off(&def.layer, mode) {
+                continue;
+            }
+            let clip = set.family(moveset, &def.clip);
+            let Some(node) = built.overlay_node(&def.layer, clip) else { continue };
+            bound.overlays.entry(def.layer.clone()).or_default().start_event(&event, clip, node, def, at);
+            overlays_started += 1;
+        }
 
         // A hit stop in co-op: this body's picture stands still (the clock runs on). Its player
         // is paused as a whole, and nothing is sought or switched until the hold is over.
@@ -729,6 +997,10 @@ pub fn drive(
                 if let Some(since) = bound.held_since.take() {
                     bound.mounts.shift(clock - since);
                     bound.modes.shift(clock - since);
+                    bound.turn.shift(clock - since);
+                    for layer in bound.overlays.values_mut() {
+                        layer.shift(clock - since);
+                    }
                 }
             }
         }
@@ -739,39 +1011,56 @@ pub fn drive(
             continue;
         }
 
-        // The running action as (key, seconds in, length). One that has a hold loop (a raised
+        // The running action: its key, seconds in, length and phases. One that has a hold loop (a raised
         // block) is not looked ahead: it would run past the loop's end.
         let run = if predicted { shown.map(|p| &p.run) } else { state.and_then(|s| s.current.as_ref()) };
         let def = run.and_then(|r| db.get::<ActionDef>(&r.action));
         let action = run.map(|r| {
             let key = set.action_key(&r.action, r.anim.as_deref(), def.map_or(&[], |d| d.tags.as_slice()));
             let ahead = if def.is_some_and(|d| d.hold.is_some()) { 0.0 } else { overstep };
-            (key, (r.t + ahead).min(r.length), r.length)
+            ActionTime::new(key, (r.t + ahead).min(r.length), r.length, def.map_or(&[], |d| d.phases.as_slice()))
         });
         let staggers = fighter
             .and_then(|f| db.get::<MovesetDef>(&f.moveset))
             .and_then(|m| m.stagger.as_deref())
             .zip(run)
             .is_some_and(|(stagger, r)| r.forced && r.action == stagger);
-        let status = BodyStatus { dead, staggered: staggers, pace: modifiers.map_or(1.0, MoveModifiers::pace) };
-        let moveset = fighter.map(|f| f.moveset.as_str());
-        let choice = select_clip_in(action, motion.unwrap_or(&standing), status, set, moveset);
-        let switched = drive_body(&mut commands, entity, set, built, &clips, &mut bound, &mut player, &mut transitions, &choice, frozen);
+        // Facing a target: which way the body moves from where it faces (the gaits' heading clips).
+        let moving = motion.unwrap_or(&standing);
+        let faces = transform.filter(|_| loco.is_some_and(|l| l.face.is_some()));
+        let kept = bound.heading;
+        bound.heading = faces.map_or(Heading::Forward, |tf| Heading::of(*tf.forward(), moving.velocity, kept));
+        let status = BodyStatus {
+            dead,
+            staggered: staggers,
+            pace: modifiers.map_or(1.0, MoveModifiers::pace),
+            facing: faces.map(|_| bound.heading),
+        };
+        let choice = select_clip_timed(action, moving, status, set, moveset);
+        let switched =
+            drive_body(&mut commands, &mut bones, entity, set, built, &clips, &mut bound, &mut player, &mut transitions, &choice, frozen);
         if switched {
             // The fade out of the mode's clip (its nominal blend, a paused clock snaps it but does not
             // age the wait): a `@left` wait ends with it.
             bound.modes.note_switch(clock, choice.blend.clamp(0.01, 10.0));
         }
-        let mode = motion.unwrap_or(&standing).mode;
+        // The model's turn: to the heading of a run that keeps the body's facing, while its mapping
+        // turns the model; back to the body's facing after it.
+        let turning = run.zip(action).zip(transform).and_then(|((r, a), tf)| {
+            let secs = set.turn_of(a.key);
+            let keeps = def.is_some_and(|d| d.face == Face::Keep);
+            (secs > 0.0 && keeps).then(|| yaw_between(*tf.forward(), r.facing).map(|yaw| (yaw, secs))).flatten()
+        });
+        bound.turn.advance(turning, clock);
         if !built.layered.is_empty() || !bound.overlays.is_empty() {
             // A layer that is off in this mode plays nothing: what played fades out.
-            let wanted = select_layer_in(action, status, set, moveset).filter(|l| !set.layer_off(l.layer, mode));
-            let frame = LayerFrame { wanted, back_blend: choice.blend, dt: time.delta_secs(), frozen };
-            drive_layers(&mut commands, entity, set, built, &clips, &mut bound, &mut player, &frame);
+            let wanted = select_layer_timed(action, status, set, moveset).filter(|l| !set.layer_off(l.layer, mode));
+            let frame = LayerFrame { wanted, back_blend: choice.blend, dt: time.delta_secs(), frozen, clock, dead, mode };
+            drive_layers(&mut commands, &mut bones, entity, set, built, &clips, &mut bound, &mut player, &frame);
         }
 
         // The motion mode: the mounts' rules for it and for after leaving it, the drop.
-        let ended = run.zip(action).map(|(r, (key, ..))| (r.instance, set.ends_equip(key)));
+        let ended = run.zip(action).map(|(r, a)| (r.instance, set.ends_equip(a.key)));
         let moded = bound.modes.advance(&ModeFrame { set, mode, acting: run.is_some(), run: ended, clock });
         if let Some(left) = moded.fired {
             commands.trigger(ModeLeft { entity, mode: mode_name(left).to_owned() });
@@ -788,7 +1077,7 @@ pub fn drive(
             db: &db,
             moveset,
             swaps,
-            run: run.zip(action).map(|(run, (key, t, _))| RunView { run, def, key, t }),
+            run: run.zip(action).map(|(run, a)| RunView { run, def, key: a.key, t: a.t }),
             clock,
             modes: moded,
         };
@@ -796,13 +1085,14 @@ pub fn drive(
         props::step(&mut mounting, &frame, &mut bound.mounts);
         spent += began.elapsed();
         props_drawn += bound.mounts.drawn().count();
-        plays += bound.overlays.values().filter(|o| o.main.is_some()).count();
+        plays += bound.overlays.values().map(|o| usize::from(o.main.is_some()) + usize::from(o.event.is_some())).sum::<usize>();
     }
     if let Some(mut stats) = stats {
         stats.animated = all.iter().count();
         stats.bound = bound_bodies;
         stats.props = props_drawn;
         stats.plays = plays;
+        stats.overlays_started = overlays_started;
         stats.ms = if bound_bodies > 0 { spent.as_secs_f32() * 1000.0 } else { 0.0 };
     }
 }
@@ -812,6 +1102,7 @@ pub fn drive(
 #[allow(clippy::too_many_arguments, reason = "what one character's step reads and writes")]
 fn drive_body(
     commands: &mut Commands,
+    bones: &mut CueBones,
     entity: Entity,
     set: &AnimSet,
     built: &Built,
@@ -827,24 +1118,36 @@ fn drive_body(
     let duration = clips.get(handle).map_or(0.0, |c| c.duration());
     let mut switched = false;
     if bound.clip.as_deref() != Some(clip) {
-        if bound.clip.is_none() || frozen {
+        // From a gait's clip to a gait's clip (a walk to a run, to a strafe): the new one starts
+        // where the old one was in its stride, so the feet do not skip.
+        let carried = if bound.gait && choice.gait {
+            let old = bound.clip.as_deref().and_then(|c| built.nodes.get(c)).and_then(|(_, h)| clips.get(h));
+            old.zip(bound.last_time).and_then(|(old, at)| carry_phase(at, old.duration(), duration))
+        } else {
+            None
+        };
+        let active = if bound.clip.is_none() || frozen {
             // Nothing to blend from, or the clock is stopped (a paused simulation, an agent
             // stepping tick by tick): a fade would never advance and leave the old pose
             // standing, so the new clip snaps in.
             player.stop_all();
             *transitions = AnimationTransitions::new();
-            transitions.play(player, *node, Duration::ZERO);
-            switched = true;
+            transitions.play(player, *node, Duration::ZERO)
         } else {
             // Not zero (Bevy's fade divides by it), not absurd (a typo in content must not
             // overflow a `Duration`).
             let blend = choice.blend.clamp(0.01, 10.0);
-            transitions.play(player, *node, Duration::from_secs_f32(blend));
-            switched = true;
+            transitions.play(player, *node, Duration::from_secs_f32(blend))
+        };
+        if let Some(at) = carried {
+            active.set_seek_time(at);
         }
+        switched = true;
         bound.clip = Some(clip.to_owned());
-        bound.last_time = None;
+        // A carried stride has passed nothing yet: its cues count from where it starts.
+        bound.last_time = carried;
     }
+    bound.gait = choice.gait;
     let Some(active) = player.animation_mut(*node) else { return switched };
     active.set_repeat(if choice.looping { RepeatAnimation::Forever } else { RepeatAnimation::Never });
     let now = match choice.seek_to {
@@ -861,14 +1164,23 @@ fn drive_body(
         }
     };
 
+    // A gait's clip played backward (a body backing away from its target) passes its cues going down.
+    let backward = choice.seek_to.is_none() && choice.speed < 0.0;
     let cues = set.clip(clip).map_or(&[][..], |c| c.cues.as_slice());
     if !cues.is_empty() {
-        let wrap = (choice.looping && duration > 0.0).then_some(duration);
-        for cue in crossed_cues(cues, bound.last_time, now, wrap) {
-            commands.trigger(AnimationCue { entity, cue: cue.cue.clone(), clip: clip.to_owned() });
-        }
+        // Since the last frame the clip went the way set then (a walk that turns round now, as a
+        // lock-on ends, went back until now): a seek or a new clip has gone nowhere yet. Going on, a
+        // looping clip wraps round, and so does the stretch a looping phase repeats.
+        let went_back = if switched || choice.seek_to.is_some() { backward } else { bound.backward };
+        let crossed = if went_back {
+            crossed_cues_back(cues, bound.last_time, now, (choice.looping && duration > 0.0).then_some(duration))
+        } else {
+            crossed_cues_in(cues, bound.last_time, now, choice.wraps(duration))
+        };
+        bones.fire(commands, entity, bound.player, clip, crossed);
     }
     bound.last_time = Some(now);
+    bound.backward = backward;
     switched
 }
 
@@ -882,14 +1194,22 @@ struct LayerFrame<'a> {
     dt: f32,
     /// The clock is stopped: fades would never advance, so clips snap in and out.
     frozen: bool,
+    /// The simulation's clock, which event overlays age by.
+    clock: f64,
+    /// The body is dead: its overlays leave.
+    dead: bool,
+    /// The motion mode it is drawn in: an overlay on a layer off in it leaves.
+    mode: shards_motion::MotionMode,
 }
 
-/// The clips on the layers: each layer's action clip fades in over its own blend and out over
-/// the locomotion clip's, seeked to the action's progress, while [`drive_body`] keeps
-/// locomotion going on every bone. See the module docs for the weights.
+/// The clips on the layers: each layer's action clip fades in over its own blend and out over its
+/// mapping's `blend_out` (else the locomotion clip's blend), seeked to the action's progress, and an
+/// event overlay plays over it by its envelope, while [`drive_body`] keeps locomotion going on
+/// every bone. See the module docs for the weights.
 #[allow(clippy::too_many_arguments, reason = "what one character's step reads and writes")]
 fn drive_layers(
     commands: &mut Commands,
+    bones: &mut CueBones,
     entity: Entity,
     set: &AnimSet,
     built: &Built,
@@ -903,6 +1223,7 @@ fn drive_layers(
     if let Some(layer) = wanted {
         bound.overlays.entry(layer.layer.to_owned()).or_default();
     }
+    let model = bound.player;
     for (name, overlay) in &mut bound.overlays {
         let want = wanted.filter(|l| l.layer == name).and_then(|l| {
             let clip = l.choice.clip?;
@@ -910,11 +1231,23 @@ fn drive_layers(
             Some((l.choice, clip, *node, handle))
         });
         let blend = want.map_or(frame.back_blend, |(choice, ..)| choice.blend).clamp(0.01, 10.0);
+        let out = wanted.filter(|l| l.layer == name).and_then(|l| l.blend_out);
         let mut stopped = Vec::new();
-        overlay.switch(want.map(|(_, clip, node, _)| (clip, node)), blend, frame.frozen, &mut stopped);
+        overlay.switch(want.map(|(_, clip, node, _)| (clip, node, out)), blend, frame.frozen, &mut stopped);
+        age_event(overlay, set, name, frame, &mut stopped);
         let weights = overlay.advance(frame.dt, &mut stopped);
         for node in stopped {
             player.stop(node);
+        }
+        if let Some(play) = &mut overlay.event {
+            // From the clip's start, on the simulation's clock; held on its last pose past its end.
+            let handle = built.overlaid.get(name.as_str()).and_then(|on| on.get(&play.clip)).map(|(_, h)| h);
+            let duration = handle.and_then(|h| clips.get(h)).map_or(0.0, |c| c.duration());
+            let at = play.age.max(0.0).min((duration - END_MARGIN).max(0.0));
+            player.play(play.node).set_repeat(RepeatAnimation::Never).set_speed(0.0).set_seek_time(at);
+            let cues = set.clip(&play.clip).map_or(&[][..], |c| c.cues.as_slice());
+            bones.fire(commands, entity, model, &play.clip, crossed_cues(cues, play.last_time, at, None));
+            play.last_time = Some(at);
         }
         if let Some((choice, clip, node, handle)) = want {
             // Gameplay moves it, as it moves an action's clip on the whole body.
@@ -923,9 +1256,7 @@ fn drive_layers(
             player.play(node).set_repeat(RepeatAnimation::Never).set_speed(0.0).set_seek_time(at);
             let cues = set.clip(clip).map_or(&[][..], |c| c.cues.as_slice());
             if !cues.is_empty() {
-                for cue in crossed_cues(cues, overlay.last_time, at, None) {
-                    commands.trigger(AnimationCue { entity, cue: cue.cue.clone(), clip: clip.to_owned() });
-                }
+                bones.fire(commands, entity, model, clip, crossed_cues_in(cues, overlay.last_time, at, choice.wraps(duration)));
             }
             overlay.last_time = Some(at);
         }
@@ -936,6 +1267,30 @@ fn drive_layers(
         }
     }
     bound.overlays.retain(|_, overlay| !overlay.idle());
+}
+
+/// The event overlay on layer `name` one frame on: its age on the simulation clock gives its share,
+/// and it ends at its fade out's end. One cut short (the body died, the layer is off in this mode,
+/// the overlay is gone from the set) leaves over the locomotion clip's blend, as an action's clip
+/// does.
+fn age_event(overlay: &mut Overlay, set: &AnimSet, name: &str, frame: &LayerFrame, stopped: &mut Vec<AnimationNodeIndex>) {
+    let Some(play) = &mut overlay.event else { return };
+    play.age = (frame.clock - play.started) as f32;
+    let def = set.overlays.get(&play.event).filter(|d| d.layer == name && !frame.dead && !set.layer_off(name, frame.mode));
+    let cut = match def {
+        Some(def) if !def.ended(play.age) => {
+            play.share = def.share(play.age, play.from);
+            return;
+        }
+        Some(_) => false,
+        None => true,
+    };
+    let Some(play) = overlay.event.take() else { return };
+    if cut && !frame.frozen && play.share > 0.0 {
+        overlay.fading.push(OverlayFade { node: play.node, left: play.share, fall: 1.0 / frame.back_blend.clamp(0.01, 10.0) });
+    } else {
+        stopped.push(play.node);
+    }
 }
 
 /// `PostUpdate`, after the clips are applied and before transforms propagate: the set's
@@ -1062,6 +1417,7 @@ mod tests {
         "stagger": (net_id: 3, phases: [("stagger", 0.8)]),
         "drink": (net_id: 4, phases: [("drink", 1.0)]),
         "guard": (net_id: 5, phases: [("guard", 1.0)]),
+        "sidestep": (net_id: 6, phases: [("step", 0.4)], face: Keep),
     }"#;
     const MOVESETS: &str = r#"{ "hero": (inputs: {"light": "light_1", "dodge": "roll"}, stagger: "stagger") }"#;
     const ANIMSETS: &str = r#"{ "humanoid": (
@@ -1434,9 +1790,60 @@ mod tests {
         let heard = &rig.app.world().resource::<Heard>().0;
         assert_eq!(heard.len(), 1, "{heard:?}");
         assert_eq!((heard[0].entity, heard[0].cue.as_str(), heard[0].clip.as_str()), (rig.character, "swoosh", "swing_1"));
+        assert_eq!(
+            (heard[0].bone.as_deref(), heard[0].at, heard[0].strength),
+            (None, None, 1.0),
+            "a cue without a bone is the body's, at full strength"
+        );
         rig.run_action("light_1", 0.5, Some("swing_1"));
         rig.app.update();
         assert_eq!(rig.app.world().resource::<Heard>().0.len(), 1, "once");
+    }
+
+    #[test]
+    fn a_cue_with_a_bone_carries_the_bones_world_place_and_its_strength() {
+        #[derive(Resource, Default)]
+        struct Heard(Vec<AnimationCue>);
+        let mut rig = rig();
+        let edited = ANIMSETS.replace(
+            r#"cues: [(at: 0.5, cue: "swoosh")]"#,
+            r#"cues: [(at: 0.5, cue: "swoosh", bone: "hand.R", strength: 0.5), (at: 0.5, cue: "far", bone: "tail")]"#,
+        );
+        assert_ne!(edited, ANIMSETS);
+        rig.app.insert_resource(db_from(&edited));
+        rig.app.init_resource::<Heard>();
+        rig.app.add_observer(|cue: On<AnimationCue>, mut heard: ResMut<Heard>| heard.0.push(cue.event().clone()));
+        // The body stands at (4, 0, -2); the model's player and its bones need a `Transform` each for
+        // the world place to be worked out. A prop's glTF has a `hand.R` node too, in front of the
+        // real one: it must not stand in for the bone.
+        let world = rig.app.world_mut();
+        world.entity_mut(rig.character).insert(Transform::from_xyz(4.0, 0.0, -2.0));
+        world.entity_mut(rig.player).insert(Transform::default());
+        let prop = world.spawn((PropOf { body: rig.character, prop: "sword".into() }, Transform::from_xyz(1.0, 1.0, 1.0))).id();
+        let impostor = world.spawn((Name::new("hand.R"), Transform::from_xyz(9.0, 9.0, 9.0))).id();
+        world.entity_mut(prop).add_child(impostor);
+        let hand = world.spawn((Name::new("hand.R"), Transform::from_xyz(0.25, 1.0, 0.5))).id();
+        world.entity_mut(rig.player).add_child(prop).add_child(hand);
+        rig.app.update();
+        let world = rig.app.world();
+        assert_eq!(world.get::<GlobalTransform>(hand).unwrap().translation(), Vec3::new(4.25, 1.0, -1.5), "propagated");
+
+        rig.run_action("light_1", 0.1, Some("swing_1")); // 1/6 in: the cues are at 0.5 s of the 1 s clip
+        rig.app.update();
+        assert!(rig.app.world().resource::<Heard>().0.is_empty());
+        rig.run_action("light_1", 0.35, Some("swing_1"));
+        rig.app.update();
+        let heard = &rig.app.world().resource::<Heard>().0;
+        assert_eq!(heard.len(), 2, "{heard:?}");
+        let swoosh = heard.iter().find(|c| c.cue == "swoosh").unwrap();
+        assert_eq!(
+            (swoosh.entity, swoosh.clip.as_str(), swoosh.bone.as_deref(), swoosh.at, swoosh.strength),
+            (rig.character, "swing_1", Some("hand.R"), Some(Vec3::new(4.25, 1.0, -1.5)), 0.5),
+            "where the bone is, not the body's feet and not the prop's node"
+        );
+        // A bone the model lacks: the cue still fires, with its bone named and no place (the body's).
+        let far = heard.iter().find(|c| c.cue == "far").unwrap();
+        assert_eq!((far.bone.as_deref(), far.at, far.strength), (Some("tail"), None, 1.0));
     }
 
     #[test]
@@ -1465,6 +1872,36 @@ mod tests {
             rig.app.update();
         }
         assert_eq!(breaths(&rig), 2, "and again on the next pass");
+    }
+
+    /// Runs `id` with `t` seconds in, for `length` seconds in all (a miss's longer recovery).
+    fn run_for(rig: &mut Rig, id: &str, t: f32, length: f32, anim: Option<&str>) {
+        rig.run_action(id, t, anim);
+        rig.app.world_mut().get_mut::<ActionState>(rig.character).unwrap().current.as_mut().unwrap().length = length;
+    }
+
+    #[test]
+    fn a_looped_phase_fires_its_cues_on_each_pass_and_not_the_earlier_ones() {
+        #[derive(Resource, Default)]
+        struct Heard(Vec<AnimationCue>);
+        let mut rig = rig();
+        // The swing's recovery, the last 0.2 s of its 1 s clip, loops for as long as the recovery lasts.
+        let looped = ANIMSETS.replace(
+            r#""swing_1": (name: "Armature|Slash", cues: [(at: 0.5, cue: "swoosh")]),"#,
+            r#""swing_1": (name: "Armature|Slash", cues: [(at: 0.3, cue: "swoosh"), (at: 0.9, cue: "tick")],
+                phases: [("windup", 0.5), ("active", 0.3), ("recovery", 0.2)], loops: ["recovery"]),"#,
+        );
+        assert_ne!(looped, ANIMSETS);
+        rig.app.insert_resource(db_from(&looped));
+        rig.app.init_resource::<Heard>();
+        rig.app.add_observer(|cue: On<AnimationCue>, mut heard: ResMut<Heard>| heard.0.push(cue.event().clone()));
+        let count = |rig: &Rig, cue: &str| rig.app.world().resource::<Heard>().0.iter().filter(|c| c.cue == cue).count();
+        // `light_1` (windup 0.2, active 0.1, recovery 0.3) run for 1 s: a 0.7 s recovery, three and a half passes.
+        for (t, swooshes, ticks) in [(0.1, 0, 0), (0.15, 1, 0), (0.35, 1, 0), (0.42, 1, 1), (0.55, 1, 1), (0.63, 1, 2), (0.72, 1, 2), (0.83, 1, 3)] {
+            run_for(&mut rig, "light_1", t, 1.0, Some("swing_1"));
+            rig.app.update();
+            assert_eq!((count(&rig, "swoosh"), count(&rig, "tick")), (swooshes, ticks), "{t} s in");
+        }
     }
 
     #[test]
@@ -1561,6 +1998,133 @@ mod tests {
         assert_eq!(rig.app.world().get::<Transform>(bone).unwrap().translation, Vec3::new(0.5, 0.2, 3.0));
     }
 
+    // --- facing (D1.3) ---------------------------------------------------------------------
+
+    impl Rig {
+        fn bound(&self) -> &AnimationBound {
+            self.app.world().get::<AnimationBound>(self.character).unwrap()
+        }
+
+        fn clip_at(&self, clip: &str) -> (f32, f32) {
+            let p = self.playing().into_iter().find(|p| p.0 == clip).unwrap_or_else(|| panic!("{clip} is not playing"));
+            (p.1, p.2)
+        }
+    }
+
+    #[test]
+    fn facing_a_target_the_body_backs_away_on_its_walk_played_backward() {
+        let mut rig = rig();
+        let faced = LocomotionInput { face: Some(Vec3::NEG_Z), ..default() };
+        rig.app.world_mut().entity_mut(rig.character).insert((Transform::default(), faced));
+        // The body faces -z and moves +z: away from its target.
+        rig.velocity(-2.0);
+        rig.app.update();
+        assert_eq!(rig.main_clip().as_deref(), Some("walk"));
+        let (_, speed) = rig.clip_at("walk");
+        assert!((speed + 1.0).abs() < 1e-4, "no `walk.back`: the walk backward, speed {speed}");
+        assert_eq!(rig.bound().heading(), Heading::Back);
+        // Facing no target, the body turns to where it goes: the walk plays forward.
+        rig.app.world_mut().get_mut::<LocomotionInput>(rig.character).unwrap().face = None;
+        rig.app.update();
+        let (_, speed) = rig.clip_at("walk");
+        assert!((speed - 1.0).abs() < 1e-4, "{speed}");
+        assert_eq!(rig.bound().heading(), Heading::Forward);
+    }
+
+    #[test]
+    fn a_walk_that_turns_round_fires_only_the_cues_it_passed() {
+        #[derive(Resource, Default)]
+        struct Heard(Vec<AnimationCue>);
+        let mut rig = rig();
+        let stepped = ANIMSETS.replace(r#""walk": (),"#, r#""walk": (cues: [(at: 0.25, cue: "left"), (at: 0.75, cue: "right")]),"#);
+        assert_ne!(stepped, ANIMSETS);
+        rig.app.insert_resource(db_from(&stepped));
+        rig.app.init_resource::<Heard>();
+        rig.app.add_observer(|cue: On<AnimationCue>, mut heard: ResMut<Heard>| heard.0.push(cue.event().clone()));
+        // Frames of 0.1 s on the 1 s walk: a step every 0.5 s, so a frame passes one step at most.
+        rig.app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(100)));
+        rig.app.world_mut().entity_mut(rig.character).insert((Transform::default(), LocomotionInput::default()));
+        rig.velocity(-2.0);
+        let mut steps = Vec::new();
+        // Backing away from a target, then walking on facing where it goes (the lock-on let go),
+        // then facing the target again: the walk turns round twice on the same clip.
+        for face in [Some(Vec3::NEG_Z), None, Some(Vec3::NEG_Z)] {
+            rig.app.world_mut().get_mut::<LocomotionInput>(rig.character).unwrap().face = face;
+            for _ in 0..8 {
+                let before = rig.app.world().resource::<Heard>().0.len();
+                rig.app.update();
+                assert_eq!(rig.main_clip().as_deref(), Some("walk"));
+                steps.push(rig.app.world().resource::<Heard>().0.len() - before);
+            }
+        }
+        assert!(steps.iter().all(|n| *n <= 1), "no burst of steps as the walk turns round: {steps:?}");
+        assert!(steps.iter().sum::<usize>() >= 3, "every 0.8 s of walk passes a step: {steps:?}");
+    }
+
+    #[test]
+    fn a_switch_between_gaits_carries_the_stride() {
+        let mut rig = rig();
+        rig.velocity(2.0);
+        rig.app.update();
+        assert_eq!(rig.main_clip().as_deref(), Some("walk"));
+        // A quarter into the 1 s walk.
+        let walk = rig.nodes["walk"];
+        rig.app.world_mut().get_mut::<AnimationPlayer>(rig.player).unwrap().animation_mut(walk).unwrap().set_seek_time(0.25);
+        rig.app.update();
+        rig.velocity(6.0);
+        rig.app.update();
+        assert_eq!(rig.main_clip().as_deref(), Some("run"));
+        let (at, _) = rig.clip_at("run");
+        assert!((at - 0.2).abs() < 1e-4, "a quarter into the 0.8 s run: {at}");
+        // Idle is no gait: a walk after it starts at its own start.
+        rig.velocity(0.0);
+        rig.app.update();
+        rig.velocity(2.0);
+        rig.app.update();
+        assert_eq!(rig.clip_at("walk").0, 0.0);
+    }
+
+    #[test]
+    fn a_run_that_keeps_the_bodys_facing_turns_the_model_to_its_heading_and_back() {
+        let mut rig = rig();
+        let edited = ANIMSETS.replace(
+            "actions: {\"roll\": \"idle\"},",
+            "actions: {\"roll\": \"idle\", \"sidestep\": (clip: \"walk\", turn: 0.1)}, root_motion: \"root\",",
+        );
+        assert_ne!(edited, ANIMSETS);
+        rig.app.insert_resource(db_from(&edited));
+        rig.app.add_systems(PostUpdate, (hold_root_motion, modes::apply_model).chain().after(bevy::app::AnimationSystems));
+        let bone = rig.app.world_mut().spawn((Name::new("root"), Transform::default())).id();
+        rig.app.world_mut().entity_mut(rig.player).add_child(bone);
+        rig.app.world_mut().entity_mut(rig.character).insert(Transform::default());
+        rig.app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(10)));
+        rig.app.update();
+        // A step to the right (+x) while the body keeps facing -z.
+        let def = db_from(&edited).get::<ActionDef>("sidestep").cloned().unwrap();
+        let mut run = Running::new("sidestep", &def, 0, Vec3::X, None, Some("dodge".into()));
+        run.t = 0.1;
+        rig.app.world_mut().get_mut::<ActionState>(rig.character).unwrap().current = Some(run);
+        rig.app.update();
+        rig.app.update();
+        let partway = rig.bound().model_turn();
+        assert!(partway < -0.1 && partway > -1.5, "on its way: {partway}");
+        for _ in 0..40 {
+            rig.app.update();
+        }
+        let rotation = rig.app.world().get::<Transform>(bone).unwrap().rotation;
+        let right = Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2);
+        assert!(rotation.angle_between(right) < 1e-3, "the model faces the step: {rotation:?}");
+        assert!((rig.bound().model_turn() + std::f32::consts::FRAC_PI_2).abs() < 1e-3);
+        // The run is over: the model comes back to the body's facing, and the bone is left as the clips leave it.
+        rig.app.world_mut().get_mut::<ActionState>(rig.character).unwrap().current = None;
+        for _ in 0..40 {
+            rig.app.update();
+        }
+        assert_eq!(rig.bound().model_turn(), 0.0);
+        let rotation = rig.app.world().get::<Transform>(bone).unwrap().rotation;
+        assert!(rotation.angle_between(Quat::IDENTITY) < 1e-5, "{rotation:?}");
+    }
+
     // --- layers ---------------------------------------------------------------------------
 
     const LAYERED: &str = r#"{ "humanoid": (
@@ -1574,13 +2138,31 @@ mod tests {
         actions: {"drink": (clip: "drink", layer: "upper"), "guard": (clip: "guard", layer: "upper")},
     ) }"#;
 
+    /// [`LAYERED`] with a `flinch` clip (x = 20) that two of the engine's events lay over the upper
+    /// body, and a `drink` that leaves over a `blend_out` of its own.
+    const OVERLAID: &str = r#"{ "humanoid": (
+        source: "models/humanoid.glb",
+        clips: {
+            "idle": (), "walk": (), "run": (), "swing_1": (),
+            "drink": (blend: 0.4, cues: [(at: 0.5, cue: "gulp")]), "guard": (blend: 0.4),
+            "flinch": (cues: [(at: 0.1, cue: "ouch")]),
+        },
+        locomotion: {"idle": "idle", "walk": "walk", "run": "run"},
+        layers: {"upper": (root: "spine")},
+        actions: {"drink": (clip: "drink", layer: "upper", blend_out: 0.25), "guard": (clip: "guard", layer: "upper")},
+        overlays: {
+            "staggered": (clip: "flinch", layer: "upper", fade_in: 0.25, fade_out: (0.25, 0.5), strength: 0.5),
+            "landed": (clip: "flinch", layer: "upper", fade_out: (0.25, 0.5)),
+        },
+    ) }"#;
+
     /// Each bone of the rig: its name and its parent. The player is `Armature`, above them all.
     const SKELETON: [(&str, &str); 5] =
         [("hips", "Armature"), ("thigh", "hips"), ("spine", "hips"), ("upper_arm", "spine"), ("head", "spine")];
 
     /// The `x` every clip sets on every bone: a bone's pose says which clip moves it.
-    const CLIP_X: [(&str, f32); 6] =
-        [("idle", 0.0), ("walk", 1.0), ("run", 2.0), ("swing_1", 3.0), ("drink", 5.0), ("guard", 9.0)];
+    const CLIP_X: [(&str, f32); 7] =
+        [("idle", 0.0), ("walk", 1.0), ("run", 2.0), ("swing_1", 3.0), ("drink", 5.0), ("guard", 9.0), ("flinch", 20.0)];
 
     /// A character with a skeleton whose clips each move all bones to an `x` of their own.
     struct Skeleton {
@@ -1669,6 +2251,33 @@ mod tests {
             let node = self.rig.app.world().resource::<AnimGraphs>().built("humanoid")?.layer_node(layer, clip)?;
             let player = self.rig.app.world().get::<AnimationPlayer>(self.rig.player)?;
             player.animation(node).map(|a| a.weight())
+        }
+
+        /// The weight an event overlay's `clip` plays with on `layer`, while it plays.
+        fn overlay_weight(&self, layer: &str, clip: &str) -> Option<f32> {
+            let node = self.rig.app.world().resource::<AnimGraphs>().built("humanoid")?.overlay_node(layer, clip)?;
+            let player = self.rig.app.world().get::<AnimationPlayer>(self.rig.player)?;
+            player.animation(node).map(|a| a.weight())
+        }
+
+        /// The engine's events reach the overlays (the bridge's plugin adds the observers), and the
+        /// frames are 125 ms from now on: 8 ticks of the simulation exactly, so the clock the
+        /// overlays age by has no overstep.
+        fn with_events(mut self) -> Self {
+            self.rig.app.add_plugins(overlay_events);
+            self.clock(125);
+            self
+        }
+
+        fn stagger(&mut self) {
+            let entity = self.rig.character;
+            self.rig.app.world_mut().trigger(Staggered { entity, cause: crate::combat::StaggerCause::Dev });
+        }
+
+        fn land(&mut self) {
+            let entity = self.rig.character;
+            let landed = shards_motion::Landed { entity, fall_height: 2.0, impact_speed: 6.0, tier: 1, jumped: false };
+            self.rig.app.world_mut().trigger(landed);
         }
 
         fn clock(&mut self, millis: u64) {
@@ -1849,6 +2458,56 @@ mod tests {
     }
 
     #[test]
+    fn a_looped_phase_on_a_layer_fires_its_cues_on_each_pass_and_not_the_earlier_ones() {
+        #[derive(Resource, Default)]
+        struct Heard(Vec<AnimationCue>);
+        // `light_1` plays the drink clip on the upper body; its recovery (0.6 s to the end) loops.
+        let looped = LAYERED
+            .replace(
+                r#""drink": (blend: 0.4, cues: [(at: 0.5, cue: "gulp")]),"#,
+                r#""drink": (blend: 0.4, cues: [(at: 0.2, cue: "lift"), (at: 0.8, cue: "gulp")],
+                    phases: [("windup", 0.4), ("active", 0.2), ("recovery", 0.4)], loops: ["recovery"]),"#,
+            )
+            .replace(r#"actions: {"drink":"#, r#"actions: {"light_1": (clip: "drink", layer: "upper"), "drink":"#);
+        assert_eq!(looped.matches("lift").count() + looped.matches("\"light_1\"").count(), 2, "{looped}");
+        let mut rig = skeleton(&looped);
+        rig.rig.app.init_resource::<Heard>();
+        rig.rig.app.add_observer(|cue: On<AnimationCue>, mut heard: ResMut<Heard>| heard.0.push(cue.event().clone()));
+        let count = |rig: &Skeleton, cue: &str| rig.rig.app.world().resource::<Heard>().0.iter().filter(|c| c.cue == cue).count();
+        // Run for 1 s: a 0.7 s recovery over a 0.4 s stretch.
+        for (t, lifts, gulps) in [(0.15, 1, 0), (0.45, 1, 0), (0.55, 1, 1), (0.75, 1, 1), (0.95, 1, 2)] {
+            run_for(&mut rig.rig, "light_1", t, 1.0, None);
+            rig.rig.app.update();
+            assert_eq!(rig.bound().layer_clip("upper"), Some("drink"));
+            assert_eq!((count(&rig, "lift"), count(&rig, "gulp")), (lifts, gulps), "{t} s in");
+        }
+    }
+
+    #[test]
+    fn a_layered_clips_cue_carries_its_bone_and_strength_too() {
+        #[derive(Resource, Default)]
+        struct Heard(Vec<AnimationCue>);
+        let mut rig = skeleton(&LAYERED.replace(r#"cues: [(at: 0.5, cue: "gulp")]"#, r#"cues: [(at: 0.5, cue: "gulp", bone: "head", strength: 0.25)]"#));
+        rig.rig.app.init_resource::<Heard>();
+        rig.rig.app.add_observer(|cue: On<AnimationCue>, mut heard: ResMut<Heard>| heard.0.push(cue.event().clone()));
+        // The body stands off the origin, so a world place is not the bone's local one.
+        rig.rig.app.world_mut().entity_mut(rig.rig.character).insert(Transform::from_xyz(4.0, 0.0, -2.0));
+        rig.rig.app.update();
+        rig.rig.run_action("drink", 0.2, None);
+        rig.rig.app.update();
+        assert!(rig.rig.app.world().resource::<Heard>().0.is_empty());
+        // The place the head has when the cue fires: where the last frame left it.
+        let head = rig.rig.app.world().get::<GlobalTransform>(rig.bones["head"]).unwrap().translation();
+        assert!(head.x > 3.9 && head.z < -1.9, "the head rides the body at (4, 0, -2): {head}");
+        rig.rig.run_action("drink", 0.7, None);
+        rig.rig.app.update();
+        let heard = &rig.rig.app.world().resource::<Heard>().0;
+        assert_eq!(heard.len(), 1, "{heard:?}");
+        assert_eq!((heard[0].cue.as_str(), heard[0].clip.as_str(), heard[0].bone.as_deref()), ("gulp", "drink", Some("head")));
+        assert_eq!((heard[0].at, heard[0].strength), (Some(head), 0.25));
+    }
+
+    #[test]
     fn a_model_without_the_layers_bone_keeps_its_locomotion_clip() {
         let mut rig = skeleton(&LAYERED.replace("root: \"spine\"", "root: \"tail\""));
         assert!(rig.bound().ready.is_empty());
@@ -1869,6 +2528,184 @@ mod tests {
         assert!(graph.mask_groups.is_empty());
     }
 
+    // --- event overlays ----------------------------------------------------------------------
+
+    #[test]
+    fn an_event_overlay_plays_over_the_layer_by_its_envelope_on_the_simulation_clock() {
+        #[derive(Resource, Default)]
+        struct Heard(Vec<AnimationCue>);
+        // Its cue names a bone: it fires through the bones, as a body or layer cue does.
+        let mut rig = skeleton(&OVERLAID.replace(r#"(at: 0.1, cue: "ouch")"#, r#"(at: 0.1, cue: "ouch", bone: "head", strength: 0.5)"#));
+        rig.rig.app.init_resource::<Heard>();
+        rig.rig.app.add_observer(|cue: On<AnimationCue>, mut heard: ResMut<Heard>| heard.0.push(cue.event().clone()));
+        rig.rig.velocity(2.0);
+        rig.rig.app.update();
+        let built = rig.rig.app.world().resource::<AnimGraphs>().built("humanoid").unwrap();
+        let graph = rig.rig.app.world().resource::<Assets<AnimationGraph>>().get(&built.graph).unwrap();
+        assert_eq!(graph.nodes().count(), 7 + 2 + 1 + 1, "the clips, the two layered ones, the overlay's and the root");
+        let flinch = built.overlay_node("upper", "flinch").unwrap();
+        assert_eq!(graph.get(flinch).unwrap().mask, 1, "masked to its layer like a layered clip");
+        assert!(rig.bound().overlay_on("upper").is_none());
+
+        let mut rig = rig.with_events();
+        rig.stagger();
+        // In over 0.25 s to half the layer (its strength), out between 0.25 s and 0.5 s, by the
+        // simulation's clock. The upper body is a share `s` of the way from the walk (x = 1) to
+        // the flinch (x = 20); the legs walk on.
+        for (frame, age, share) in [(1, 0.125, 0.25), (2, 0.25, 0.5), (3, 0.375, 0.25)] {
+            rig.rig.app.update();
+            let play = rig.bound().overlay_on("upper").expect("playing");
+            assert_eq!((play.event.as_str(), play.clip.as_str()), ("staggered", "flinch"));
+            assert!(near(play.age, age) && near(play.share, share), "frame {frame}: {play:?}");
+            for bone in UPPER {
+                assert!(near(rig.x(bone), 1.0 + 19.0 * share), "frame {frame}: {bone} is {}", rig.x(bone));
+            }
+            for bone in LEGS {
+                assert!(near(rig.x(bone), 1.0), "frame {frame}: {bone} walks: {}", rig.x(bone));
+            }
+        }
+        // At 0.5 s it is over: stopped, not left playing at no weight.
+        rig.rig.app.update();
+        assert!(rig.bound().overlay_on("upper").is_none());
+        assert_eq!(rig.overlay_weight("upper", "flinch"), None);
+        for bone in UPPER {
+            assert!(near(rig.x(bone), 1.0), "{bone} walks again: {}", rig.x(bone));
+        }
+        assert!(rig.bound().overlays.is_empty(), "nothing left to keep");
+        // Its clip's cue fired once, as the clip passed it.
+        let heard = &rig.rig.app.world().resource::<Heard>().0;
+        let said: Vec<_> = heard.iter().map(|c| (c.entity, c.cue.as_str(), c.clip.as_str(), c.bone.as_deref(), c.strength)).collect();
+        assert_eq!(said, [(rig.rig.character, "ouch", "flinch", Some("head"), 0.5)]);
+        assert!(heard[0].at.is_some(), "the head's place: {:?}", heard[0]);
+    }
+
+    #[test]
+    fn an_event_overlay_lays_over_the_action_on_its_layer_and_leaves_it_after() {
+        let mut rig = skeleton(OVERLAID);
+        rig.rig.velocity(2.0);
+        rig.rig.run_action("drink", 0.5, None);
+        rig.rig.app.update(); // the clock is stopped: the drink snaps in
+        assert!(near(rig.x("upper_arm"), 5.0));
+        let mut rig = rig.with_events();
+        rig.land();
+        // No fade in and the whole strength: the flinch takes the layer from the drink at once.
+        rig.rig.app.update();
+        assert!(near(rig.bound().overlay_on("upper").unwrap().share, 1.0));
+        assert!(near(rig.x("upper_arm"), 20.0), "{}", rig.x("upper_arm"));
+        rig.rig.app.update();
+        assert!(near(rig.x("upper_arm"), 20.0), "held until 0.25 s: {}", rig.x("upper_arm"));
+        // Half way out, the drink has the other half: the walk never shows through.
+        rig.rig.app.update();
+        assert!(near(rig.x("upper_arm"), 0.5 * 5.0 + 0.5 * 20.0), "{}", rig.x("upper_arm"));
+        assert!(near(rig.x("thigh"), 1.0));
+        rig.rig.app.update();
+        assert!(rig.bound().overlay_on("upper").is_none());
+        assert_eq!(rig.bound().layer_clip("upper"), Some("drink"), "the action's clip played on under it");
+        assert!(near(rig.x("upper_arm"), 5.0), "{}", rig.x("upper_arm"));
+    }
+
+    #[test]
+    fn the_same_event_again_starts_its_overlay_over_from_the_share_it_has() {
+        let mut rig = skeleton(OVERLAID);
+        rig.rig.velocity(2.0);
+        rig.rig.app.update();
+        let mut rig = rig.with_events();
+        rig.stagger();
+        for _ in 0..3 {
+            rig.rig.app.update();
+        }
+        assert!(near(rig.bound().overlay_on("upper").unwrap().share, 0.25), "fading out");
+        // Staggered again: it starts over from a quarter of the layer, half its strength, and
+        // comes in from there instead of from nothing.
+        rig.stagger();
+        rig.rig.app.update();
+        let play = rig.bound().overlay_on("upper").unwrap();
+        assert!(near(play.age, 0.125) && near(play.share, 0.5), "{play:?}");
+        // Its whole envelope runs again from the second event: half a second.
+        rig.rig.app.update();
+        rig.rig.app.update();
+        assert!(rig.bound().overlay_on("upper").is_some());
+        rig.rig.app.update();
+        assert!(rig.bound().overlay_on("upper").is_none());
+        assert_eq!(rig.overlay_weight("upper", "flinch"), None);
+    }
+
+    #[test]
+    fn a_dead_body_lets_its_overlay_go_and_starts_none() {
+        let mut rig = skeleton(OVERLAID);
+        rig.rig.velocity(2.0);
+        rig.rig.app.update();
+        let mut rig = rig.with_events();
+        rig.land();
+        rig.rig.app.update();
+        assert!(near(rig.x("upper_arm"), 20.0));
+        rig.rig.app.world_mut().entity_mut(rig.rig.character).insert(Dead);
+        rig.rig.app.update();
+        assert!(rig.bound().overlay_on("upper").is_none(), "cut short");
+        assert!(rig.overlay_weight("upper", "flinch").is_some(), "it leaves over a blend, not at once");
+        for _ in 0..3 {
+            rig.rig.app.update();
+        }
+        assert_eq!(rig.overlay_weight("upper", "flinch"), None, "faded out and stopped");
+        rig.land();
+        rig.rig.app.update();
+        assert!(rig.bound().overlay_on("upper").is_none(), "a dead body starts none");
+        assert_eq!(rig.overlay_weight("upper", "flinch"), None);
+    }
+
+    #[test]
+    fn a_hit_the_body_ignored_starts_no_damaged_overlay() {
+        use crate::combat::{HitWeight, IgnoreReason};
+        let hurt = OVERLAID.replace(r#""landed": "#, r#""damaged": (clip: "flinch", layer: "upper", fade_out: (0.25, 0.5)), "landed": "#);
+        assert_ne!(hurt, OVERLAID);
+        let mut rig = skeleton(&hurt);
+        rig.rig.velocity(2.0);
+        rig.rig.app.update();
+        let mut rig = rig.with_events();
+        let body = rig.rig.character;
+        let hit = |ignored: bool| Damaged {
+            attacker: body,
+            target: body,
+            action: "light_1".into(),
+            amount: if ignored { 0.0 } else { 10.0 },
+            poise: 0.0,
+            hp_left: 90.0,
+            invulnerable: ignored,
+            ignore_reason: ignored.then_some(IgnoreReason::Grace),
+            weight: HitWeight::Light,
+            reaction: None,
+            absorbed: 0.0,
+            source: None,
+            part: None,
+        };
+        rig.rig.app.world_mut().trigger(hit(true));
+        rig.rig.app.update();
+        assert!(rig.bound().overlay_on("upper").is_none(), "a hit a grace period ignored did not land");
+        rig.rig.app.world_mut().trigger(hit(false));
+        rig.rig.app.update();
+        assert!(rig.bound().overlay_on("upper").is_some(), "a hit that landed flinches");
+    }
+
+    #[test]
+    fn a_layered_clip_leaves_over_its_mappings_blend_out() {
+        let mut rig = skeleton(OVERLAID);
+        rig.rig.velocity(2.0);
+        rig.rig.run_action("drink", 0.5, None);
+        rig.rig.app.update();
+        rig.clock(125);
+        // `blend_out: 0.25`, not the walk's 0.2 s: half way out after a frame of 0.125 s.
+        rig.end_action();
+        rig.rig.app.update();
+        for bone in UPPER {
+            assert!(near(rig.x(bone), 3.0), "{bone} is half way back: {}", rig.x(bone));
+        }
+        rig.rig.app.update();
+        for bone in UPPER {
+            assert!(near(rig.x(bone), 1.0), "{bone} walks again: {}", rig.x(bone));
+        }
+        assert_eq!(rig.weight("upper", "drink"), None, "faded out and stopped");
+    }
+
     #[test]
     fn the_overlay_fades_by_the_blend_and_never_takes_the_whole_layer() {
         let (a, b) = (AnimationNodeIndex::new(1), AnimationNodeIndex::new(2));
@@ -1876,7 +2713,7 @@ mod tests {
         let mut stopped = Vec::new();
         let weight_of = |w: &[(AnimationNodeIndex, f32)], node| w.iter().find(|(n, _)| *n == node).map(|(_, w)| *w);
         // In over 0.5 s: a share s has the weight s / (1 - s).
-        overlay.switch(Some(("a", a)), 0.5, false, &mut stopped);
+        overlay.switch(Some(("a", a, None)), 0.5, false, &mut stopped);
         let w = overlay.advance(0.25, &mut stopped);
         assert!(near(weight_of(&w, a).unwrap(), 1.0), "half the layer's bones: weight 1 against locomotion's 1");
         assert!(near(overlay.share(), 0.5));
@@ -1895,19 +2732,39 @@ mod tests {
         assert!(overlay.idle());
         // A clip that takes over from another: the shares add up to what the layer had, and the walk never shows through.
         stopped.clear();
-        overlay.switch(Some(("a", a)), 0.5, true, &mut stopped);
+        overlay.switch(Some(("a", a, None)), 0.5, true, &mut stopped);
         assert!(near(overlay.share(), 0.0), "not advanced yet");
         overlay.advance(0.0, &mut stopped);
         assert!(overlay.share() > 0.9999, "snapped: {}", overlay.share());
-        overlay.switch(Some(("b", b)), 0.5, false, &mut stopped);
+        overlay.switch(Some(("b", b, None)), 0.5, false, &mut stopped);
         let w = overlay.advance(0.25, &mut stopped);
         let (wa, wb) = (weight_of(&w, a).unwrap(), weight_of(&w, b).unwrap());
         assert!(near(wa, wb), "half and half after half the blend: {wa} {wb}");
         assert!(overlay.share() > 0.9999, "the walk does not show through");
+        // A clip with a short `blend_out` taken over by a slower one leaves at the new one's pace: the
+        // layer stays full (alone, it would leave over its own 0.125 s).
+        overlay.advance(0.5, &mut stopped);
+        overlay.main.as_mut().unwrap().out = Some(0.125);
+        overlay.switch(Some(("a", a, None)), 0.5, false, &mut stopped);
+        overlay.advance(0.0625, &mut stopped);
+        assert!(overlay.share() > 0.9999, "the walk does not show through: {}", overlay.share());
         // Back to a clip that was fading starts it again.
-        overlay.switch(Some(("a", a)), 0.5, false, &mut stopped);
+        overlay.switch(Some(("b", b, None)), 0.5, false, &mut stopped);
+        overlay.switch(Some(("a", a, None)), 0.5, false, &mut stopped);
         assert_eq!(overlay.fading.iter().map(|f| f.node).collect::<Vec<_>>(), [b]);
         assert_eq!(overlay.main.as_ref().map(|m| m.ramp), Some(0.0));
+        // Taken over twice in a row (a cancel window): each clip keeps the share it showed, so the
+        // layer does not drop to the walk the moment the third clip starts.
+        let c = AnimationNodeIndex::new(3);
+        let mut chained = Overlay::default();
+        chained.switch(Some(("a", a, None)), 0.5, true, &mut stopped);
+        chained.advance(0.0, &mut stopped);
+        chained.switch(Some(("b", b, None)), 0.5, false, &mut stopped);
+        let w = chained.advance(0.15, &mut stopped);
+        assert!(chained.share() > 0.9999, "a 0.7 and b 0.3: {w:?}");
+        chained.switch(Some(("c", c, None)), 0.5, false, &mut stopped);
+        chained.advance(0.0, &mut stopped);
+        assert!(chained.share() > 0.9999, "a 0.7 and b 0.3 still, c not in yet: {}", chained.share());
         // The clock stopped: everything snaps, and what played stops.
         stopped.clear();
         overlay.switch(None, 0.5, true, &mut stopped);
