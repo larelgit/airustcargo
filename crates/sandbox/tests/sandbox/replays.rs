@@ -750,11 +750,11 @@ fn dress_fighters(
     assets: Res<AssetServer>,
 ) {
     for body in &bodies {
-        let scene = assets.load(shards::bevy::gltf::GltfAssetLabel::Scene(0).from_asset("models/humanoid.glb"));
+        let model = shards::action::render::GltfModel::load(&assets, "models/humanoid.glb");
         commands
             .entity(body)
             .insert(shards::action::Animated::new("humanoid"))
-            .with_child(shards::bevy::world_serialization::WorldAssetRoot(scene));
+            .with_child(model);
     }
 }
 
