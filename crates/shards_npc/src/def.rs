@@ -570,6 +570,16 @@ pub struct AttackOption {
     /// tags are its option's, its action's and its name).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub forbid_after: Vec<String>,
+    /// Not chosen while one of these is a live tag: a combat object of the NPC's own (anywhere)
+    /// or a zone near the target (within the plan's `zone_margin`) whose action carries it, or a
+    /// zone another NPC's attack in flight will lay at the target's feet. `["capture"]`: one
+    /// capture at a time.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub forbid_while: Vec<String>,
+    /// As `forbid_while`, but only while one player is living (or none): `["long"]` keeps a solo
+    /// player out of two long zones at once.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub solo_forbid_while: Vec<String>,
 }
 
 /// A combo continuation of an attack ([`AttackOption::chain`]). The input goes into the press
@@ -616,6 +626,8 @@ impl Default for AttackOption {
             players: None,
             max_repeats: None,
             forbid_after: Vec::new(),
+            forbid_while: Vec::new(),
+            solo_forbid_while: Vec::new(),
         }
     }
 }
@@ -624,6 +636,11 @@ impl AttackOption {
     /// Its name: `name`, else the input, else the action.
     pub fn label(&self) -> &str {
         self.name.as_deref().or(self.input.as_deref()).or(self.action.as_deref()).unwrap_or("")
+    }
+
+    /// Its rules that name tags, by field: `forbid_after`, `forbid_while`, `solo_forbid_while`.
+    fn tag_rules(&self) -> [(&'static str, &[String]); 3] {
+        [("forbid_after", &self.forbid_after), ("forbid_while", &self.forbid_while), ("solo_forbid_while", &self.solo_forbid_while)]
     }
 }
 
@@ -704,6 +721,11 @@ pub struct AttackPlanDef {
     /// closes in or stands, as before.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wait: Option<WaitRole>,
+    /// A live zone of any owner counts for the options' `forbid_while` and `solo_forbid_while`
+    /// when the target stands within this many meters of its footprint, on the ground plane (0:
+    /// only inside it). The NPC's own combat objects count wherever they are.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub zone_margin: f32,
 }
 
 impl Default for AttackPlanDef {
@@ -721,11 +743,17 @@ impl Default for AttackPlanDef {
             ignores_spacing: false,
             tokenless: false,
             wait: None,
+            zone_margin: 0.0,
         }
     }
 }
 
 impl AttackPlanDef {
+    /// Some option has a `forbid_while` or a `solo_forbid_while`: the NPC's live tags are read.
+    pub fn reads_live_tags(&self) -> bool {
+        self.options.iter().any(|o| !o.forbid_while.is_empty() || !o.solo_forbid_while.is_empty())
+    }
+
     /// How many past attacks the plan looks at: the largest of the bans' `within` and the options'
     /// `max_repeats`, at least 1 (`forbid_after` reads only the newest).
     pub fn memory(&self) -> usize {
@@ -786,8 +814,10 @@ impl ContentDef for AttackPlanDef {
             if o.max_repeats == Some(0) {
                 refs.error(format!("{at}.max_repeats must be at least 1 (1: never twice in a row); leave it out for no limit"));
             }
-            if o.forbid_after.iter().any(String::is_empty) {
-                refs.error(format!("{at}.forbid_after has an empty tag"));
+            for (field, tags) in o.tag_rules() {
+                if tags.iter().any(String::is_empty) {
+                    refs.error(format!("{at}.{field} has an empty tag"));
+                }
             }
             if let Some(chain) = &o.chain {
                 if chain.input.is_empty() {
@@ -811,14 +841,21 @@ impl ContentDef for AttackPlanDef {
                 refs.error(format!("{name} ({lo}, {hi}) must be 0 <= min <= max"));
             }
         }
-        if self.options.iter().any(|o| o.forbid_after.iter().any(|t| !t.is_empty())) {
+        if !(self.zone_margin >= 0.0 && self.zone_margin.is_finite()) {
+            refs.error(format!("zone_margin must be >= 0 and finite (is {})", self.zone_margin));
+        } else if self.zone_margin > 0.0 && !self.reads_live_tags() {
+            refs.error("zone_margin without any forbid_while or solo_forbid_while reads nothing; set the forbids or leave it out");
+        }
+        if self.options.iter().any(|o| o.tag_rules().iter().any(|(_, tags)| tags.iter().any(|t| !t.is_empty()))) {
             // A tag nothing carries never applies: a typo check. A tag any action carries is never an
             // error (an `input` option's action is not known without a moveset, and a history entry
             // carries its action's tags); a plan option's tags and name count, every plan's (phase
             // plans share one history), and so does every moveset input name (the names of `auto`
-            // options).
-            let mut known: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-            known.extend(refs.iter::<ActionDef>().flat_map(|(_, a)| a.tags.iter().map(String::as_str)));
+            // options). The live lists are narrower: a live tag is only ever an action's (the action a
+            // zone, a summon or a spawn runs; `LiveZones::tags`), never a plan option's tag or name.
+            let action_tags: std::collections::BTreeSet<&str> =
+                refs.iter::<ActionDef>().flat_map(|(_, a)| a.tags.iter().map(String::as_str)).collect();
+            let mut known = action_tags.clone();
             for (_, plan) in refs.iter::<AttackPlanDef>() {
                 for o in &plan.options {
                     known.extend(o.tags.iter().map(String::as_str));
@@ -827,11 +864,21 @@ impl ContentDef for AttackPlanDef {
             }
             known.extend(refs.iter::<MovesetDef>().flat_map(|(_, m)| m.inputs.keys().map(String::as_str)));
             for (i, o) in self.options.iter().enumerate() {
-                for tag in o.forbid_after.iter().filter(|t| !t.is_empty() && !known.contains(t.as_str())) {
-                    let hint = shards_content::db::closest(tag, known.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
-                    refs.error(format!(
-                        "options[{i}].forbid_after names `{tag}`, which no action, no plan option and no moveset input in the content carries: it never applies{hint}"
-                    ));
+                for (field, tags) in o.tag_rules() {
+                    let live = field != "forbid_after";
+                    let pool = if live { &action_tags } else { &known };
+                    for tag in tags.iter().filter(|t| !t.is_empty() && !pool.contains(t.as_str())) {
+                        let hint = shards_content::db::closest(tag, pool.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
+                        refs.error(if live {
+                            format!(
+                                "options[{i}].{field} names `{tag}`, which no action in the content carries: a live tag is a tag of the action a zone, a summon or a spawn runs (not a plan option's), so it never applies{hint}"
+                            )
+                        } else {
+                            format!(
+                                "options[{i}].{field} names `{tag}`, which no action, no plan option and no moveset input in the content carries: it never applies{hint}"
+                            )
+                        });
+                    }
                 }
             }
         }
@@ -1192,6 +1239,63 @@ mod tests {
         assert_eq!(errors, expected);
         // `melee` (an action's tag), `slam` (an option's name) and `jab` (a moveset input) are known.
         assert!(!errors.iter().any(|e| e.contains("`melee`") || e.contains("`slam`") || e.contains("`jab`")), "{errors:?}");
+    }
+
+    /// The live-tag forbids and `zone_margin` stay out of an option and a plan that do not use
+    /// them, round-trip, and validate: an empty tag, a typo (with the nearest known tag), a bad
+    /// margin and a margin with nothing to read.
+    #[test]
+    fn the_live_tag_forbids_round_trip_and_validate() {
+        let neutral = serde_json::to_value(AttackPlanDef { options: vec![AttackOption::default()], ..Default::default() }).unwrap();
+        for field in ["forbid_while", "solo_forbid_while"] {
+            assert!(neutral["options"][0].get(field).is_none(), "{field} stays out: {neutral}");
+        }
+        assert!(neutral.get("zone_margin").is_none(), "{neutral}");
+        let plan: AttackPlanDef =
+            ron(r#"(options: [(input: "trap", forbid_while: ["capture"], solo_forbid_while: ["long"])], zone_margin: 1.0)"#);
+        assert!(plan.reads_live_tags());
+        assert!(!AttackPlanDef::default().reads_live_tags());
+        let json = serde_json::to_value(&plan).unwrap();
+        assert_eq!(json["options"][0]["forbid_while"], serde_json::json!(["capture"]));
+        assert_eq!(json["options"][0]["solo_forbid_while"], serde_json::json!(["long"]));
+        assert_eq!(json["zone_margin"], 1.0);
+        assert_eq!(serde_json::from_value::<AttackPlanDef>(json).unwrap(), plan);
+
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<AttackPlanDef>();
+        kinds.register::<ActionDef>();
+        let source = |path: &str, text: &str| shards_content::db::Source { path: path.into(), text: text.into() };
+        let plans = r#"{
+            "p": (options: [
+                (input: "trap", forbid_while: ["capture", ""], solo_forbid_while: ["lnog"]),
+                (input: "vines", solo_forbid_while: ["long", ""]),
+            ], zone_margin: -1.0),
+            "q": (options: [(input: "light")], zone_margin: 1.5),
+            "r": (options: [(input: "trap", forbid_while: ["capture"])], zone_margin: 1.0),
+            // `snare` is only this option's tag: fine for `forbid_after` (history carries it), never live.
+            "s": (options: [(input: "trap", tags: ["snare"], forbid_after: ["snare"], forbid_while: ["snare"])]),
+        }"#;
+        let actions = r#"{ "puddle": (net_id: 1, phases: [("active", 1.0)], tags: ["capture", "long"]) }"#;
+        let db = ContentDb::build(&kinds, &[source("content/p.attack_plan.ron", plans), source("content/a.action.ron", actions)]);
+        let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+        let at = |plan: &str, what: &str| format!("content/p.attack_plan.ron: attack_plan `{plan}`: {what}");
+        assert_eq!(
+            errors,
+            [
+                at("p", "options[0].forbid_while has an empty tag"),
+                at("p", "options[1].solo_forbid_while has an empty tag"),
+                at("p", "zone_margin must be >= 0 and finite (is -1)"),
+                at(
+                    "p",
+                    "options[0].solo_forbid_while names `lnog`, which no action in the content carries: a live tag is a tag of the action a zone, a summon or a spawn runs (not a plan option's), so it never applies (did you mean `long`?)"
+                ),
+                at("q", "zone_margin without any forbid_while or solo_forbid_while reads nothing; set the forbids or leave it out"),
+                at(
+                    "s",
+                    "options[0].forbid_while names `snare`, which no action in the content carries: a live tag is a tag of the action a zone, a summon or a spawn runs (not a plan option's), so it never applies"
+                ),
+            ]
+        );
     }
 
     #[test]

@@ -1,0 +1,5 @@
+// The fighter of the live-tag tests (N8d): a jab, a cast that lays a capture zone at its target,
+// and a capture swing that lays nothing.
+{
+    "live": (inputs: {"light": "jab", "cast": "live_cast", "grab": "live_grab"}, stagger: "grunt_stagger"),
+}

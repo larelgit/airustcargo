@@ -39,7 +39,7 @@ use crate::def::{AttackPlanDef, DirectorDef, Role, WaitRole};
 use crate::perception::Perceived;
 use crate::chain::NpcChain;
 use crate::planner::{feasible, resolve, InFlight, NpcOptions, NpcPlan};
-use crate::schedule::{grant_notes, inputs, living_players, FightCx, Players};
+use crate::schedule::{grant_notes, inputs, living_players, FightCx, LiveZones, Players};
 use crate::strike::{pool, NpcStrike};
 
 /// An NPC's attack token, while it holds one, and its place in the queue while it asks.
@@ -264,6 +264,7 @@ pub(crate) fn direct(
     players: Players,
     targets: Targets,
     rules: Option<Res<ActiveRules>>,
+    live: LiveZones,
     mut npcs: Query<Fighting>,
 ) {
     let dt = time.delta_secs();
@@ -426,7 +427,7 @@ pub(crate) fn direct(
         }
     }
     asking.sort();
-    let cx = FightCx { db: &db, physics: &physics, tick: tick.0, dt, players, rules: rules.as_deref() };
+    let cx = FightCx { db: &db, physics: &physics, tick: tick.0, dt, players, rules: rules.as_deref(), live: Some(&live) };
     for (_, _, entity) in asking {
         // Judged on the NPC's read-only view, by the rules the planner chooses by: some option
         // must pass, distance aside (no token for a strike that would come too soon after

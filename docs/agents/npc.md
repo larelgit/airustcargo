@@ -28,6 +28,11 @@ Read this when you touch enemy brains, behaviour, perception, the director, atta
   `Grant` or `Npc` for a gate (they are hashed). `npc_schedule` reports what `refusal()` says by building its inputs with `inputs()`: never
   re-derive a rule in the tool. The invariant `npc.plan_sequence` judges the press with its own short code on purpose, so a planner path that
   skips `refusal()` is caught; change the two together.
+- **Live tags** (`forbid_while`, `solo_forbid_while`, `zone_margin`; N8d). They are read only through `LiveZones::tags`, called by `inputs()`
+  and only for a plan where `AttackPlanDef::reads_live_tags()` holds: the reads (`ActionDef`, `MovesetDef`) are content reads, so reading them for
+  every plan would change existing replays' `content` check. Give `FightCx::live` to every caller that judges a grant or a choice (`direct`,
+  `plan_attacks`, `schedule_report`). An attack in flight carries its pressed input (`InFlight`), and `plan_attacks` adds each press with
+  its input, so a later NPC on the same tick sees what the press will lay at the target; a new place that presses for the planner must add it too. A live tag is only ever an action's tag (the action a zone, a summon or a spawn runs), so the content check holds the two lists to the actions' tags, not to plan options' tags or names.
 - **Encounters** (`shards_encounter`, "Encounters (G9)" in the manual) spawn NPCs in waves and pull the survivors of a placed wave back home
   on a wipe or a reset: they `force_state` the behaviour state the encounter's `pull_back.state` names (so a behaviour needs that state,
   `return_home` kind, which the content check enforces: a state of any other kind is refused), and set `EncounterMember.returning` until the member is home; the NPC condition

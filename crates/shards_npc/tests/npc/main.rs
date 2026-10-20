@@ -7,6 +7,7 @@ mod avoid;
 mod bodies;
 mod director;
 mod duel;
+mod live;
 mod fsm;
 mod nav;
 mod navmesh;

@@ -1,0 +1,13 @@
+// Plans of the live-tag tests (N8d).
+{
+    // A jab that is not chosen while a capture is live: near the target (inside the zone) or laid by an
+    // attack in flight; with a metre of margin around a zone in the second.
+    "live_trap": (options: [(input: "light", name: "trap", forbid_while: ["capture"])], rest: (0.1, 0.1)),
+    "live_margin": (options: [(input: "light", name: "trap", forbid_while: ["capture"])], zone_margin: 1.0, rest: (0.1, 0.1)),
+    // A jab that is not chosen while a long zone is live and one player lives.
+    "live_solo": (options: [(input: "light", name: "vines", solo_forbid_while: ["long"])], rest: (0.1, 0.1)),
+    // A boss's capture: one at a time on the target, its own included, and 5 s between two of its own.
+    "live_caster": (options: [(input: "cast", max: Some(8.0), cooldown: 5.0, forbid_while: ["capture"])], rest: (0.2, 0.2), tokenless: true, ignores_spacing: true),
+    // A capture swing that lays nothing.
+    "live_grabber": (options: [(input: "grab", max: Some(8.0))], rest: (0.2, 0.2), tokenless: true),
+}

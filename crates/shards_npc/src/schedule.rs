@@ -14,13 +14,16 @@
 //! 3. `Angle`: the target is outside the option's `angle` window off the NPC's facing;
 //! 4. `Closed`: a `when` condition does not hold;
 //! 5. `Players`: the living players are outside the option's `players` window;
-//! 6. `Repeats`: it was chosen `max_repeats` times in a row already;
-//! 7. `ForbidAfter`: the newest past attack carries one of its `forbid_after` tags;
-//! 8. `Banned`: a plan ban (`SequenceBan`) after the last attacks;
-//! 9. `Machine`: the action machine would start it neither now nor by waiting;
-//! 10. `Budget`: it does not fit in what is left of the target's collision budget;
-//! 11. `Overlap`: it may not overlap with an attack in flight on the target;
-//! 12. `Spacing`: another NPC of its director began a strike less than `min_spacing` ago.
+//! 6. `Live`: one of its `forbid_while` tags is live (a combat object of the NPC's own, a zone
+//!    near the target, a zone another NPC's attack in flight will lay at the target: [`LiveZones`]);
+//! 7. `LiveSolo`: one of its `solo_forbid_while` tags is live while one player lives;
+//! 8. `Repeats`: it was chosen `max_repeats` times in a row already;
+//! 9. `ForbidAfter`: the newest past attack carries one of its `forbid_after` tags;
+//! 10. `Banned`: a plan ban (`SequenceBan`) after the last attacks;
+//! 11. `Machine`: the action machine would start it neither now nor by waiting;
+//! 12. `Budget`: it does not fit in what is left of the target's collision budget;
+//! 13. `Overlap`: it may not overlap with an attack in flight on the target;
+//! 14. `Spacing`: another NPC of its director began a strike less than `min_spacing` ago.
 //!
 //! Every rule is a pure read of the world as the system sees it, so the order changes nothing
 //! but the answer's name. The action machine is asked where the rules before this module asked
@@ -28,15 +31,18 @@
 //! definitions (a cancel window's action, a context binding's) that the replay's `content` check
 //! records: what a session reads is what it read before. The distance window is not a rule here:
 //! the planner prefers the options whose window holds and, with `in_range_only`, chooses only
-//! among them.
+//! among them. The live tags are read only for a plan with an option that forbids any, for the
+//! same reason: they read the combat objects' actions and the movesets of attacks in flight.
 //!
 //! The players the director counts are `Players` and `living_players`.
+
+use std::collections::BTreeSet;
 
 use ai_core::{AiId, AiIndex, DetRng, SimSeed, SimTick};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use serde::Serialize;
-use shards_action::{FighterView, Standing};
+use shards_action::{action_zones, ActionDef, ActionState, CombatObject, Dead, Effect, Fighter, FighterView, MovesetDef, SpawnAim, Standing};
 use shards_content::ContentDb;
 use shards_core::{flat, PlayerId};
 use shards_motion::PhysicsWorld;
@@ -67,6 +73,10 @@ pub enum Refusal {
     Closed { when: String },
     /// The living players (`players`) are outside the option's `players` window.
     Players { players: u32, min: u32, max: u32 },
+    /// `tag`, one of the option's `forbid_while`, is live ([`LiveZones`]).
+    Live { tag: String },
+    /// `tag`, one of the option's `solo_forbid_while`, is live while one player lives.
+    LiveSolo { tag: String },
     /// It was chosen `times` times in a row (the newest history entries) and `max_repeats` is `max`.
     Repeats { times: u32, max: u32 },
     /// The newest history entry, `after` (its name), carries `tag`, one of the option's `forbid_after`.
@@ -95,16 +105,96 @@ pub(crate) struct FightCx<'a> {
     pub players: u32,
     /// The rules in play: what they make an NPC's attack cost ([`npc_rules`]).
     pub rules: Option<&'a ActiveRules>,
+    /// Where the live tags are read from; `None`: none is live.
+    pub live: Option<&'a LiveZones<'a, 'a>>,
 }
 
 /// What the rules read of the moment besides the NPC's plan: where the target stands off the
-/// NPC's facing, and how many players live.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// NPC's facing, how many players live, and which tags are live.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Moment {
     /// Degrees between the NPC's facing and the target, 0..=180 ([`target_angle`]).
     pub angle: f32,
     /// Living players ([`living_players`]).
     pub players: u32,
+    /// The live tags ([`LiveZones::tags`]); empty for a plan that forbids none.
+    pub live: BTreeSet<String>,
+}
+
+/// What an NPC's live tags are read from, for its options' `forbid_while` and
+/// `solo_forbid_while`: the combat objects, who is dead, and the fighters' movesets (what an
+/// attack in flight lays at its target). The director's grant, the planner and `npc_schedule`
+/// read them through it, so the three judge the same tags.
+#[derive(SystemParam)]
+pub struct LiveZones<'w, 's> {
+    objects: Query<'w, 's, (&'static CombatObject, &'static ActionState, &'static Transform, Has<Dead>)>,
+    bodies: Query<'w, 's, (Option<&'static Fighter>, Has<Dead>)>,
+    index: Res<'w, AiIndex>,
+}
+
+impl LiveZones<'_, '_> {
+    /// The live tags of NPC `me` fighting `target` (its id, and where it stands):
+    ///
+    /// 1. its own combat objects, wherever they are: a zone or a projectile while its action has
+    ///    a hit window still to come or open (a delayed one's whole action is to come), a summon
+    ///    (`stay`) while it stands;
+    /// 2. any owner's zones that a body of `margin` meters at the target touches (on the ground
+    ///    plane), while a hit window is to come or open;
+    /// 3. what the others' attacks in flight on the target lay at its feet: the tags of the
+    ///    actions their action's `Spawn` effects aimed `AtTarget` run, one level deep. A capture
+    ///    is live from its press; once its zone is down, by 2.
+    ///
+    /// A zone's tags are those of the action it runs (as [`hit_zones`](shards_action::hit_zones)
+    /// gives them; a delayed one's: the action it will start), a summon's those of the action it
+    /// was spawned with. An object whose owner is gone or dead counts for nothing: it goes. The
+    /// answer is a set, so the order the objects are walked in changes nothing.
+    pub(crate) fn tags(&self, db: &ContentDb, me: AiId, (target, there): (AiId, Vec3), margin: f32, inflight: &InFlight) -> BTreeSet<String> {
+        let mut live = BTreeSet::new();
+        let body = |id: AiId| self.index.get(id).and_then(|e| self.bodies.get(e).ok());
+        for (object, state, tf, dead) in &self.objects {
+            if dead || body(object.owner).is_none_or(|(_, owner_dead)| owner_dead) {
+                continue;
+            }
+            let mine = object.owner == me;
+            let running = match &state.current {
+                Some(run) => Some((run.action.as_str(), run.t, run.facing)),
+                None if object.start_in > 0.0 => Some((object.action.as_str(), 0.0, *tf.forward())),
+                None => None,
+            };
+            if let Some((action, t, facing)) = running
+                && let Some(def) = db.get::<ActionDef>(action)
+            {
+                let zones = action_zones(def, t, tf.translation, facing);
+                if !zones.is_empty() && (mine || zones.iter().any(|z| z.shape.contains(there, margin))) {
+                    live.extend(def.tags.iter().cloned());
+                }
+            }
+            if mine
+                && object.stay
+                && let Some(def) = db.get::<ActionDef>(&object.action)
+            {
+                live.extend(def.tags.iter().cloned());
+            }
+        }
+        for (holder, input) in inflight.presses_on(target, me) {
+            let moveset = body(holder).and_then(|(fighter, _)| fighter).and_then(|f| db.get::<MovesetDef>(&f.moveset));
+            if let Some(action) = moveset.and_then(|m| m.action(input)) {
+                live.extend(laid_at_target(db, action));
+            }
+        }
+        live
+    }
+}
+
+/// The tags of the actions that `action`'s `Spawn` effects aimed `AtTarget` run: what it lays at
+/// its target's feet, one level deep.
+pub(crate) fn laid_at_target(db: &ContentDb, action: &str) -> Vec<String> {
+    let Some(def) = db.get::<ActionDef>(action) else { return Vec::new() };
+    let spawns = def.effects.iter().filter_map(|e| match &e.effect {
+        Effect::Spawn(spawn) if spawn.aim == SpawnAim::AtTarget => Some(spawn),
+        _ => None,
+    });
+    spawns.flat_map(|s| s.action.iter()).filter_map(|a| db.get::<ActionDef>(a)).flat_map(|d| d.tags.iter().cloned()).collect()
 }
 
 /// Degrees between `facing` and the direction from `from` to `to`, on the ground plane, 0..=180
@@ -139,7 +229,7 @@ pub(crate) struct Inputs<'a> {
     pub spacing: Option<(AiId, u64)>,
     /// The options its `when` conditions open (only NPCs whose plan has gated options carry it).
     pub open: Option<&'a NpcOptions>,
-    /// The target's angle and the living players.
+    /// The target's angle, the living players and the live tags.
     pub moment: Moment,
 }
 
@@ -166,7 +256,12 @@ pub(crate) fn inputs<'a>(
     } else {
         waiting(notes, *f.id, &pool(&f.npc.director), cx.tick, spacing_ticks(director.min_spacing, cx.dt))
     };
-    let moment = Moment { angle: target_angle(*f.transform.forward(), f.transform.translation, there), players: cx.players };
+    // Read only for a plan that forbids a live tag: the reads are content reads.
+    let live = match cx.live {
+        Some(zones) if plan_def.reads_live_tags() => zones.tags(cx.db, *f.id, (id, there), plan_def.zone_margin, inflight),
+        _ => BTreeSet::new(),
+    };
+    let moment = Moment { angle: target_angle(*f.transform.forward(), f.transform.translation, there), players: cx.players, live };
     Some(Inputs { plan_def, plan: f.plan, view, dt: cx.dt, budget, overlapping, director, spacing, open: f.options, moment })
 }
 
@@ -218,6 +313,7 @@ pub struct ScheduleParams<'w, 's> {
     fixed: Res<'w, Time<Fixed>>,
     players: Players<'w, 's>,
     rules: Option<Res<'w, ActiveRules>>,
+    live: LiveZones<'w, 's>,
 }
 
 impl ScheduleParams<'_, '_> {
@@ -233,7 +329,7 @@ impl ScheduleParams<'_, '_> {
 }
 
 /// What the caller of `npc_schedule` asks "what if" about; each `None` is measured.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct WhatIf {
     /// Judge against this target.
     pub target: Option<AiId>,
@@ -243,11 +339,13 @@ pub struct WhatIf {
     pub angle: Option<f32>,
     /// Living players, instead of the counted ones.
     pub players: Option<u32>,
+    /// The live tags, instead of the collected ones (`Some(vec![])`: none is live).
+    pub live: Option<Vec<String>>,
 }
 
 impl WhatIf {
     fn any(&self) -> bool {
-        self.target.is_some() || self.distance.is_some() || self.angle.is_some() || self.players.is_some()
+        self.target.is_some() || self.distance.is_some() || self.angle.is_some() || self.players.is_some() || self.live.is_some()
     }
 }
 
@@ -297,6 +395,10 @@ pub struct ScheduleReport {
     pub distance: f32,
     pub angle: f32,
     pub players: u32,
+    /// The live tags it judges `forbid_while` and `solo_forbid_while` by (read only for a plan
+    /// that forbids any).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub live: Vec<String>,
     /// Its plan is `tokenless`: it holds no counted token (a boss among its adds).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub tokenless: bool,
@@ -326,6 +428,8 @@ fn refusal_text(r: &Refusal, spacing: u64) -> String {
         }
         Refusal::Closed { when } => format!("closed: when {when} does not hold"),
         Refusal::Players { players, min, max } => format!("players: {players} living, this option needs {min}-{max}"),
+        Refusal::Live { tag } => format!("live: {tag} is live (forbid_while)"),
+        Refusal::LiveSolo { tag } => format!("live: {tag} is live with one player (solo_forbid_while)"),
         Refusal::Repeats { times, max } => format!("repeats: chosen {times} times in a row, max_repeats {max}"),
         Refusal::ForbidAfter { tag, after } => format!("forbid_after: {tag}, after {after}"),
         Refusal::Banned { after, ban } => format!("banned: after {after} (bans[{ban}])"),
@@ -384,7 +488,7 @@ pub fn schedule_report(p: &ScheduleParams, entity: Entity, what_if: &WhatIf, dev
     let counted = living_players(&p.players);
     let players = what_if.players.unwrap_or(counted);
     let rules = p.rules.as_deref();
-    let cx = FightCx { db: &p.db, physics: &p.physics, tick, dt, players: counted, rules };
+    let cx = FightCx { db: &p.db, physics: &p.physics, tick, dt, players: counted, rules, live: Some(&p.live) };
     let inflight = InFlight::collect(p.npcs.iter().map(|f| (*f.id, f.token.held.as_ref())));
     // As the caller that would judge the NPC next builds them: the planner's notes for one that
     // holds a grant, the director's for one that asks for it.
@@ -395,8 +499,13 @@ pub fn schedule_report(p: &ScheduleParams, entity: Entity, what_if: &WhatIf, dev
         return Err(format!("{id}'s attack plan `{plan_name}` is not in content"));
     };
     inputs.plan = &next;
-    inputs.moment = Moment { angle: what_if.angle.unwrap_or(inputs.moment.angle), players };
+    inputs.moment.angle = what_if.angle.unwrap_or(inputs.moment.angle);
+    inputs.moment.players = players;
+    if let Some(live) = &what_if.live {
+        inputs.moment.live = live.iter().cloned().collect();
+    }
     let angle = inputs.moment.angle;
+    let live: Vec<String> = inputs.moment.live.iter().cloned().collect();
     let spacing = spacing_ticks(inputs.director.min_spacing, dt);
     let options = resolve(plan_def, &p.db, &f.fighter.moveset, radius);
     let ok = |o: &Resolved| refusal(o, &inputs).is_none();
@@ -464,6 +573,7 @@ pub fn schedule_report(p: &ScheduleParams, entity: Entity, what_if: &WhatIf, dev
         distance: round2(distance),
         angle: round2(angle),
         players,
+        live,
         tokenless: plan_def.tokenless,
         what_if: what_if.any(),
         history: f.plan.history.iter().map(|h| h.name.clone()).collect(),
@@ -550,7 +660,7 @@ mod tests {
 
     fn built(w: &mut World) -> Built {
         w.run_system_once(|db: Res<ContentDb>, physics: Res<PhysicsWorld>, npcs: Query<FightingReadOnly>| -> Built {
-            let cx = FightCx { db: &db, physics: &physics, tick: TICK, dt: DT, players: 1, rules: None };
+            let cx = FightCx { db: &db, physics: &physics, tick: TICK, dt: DT, players: 1, rules: None, live: None };
             let inflight = InFlight::collect(npcs.iter().map(|f| (*f.id, f.token.held.as_ref())));
             let notes = plan_notes(&db, None, npcs.iter(), TICK, DT);
             let mut out: Built = npcs

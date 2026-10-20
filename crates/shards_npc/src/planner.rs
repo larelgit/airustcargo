@@ -28,7 +28,7 @@ use shards_rules::ActiveRules;
 use crate::brain::{clamp_to_leash, salt};
 use crate::def::{AttackPlanDef, DirectorDef, SequenceBan};
 use crate::director::{order, target_of, wait_in_role, Fighting, Grant, Targets};
-use crate::schedule::{inputs, living_players, plan_notes, FightCx, Inputs, Players, Refusal};
+use crate::schedule::{inputs, living_players, plan_notes, FightCx, Inputs, LiveZones, Players, Refusal};
 use crate::strike::pool;
 
 /// An NPC's attack history and timers: gameplay state, kept in replays.
@@ -126,6 +126,8 @@ pub struct Resolved {
     pub players: Option<(u32, u32)>,
     pub max_repeats: Option<u32>,
     pub forbid_after: Vec<String>,
+    pub forbid_while: Vec<String>,
+    pub solo_forbid_while: Vec<String>,
 }
 
 /// A cooldown at or below this (s) is none: [`NpcPlan::tick`] lets it go, and
@@ -157,6 +159,8 @@ pub fn resolve(plan: &AttackPlanDef, db: &ContentDb, moveset: &str, target_radiu
             players: o.and_then(|o| o.players),
             max_repeats: o.and_then(|o| o.max_repeats),
             forbid_after: o.map(|o| o.forbid_after.clone()).unwrap_or_default(),
+            forbid_while: o.map(|o| o.forbid_while.clone()).unwrap_or_default(),
+            solo_forbid_while: o.map(|o| o.solo_forbid_while.clone()).unwrap_or_default(),
             tags,
             name,
         }
@@ -286,14 +290,17 @@ pub fn in_window(o: &Resolved, distance: f32) -> bool {
     distance >= o.min - 1e-4 && distance <= o.max + 1e-4
 }
 
+/// One attack in flight: its target, its holder, its cost, its tags and the input it pressed.
+type Flight = (AiId, AiId, f32, Vec<String>, Option<String>);
+
 /// The attacks in flight (pressed or running), by target.
-pub(crate) struct InFlight(Vec<(AiId, AiId, f32, Vec<String>)>);
+pub(crate) struct InFlight(Vec<Flight>);
 
 impl InFlight {
     /// From every NPC's held token: `(holder, grant)`.
     pub(crate) fn collect<'a>(tokens: impl Iterator<Item = (AiId, Option<&'a Grant>)>) -> Self {
-        let mut all: Vec<(AiId, AiId, f32, Vec<String>)> = tokens
-            .filter_map(|(holder, g)| g.filter(|g| g.in_flight()).map(|g| (g.target, holder, g.cost, g.tags.clone())))
+        let mut all: Vec<Flight> = tokens
+            .filter_map(|(holder, g)| g.filter(|g| g.in_flight()).map(|g| (g.target, holder, g.cost, g.tags.clone(), g.input.clone())))
             .collect();
         all.sort_by_key(|a| (a.0, a.1));
         Self(all)
@@ -303,12 +310,18 @@ impl InFlight {
     /// and tags.
     pub(crate) fn on(&self, target: AiId, me: AiId, director: &DirectorDef) -> (Option<f32>, Vec<(AiId, Vec<String>)>) {
         let others = self.0.iter().filter(|(t, holder, ..)| *t == target && *holder != me);
-        let spent: f32 = others.clone().map(|(_, _, cost, _)| *cost).sum();
-        (director.budget.map(|b| b - spent), others.map(|(_, holder, _, tags)| (*holder, tags.clone())).collect())
+        let spent: f32 = others.clone().map(|(_, _, cost, ..)| *cost).sum();
+        (director.budget.map(|b| b - spent), others.map(|(_, holder, _, tags, _)| (*holder, tags.clone())).collect())
     }
 
-    fn add(&mut self, target: AiId, holder: AiId, cost: f32, tags: Vec<String>) {
-        self.0.push((target, holder, cost, tags));
+    /// The others' attacks in flight on `target` (never `me`'s): the holder and the input it
+    /// pressed, for what the attack lays at the target's feet ([`LiveZones`](crate::schedule::LiveZones)).
+    pub(crate) fn presses_on(&self, target: AiId, me: AiId) -> impl Iterator<Item = (AiId, &str)> {
+        self.0.iter().filter(move |(t, holder, ..)| *t == target && *holder != me).filter_map(|(_, holder, _, _, input)| Some((*holder, input.as_deref()?)))
+    }
+
+    fn add(&mut self, target: AiId, holder: AiId, cost: f32, tags: Vec<String>, input: String) {
+        self.0.push((target, holder, cost, tags, Some(input)));
     }
 }
 
@@ -357,6 +370,14 @@ pub(crate) fn refusal(o: &Resolved, i: &Inputs) -> Option<Refusal> {
         && (i.moment.players < min || i.moment.players > max)
     {
         return Some(Refusal::Players { players: i.moment.players, min, max });
+    }
+    if let Some(tag) = o.forbid_while.iter().find(|t| i.moment.live.contains(*t)) {
+        return Some(Refusal::Live { tag: tag.clone() });
+    }
+    if i.moment.players <= 1
+        && let Some(tag) = o.solo_forbid_while.iter().find(|t| i.moment.live.contains(*t))
+    {
+        return Some(Refusal::LiveSolo { tag: tag.clone() });
     }
     if let Some(max) = o.max_repeats {
         let times = repeats_of(&i.plan.history, &o.name);
@@ -430,11 +451,12 @@ pub(crate) fn plan_attacks(
     players: Players,
     targets: Targets,
     rules: Option<Res<ActiveRules>>,
+    live: LiveZones,
     mut npcs: Query<Fighting>,
 ) {
     let dt = time.delta_secs();
     let players = living_players(&players);
-    let cx = FightCx { db: &db, physics: &physics, tick: tick.0, dt, players, rules: rules.as_deref() };
+    let cx = FightCx { db: &db, physics: &physics, tick: tick.0, dt, players, rules: rules.as_deref(), live: Some(&live) };
     let mut inflight = InFlight::collect(npcs.iter().map(|f| (*f.id, f.token.held.as_ref())));
     let mut notes = plan_notes(&db, rules.as_deref(), npcs.iter(), tick.0, dt);
     for (id, entity) in order(&npcs) {
@@ -530,7 +552,7 @@ pub(crate) fn plan_attacks(
                     // The next wait seeds its orbit from where the attack leaves the body.
                     f.brain.role = None;
                 }
-                inflight.add(grant.target, id, o.cost, o.tags.clone());
+                inflight.add(grant.target, id, o.cost, o.tags.clone(), o.input.clone());
                 notes.push((id, pool(&f.npc.director), tick.0));
             }
         }
@@ -561,6 +583,8 @@ mod tests {
             players: None,
             max_repeats: None,
             forbid_after: Vec::new(),
+            forbid_while: Vec::new(),
+            solo_forbid_while: Vec::new(),
         }
     }
 
@@ -858,7 +882,7 @@ mod tests {
                 director: DirectorDef::default(),
                 spacing: None,
                 open: None,
-                moment: Moment { angle: 0.0, players: 1 },
+                moment: Moment { angle: 0.0, players: 1, ..Default::default() },
             }
         }
 
@@ -877,7 +901,7 @@ mod tests {
                 director: self.director.clone(),
                 spacing: self.spacing,
                 open: self.open.as_ref(),
-                moment: self.moment,
+                moment: self.moment.clone(),
             };
             let tags: Vec<Vec<String>> = self.overlapping.iter().map(|(_, tags)| tags.clone()).collect();
             let mut old = false;
@@ -909,11 +933,11 @@ mod tests {
     }
 
     /// The rules in the order `refusal` asks them.
-    const RULES: [&str; 12] =
-        ["weight", "cooldown", "angle", "closed", "players", "repeats", "forbid_after", "banned", "machine", "budget", "overlap", "spacing"];
+    const RULES: [&str; 14] =
+        ["weight", "cooldown", "angle", "closed", "players", "live", "live_solo", "repeats", "forbid_after", "banned", "machine", "budget", "overlap", "spacing"];
 
     /// Which of [`RULES`] the old conjunction ([`feasible_old`]) had: the others are the scheduler's gates.
-    const OLD: [bool; 12] = [true, true, false, true, false, false, false, true, true, true, true, true];
+    const OLD: [bool; 14] = [true, true, false, true, false, false, false, false, false, true, true, true, true, true];
 
     fn rule(r: &Refusal) -> &'static str {
         match r {
@@ -922,6 +946,8 @@ mod tests {
             Refusal::Angle { .. } => "angle",
             Refusal::Closed { .. } => "closed",
             Refusal::Players { .. } => "players",
+            Refusal::Live { .. } => "live",
+            Refusal::LiveSolo { .. } => "live_solo",
             Refusal::Repeats { .. } => "repeats",
             Refusal::ForbidAfter { .. } => "forbid_after",
             Refusal::Banned { .. } => "banned",
@@ -936,7 +962,7 @@ mod tests {
     type Closer = (fn(&mut Case), Refusal);
 
     /// For each rule of [`RULES`], in order, its [`Closer`].
-    fn closers() -> [Closer; 12] {
+    fn closers() -> [Closer; 14] {
         [
             (|c| c.o.weight = 0.0, Refusal::Weight),
             (|c| c.plan.cooldowns = vec![PlanCooldown { name: "a".into(), left: 0.5 }], Refusal::Cooldown { left: 0.5 }),
@@ -960,6 +986,21 @@ mod tests {
                 Refusal::Closed { when: "enraged, !calm".into() },
             ),
             (|c| { c.o.players = Some((2, 3)); c.moment.players = 1; }, Refusal::Players { players: 1, min: 2, max: 3 }),
+            (
+                |c| {
+                    c.o.forbid_while = vec!["trap".into(), "capture".into()];
+                    c.moment.live.insert("capture".into());
+                },
+                Refusal::Live { tag: "capture".into() },
+            ),
+            (
+                |c| {
+                    c.o.solo_forbid_while = vec!["long".into()];
+                    c.moment.live.insert("long".into());
+                    c.moment.players = 1;
+                },
+                Refusal::LiveSolo { tag: "long".into() },
+            ),
             (
                 |c| {
                     c.o.max_repeats = Some(2);
@@ -1131,7 +1172,7 @@ mod tests {
         let tag_pool = ["light", "heavy", "zone", "move", "a", "b"];
         let tags = |rng: &mut DetRng| -> Vec<String> { tag_pool.iter().filter(|_| rng.chance(0.35)).map(|t| (*t).to_owned()).collect() };
         let conds = ["enraged", "!calm", "phase_2"];
-        let mut refused = [0u32; 12];
+        let mut refused = [0u32; 14];
         let mut passed = 0u32;
         for n in 0..20_000 {
             let name = *rng.pick(&names).unwrap();
@@ -1200,7 +1241,7 @@ mod tests {
                 director,
                 spacing: rng.chance(0.4).then(|| (AiId(9), 1 + u64::from(rng.below(40)))),
                 open: rng.chance(0.5).then(|| NpcOptions { allowed: names.iter().filter(|_| rng.chance(0.5)).map(|n| (*n).to_owned()).collect() }),
-                moment: Moment { angle: 0.0, players: 1 },
+                moment: Moment { angle: 0.0, players: 1, ..Default::default() },
             };
             let judged = case.judge(&db, &scope);
             assert_eq!(judged.refusal.is_none(), judged.old, "case {n}: {case:?} gives {:?}", judged.refusal);
@@ -1286,7 +1327,7 @@ mod tests {
             let mut case = Case::open();
             case.o.players = players;
             case.o.angle = angle;
-            case.moment = Moment { angle: off, players: living };
+            case.moment = Moment { angle: off, players: living, ..Default::default() };
             case.judge(&db, &scope).refusal.is_none()
         };
         assert!(judge(Some((1, 1)), 1, None, 0.0) && !judge(Some((1, 1)), 2, None, 0.0) && !judge(Some((1, 1)), 0, None, 0.0));
@@ -1296,6 +1337,31 @@ mod tests {
         assert!(judge(None, 1, behind, 150.0) && judge(None, 1, behind, 95.0) && judge(None, 1, behind, 180.0));
         assert!(!judge(None, 1, behind, 94.0) && !judge(None, 1, behind, 0.0));
         assert!(judge(None, 1, behind, 94.99995), "within the planner's 1e-4 slack");
+    }
+
+    /// `forbid_while` refuses while one of its tags is live, whatever the players, naming the first
+    /// in written order; `solo_forbid_while` only while one player (or none) lives.
+    #[test]
+    fn a_live_tag_refuses_and_a_solo_one_only_alone() {
+        let (db, scope) = machine_db();
+        let judge = |forbid: &[&str], solo: &[&str], live: &[&str], players: u32| {
+            let mut case = Case::open();
+            case.o.forbid_while = forbid.iter().map(|t| (*t).to_owned()).collect();
+            case.o.solo_forbid_while = solo.iter().map(|t| (*t).to_owned()).collect();
+            case.moment.live = live.iter().map(|t| (*t).to_owned()).collect();
+            case.moment.players = players;
+            case.judge(&db, &scope).refusal
+        };
+        let live = |tag: &str| Some(Refusal::Live { tag: tag.into() });
+        assert_eq!(judge(&["capture"], &[], &[], 1), None, "nothing live");
+        assert_eq!(judge(&["capture"], &[], &["long"], 1), None, "another tag live");
+        assert_eq!(judge(&["capture"], &[], &["capture"], 1), live("capture"));
+        assert_eq!(judge(&["capture"], &[], &["capture"], 3), live("capture"), "with any number of players");
+        assert_eq!(judge(&["long", "capture"], &[], &["capture", "long"], 2), live("long"), "the first written");
+        assert_eq!(judge(&[], &["long"], &["long"], 1), Some(Refusal::LiveSolo { tag: "long".into() }));
+        assert_eq!(judge(&[], &["long"], &["long"], 0), Some(Refusal::LiveSolo { tag: "long".into() }), "none living");
+        assert_eq!(judge(&[], &["long"], &["long"], 2), None, "two players");
+        assert_eq!(judge(&["capture"], &["long"], &["capture", "long"], 1), live("capture"), "forbid_while first");
     }
     #[test]
     fn budgets_and_combinations_come_from_the_attacks_in_flight() {
