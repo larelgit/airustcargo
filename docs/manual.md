@@ -1026,7 +1026,7 @@ where the framing puts it, but its view turns up from the focus about its own ho
 both cannot be kept, the player is. Both are measured in the camera's own frame, so a target off to the side (a camera still
 turning to a new lock) lands where the frame's height says. The turn eases toward the target at `fit.rate`, but the feet's limit
 and `tilt_max` (`fit_room`) hold it on every frame: a wall that shortens the arm or a lower `tilt_max` never lets the feet out (the player and the threat, not the whole silhouette). With the defaults a point fits up
-to about 9 m at 2 m ahead, 10 m at 4 m, and 12 m from 6 m out. The view never turns down, a target the frame
+to about 9 m at 2 m ahead, 10 m at 4 m, and 12 m from 6 m out. The fit never tilts the view below the focus, a target the frame
 already holds (a body of a person's height, framed at its chest) gives the very same camera as without a fit, and after the lock
 the view comes back to the focus at `fit.rate`. A lower camera needs no new number: `framing.pitch_clamp`'s low end is how far
 down the framed arm may go (`(0.0, 0.7)` keeps it level with the head next to a big body). Without a `fit` nothing changes. The
