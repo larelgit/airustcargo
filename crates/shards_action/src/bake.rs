@@ -760,6 +760,30 @@ mod tests {
     }
 
     #[test]
+    fn a_cues_bone_must_be_a_node_of_its_clips_file() {
+        // The model has `root` and `hips` (the helper's skeleton); `models/g.glb` is not there at all.
+        let set = r#"{ "h": (source: "models/h.glb", clips: {
+            "idle": (cues: [(at: 0.5, cue: "breath", bone: "hips"), (at: 1.0, cue: "breath", bone: "tail"), (at: 1.5, cue: "breath")]),
+            "lunge": (cues: [(at: 0.1, cue: "step", bone: "foot.L", strength: 0.5), (at: 0.2, cue: "step", bone: "")]),
+        }) }"#;
+        let root = assets("cue_bones", &[("content/h.animset.ron", set)]);
+        let errors = errors(&build(&root));
+        assert_eq!(
+            errors,
+            [
+                "content/h.animset.ron: animset `h`: clips.lunge.cues[1].bone is empty; name a bone of the model \
+                 (`bone: \"foot.L\"`) or leave it out",
+                "content/h.animset.ron: animset `h`: clips.idle.cues[1].bone -> `models/h.glb` has no node `tail`; \
+                 name a bone of the model",
+                "content/h.animset.ron: animset `h`: clips.lunge.cues[0].bone -> `models/h.glb` has no node `foot.L`; \
+                 name a bone of the model",
+            ],
+            "`hips` is a node of the file; an empty bone is reported once, by the field check"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn a_baked_curve_must_match_its_clip() {
         let actions = r#"{
             "fresh": (net_id: 1, phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)],

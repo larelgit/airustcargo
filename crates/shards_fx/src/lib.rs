@@ -8,6 +8,9 @@
 //! own with [`PlayEffect`] or [`play`]. An event with an attacker (a hit, a guard, a parry) plays
 //! on the side of the body that faces the attacker, and `aim: Hit` sends the particles back out
 //! of it, towards the attacker; such an effect plays at that point and does not follow the body.
+//! A clip's cue plays at the body's feet, or at the world position of the bone the cue names
+//! (`CueDef::bone`, a footstep at the foot), and its `strength` scales the burst and the size of
+//! the particles ([`play_scaled`]; strength 0 plays nothing).
 //!
 //! - **Particles** are the engine's own (bevy_hanabi has no Bevy 0.20 release): each effect has a
 //!   **pool** of `max_live` meshes made once, when content loads, and hidden while idle; a play
@@ -147,9 +150,11 @@ pub struct Emitter {
     /// The clock when it started.
     pub born: f64,
     pub rate: f32,
-    /// Particles emitted so far, and in all.
+    /// Particles emitted so far, and in all (scaled by `strength`).
     pub emitted: u32,
     pub total: u32,
+    /// How strong the play was ([`play_scaled`]): the size of each particle it emits.
+    pub strength: f32,
 }
 
 /// The particles in flight, by effect, and the effects still emitting. Only while something is
@@ -271,6 +276,15 @@ fn place(world: &World, at: EffectAt) -> Option<Vec3> {
 /// what its `rate` adds over its `duration`. Errors: an effect no content defines (naming the
 /// closest), an entity with no place, nothing drawn.
 pub fn play(world: &mut World, effect: &str, at: EffectAt, toward: Option<Vec3>) -> Result<Played, String> {
+    play_scaled(world, effect, at, toward, 1.0)
+}
+
+/// [`play`] at `strength` (a clip cue's, `CueDef::strength`): the effect's particles, the burst and
+/// what its `rate` adds, are scaled in number (rounded, and at least one while the effect has
+/// any and `strength` is above 0) and in size. 1 is [`play`]; 0, or a value that is not a number,
+/// plays nothing and leaves the pools alone. The pools are made for the effect as content defines
+/// it: a scaled play never remakes one.
+pub fn play_scaled(world: &mut World, effect: &str, at: EffectAt, toward: Option<Vec3>, strength: f32) -> Result<Played, String> {
     let db = world.get_resource::<ContentDb>().ok_or("this game has no content")?;
     let Some(def) = db.get::<EffectDef>(effect).cloned() else {
         let known: Vec<&str> = db.iter::<EffectDef>().map(|(id, _)| id).collect();
@@ -284,10 +298,16 @@ pub fn play(world: &mut World, effect: &str, at: EffectAt, toward: Option<Vec3>)
         EffectAt::Entity(e) => format!("{} has no place in the world to play at", ai_core::label(world, e)),
         EffectAt::Point(_) => unreachable!("a point is a place"),
     })?;
+    let strength = if strength.is_finite() { strength.max(0.0) } else { 0.0 };
     let now = clock(world);
     let aim = sim::aim_of(&def, toward);
     let mut particles = world.resource_mut::<Particles>();
     let Particles { effects, emitters, rng, played, .. } = &mut *particles;
+    if strength == 0.0 {
+        // Nothing starts: not played, and no pool made or remade for it.
+        let (live, pool) = effects.get(effect).map_or((0, def.pool_size()), |p| (p.pool.live(), p.pool.size()));
+        return Ok(Played { particles: 0, later: 0, position, live, pool });
+    }
     let playing = {
         let fresh = effects.get(effect).is_none_or(|p| p.def != def);
         if fresh {
@@ -296,13 +316,15 @@ pub fn play(world: &mut World, effect: &str, at: EffectAt, toward: Option<Vec3>)
         effects.get_mut(effect).expect("just made")
     };
     // A definition the check refuses still plays at the first load: within the limits it names.
-    let burst = def.count.min(MAX_COUNT);
+    let burst = scaled(def.count.min(MAX_COUNT), strength).min(MAX_COUNT);
     for _ in 0..burst {
-        playing.pool.add(sim::spawn(&def, position, aim, now, rng));
+        let mut particle = sim::spawn(&def, position, aim, now, rng);
+        particle.size *= strength;
+        playing.pool.add(particle);
     }
-    let later = def.later().min(MAX_LIVE);
+    let later = scaled(def.later().min(MAX_LIVE), strength).min(MAX_LIVE);
     if later > 0 {
-        emitters.push(Emitter { effect: effect.to_owned(), at, aim, born: now, rate: def.rate, emitted: 0, total: later });
+        emitters.push(Emitter { effect: effect.to_owned(), at, aim, born: now, rate: def.rate, emitted: 0, total: later, strength });
     }
     *played += 1;
     Ok(Played { particles: burst, later, position, live: playing.pool.live(), pool: playing.pool.size() })
@@ -311,10 +333,15 @@ pub fn play(world: &mut World, effect: &str, at: EffectAt, toward: Option<Vec3>)
 /// [`play`] for what the engine plays (an event, a cue, [`PlayEffect`]): nothing while nothing is
 /// drawn; an unknown effect is journaled once and otherwise ignored.
 pub fn play_quietly(world: &mut World, effect: &str, at: EffectAt, toward: Option<Vec3>, why: &str) {
+    play_quietly_scaled(world, effect, at, toward, 1.0, why);
+}
+
+/// [`play_quietly`] at `strength`, as [`play_scaled`] takes it.
+pub fn play_quietly_scaled(world: &mut World, effect: &str, at: EffectAt, toward: Option<Vec3>, strength: f32, why: &str) {
     if !draws(world) {
         return;
     }
-    if let Err(e) = play(world, effect, at, toward)
+    if let Err(e) = play_scaled(world, effect, at, toward, strength)
         && e.starts_with("no effect")
         && world.resource_mut::<Particles>().unknown.insert(effect.to_owned())
     {
@@ -342,7 +369,9 @@ pub fn emit_due(world: &mut World) {
         if let Some(playing) = effects.get_mut(&emitter.effect).filter(|p| p.def == def) {
             for i in emitter.emitted..due {
                 let born = emitter.born + f64::from(i + 1) / f64::from(emitter.rate);
-                playing.pool.add(sim::spawn(&def, position, emitter.aim, born, rng));
+                let mut particle = sim::spawn(&def, position, emitter.aim, born, rng);
+                particle.size *= emitter.strength;
+                playing.pool.add(particle);
             }
         }
         emitter.emitted = due;
@@ -358,9 +387,19 @@ fn on_play_effect(event: On<PlayEffect>, mut commands: Commands) {
     commands.queue(move |world: &mut World| play_quietly(world, &effect, at, toward, "PlayEffect"));
 }
 
-/// A clip's cue: the effect the table gives it, else the effect of its name, from the body.
+/// `count` particles at `strength` above 0: scaled and rounded, and at least one while there are
+/// any.
+fn scaled(count: u32, strength: f32) -> u32 {
+    if count == 0 {
+        return 0;
+    }
+    ((count as f32 * strength).round() as u32).max(1)
+}
+
+/// A clip's cue: the effect the table gives it, else the effect of its name, from the body (its
+/// feet), or from the cue's bone when the cue has one, at the cue's strength.
 fn on_animation_cue(cue: On<AnimationCue>, mut commands: Commands) {
-    let AnimationCue { entity, cue, .. } = cue.event().clone();
+    let AnimationCue { entity, cue, at, strength, .. } = cue.event().clone();
     commands.queue(move |world: &mut World| {
         if !draws(world) {
             return;
@@ -368,7 +407,8 @@ fn on_animation_cue(cue: On<AnimationCue>, mut commands: Commands) {
         let mapped = fx_def(world).and_then(|fx| fx.cues.get(&cue).cloned());
         let named = || world.resource::<ContentDb>().get::<EffectDef>(&cue).is_some().then(|| cue.clone());
         if let Some(effect) = mapped.or_else(named) {
-            play_quietly(world, &effect, EffectAt::Entity(entity), None, "a clip's cue");
+            let place = at.map_or(EffectAt::Entity(entity), EffectAt::Point);
+            play_quietly_scaled(world, &effect, place, None, strength, "a clip's cue");
         }
     });
 }
