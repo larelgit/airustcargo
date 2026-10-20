@@ -760,6 +760,51 @@ mod tests {
     }
 
     #[test]
+    fn a_cues_bone_must_be_a_node_of_the_model() {
+        // The model has `root` and `hips` (the helper's skeleton); `models/g.glb` is not there at all.
+        let set = r#"{ "h": (source: "models/h.glb", clips: {
+            "idle": (cues: [(at: 0.5, cue: "breath", bone: "hips"), (at: 1.0, cue: "breath", bone: "tail"), (at: 1.5, cue: "breath")]),
+            "lunge": (cues: [(at: 0.1, cue: "step", bone: "foot.L", strength: 0.5), (at: 0.2, cue: "step", bone: "")]),
+        }) }"#;
+        let root = assets("cue_bones", &[("content/h.animset.ron", set)]);
+        let errors = errors(&build(&root));
+        assert_eq!(
+            errors,
+            [
+                "content/h.animset.ron: animset `h`: clips.lunge.cues[1].bone is empty; name a bone of the model \
+                 (`bone: \"foot.L\"`) or leave it out",
+                "content/h.animset.ron: animset `h`: clips.idle.cues[1].bone -> `models/h.glb` has no node `tail`; \
+                 name a bone of the model",
+                "content/h.animset.ron: animset `h`: clips.lunge.cues[0].bone -> `models/h.glb` has no node `foot.L`; \
+                 name a bone of the model",
+            ],
+            "`hips` is a node of the file; an empty bone is reported once, by the field check"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_cue_on_a_clip_from_another_file_names_a_bone_of_the_model() {
+        // `models/g.glb` holds clips for the same skeleton and a helper node `tail` the model lacks; the
+        // model has `hips`, the gestures file does not. The bridge finds a cue's bone under the model.
+        let set = r#"{ "h": (source: "models/h.glb", clips: {"idle": (),
+            "bow": (source: "models/g.glb", name: "lunge", cues: [(at: 0.1, cue: "creak", bone: "hips"), (at: 0.2, cue: "swish", bone: "tail")]),
+        }) }"#;
+        let root = assets("cue_bones_file", &[("content/h.animset.ron", set)]);
+        let mut gestures = std::fs::read(root.join("models/h.glb")).unwrap();
+        let at = gestures.windows(6).position(|w| w == b"\"hips\"").unwrap();
+        gestures[at..at + 6].copy_from_slice(b"\"tail\"");
+        std::fs::write(root.join("models/g.glb"), gestures).unwrap();
+        let errors = errors(&build(&root));
+        assert_eq!(
+            errors,
+            ["content/h.animset.ron: animset `h`: clips.bow.cues[1].bone -> `models/h.glb` has no node `tail`; name a bone of the model"],
+            "`hips` is the model's, whatever the clip's own file has"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn a_baked_curve_must_match_its_clip() {
         let actions = r#"{
             "fresh": (net_id: 1, phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)],
