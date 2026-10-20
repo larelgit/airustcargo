@@ -65,7 +65,7 @@ use shards_core::Predicted;
 use shards_motion::{MotionState, MoveModifiers};
 
 use crate::anim::{
-    crossed_cues, mode_name, select_clip_in, select_layer_in, AnimSet, Animated, AnimationCue, BodyStatus, ClipChoice,
+    crossed_cues, mode_name, select_clip_timed, select_layer_timed, ActionTime, AnimSet, Animated, AnimationCue, BodyStatus, ClipChoice,
     LayerChoice, ModeLeft, PropSwaps, MAX_LAYERS,
 };
 use crate::def::{ActionDef, MovesetDef};
@@ -740,14 +740,14 @@ pub fn drive(
             continue;
         }
 
-        // The running action as (key, seconds in, length). One that has a hold loop (a raised
+        // The running action: its key, seconds in, length and phases. One that has a hold loop (a raised
         // block) is not looked ahead: it would run past the loop's end.
         let run = if predicted { shown.map(|p| &p.run) } else { state.and_then(|s| s.current.as_ref()) };
         let def = run.and_then(|r| db.get::<ActionDef>(&r.action));
         let action = run.map(|r| {
             let key = set.action_key(&r.action, r.anim.as_deref(), def.map_or(&[], |d| d.tags.as_slice()));
             let ahead = if def.is_some_and(|d| d.hold.is_some()) { 0.0 } else { overstep };
-            (key, (r.t + ahead).min(r.length), r.length)
+            ActionTime::new(key, (r.t + ahead).min(r.length), r.length, def.map_or(&[], |d| d.phases.as_slice()))
         });
         let staggers = fighter
             .and_then(|f| db.get::<MovesetDef>(&f.moveset))
@@ -756,7 +756,7 @@ pub fn drive(
             .is_some_and(|(stagger, r)| r.forced && r.action == stagger);
         let status = BodyStatus { dead, staggered: staggers, pace: modifiers.map_or(1.0, MoveModifiers::pace) };
         let moveset = fighter.map(|f| f.moveset.as_str());
-        let choice = select_clip_in(action, motion.unwrap_or(&standing), status, set, moveset);
+        let choice = select_clip_timed(action, motion.unwrap_or(&standing), status, set, moveset);
         let switched = drive_body(&mut commands, entity, set, built, &clips, &mut bound, &mut player, &mut transitions, &choice, frozen);
         if switched {
             // The fade out of the mode's clip (its nominal blend, a paused clock snaps it but does not
@@ -766,13 +766,13 @@ pub fn drive(
         let mode = motion.unwrap_or(&standing).mode;
         if !built.layered.is_empty() || !bound.overlays.is_empty() {
             // A layer that is off in this mode plays nothing: what played fades out.
-            let wanted = select_layer_in(action, status, set, moveset).filter(|l| !set.layer_off(l.layer, mode));
+            let wanted = select_layer_timed(action, status, set, moveset).filter(|l| !set.layer_off(l.layer, mode));
             let frame = LayerFrame { wanted, back_blend: choice.blend, dt: time.delta_secs(), frozen };
             drive_layers(&mut commands, entity, set, built, &clips, &mut bound, &mut player, &frame);
         }
 
         // The motion mode: the mounts' rules for it and for after leaving it, the drop.
-        let ended = run.zip(action).map(|(r, (key, ..))| (r.instance, set.ends_equip(key)));
+        let ended = run.zip(action).map(|(r, a)| (r.instance, set.ends_equip(a.key)));
         let moded = bound.modes.advance(&ModeFrame { set, mode, acting: run.is_some(), run: ended, clock });
         if let Some(left) = moded.fired {
             commands.trigger(ModeLeft { entity, mode: mode_name(left).to_owned() });
@@ -789,7 +789,7 @@ pub fn drive(
             db: &db,
             moveset,
             swaps,
-            run: run.zip(action).map(|(run, (key, t, _))| RunView { run, def, key, t }),
+            run: run.zip(action).map(|(run, a)| RunView { run, def, key: a.key, t: a.t }),
             clock,
             modes: moded,
         };

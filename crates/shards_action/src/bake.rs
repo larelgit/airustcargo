@@ -65,7 +65,7 @@ pub fn keys_text(keys: &[(f32, f32)]) -> String {
 }
 
 /// `v` to `decimals` places, at least one, without trailing zeros; never `-0.0`.
-fn number(v: f32, decimals: usize) -> String {
+pub(crate) fn number(v: f32, decimals: usize) -> String {
     let mut s = format!("{v:.decimals$}");
     while s.ends_with('0') && !s.ends_with(".0") {
         s.pop();
@@ -733,6 +733,30 @@ mod tests {
                 "content/h.animset.ron: animset `h`: clips.slash -> `models/h.glb` has no animation `Slash`; it has: idle, lunge",
                 "content/h.animset.ron: animset `h`: root_motion -> `models/h.glb` has no node `pelvis`; name its root bone",
             ]
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_clips_phases_must_be_the_files() {
+        // `lunge` carries `windup 0.2 active 0.1 recovery 0.3`; `idle` carries none and lasts 2 s.
+        let set = r#"{ "h": (source: "models/h.glb", clips: {
+            "lunge": (phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)]),
+            "near": (name: "lunge", phases: [("windup", 0.205), ("active", 0.1), ("recovery", 0.3)]),
+            "late": (name: "lunge", phases: [("windup", 0.25), ("active", 0.1), ("recovery", 0.3)]),
+            "idle": (phases: [("loop", 2.0)]),
+            "short": (name: "idle", phases: [("loop", 1.5)]),
+        }) }"#;
+        let root = assets("clip_phases", &[("content/h.animset.ron", set)]);
+        assert_eq!(
+            errors(&build(&root)),
+            [
+                "content/h.animset.ron: animset `h`: clips.late.phases (windup 0.25, active 0.1, recovery 0.3) are not the \
+                 phases animation `lunge` of `models/h.glb` was timed to (windup 0.2, active 0.1, recovery 0.3); write the file's",
+                "content/h.animset.ron: animset `h`: clips.short.phases last 1.5 s in all, animation `idle` of `models/h.glb` \
+                 2.0 s; make them add up to the clip's length",
+            ],
+            "within half a tick is the same, as for a bake"
         );
         let _ = std::fs::remove_dir_all(root);
     }

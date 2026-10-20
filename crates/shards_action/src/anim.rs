@@ -90,6 +90,31 @@
 //! its body. A content check with the asset folder reads the files: a clip the file lacks, a
 //! root bone it lacks, a baked curve that no longer matches its clip are errors.
 //!
+//! ## Phases on the clip
+//!
+//! An action's clip is seeked evenly over the run by default: 40 % of the run shows 40 % of the
+//! clip. A clip made for one action and played by another with other timings (an enemy's slow
+//! swing on the hero's quick one) then shows its strike before the strike lands. A clip that says
+//! which phases it was timed to (`phases`, in clip seconds, as an action's are written) is seeked
+//! phase by phase instead: each phase of an action with the same phases (the same names in the
+//! same order) shows its own stretch of the clip, however long the action's phase lasts.
+//!
+//! ```ron
+//! //     clips: {"light_1": (phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)])},
+//! // an action with phases [("windup", 0.6), ("active", 0.15), ("recovery", 0.8)] shows the
+//! // clip's first 0.2 s over its 0.6 s windup, and the strike when its active phase starts.
+//! ```
+//!
+//! A phase of open length is no stretch: name it in `loops` (`loops: ["down"]`) and its stretch of
+//! the clip repeats at the authored speed for as long as the action's phase lasts (a toppled body
+//! breathing for 4 s on a 1.5 s breath); the next phase starts at its own start.
+//!
+//! Time a run gains past its phases (a miss's longer recovery) stretches its last phase. An
+//! action whose phases are not the clip's plays it evenly, as one without `phases` does;
+//! the content check refuses one that shares some of the clip's phase names but not all, in
+//! order (a typo or a phase left out). With the asset folder, a clip's `phases` must match the
+//! file's: its `phases` extra when it has one, else its length. [`phase_seek`] is the mapping.
+//!
 //! ## Sockets and props
 //!
 //! A character can carry things: a sword in the hand, a flask on the hip. A *socket* is a place on
@@ -142,7 +167,7 @@ use shards_content::{ContentDef, Refs};
 use shards_motion::{MotionMode, MotionState};
 
 use crate::clipfile::ClipFile;
-use crate::def::{ActionDef, MovesetDef, Span, EPS};
+use crate::def::{ActionDef, MovesetDef, Phase, Span, EPS};
 
 /// Marks a character the animation bridge drives: `animset` is the id of its
 /// [`AnimSet`]. The glTF scene is a child entity. Presentation only: replays ignore it, so
@@ -206,11 +231,20 @@ pub struct ClipDef {
     /// Effects and sound on its timeline.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub cues: Vec<CueDef>,
+    /// The phases the clip was timed to, in clip seconds (`[("windup", 0.2), ("active", 0.1),
+    /// ("recovery", 0.3)]`): an action with the same phases is seeked phase by phase (see
+    /// "Phases on the clip" in the [module](self)). Empty: every action plays it evenly.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub phases: Vec<Phase>,
+    /// Phases of `phases` whose stretch of the clip repeats at the authored speed while the action's
+    /// phase lasts (a breath while a body lies toppled), instead of being stretched over it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub loops: Vec<String>,
 }
 
 impl Default for ClipDef {
     fn default() -> Self {
-        Self { name: None, source: None, speed: 1.0, blend: None, cues: Vec::new() }
+        Self { name: None, source: None, speed: 1.0, blend: None, cues: Vec::new(), phases: Vec::new(), loops: Vec::new() }
     }
 }
 
@@ -1104,6 +1138,94 @@ fn ground_scale(state: Locomotion, motion: &MotionState, speeds: &GroundSpeeds) 
     (v / authored).clamp(speeds.min_scale, speeds.max_scale.max(speeds.min_scale))
 }
 
+/// A running action as the animation reads it: the key [`AnimSet::action_key`] chose, seconds into
+/// the run, the run's length (a miss's longer recovery included) and the action's phases.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ActionTime<'a> {
+    pub key: &'a str,
+    pub t: f32,
+    pub length: f32,
+    /// The action's phases; empty: every clip plays it evenly.
+    pub phases: &'a [Phase],
+}
+
+impl<'a> ActionTime<'a> {
+    pub fn new(key: &'a str, t: f32, length: f32, phases: &'a [Phase]) -> Self {
+        Self { key, t, length, phases }
+    }
+
+    /// An action whose clips play evenly (`t / length`): no phases to match.
+    pub fn even(key: &'a str, t: f32, length: f32) -> Self {
+        Self::new(key, t, length, &[])
+    }
+}
+
+/// `t / length`, 0 to 1; 1 for a run of no length.
+fn even_progress(t: f32, length: f32) -> f32 {
+    if length > EPS { (t / length).clamp(0.0, 1.0) } else { 1.0 }
+}
+
+/// Whether an action timed to `action` and a clip timed to `clip` have the same phases by name, in
+/// the same order (their seconds may differ).
+fn timed_alike(action: &[Phase], clip: &[Phase]) -> bool {
+    !action.is_empty() && action.len() == clip.len() && action.iter().zip(clip).all(|(a, c)| a.0 == c.0)
+}
+
+/// The phases as `windup 0.2, active 0.1, recovery 0.3`.
+fn phases_text(phases: &[Phase]) -> String {
+    phases.iter().map(|p| format!("{} {}", p.0, p.1)).collect::<Vec<_>>().join(", ")
+}
+
+/// Where a clip timed to `clip` shows an action timed to `action`, `t` seconds into a run of
+/// `length` seconds, as a fraction of the clip (0 to 1): the action's phase that `t` falls in is
+/// found, and the same fraction of the clip's phase of that name is the place. A phase named in
+/// `loops` repeats its stretch of the clip at the authored speed instead (`t - start` modulo its clip
+/// seconds). Time the run has past the action's phases (a miss's longer recovery) stretches the last
+/// phase. `None` when the two are not timed alike (other names, another order, a clip of no length):
+/// the clip plays evenly then. See "Phases on the clip" in the [module](self).
+pub fn phase_seek(action: &[Phase], clip: &[Phase], loops: &[String], t: f32, length: f32) -> Option<f32> {
+    if !timed_alike(action, clip) {
+        return None;
+    }
+    let clip_total: f32 = clip.iter().map(|p| p.1).sum();
+    if clip_total <= EPS {
+        return None;
+    }
+    let action_total: f32 = action.iter().map(|p| p.1).sum();
+    let extra = (length - action_total).max(0.0);
+    let t = t.clamp(0.0, action_total + extra);
+    let last = action.len() - 1;
+    let (mut from, mut clip_from) = (0.0, 0.0);
+    for (i, (a, c)) in action.iter().zip(clip).enumerate() {
+        let lasts = if i == last { a.1 + extra } else { a.1 };
+        let to = from + lasts;
+        if t <= to || i == last {
+            let into = (t - from).max(0.0);
+            let on_clip = if c.1 > EPS && loops.contains(&c.0) {
+                into % c.1
+            } else if lasts > EPS {
+                (into / lasts).min(1.0) * c.1
+            } else {
+                c.1
+            };
+            return Some(((clip_from + on_clip) / clip_total).clamp(0.0, 1.0));
+        }
+        from = to;
+        clip_from += c.1;
+    }
+    None
+}
+
+impl AnimSet {
+    /// Where on `clip` the running `action` is, 0 to 1: phase by phase when the clip is timed to the
+    /// action's phases ([`phase_seek`]), else evenly over the run.
+    pub fn progress(&self, clip: &str, action: &ActionTime) -> f32 {
+        let Some(def) = self.clips.get(clip) else { return even_progress(action.t, action.length) };
+        phase_seek(action.phases, &def.phases, &def.loops, action.t, action.length)
+            .unwrap_or_else(|| even_progress(action.t, action.length))
+    }
+}
+
 /// The clip a character should show, as a pure function of the action machine and the
 /// controller. `action` is the running action as `(key, t, length)` in seconds, the key
 /// being what [`AnimSet::action_key`] chose. Same as [`select_clip_for`] for a body that is
@@ -1140,16 +1262,31 @@ pub fn select_clip_in<'a>(
     set: &'a AnimSet,
     moveset: Option<&str>,
 ) -> ClipChoice<'a> {
-    let action = action.filter(|(id, ..)| !set.is_layered(id));
-    let progress = action.map(|(_, t, len)| if len > EPS { (t / len).clamp(0.0, 1.0) } else { 1.0 });
-    if let Some((id, ..)) = action
-        && let Some(clip) = set.action_clip(id)
+    select_clip_timed(action.map(|(key, t, length)| ActionTime::even(key, t, length)), motion, status, set, moveset)
+}
+
+/// [`select_clip_in`] with the action's phases: a clip timed to them is seeked phase by phase
+/// ([`AnimSet::progress`]), the action's clip as well as the dead and stagger clips.
+pub fn select_clip_timed<'a>(
+    action: Option<ActionTime>,
+    motion: &MotionState,
+    status: BodyStatus,
+    set: &'a AnimSet,
+    moveset: Option<&str>,
+) -> ClipChoice<'a> {
+    let action = action.filter(|a| !set.is_layered(a.key));
+    let seeked = |clip: &'a str, a: &ActionTime| {
+        let clip = set.family(moveset, clip);
+        ClipChoice::seeked(set, clip, set.progress(clip, a), true)
+    };
+    if let Some(a) = &action
+        && let Some(clip) = set.action_clip(a.key)
     {
-        return ClipChoice::seeked(set, set.family(moveset, clip), progress.unwrap_or(0.0), true);
+        return seeked(clip, a);
     }
     if status.dead {
-        return match (set.exact(Locomotion::Dead), progress) {
-            (Some(clip), Some(p)) => ClipChoice::seeked(set, set.family(moveset, clip), p, true),
+        return match (set.exact(Locomotion::Dead), &action) {
+            (Some(clip), Some(a)) => seeked(clip, a),
             (Some(clip), None) => {
                 let clip = set.family(moveset, clip);
                 ClipChoice {
@@ -1164,9 +1301,9 @@ pub fn select_clip_in<'a>(
         };
     }
     if status.staggered
-        && let (Some(clip), Some(p)) = (set.exact(Locomotion::Stagger), progress)
+        && let (Some(clip), Some(a)) = (set.exact(Locomotion::Stagger), &action)
     {
-        return ClipChoice::seeked(set, set.family(moveset, clip), p, true);
+        return seeked(clip, a);
     }
     let state = locomotion_state_at(motion, &set.speeds, status.pace);
     let Some((resolved, clip)) = set.locomotion_clip(state) else { return ClipChoice::none(set) };
@@ -1208,13 +1345,23 @@ pub fn select_layer_in<'a>(
     set: &'a AnimSet,
     moveset: Option<&str>,
 ) -> Option<LayerChoice<'a>> {
+    select_layer_timed(action.map(|(key, t, length)| ActionTime::even(key, t, length)), status, set, moveset)
+}
+
+/// [`select_layer_in`] with the action's phases: a clip timed to them is seeked phase by phase.
+pub fn select_layer_timed<'a>(
+    action: Option<ActionTime>,
+    status: BodyStatus,
+    set: &'a AnimSet,
+    moveset: Option<&str>,
+) -> Option<LayerChoice<'a>> {
     if status.dead || status.staggered {
         return None;
     }
-    let (id, t, len) = action?;
-    let (clip, Some(layer)) = set.action_shown(id)? else { return None };
-    let progress = if len > EPS { (t / len).clamp(0.0, 1.0) } else { 1.0 };
-    Some(LayerChoice { layer, choice: ClipChoice::seeked(set, set.family(moveset, clip), progress, true) })
+    let a = action?;
+    let (clip, Some(layer)) = set.action_shown(a.key)? else { return None };
+    let clip = set.family(moveset, clip);
+    Some(LayerChoice { layer, choice: ClipChoice::seeked(set, clip, set.progress(clip, &a), true) })
 }
 
 /// The cues the animation passed going from `prev` to `now` (seconds on the clip's
@@ -1273,6 +1420,8 @@ impl AnimSet {
                 let wanted = self.file_name(name);
                 if !file.has_animation(wanted) {
                     refs.error(format!("clips.{name} -> `{source}` has no animation `{wanted}`; it has: {have}"));
+                } else {
+                    check_phases_in_file(refs, name, source, wanted, &file, &self.clips[name].phases);
                 }
             }
             if source != self.source {
@@ -1325,6 +1474,122 @@ impl AnimSet {
             .map(|c| format!(" (did you mean `{c}`?)"))
             .unwrap_or_default();
         refs.error(format!("{field}.layer -> unknown layer `{layer}`{hint}; layers: {}", names.join(", ")));
+    }
+}
+
+/// `clips.NAME.phases`: each named, once, lasting >= 0 s, and some length in all; `loops` names
+/// some of them.
+fn check_clip_phases(refs: &mut Refs, name: &str, clip: &ClipDef) {
+    let phases = &clip.phases;
+    let names: Vec<&str> = phases.iter().map(|p| p.0.as_str()).collect();
+    for looped in &clip.loops {
+        if names.is_empty() {
+            refs.error(format!(
+                "clips.{name}.loops names `{looped}`, but the clip has no `phases`; give the phases it was timed to, \
+                 e.g. `phases: [(\"{looped}\", 1.0)]`"
+            ));
+            break;
+        }
+        if !names.contains(&looped.as_str()) {
+            let hint = shards_content::db::closest(looped, names.iter().copied())
+                .map(|c| format!(" (did you mean `{c}`?)"))
+                .unwrap_or_default();
+            refs.error(format!("clips.{name}.loops names an unknown phase `{looped}`{hint}; phases: {}", names.join(", ")));
+        }
+    }
+    if phases.is_empty() {
+        return;
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    for Phase(phase, secs) in phases {
+        if phase.is_empty() {
+            refs.error(format!("clips.{name}.phases has a phase with no name"));
+        } else if seen.contains(&phase.as_str()) {
+            refs.error(format!("clips.{name}.phases has `{phase}` twice; an action's phase finds the clip's by its name"));
+        }
+        seen.push(phase);
+        if !(*secs >= 0.0 && secs.is_finite()) {
+            refs.error(format!("clips.{name}.phases: `{phase}` must last >= 0 s (is {secs})"));
+        }
+    }
+    let valid = phases.iter().all(|p| p.1 >= 0.0 && p.1.is_finite());
+    if valid && phases.iter().map(|p| p.1).sum::<f32>() <= EPS {
+        refs.error(format!("clips.{name}.phases last 0 s in all; give the seconds the clip was timed to"));
+    }
+}
+
+/// `clips.NAME.phases` against animation `wanted` of `file` (shown as `source`): the phases its
+/// `phases` extra names, to half a tick of [`SAMPLE_HZ`](crate::bake::SAMPLE_HZ) (as a bake reads
+/// them), or without one its length.
+fn check_phases_in_file(refs: &mut Refs, name: &str, source: &str, wanted: &str, file: &ClipFile, phases: &[Phase]) {
+    if phases.is_empty() {
+        return;
+    }
+    let half_tick = 0.5 / crate::bake::SAMPLE_HZ;
+    match file.phases(wanted) {
+        Some(Err(e)) => refs.error(format!("clips.{name}.phases: animation `{wanted}` of `{source}`: {e}")),
+        Some(Ok(theirs)) => {
+            let same = theirs.len() == phases.len()
+                && theirs.iter().zip(phases).all(|(f, p)| f.0 == p.0 && (f.1 - p.1).abs() <= half_tick);
+            if !same {
+                let theirs: Vec<Phase> = theirs.into_iter().map(|(n, s)| Phase(n, s)).collect();
+                refs.error(format!(
+                    "clips.{name}.phases ({}) are not the phases animation `{wanted}` of `{source}` was timed to ({}); \
+                     write the file's",
+                    phases_text(phases),
+                    phases_text(&theirs)
+                ));
+            }
+        }
+        None => {
+            let total: f32 = phases.iter().map(|p| p.1).sum();
+            if let Some(lasts) = file.duration(wanted)
+                && (lasts - total).abs() > half_tick
+            {
+                refs.error(format!(
+                    "clips.{name}.phases last {} s in all, animation `{wanted}` of `{source}` {} s; make them add up \
+                     to the clip's length",
+                    crate::bake::number(total, 4),
+                    crate::bake::number(lasts, 4)
+                ));
+            }
+        }
+    }
+}
+
+impl AnimSet {
+    /// Every action the set shows on a clip timed to phases (its clip, and that clip's family in each
+    /// `by_moveset`) has the same phases in the same order, or none of their names (the clip plays
+    /// evenly then). One that shares some of the names has a typo or a phase left out.
+    fn check_timing(&self, refs: &mut Refs) {
+        let actions: Vec<(&str, &ActionDef)> = refs.iter::<ActionDef>().collect();
+        for (id, def) in actions {
+            let key = self.action_key(id, def.anim.as_deref(), &def.tags);
+            let Some((clip, _)) = self.action_shown(key) else { continue };
+            let mut shown = vec![clip];
+            for renamed in self.by_moveset.values().filter_map(|table| table.get(clip)) {
+                if let Some(c) = self.known(renamed)
+                    && !shown.contains(&c)
+                {
+                    shown.push(c);
+                }
+            }
+            for clip in shown {
+                let timed = &self.clips[clip].phases;
+                let shared: Vec<&str> =
+                    timed.iter().map(|c| c.0.as_str()).filter(|n| def.phases.iter().any(|a| a.0 == *n)).collect();
+                if shared.is_empty() || timed_alike(&def.phases, timed) {
+                    continue;
+                }
+                refs.error(format!(
+                    "clips.{clip}.phases ({}) and action `{id}`, which plays it ({}), share {} but are not the same phases \
+                     in the same order; give the clip the action's phase names (or none of them, and it plays evenly)",
+                    phases_text(timed),
+                    phases_text(&def.phases),
+                    shared.join(", ")
+                ));
+            }
+        }
     }
 }
 
@@ -1407,6 +1672,7 @@ impl ContentDef for AnimSet {
                     refs.error(format!("clips.{name}.cues[{i}].cue has no name"));
                 }
             }
+            check_clip_phases(refs, name, clip);
         }
         let states: Vec<&str> = Locomotion::ALL.iter().map(|s| s.name()).collect();
         for (state, clip) in &self.locomotion {
@@ -1454,6 +1720,7 @@ impl ContentDef for AnimSet {
             }
             self.check_layer(refs, &format!("tags.{tag}"), mapping);
         }
+        self.check_timing(refs);
         for (field, v) in [("blend", self.blend), ("action_blend", self.action_blend)] {
             if !(v >= 0.0 && v.is_finite()) {
                 refs.error(format!("{field} must be >= 0 (is {v})"));
@@ -1910,6 +2177,92 @@ mod tests {
         assert_eq!(select_clip_for(None, &moving(0.0), status, &set).clip, Some("idle"));
     }
 
+    fn phases(list: &[(&str, f32)]) -> Vec<Phase> {
+        list.iter().map(|(n, s)| Phase((*n).to_owned(), *s)).collect()
+    }
+
+    #[test]
+    fn a_clip_timed_to_the_actions_phases_is_seeked_phase_by_phase() {
+        let quick = phases(&[("windup", 0.2), ("active", 0.1), ("recovery", 0.3)]);
+        let slow = phases(&[("windup", 0.6), ("active", 0.15), ("recovery", 0.8)]);
+        let at = |t, length| phase_seek(&slow, &quick, &[], t, length).unwrap();
+        // The slow windup shows the quick one's 0.2 s, and the strike comes as its active phase starts.
+        assert!(close(at(0.3, 1.55), 0.1 / 0.6), "{}", at(0.3, 1.55));
+        assert!(close(at(0.6, 1.55), 0.2 / 0.6), "{}", at(0.6, 1.55));
+        assert!(close(at(0.675, 1.55), 0.25 / 0.6), "halfway through the active phase: {}", at(0.675, 1.55));
+        assert!(close(at(1.55, 1.55), 1.0) && close(at(9.0, 1.55), 1.0) && close(at(-1.0, 1.55), 0.0));
+        // Evenly, 0.6 s in is 39 % of the clip, past the strike that starts at 33 %: it shows early.
+        assert!(even_progress(0.6, 1.55) > at(0.6, 1.55));
+        // A run longer than the phases (a miss's longer recovery) stretches the last phase.
+        assert!(close(at(0.75 + 0.65, 2.05), (0.3 + 0.15) / 0.6), "{}", at(1.4, 2.05));
+        // The same timings seek as evenly.
+        assert!(close(phase_seek(&quick, &quick, &[], 0.15, 0.6).unwrap(), even_progress(0.15, 0.6)));
+        // Not timed alike: other names, another order, fewer phases, none, a clip of no length.
+        assert_eq!(phase_seek(&phases(&[("stroke", 0.5)]), &quick, &[], 0.1, 0.5), None);
+        let swapped = phases(&[("active", 0.1), ("windup", 0.2), ("recovery", 0.3)]);
+        assert_eq!(phase_seek(&swapped, &quick, &[], 0.1, 0.6), None);
+        assert_eq!(phase_seek(&quick[..2], &quick, &[], 0.1, 0.3), None);
+        assert_eq!(phase_seek(&[], &quick, &[], 0.1, 0.6), None);
+        assert_eq!(phase_seek(&quick, &phases(&[("windup", 0.0), ("active", 0.0), ("recovery", 0.0)]), &[], 0.1, 0.6), None);
+    }
+
+    #[test]
+    fn a_looped_phase_repeats_its_stretch_of_the_clip() {
+        let clip = phases(&[("fall", 0.5), ("down", 1.5), ("rise", 1.0)]);
+        let action = phases(&[("fall", 0.5), ("down", 4.0), ("rise", 1.0)]);
+        let loops = ["down".to_owned()];
+        let at = |t| phase_seek(&action, &clip, &loops, t, 5.5).unwrap();
+        // The breath repeats at its own speed: 2 s into the phase is 0.5 s into its second pass.
+        assert!(close(at(2.5), (0.5 + 0.5) / 3.0), "{}", at(2.5));
+        assert!(close(at(0.5 + 1.5 * 2.0 + 0.25), (0.5 + 0.25) / 3.0));
+        // The rise starts at its own start and is stretched as usual.
+        assert!(close(at(4.75), 2.25 / 3.0) && close(at(5.5), 1.0));
+        // Without `loops` the breath is stretched over the 4 s.
+        assert!(close(phase_seek(&action, &clip, &[], 2.5, 5.5).unwrap(), (0.5 + 0.75) / 3.0));
+    }
+
+    #[test]
+    fn the_played_clip_decides_how_an_action_is_seeked() {
+        let mut set = set();
+        let quick = phases(&[("windup", 0.2), ("active", 0.1), ("recovery", 0.3)]);
+        let slow = phases(&[("windup", 0.6), ("active", 0.15), ("recovery", 0.8)]);
+        let slow_at = |t| Some(ActionTime::new("light_1", t, 1.55, &slow));
+        let idle = moving(0.0);
+        let alive = BodyStatus::default();
+        // Without phases on the clip, the timed choice is the even one, bit for bit.
+        for t in [0.0, 0.3, 0.6, 1.0, 1.55, 2.0] {
+            let timed = select_clip_timed(slow_at(t), &idle, alive, &set, None);
+            assert_eq!(timed, select_clip_in(Some(("light_1", t, 1.55)), &idle, alive, &set, None), "t {t}");
+        }
+        set.clips.get_mut("swing_1").unwrap().phases = quick.clone();
+        let c = select_clip_timed(slow_at(0.6), &idle, alive, &set, None);
+        assert_eq!(c.clip, Some("swing_1"));
+        assert!(close(c.seek_to.unwrap(), 0.2 / 0.6), "{c:?}");
+        // An action with no phases (the old call) still plays it evenly.
+        let even = select_clip_in(Some(("light_1", 0.6, 1.55)), &idle, alive, &set, None);
+        assert!(close(even.seek_to.unwrap(), 0.6 / 1.55), "{even:?}");
+        // A moveset's family clip is seeked by its own phases: `block` has none, so evenly.
+        set.by_moveset.insert("brute".into(), [("swing_1".to_owned(), "block".to_owned())].into());
+        let family = select_clip_timed(slow_at(0.6), &idle, alive, &set, Some("brute"));
+        assert_eq!(family.clip, Some("block"));
+        assert!(close(family.seek_to.unwrap(), 0.6 / 1.55), "{family:?}");
+        // The stagger and dead clips follow the running action's phases too.
+        set.clips.get_mut("hit").unwrap().phases = phases(&[("reel", 0.2), ("recover", 0.4)]);
+        let reel = phases(&[("reel", 0.4), ("recover", 0.4)]);
+        let staggered = BodyStatus { staggered: true, ..default() };
+        let c = select_clip_timed(Some(ActionTime::new("stagger", 0.4, 0.8, &reel)), &idle, staggered, &set, None);
+        assert_eq!(c.clip, Some("hit"));
+        assert!(close(c.seek_to.unwrap(), 0.2 / 0.6), "the reel ends where the clip's does: {c:?}");
+        // And so does a clip on a layer.
+        set.layers.insert("upper".into(), LayerDef::at("spine"));
+        set.actions.insert("drink".into(), ActionClip::on("swing_1", "upper"));
+        let drink = Some(ActionTime::new("drink", 0.6, 1.55, &slow));
+        let layer = select_layer_timed(drink, alive, &set, None).unwrap();
+        assert_eq!((layer.layer, layer.choice.clip), ("upper", Some("swing_1")));
+        assert!(close(layer.choice.seek_to.unwrap(), 0.2 / 0.6), "{layer:?}");
+        assert!(close(select_layer_in(Some(("drink", 0.6, 1.55)), alive, &set, None).unwrap().choice.seek_to.unwrap(), 0.6 / 1.55));
+    }
+
     #[test]
     fn an_empty_set_chooses_nothing() {
         let mut set = set();
@@ -2026,6 +2379,66 @@ mod tests {
         kinds.register::<ActionDef>();
         let errors: Vec<String> = ContentDb::build(&kinds, &[alone]).errors().map(ToString::to_string).collect();
         assert!(errors.is_empty(), "{errors:#?}");
+    }
+
+    #[test]
+    fn a_clips_phases_are_checked_and_an_action_must_share_all_of_them_or_none() {
+        let set = r#"{ "h": (source: "models/h.glb", clips: {
+                "swing": (phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)]),
+                "heavy": (phases: [("windup", 0.5), ("strike", 0.1), ("recovery", 0.3)]),
+                "bad": (phases: [("", 0.1), ("a", -1.0), ("a", 0.0)]),
+                "bare": (loops: ["x"]),
+                "breath": (phases: [("in", 1.0)], loops: ["inn"]),
+                "still": (phases: [("still", 0.0)]),
+            },
+            actions: {"spar": "swing"}, by_moveset: {"brute": {"swing": "heavy"}}) }"#;
+        let actions = r#"{
+            "light": (net_id: 1, phases: [("windup", 0.6), ("active", 0.15), ("recovery", 0.8)], anim: "swing"),
+            "spar": (net_id: 2, phases: [("stroke", 0.5)]),
+            "typo": (net_id: 3, phases: [("windup", 0.2), ("actve", 0.1), ("recovery", 0.3)], anim: "swing"),
+        }"#;
+        let mut kinds = ContentKinds::default();
+        kinds.register::<ActionDef>();
+        kinds.register::<AnimSet>();
+        kinds.register::<crate::def::MovesetDef>();
+        kinds.register::<crate::status::StatusDef>();
+        let sources = [
+            shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
+            shards_content::db::Source { path: "content/h.animset.ron".into(), text: set.into() },
+            shards_content::db::Source { path: "content/m.moveset.ron".into(), text: r#"{ "brute": (inputs: {}) }"#.into() },
+        ];
+        let errors: Vec<String> = ContentDb::build(&kinds, &sources).errors().map(ToString::to_string).collect();
+        let h = "content/h.animset.ron: animset `h`: ";
+        assert_eq!(
+            errors,
+            [
+                format!("{h}clips.bad.phases has a phase with no name"),
+                format!("{h}clips.bad.phases: `a` must last >= 0 s (is -1)"),
+                format!("{h}clips.bad.phases has `a` twice; an action's phase finds the clip's by its name"),
+                format!(
+                    "{h}clips.bare.loops names `x`, but the clip has no `phases`; give the phases it was timed to, \
+                     e.g. `phases: [(\"x\", 1.0)]`"
+                ),
+                format!("{h}clips.breath.loops names an unknown phase `inn` (did you mean `in`?); phases: in"),
+                format!("{h}clips.still.phases last 0 s in all; give the seconds the clip was timed to"),
+                format!(
+                    "{h}clips.heavy.phases (windup 0.5, strike 0.1, recovery 0.3) and action `light`, which plays it (windup 0.6, \
+                     active 0.15, recovery 0.8), share windup, recovery but are not the same phases in the same order; give \
+                     the clip the action's phase names (or none of them, and it plays evenly)"
+                ),
+                format!(
+                    "{h}clips.swing.phases (windup 0.2, active 0.1, recovery 0.3) and action `typo`, which plays it (windup 0.2, \
+                     actve 0.1, recovery 0.3), share windup, recovery but are not the same phases in the same order; give \
+                     the clip the action's phase names (or none of them, and it plays evenly)"
+                ),
+                format!(
+                    "{h}clips.heavy.phases (windup 0.5, strike 0.1, recovery 0.3) and action `typo`, which plays it (windup 0.2, \
+                     actve 0.1, recovery 0.3), share windup, recovery but are not the same phases in the same order; give \
+                     the clip the action's phase names (or none of them, and it plays evenly)"
+                ),
+            ],
+            "`light` matches `swing`; the spar's stroke shares nothing and plays evenly"
+        );
     }
 
     #[test]
