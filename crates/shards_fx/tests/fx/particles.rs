@@ -214,10 +214,14 @@ fn a_cue_at_a_bone_plays_at_that_point_and_its_strength_scales_the_burst() {
     assert!(feet.iter().all(|p| p.origin == Vec3::new(2.0, 0.0, 0.0)), "{:?}", feet.iter().map(|p| p.origin).collect::<Vec<_>>());
 
     // An effect with a rate scales what it emits later too: 6 + 10 at full strength, 3 + 5 at half,
-    // each as big as half.
+    // each as big as half, over the same half second (10 a second, not 20).
     let played = shards::fx::play_scaled(app.world_mut(), "dust", EffectAt::Point(foot), None, 0.5).unwrap();
     assert_eq!((played.particles, played.later), (3, 5));
-    step(&mut app, 32);
+    step(&mut app, 16);
+    app.update();
+    let particles = app.world().resource::<Particles>();
+    assert_eq!((particles.emitters.len(), particles.effects["dust"].pool.started), (1, 5), "0.27 s in: two more, still going");
+    step(&mut app, 16);
     app.update();
     let particles = app.world().resource::<Particles>();
     assert!(particles.emitters.is_empty(), "done emitting");

@@ -1475,7 +1475,7 @@ impl ContentDef for AnimSet {
                     ));
                 }
                 if !(cue.strength >= 0.0 && cue.strength.is_finite()) {
-                    refs.error(format!("clips.{name}.cues[{i}].strength must be >= 0 (is {})", cue.strength));
+                    refs.error(format!("clips.{name}.cues[{i}].strength must be a number, 0 or more (is {})", cue.strength));
                 }
             }
         }
@@ -2179,11 +2179,11 @@ mod tests {
             [
                 "content/h.animset.ron: animset `h`: clips.walk.cues[1].bone is empty; name a bone of the model \
                  (`bone: \"foot.L\"`) or leave it out",
-                "content/h.animset.ron: animset `h`: clips.walk.cues[2].strength must be >= 0 (is -1)",
-                "content/h.animset.ron: animset `h`: clips.walk.cues[3].strength must be >= 0 (is inf)",
+                "content/h.animset.ron: animset `h`: clips.walk.cues[2].strength must be a number, 0 or more (is -1)",
+                "content/h.animset.ron: animset `h`: clips.walk.cues[3].strength must be a number, 0 or more (is inf)",
                 "content/h.animset.ron: animset `h`: clips.walk.cues[4].bone is empty; name a bone of the model \
                  (`bone: \"foot.L\"`) or leave it out",
-                "content/h.animset.ron: animset `h`: clips.walk.cues[4].strength must be >= 0 (is -0.25)",
+                "content/h.animset.ron: animset `h`: clips.walk.cues[4].strength must be a number, 0 or more (is -0.25)",
             ]
         );
     }

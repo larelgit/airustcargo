@@ -281,7 +281,8 @@ pub fn play(world: &mut World, effect: &str, at: EffectAt, toward: Option<Vec3>)
 
 /// [`play`] at `strength` (a clip cue's, `CueDef::strength`): the effect's particles, the burst and
 /// what its `rate` adds, are scaled in number (rounded, and at least one while the effect has
-/// any and `strength` is above 0) and in size. 1 is [`play`]; 0, or a value that is not a number,
+/// any and `strength` is above 0) and in size; what the rate adds is spread over the same
+/// `duration`, at a rate scaled with it. 1 is [`play`]; 0, or a value that is not a number,
 /// plays nothing and leaves the pools alone. The pools are made for the effect as content defines
 /// it: a scaled play never remakes one.
 pub fn play_scaled(world: &mut World, effect: &str, at: EffectAt, toward: Option<Vec3>, strength: f32) -> Result<Played, String> {
@@ -322,9 +323,12 @@ pub fn play_scaled(world: &mut World, effect: &str, at: EffectAt, toward: Option
         particle.size *= strength;
         playing.pool.add(particle);
     }
-    let later = scaled(def.later().min(MAX_LIVE), strength).min(MAX_LIVE);
+    let full = def.later().min(MAX_LIVE);
+    let later = scaled(full, strength).min(MAX_LIVE);
     if later > 0 {
-        emitters.push(Emitter { effect: effect.to_owned(), at, aim, born: now, rate: def.rate, emitted: 0, total: later, strength });
+        // Fewer particles over the same duration: a weaker cue's dust lasts as long, thinner.
+        let rate = def.rate * (later as f32 / full as f32);
+        emitters.push(Emitter { effect: effect.to_owned(), at, aim, born: now, rate, emitted: 0, total: later, strength });
     }
     *played += 1;
     Ok(Played { particles: burst, later, position, live: playing.pool.live(), pool: playing.pool.size() })
