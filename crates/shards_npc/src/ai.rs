@@ -220,6 +220,8 @@ pub struct NpcScheduleArgs {
     pub angle: Option<f32>,
     /// Living players, instead of the counted ones.
     pub players: Option<u32>,
+    /// The live tags, instead of the collected ones: `["capture"]`, or `[]` for none.
+    pub live: Option<Vec<String>>,
 }
 
 fn npc_schedule(In(call): In<Call<NpcScheduleArgs>>, p: ScheduleParams, role: Option<Res<shards_core::NetRole>>) -> ToolResult<Value> {
@@ -241,11 +243,15 @@ fn npc_schedule(In(call): In<Call<NpcScheduleArgs>>, p: ScheduleParams, role: Op
     if args.players == Some(0) {
         return Err("players must be at least 1 (is 0)".to_owned());
     }
+    if args.live.as_ref().is_some_and(|tags| tags.iter().any(|t| t.trim().is_empty())) {
+        return Err("live lists tags, e.g. live=[\"capture\"] (an empty tag names nothing)".to_owned());
+    }
     let entity = p.resolve(args.id.0)?;
     if !p.is_npc(entity) {
         return Err(format!("{} is not an NPC (it has no Npc component)", args.id));
     }
-    let what_if = WhatIf { target: args.target.map(|t| t.0), distance: args.distance, angle: args.angle, players: args.players };
+    let what_if =
+        WhatIf { target: args.target.map(|t| t.0), distance: args.distance, angle: args.angle, players: args.players, live: args.live.clone() };
     let report = schedule_report(&p, entity, &what_if, call.caller.scope.allows(Scope::Dev))?;
     serde_json::to_value(report).map_err(|e| e.to_string())
 }

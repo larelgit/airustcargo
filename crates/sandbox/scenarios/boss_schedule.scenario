@@ -30,7 +30,7 @@ act set id=e6 component=NpcPlan value='{"history": [], "cooldowns": [], "rest": 
 # --- the definitions: a director with two tokens that spaces strikes 0.7 s, a fighting behaviour without a leash, the
 # skeletons' claw as a plan, and the warden's four inputs as options with a gate each (every window holds 1.5 m, so the
 # range never decides what the checks below read); the boss plans are tokenless and wait in a strafe of their own
-act content_apply changes='[{"kind": "director", "id": "sched_arena", "def": {"tokens": {"1": 2}, "waiting": [{"role": "Hold", "distance": 4.0}], "patience": 3.0, "min_spacing": 0.7}}, {"kind": "behavior", "id": "sched_fight", "def": {"initial": "idle", "states": {"idle": {"transitions": [{"to": "fight", "when": ["target_known"]}]}, "fight": {"kind": "attack", "transitions": [{"to": "idle", "when": ["target_lost"]}]}}}}, {"kind": "attack_plan", "id": "sched_add", "def": {"options": [{"input": "light", "tags": ["light"]}], "rest": [0.6, 1.0]}}, {"kind": "attack_plan", "id": "sched_boss", "def": {"options": [{"input": "light", "weight": 3.0, "max": 3.0, "max_repeats": 2, "tags": ["melee"]}, {"input": "heavy", "weight": 1.4, "max": 3.2, "cooldown": 4.0, "tags": ["zone"], "forbid_after": ["zone"]}, {"input": "technique.1", "weight": 4.0, "max": 3.0, "cooldown": 3.0, "angle": [95.0, 180.0]}, {"input": "technique.2", "weight": 1.0, "max": 6.0, "players": [2, 3]}], "in_range_only": true, "press_on_decision": true, "rest": [0.6, 1.0], "tokenless": true, "ignores_spacing": true, "wait": {"role": "Strafe", "distance": 2.2, "speed": 1.0, "orbit": 1.6, "period": 1.875}}}, {"kind": "attack_plan", "id": "sched_boss_enraged", "def": {"options": [{"input": "light", "weight": 3.0, "max": 3.0, "max_repeats": 2, "tags": ["melee"]}, {"input": "heavy", "weight": 1.4, "max": 3.2, "cooldown": 4.0, "tags": ["zone"], "forbid_after": ["zone"]}, {"input": "technique.1", "weight": 4.0, "max": 3.0, "cooldown": 3.0, "angle": [95.0, 180.0]}, {"input": "technique.2", "weight": 1.0, "max": 6.0, "players": [2, 3]}], "in_range_only": true, "press_on_decision": true, "rest": [0.3, 0.6], "tokenless": true, "ignores_spacing": true, "wait": {"role": "Strafe", "distance": 2.2, "speed": 1.0, "orbit": 1.6, "period": 1.875}}}]'
+act content_apply changes='[{"kind": "director", "id": "sched_arena", "def": {"tokens": {"1": 2}, "waiting": [{"role": "Hold", "distance": 4.0}], "patience": 3.0, "min_spacing": 0.7}}, {"kind": "behavior", "id": "sched_fight", "def": {"initial": "idle", "states": {"idle": {"transitions": [{"to": "fight", "when": ["target_known"]}]}, "fight": {"kind": "attack", "transitions": [{"to": "idle", "when": ["target_lost"]}]}}}}, {"kind": "attack_plan", "id": "sched_add", "def": {"options": [{"input": "light", "tags": ["light"]}], "rest": [0.6, 1.0]}}, {"kind": "attack_plan", "id": "sched_boss", "def": {"options": [{"input": "light", "weight": 3.0, "max": 3.0, "max_repeats": 2, "tags": ["melee"]}, {"input": "heavy", "weight": 1.4, "max": 3.2, "cooldown": 4.0, "tags": ["zone"], "forbid_after": ["zone"], "forbid_while": ["capture"]}, {"input": "technique.1", "weight": 4.0, "max": 3.0, "cooldown": 3.0, "angle": [95.0, 180.0]}, {"input": "technique.2", "weight": 1.0, "max": 6.0, "players": [2, 3]}], "in_range_only": true, "press_on_decision": true, "rest": [0.6, 1.0], "tokenless": true, "ignores_spacing": true, "wait": {"role": "Strafe", "distance": 2.2, "speed": 1.0, "orbit": 1.6, "period": 1.875}}}, {"kind": "attack_plan", "id": "sched_boss_enraged", "def": {"options": [{"input": "light", "weight": 3.0, "max": 3.0, "max_repeats": 2, "tags": ["melee"]}, {"input": "heavy", "weight": 1.4, "max": 3.2, "cooldown": 4.0, "tags": ["zone"], "forbid_after": ["zone"], "forbid_while": ["capture"]}, {"input": "technique.1", "weight": 4.0, "max": 3.0, "cooldown": 3.0, "angle": [95.0, 180.0]}, {"input": "technique.2", "weight": 1.0, "max": 6.0, "players": [2, 3]}], "in_range_only": true, "press_on_decision": true, "rest": [0.3, 0.6], "tokenless": true, "ignores_spacing": true, "wait": {"role": "Strafe", "distance": 2.2, "speed": 1.0, "orbit": 1.6, "period": 1.875}}}]'
 
 # --- the cast: the warden on the new plans and the arena's director, the two skeletons beside the player on the same
 # director (their behaviour is the leashless one)
@@ -70,6 +70,56 @@ act npc_schedule id=e6 target=e5 distance=1.5
 expect result contains "players: 1 living, this option needs 2-3"
 act? npc_schedule id=e6 target=e5 distance=1.5 angle=200
 expect result contains "angle must be 0..180 degrees (is 200)"
+
+# --- 1b. live tags (N8d): `heavy` is not chosen while a capture is live. The skeleton e8 is borrowed as a caster
+# (the `caster` moveset of objects.scenario, presses from a dev agent possessing it): its homing bolt meets the player
+# and bursts into a chilling puddle at the player's feet (`chill_puddle`, tagged `capture`: active 3 s, then a fade). The warden
+# stands down meanwhile, so the player can take the bolt out of god mode.
+act npc_set_state id=e6 state=calm
+act god on=false
+act heal id=e8
+act set id=e8 component=Fighter path=moveset value=caster
+act teleport id=e8 x=8 z=-3.5 y=0
+step 2
+session --agent caster --scope dev --subject e8
+act lock_on target=e5
+expect result contains "ok: locked on e5"
+session --agent scenario
+step 31
+session --agent caster
+act light_attack
+expect result contains "ok: caster_volley"
+session --agent scenario
+step 150 --until "journal:e8 -> e5 bolt_fly"
+expect journal "e8 -> e5 bolt_fly"
+step 2
+act combat_objects owner=e8
+expect result contains "chill_puddle"
+act set id=e6 component=NpcPlan value='{"history": [], "cooldowns": [], "rest": 0.5, "attacks": 0}'
+act npc_schedule id=e6 target=e5 distance=1.5
+expect result contains "live: capture is live (forbid_while)"
+expect result contains "\"live\""
+# the same judge, told that nothing is live
+act npc_schedule id=e6 target=e5 distance=1.5 live=[]
+expect result !contains "live: capture"
+# in its fade the puddle is no longer live
+step 190
+act npc_schedule id=e6 target=e5 distance=1.5
+expect result !contains "live: capture"
+expect result !contains "\"live\""
+# the caster goes back to being a skeleton, the player to god mode and the warden to its guard
+session --agent caster
+act lock_on off=true
+session --agent scenario
+act set id=e8 component=Fighter path=moveset value=skeleton
+act teleport id=e8 x=4 z=-1 y=0
+act heal id=e5
+act heal id=e8
+act npc_set_state id=e6 state=guard
+act god
+step 120
+act combat_objects owner=e8
+expect result !contains "chill_puddle"
 
 # --- 2. the fight: the skeletons take the director's tokens, the warden none, and the gates hold over a long run
 # (the rule `npc.plan_sequence` judges every press, `npc.strike_spacing` the strikes of the skeletons)
@@ -146,7 +196,7 @@ act teleport id=e8 x=18 z=18 y=0
 step 2
 act npc_state id=e6
 expect result contains "\"id\": \"warden\""
-act content_apply changes='[{"kind": "director", "id": "sched_arena", "before": {"tokens": {"1": 2}, "waiting": [{"role": "Hold", "distance": 4.0}], "patience": 3.0, "min_spacing": 0.7}}, {"kind": "behavior", "id": "sched_fight", "before": {"initial": "idle", "states": {"idle": {"transitions": [{"to": "fight", "when": ["target_known"]}]}, "fight": {"kind": "attack", "transitions": [{"to": "idle", "when": ["target_lost"]}]}}}}, {"kind": "attack_plan", "id": "sched_add", "before": {"options": [{"input": "light", "tags": ["light"]}], "rest": [0.6, 1.0]}}, {"kind": "attack_plan", "id": "sched_boss", "before": {"options": [{"input": "light", "weight": 3.0, "max": 3.0, "max_repeats": 2, "tags": ["melee"]}, {"input": "heavy", "weight": 1.4, "max": 3.2, "cooldown": 4.0, "tags": ["zone"], "forbid_after": ["zone"]}, {"input": "technique.1", "weight": 4.0, "max": 3.0, "cooldown": 3.0, "angle": [95.0, 180.0]}, {"input": "technique.2", "weight": 1.0, "max": 6.0, "players": [2, 3]}], "in_range_only": true, "press_on_decision": true, "rest": [0.6, 1.0], "tokenless": true, "ignores_spacing": true, "wait": {"role": "Strafe", "distance": 2.2, "speed": 1.0, "orbit": 1.6, "period": 1.875}}}, {"kind": "attack_plan", "id": "sched_boss_enraged", "before": {"options": [{"input": "light", "weight": 3.0, "max": 3.0, "max_repeats": 2, "tags": ["melee"]}, {"input": "heavy", "weight": 1.4, "max": 3.2, "cooldown": 4.0, "tags": ["zone"], "forbid_after": ["zone"]}, {"input": "technique.1", "weight": 4.0, "max": 3.0, "cooldown": 3.0, "angle": [95.0, 180.0]}, {"input": "technique.2", "weight": 1.0, "max": 6.0, "players": [2, 3]}], "in_range_only": true, "press_on_decision": true, "rest": [0.3, 0.6], "tokenless": true, "ignores_spacing": true, "wait": {"role": "Strafe", "distance": 2.2, "speed": 1.0, "orbit": 1.6, "period": 1.875}}}]'
+act content_apply changes='[{"kind": "director", "id": "sched_arena", "before": {"tokens": {"1": 2}, "waiting": [{"role": "Hold", "distance": 4.0}], "patience": 3.0, "min_spacing": 0.7}}, {"kind": "behavior", "id": "sched_fight", "before": {"initial": "idle", "states": {"idle": {"transitions": [{"to": "fight", "when": ["target_known"]}]}, "fight": {"kind": "attack", "transitions": [{"to": "idle", "when": ["target_lost"]}]}}}}, {"kind": "attack_plan", "id": "sched_add", "before": {"options": [{"input": "light", "tags": ["light"]}], "rest": [0.6, 1.0]}}, {"kind": "attack_plan", "id": "sched_boss", "before": {"options": [{"input": "light", "weight": 3.0, "max": 3.0, "max_repeats": 2, "tags": ["melee"]}, {"input": "heavy", "weight": 1.4, "max": 3.2, "cooldown": 4.0, "tags": ["zone"], "forbid_after": ["zone"], "forbid_while": ["capture"]}, {"input": "technique.1", "weight": 4.0, "max": 3.0, "cooldown": 3.0, "angle": [95.0, 180.0]}, {"input": "technique.2", "weight": 1.0, "max": 6.0, "players": [2, 3]}], "in_range_only": true, "press_on_decision": true, "rest": [0.6, 1.0], "tokenless": true, "ignores_spacing": true, "wait": {"role": "Strafe", "distance": 2.2, "speed": 1.0, "orbit": 1.6, "period": 1.875}}}, {"kind": "attack_plan", "id": "sched_boss_enraged", "before": {"options": [{"input": "light", "weight": 3.0, "max": 3.0, "max_repeats": 2, "tags": ["melee"]}, {"input": "heavy", "weight": 1.4, "max": 3.2, "cooldown": 4.0, "tags": ["zone"], "forbid_after": ["zone"], "forbid_while": ["capture"]}, {"input": "technique.1", "weight": 4.0, "max": 3.0, "cooldown": 3.0, "angle": [95.0, 180.0]}, {"input": "technique.2", "weight": 1.0, "max": 6.0, "players": [2, 3]}], "in_range_only": true, "press_on_decision": true, "rest": [0.3, 0.6], "tokenless": true, "ignores_spacing": true, "wait": {"role": "Strafe", "distance": 2.2, "speed": 1.0, "orbit": 1.6, "period": 1.875}}}]'
 act content_list kind=attack_plan
 expect result !contains "sched_boss"
 act content_list kind=director

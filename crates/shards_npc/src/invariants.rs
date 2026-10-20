@@ -132,7 +132,10 @@ pub fn tokens_within_limit(world: &World) -> Option<String> {
 /// (the hook may or may not have asked [`NpcCtx::strike_ready`](crate::NpcCtx::strike_ready)),
 /// and an action tagged with one of the director's `spacing_exempt_tags` is not noted at all.
 /// A start that broke the rule is found on its own tick; the rule judges the notes still on the NPCs,
-/// which is every start that is within the spacing of another.
+/// which is every start that is within the spacing of another. Of two starts on one tick, the one
+/// later in `AiId` order is held to the rule: the planner judges in that order, so the earlier
+/// could not see the later one's press (a boss later in the order that ignores the spacing and
+/// presses on an add's tick is no breach by the add).
 pub fn strike_spacing(world: &World) -> Option<String> {
     let db = world.get_resource::<ContentDb>()?;
     let dt = world.get_resource::<Time<Fixed>>()?.timestep().as_secs_f32();
@@ -151,7 +154,8 @@ pub fn strike_spacing(world: &World) -> Option<String> {
                 continue;
             }
             for (other, other_pool, other_at, other_gated, _, _) in &notes {
-                if other == id || other_pool != pool || !other_gated || other_at > at || at - other_at >= *ticks {
+                let later = other_at > at || (other_at == at && other > id);
+                if other == id || other_pool != pool || !other_gated || later || at - other_at >= *ticks {
                     continue;
                 }
                 bad.note(*id, || {
@@ -457,6 +461,23 @@ mod tests {
         let late = add(&mut w, 120);
         let text = strike_spacing(&w).expect("an add 10 ticks after a boss's strike is a breach");
         assert!(text.starts_with(&format!("{} NpcStrike:", w.get::<AiId>(late).unwrap())), "{text}");
+        // On one tick the later in `AiId` order is held: an add that pressed before a boss later in
+        // the order is no breach; one later in the order than a boss is.
+        let mut w = spaced_world();
+        add(&mut w, 200);
+        boss(&mut w, 200);
+        assert_eq!(strike_spacing(&w), None, "the add was judged before the boss pressed");
+        let mut w = spaced_world();
+        boss(&mut w, 200);
+        let after = add(&mut w, 200);
+        let text = strike_spacing(&w).expect("an add judged after the boss's press saw it");
+        assert!(text.starts_with(&format!("{} NpcStrike: began a strike on tick 200, 0 ticks after", w.get::<AiId>(after).unwrap())), "{text}");
+        // Two adds on one tick: the later one is the breach.
+        let mut w = spaced_world();
+        add(&mut w, 200);
+        let second = add(&mut w, 200);
+        let text = strike_spacing(&w).expect("two adds on one tick");
+        assert!(text.starts_with(&format!("{} NpcStrike:", w.get::<AiId>(second).unwrap())) && !text.contains("more)"), "{text}");
     }
 
     /// A hook's start between a planned press and its start is not a breach by the planned one.

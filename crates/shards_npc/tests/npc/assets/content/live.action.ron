@@ -1,0 +1,22 @@
+// Live tags (N8d): a capture zone, a cast that lays it at the target's feet, and a swing tagged
+// `capture` that lays nothing.
+{
+    // Telegraphed 0.5 s, active 1 s, then a 0.5 s fade; a 2 m circle.
+    "live_zone": (
+        net_id: 90,
+        phases: [("telegraph", 0.5), ("active", 1.0), ("fade", 0.5)],
+        tags: ["capture", "long"],
+        hits: [(span: Phase("active"), shape: Circle(radius: 2.0), damage: 1)],
+    ),
+    "live_cast": (
+        net_id: 91,
+        phases: [("windup", 0.4), ("release", 0.2), ("recovery", 0.4)],
+        effects: [(at: 0.4, effect: Spawn((prefab: ["zone"], action: ["live_zone"], aim: AtTarget)))],
+    ),
+    "live_grab": (
+        net_id: 92,
+        phases: [("windup", 0.4), ("swing", 0.2), ("recovery", 0.4)],
+        tags: ["capture"],
+        hits: [(span: Phase("swing"), shape: Cone(range: 1.8, angle: 100), damage: 1)],
+    ),
+}
