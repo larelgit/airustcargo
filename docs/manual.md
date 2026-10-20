@@ -5232,7 +5232,7 @@ with an id; only one is shown). Some show content: `Text` (its own text or `bind
 the other follows the picture's proportions; give neither and the picture keeps its own size; the content check names a missing file and a size that is not
 greater than 0), `Bar` (`value`/`max` or
 `bind`, `color` — a theme colour name or `#rrggbb`), `Cooldown` (time until ready), `Compass` (where the player looks and the four
-nearest landmarks of each category, `you.heading:<n>` for another number; see "Compass categories"), `Allies` (ally frames: name, health, whether down), `Compare` (before → after by rows: `damage 12 →
+nearest landmarks of each category, `you.heading:<n>` for another number; see "Compass categories"), `Allies` (ally frames: name, health, whether down), `Map` (a picture of the world with the game's places and the viewer; see "Map"), `Compare` (before → after by rows: `damage 12 →
 15 (+3)`). These take input: `Button` (`action`), `Slider` (`min`, `max`, `step`), `Toggle`, `Choice` (`options`); the last three have
 `setting: "group.key"` — a player setting: the widget shows it and changes it through `settings_set` (its checks, the write to
 `settings.toml`, the journal entry `settings: …`). `Binding` (`context`, `action`, `slot`) — a key or button of an action that the player
@@ -5410,6 +5410,21 @@ through a condition of its own (`add_ai_condition`, which the music's layers can
 `AiLandmark` it is left out of the replay check and `inspect`, and snapshots and co-op clients keep it. The content check refuses a
 category or a symbol name that is not letters, digits, `_` and `-`, an empty symbol, and a symbol's span font the theme lacks.
 
+**Map** (U3b). `Map(id: "map", label: "Valley", bind: "quests.places", image: "ui/valley.png", area: (min: (-128.0, -128.0), max:
+(128.0, 128.0)), width: 320.0, height: 320.0)` draws the picture `image` (optional) over `width` × `height` logical pixels (256 each by
+default) as the world's `area`: `x` and `z`, `min` the north-west corner (north is `-z`), `max` the south-east one; north is up. The places
+come from the game's source `bind`, which returns `UiValue::Map { points, you: None }`: each `MapPoint` has a label, where it is (world `x`,
+`z`), a `MapState` (`Rumor`, `Discovered`, `Completed`) and a category. Which places a player knows of, and in what state, is the game's,
+kept in its own save section; the engine draws what the source says. A discovered or completed place is a mark where it is (on the
+nearest edge when it lies outside the area); a **rumour** is a mark on the edge, on the line from the viewer (the map's middle without one)
+toward where the place is said to be, so the map gives a direction, not the place. The widget adds the viewer (the HUD's body: where it
+stands and faces) and draws it last. The theme's `map_colors` colour the marks by state (`rumor`, `discovered`, `completed`, and `you`;
+by default the dim text, the text, `#4fae55` and the accent), and its `symbols` draw a category as on the compass. Marks are drawn again
+in place when the places or the viewer move. Agents (`ui_read`) and screen readers read it in words, a rumour as a compass direction from
+the viewer: `atlas/map  map "Valley" you (0, 0) facing N · Old Shrine (shrine) discovered (12, -40) · Ruins rumor NE · Gate completed (5,
+5)`. The content check refuses an area whose `max` is not east and south of `min`, a size that is not above 0, an empty `bind`, a missing
+picture, and `map_colors` that name something else or are not colours.
+
 **Full-screen flashes** (U2). A colour over the whole picture for a moment: a reality flash, the 2–3 s glitch of a reality crack.
 A flash is content, kind `flash`:
 
@@ -5439,7 +5454,7 @@ without a GPU, a replay with pressed buttons, an edit to a screen in a running g
 the loading image — `main_menu.rs`; `bindings.rs` — rebinding through `ui_set`, a refusal that names the action, waiting for
 a key, a mouse button and a gamepad button, Escape, which does not close the screen, a replay; `flash.rs` — a flash frame by frame,
 `reduced` and `off`, a newer flash and the trigger, the tool, the content check; `fonts.rs` — runs in a named font, drawn again in place,
-a font the theme lacks, the text without markup for agents and screen readers, the content check; `compass.rs` — the nearest landmarks of each category, `you.nearest`, the category outside the replay check, symbols drawn and named to screen readers, the content check), `template/tests/game/main_menu.rs` (the path
+a font the theme lacks, the text without markup for agents and screen readers, the content check; `compass.rs` — the nearest landmarks of each category, `you.nearest`, the category outside the replay check, symbols drawn and named to screen readers, the content check; `map.rs` — places and a rumour in words, marks where they are and a rumour on the edge, the theme's colours and symbols, a redraw in place, the content check), `template/tests/game/main_menu.rs` (the path
 through the menu gives the same game and the same replay as without it; "Continue" with a save and without one), scenarios
 `crates/sandbox/scenarios/ui.scenario` and `template/scenarios/menus.scenario`.
 

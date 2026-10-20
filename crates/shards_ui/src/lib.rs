@@ -34,6 +34,8 @@
 //!   `ui_open` and `ui_close`. The journal says `ui: opened pause`, `ui: pause/resume pressed
 //!   (close)`, `ui: settings/text_size 1 → 1.25`. Code hears [`UiPressed`], [`UiChanged`],
 //!   [`UiFocusMoved`] and [`UiScreenChanged`].
+//! - **Map** ([`map`](mod@map)): `WidgetDef::Map`, a picture of the world's `area` with a game's places
+//!   (`UiValue::Map`) and the viewer; a rumour is drawn on the edge, toward it.
 //! - **Full-screen flashes** ([`flash`](mod@flash), kind `flash`): a colour over the whole picture for a
 //!   moment (a reality flash, a glitch's pulses), above the HUD and under menus, on real time, as
 //!   `accessibility.flashes` allows (`reduced` softer and slower, `off` none). Code calls
@@ -56,6 +58,7 @@
 pub mod bind;
 pub mod def;
 pub mod flash;
+pub mod map;
 pub mod markup;
 pub mod model;
 #[cfg(feature = "render")]
@@ -74,6 +77,7 @@ use shards_core::{EngineAppExt, EngineState, PauseState};
 pub use bind::{live_value, read_source, viewer, UiActionFn, UiActions, UiPress, UiSourceFn, UiSources};
 pub use def::{Anchor, ButtonAction, CompareRow, Layer, Layout, ScreenDef, ThemeDef, WidgetDef};
 pub use flash::{flash, FlashDef, PlayFlash, ScreenFlash};
+pub use map::{MapArea, MapPoint, MapState, MapYou};
 #[cfg(feature = "render")]
 pub use loading::LoadingScreen;
 pub use model::{

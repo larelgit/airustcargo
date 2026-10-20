@@ -220,6 +220,23 @@ pub enum WidgetDef {
         #[serde(default = "heading")]
         bind: String,
     },
+    /// A map of the world's `area` (`x`, `z`: `min` the north-west corner, `max` the south-east),
+    /// `width` × `height` logical pixels with the picture `image` under it, the places of the game's
+    /// source `bind` and the viewer ([`map`](crate::map)). `label` is what screen readers call it.
+    Map {
+        #[serde(default)]
+        id: Option<String>,
+        bind: String,
+        area: crate::map::MapArea,
+        #[serde(default)]
+        image: Option<String>,
+        #[serde(default = "map_side")]
+        width: f32,
+        #[serde(default = "map_side")]
+        height: f32,
+        #[serde(default)]
+        label: String,
+    },
     /// The other players: name, health, down or not. Source `allies`.
     Allies {
         #[serde(default)]
@@ -310,6 +327,11 @@ fn heading() -> String {
     "you.heading".to_owned()
 }
 
+/// A map's side without one given (logical pixels).
+fn map_side() -> f32 {
+    256.0
+}
+
 fn gameplay() -> String {
     "gameplay".to_owned()
 }
@@ -350,6 +372,7 @@ impl WidgetDef {
             | WidgetDef::Cooldown { id, .. }
             | WidgetDef::Compass { id, .. }
             | WidgetDef::Allies { id, .. }
+            | WidgetDef::Map { id, .. }
             | WidgetDef::Compare { id, .. } => id.as_deref(),
         }
     }
@@ -369,6 +392,7 @@ impl WidgetDef {
             WidgetDef::Cooldown { .. } => "cooldown",
             WidgetDef::Compass { .. } => "compass",
             WidgetDef::Allies { .. } => "allies",
+            WidgetDef::Map { .. } => "map",
             WidgetDef::Compare { .. } => "compare",
             WidgetDef::Slider { .. } => "slider",
             WidgetDef::Toggle { .. } => "toggle",
@@ -406,6 +430,7 @@ impl WidgetDef {
             WidgetDef::Text { text, .. } | WidgetDef::Hint { text, .. } => texts.push((text, "text")),
             WidgetDef::Button { label, .. }
             | WidgetDef::Image { label, .. }
+            | WidgetDef::Map { label, .. }
             | WidgetDef::Bar { label, .. }
             | WidgetDef::Cooldown { label, .. }
             | WidgetDef::Slider { label, .. }
@@ -554,6 +579,25 @@ fn check_widget(widget: &WidgetDef, refs: &mut Refs, seen: &mut BTreeSet<String>
                 refs.error(format!("image `{id}`: no file `{path}` under the asset folder (a .png, `ui/key_art.png`)"));
             }
         }
+        WidgetDef::Map { area, image, width, height, bind, .. } => {
+            if let Err(e) = area.check() {
+                refs.error(format!("map `{id}`: {e}"));
+            }
+            for (field, size) in [("width", width), ("height", height)] {
+                if !size.is_finite() || *size <= 0.0 {
+                    refs.error(format!("map `{id}`: `{field}` is a size above 0, not {size}"));
+                }
+            }
+            if bind.trim().is_empty() {
+                refs.error(format!("map `{id}`: `bind` names the game's source of places"));
+            }
+            if let Some(image) = image
+                && let Some(root) = refs.asset_root()
+                && !root.join(image).is_file()
+            {
+                refs.error(format!("map `{id}`: no file `{image}` under the asset folder (a .png)"));
+            }
+        }
         WidgetDef::Tabs { children, .. } => {
             if children.is_empty() {
                 refs.error(format!("tabs `{id}`: no pages; each child is a page"));
@@ -682,6 +726,10 @@ pub struct ThemeDef {
     /// one shows its name only to agents and screen readers.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub symbols: BTreeMap<String, String>,
+    /// The map widget's colours (`#rrggbb`) by what it draws: `rumor`, `discovered`, `completed` and
+    /// `you` (the viewer). One left out: dim text, text, `#4fae55` and the accent.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub map_colors: BTreeMap<String, String>,
     pub font_size: f32,
     pub title_size: f32,
     pub hint_size: f32,
@@ -709,6 +757,7 @@ impl Default for ThemeDef {
             font: None,
             fonts: BTreeMap::new(),
             symbols: BTreeMap::new(),
+            map_colors: BTreeMap::new(),
             font_size: 18.0,
             title_size: 26.0,
             hint_size: 15.0,
@@ -777,6 +826,13 @@ impl ContentDef for ThemeDef {
                 refs.error(format!("fonts.{name}: no file `{path}` under the asset folder (a .ttf or .otf)"));
             }
         }
+        for (key, value) in &self.map_colors {
+            if !MAP_COLOR_KEYS.contains(&key.as_str()) {
+                refs.error(format!("map_colors: `{key}` is none of {}", MAP_COLOR_KEYS.join(", ")));
+            } else if let Err(e) = parse_color(value) {
+                refs.error(format!("map_colors.{key}: {e}"));
+            }
+        }
         for (category, symbol) in &self.symbols {
             if !good_id(category) {
                 refs.error(format!("symbols: `{category}` is not a category name: letters, digits, `_` and `-`"));
@@ -791,7 +847,23 @@ impl ContentDef for ThemeDef {
     }
 }
 
+/// What the theme's `map_colors` name: the places' states and the viewer.
+pub const MAP_COLOR_KEYS: [&str; 4] = ["rumor", "discovered", "completed", "you"];
+
 impl ThemeDef {
+    /// A map mark's colour: `key` (a [`MAP_COLOR_KEYS`] name) in `map_colors`, or its default.
+    pub fn map_color(&self, key: &str) -> [u8; 4] {
+        if let Some(c) = self.map_colors.get(key).and_then(|c| parse_color(c).ok()) {
+            return c;
+        }
+        match key {
+            "rumor" => self.color(&self.dim_text),
+            "completed" => self.color("#4fae55"),
+            "you" => self.color(&self.accent),
+            _ => self.color(&self.text),
+        }
+    }
+
     /// A bar's colour: its own `#rrggbb`, a name in [`colors`](Self::colors), or the accent.
     pub fn bar_color(&self, color: Option<&str>) -> [u8; 4] {
         let named = color.and_then(|c| if c.starts_with('#') { Some(c) } else { self.colors.get(c).map(String::as_str) });
