@@ -1,6 +1,7 @@
 //! What the AI layer sees of NPCs: a fragment of their line (`chase e5 · token · leash
-//! 12/20m`), journal lines for state changes and tokens, and the tools `npc_state`,
-//! `nav_path` (queries) and `npc_set_state` (dev).
+//! 12/20m`), journal lines for state changes, tokens and plan memory, and the tools `npc_state`,
+//! `npc_schedule`, `nav_path` (queries), `npc_set_state`, `npc_plan_reset` and `npc_plan_cooldown`
+//! (dev).
 
 use ai_core::prelude::*;
 use ai_core::spatial::{compass, fmt_pos, relative};
@@ -18,6 +19,7 @@ use shards_motion::{physics::sync_physics, CharacterController, CharacterParams,
 use crate::brain::{force_state, Home, Npc, NpcBrain, NpcDrive, NpcStateChanged, NpcThink};
 use crate::chain::{ChainPressed, ChainRefused, NpcChain};
 use crate::director::{AttackToken, TokenGranted, TokenReturned};
+use crate::memory::{forgotten, reset_plan, set_plan_cooldown, CooldownSet, PlanCooldownSet, PlanReset};
 use crate::nav::{local_grid_path, local_grid_route, NavAgent, NavPaths, NAVMESH};
 use crate::perception::Perceived;
 use crate::planner::{repeats_of, NpcOptions, NpcPlan};
@@ -54,10 +56,16 @@ pub(crate) fn register(app: &mut App) {
                 e.ticks_left
             ))
         })
+        .journal_event::<PlanReset>(|e, w| Some(format!("{} plan reset ({}): {}", label(w, e.entity), e.why, forgotten(e.forgot, e.cleared))))
+        .journal_event::<PlanCooldownSet>(|e, w| {
+            Some(format!("{} {} cooldown {:.2} s (was {:.2} s)", label(w, e.entity), e.option, e.left, e.was))
+        })
         .add_ai_query("npc_state", Scope::Player, npc_state)
         .add_ai_query("npc_schedule", Scope::Player, npc_schedule)
         .add_ai_query("nav_path", Scope::Player, nav_path)
         .add_ai_tool("npc_set_state", Scope::Dev, npc_set_state)
+        .add_ai_tool("npc_plan_reset", Scope::Dev, npc_plan_reset)
+        .add_ai_tool("npc_plan_cooldown", Scope::Dev, npc_plan_cooldown)
         // `step --until named:npc_attacking`: until an NPC's attack (by its token) is under way.
         .add_ai_condition("npc_attacking", |w| {
             w.try_query::<&AttackToken>().is_some_and(|mut q| q.iter(w).any(|t| t.held.as_ref().is_some_and(|g| g.started)))
@@ -620,4 +628,41 @@ fn npc_set_state(In(call): In<Call<NpcSetStateArgs>>, world: &mut World) -> Tool
     let from = force_state(world, entity, &call.args.state).map_err(|e| format!("{}: {e}", call.args.id))?;
     let from = if from.is_empty() { "(not started)".to_owned() } else { from };
     Ok(format!("ok: {} {from} → {}", call.args.id, call.args.state))
+}
+
+/// Forgets what an NPC's plan remembers: its history and its cooldowns (`reset_plan`). The attack
+/// count, the rest, its grant and any chain stay.
+#[derive(Deserialize, JsonSchema)]
+pub struct NpcPlanResetArgs {
+    /// The NPC: 42 or "e42".
+    pub id: Id,
+}
+
+fn npc_plan_reset(In(call): In<Call<NpcPlanResetArgs>>, world: &mut World) -> ToolResult {
+    let entity = call.args.id.entity(world)?;
+    reset_plan(world, entity, "npc_plan_reset")
+}
+
+/// Sets the plan cooldown of one option of an NPC's plan (`set_plan_cooldown`).
+#[derive(Deserialize, JsonSchema)]
+pub struct NpcPlanCooldownArgs {
+    /// The NPC: 42 or "e42".
+    pub id: Id,
+    /// The option, by the name `npc_schedule` lists.
+    pub option: String,
+    /// Seconds, >= 0; `0` with `exactly` takes it off cooldown.
+    pub seconds: f32,
+    /// `exactly` (the default) or `at_least` (keeps the larger).
+    pub mode: Option<String>,
+}
+
+fn npc_plan_cooldown(In(call): In<Call<NpcPlanCooldownArgs>>, world: &mut World) -> ToolResult {
+    let args = &call.args;
+    let how = match args.mode.as_deref() {
+        None | Some("exactly") => CooldownSet::Exactly,
+        Some("at_least") => CooldownSet::AtLeast,
+        Some(other) => return Err(format!("mode must be `exactly` or `at_least` (is `{other}`)")),
+    };
+    let entity = args.id.entity(world)?;
+    set_plan_cooldown(world, entity, &args.option, args.seconds, how)
 }

@@ -54,6 +54,13 @@ pub(crate) fn plugin(app: &mut App) {
         DevCommand::Live(|w, _| Ok(toggle_line("nav_overlay", w.resource::<crate::nav::NavOverlay>().enabled))),
     )
     .add_dev_entry("ai", "npc_state", "One NPC's mind...", DevCommand::Fill("npc_state id=".into()))
+    .add_dev_entry("ai", "npc_plan_reset", "Forget an NPC's attack history and cooldowns...", DevCommand::Fill("npc_plan_reset id=".into()))
+    .add_dev_entry(
+        "ai",
+        "npc_plan_cooldown",
+        "Set a plan option's cooldown...",
+        DevCommand::Fill("npc_plan_cooldown id= option= seconds=0".into()),
+    )
     .add_dev_entry("ai", "nav_info", "Navmesh of this region", DevCommand::Run("nav_info".into()));
     #[cfg(feature = "render")]
     window::plugin(app);
