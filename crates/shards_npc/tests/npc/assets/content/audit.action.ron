@@ -1,0 +1,49 @@
+// The actions of the plan audit tests (N8e, `audit.rs`): known windows, so the gaps are counted by hand.
+{
+    // 1.0 s, hits 0.3-0.5.
+    "au_quick": (net_id: 70, phases: [("windup", 0.3), ("active", 0.2), ("recovery", 0.5)],
+        hits: [(span: Phase("active"), shape: Cone(range: 1.8, angle: 90), damage: 1, poise: 2)]),
+    // 1.2 s, hits 0.6-0.8.
+    "au_slow": (net_id: 71, phases: [("windup", 0.6), ("active", 0.2), ("recovery", 0.4)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 90), damage: 3, poise: 5, flags: [Unblockable])]),
+    // 0.9 s, hits 0.2-0.3; from its recovery (0.3) `light` goes on into `au_combo_2`.
+    "au_combo_1": (net_id: 72, phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.6)],
+        hits: [(span: Phase("active"), shape: Cone(range: 1.8, angle: 90), damage: 1)],
+        cancels: [(span: Phase("recovery"), into: [Combo("light", "au_combo_2")])]),
+    // 0.5 s, hits 0.2-0.3.
+    "au_combo_2": (net_id: 73, phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.2)],
+        hits: [(span: Phase("active"), shape: Cone(range: 1.8, angle: 90), damage: 2)]),
+    // 1.3 s, a pulse every 0.25 s over 0.2-1.2, then its tail; the tail names the zone again (a loop the
+    // audit counts once).
+    "au_zone": (net_id: 74, phases: [("windup", 0.2), ("active", 1.0), ("recovery", 0.1)],
+        hits: [(span: Phase("active"), shape: Sphere(radius: 2.0), damage: 1, repeat: 0.25)],
+        then: Some("au_zone_tail")),
+    // 0.3 s, hits all of it.
+    "au_zone_tail": (net_id: 75, phases: [("active", 0.3)],
+        hits: [(span: Phase("active"), shape: Sphere(radius: 2.5), damage: 2)],
+        then: Some("au_zone")),
+
+    // The spawning plan's.
+    // 1.0 s, no hits of its own: at 0.4 a fan of three bolts, one every 0.1 s.
+    "au_cast": (net_id: 76, phases: [("windup", 0.4), ("release", 0.2), ("recovery", 0.4)],
+        effects: [(at: 0.4, effect: Spawn((prefab: ["au_bolt"], action: ["au_bolt_fly"], count: 3,
+            pattern: Fan(spread: 10), delay: 0.1)))]),
+    // A bolt's flight: hits while it flies (2.0 s, but the bolt's `lifetime` is 1.5), then its impact.
+    "au_bolt_fly": (net_id: 77, phases: [("active", 2.0)],
+        hits: [(span: Phase("active"), shape: Sphere(radius: 0.3), damage: 2)],
+        impact: Some("au_burst")),
+    // 0.3 s, hits 0.1-0.3.
+    "au_burst": (net_id: 78, phases: [("windup", 0.1), ("active", 0.2)],
+        hits: [(span: Phase("active"), shape: Sphere(radius: 1.5), damage: 4)]),
+    // 1.0 s, hits 0.5-0.6; at 0.6 two lines of two burning pools.
+    "au_slam": (net_id: 79, phases: [("windup", 0.5), ("active", 0.1), ("recovery", 0.4)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 90), damage: 3)],
+        effects: [(at: 0.6, effect: Spawn((prefab: ["au_pool"], action: ["au_burning"], count: 2,
+            pattern: Radial(lines: 2, start: 1.0, step: 1.0))))]),
+    // A pool burns for 2.0 s, a pulse every 0.5 s.
+    "au_burning": (net_id: 80, phases: [("active", 2.0)],
+        hits: [(span: Phase("active"), shape: Sphere(radius: 1.0), damage: 1, repeat: 0.5)]),
+    // 1.0 s, no hits: at 0.2 a pool that stays (a summon: not counted).
+    "au_call": (net_id: 81, phases: [("windup", 0.2), ("recovery", 0.8)],
+        effects: [(at: 0.2, effect: Spawn((prefab: ["au_pool"], action: ["au_burning"], stay: true)))]),
+}

@@ -1,0 +1,25 @@
+// The plans of the audit tests (N8e, `audit.rs`). `au_plan`: one option per sequence rule, a chain, a
+// zone that loops, and an option the moveset cannot press. `au_spawn_plan`: bolts that fly and burst,
+// pools that burn, a summon.
+{
+    "au_plan": (
+        options: [
+            (input: "technique.1", name: "quick", max_repeats: Some(1)),
+            (input: "heavy", name: "slow", tags: ["big"], forbid_after: ["big"]),
+            (input: "light", name: "combo", chain: Some((input: "light", chance: 1.0))),
+            (input: "technique.2", name: "zone", tags: ["zone"]),
+            (input: "technique.3", name: "nowhere"),
+        ],
+        bans: [(after: ["zone"], then: ["quick"], within: 1)],
+        rest: (0.5, 1.0),
+    ),
+    "au_spawn_plan": (
+        options: [
+            (input: "light", name: "cast"),
+            (input: "heavy", name: "slam"),
+            (input: "technique.1", name: "quick"),
+            (input: "technique.2", name: "call"),
+        ],
+        rest: (0.5, 1.0),
+    ),
+}

@@ -1,0 +1,5 @@
+// What the spawning plan of the audit tests lays down (N8e, `audit.rs`): a bolt that flies 1.5 s, a pool.
+{
+    "au_bolt": (components: {"AiKind": ("projectile"), "Projectile": (speed: 10.0, lifetime: 1.5)}),
+    "au_pool": (components: {"AiKind": ("zone")}),
+}

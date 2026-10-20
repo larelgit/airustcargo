@@ -1,0 +1,5 @@
+// The movesets of the plan audit tests (N8e, `audit.rs`).
+{
+    "au": (inputs: {"light": "au_combo_1", "heavy": "au_slow", "technique.1": "au_quick", "technique.2": "au_zone"}),
+    "au_spawn": (inputs: {"light": "au_cast", "heavy": "au_slam", "technique.1": "au_quick", "technique.2": "au_call"}),
+}
