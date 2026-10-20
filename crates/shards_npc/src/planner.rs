@@ -83,7 +83,7 @@ impl NpcPlan {
             for c in &mut self.cooldowns {
                 c.left -= dt;
             }
-            self.cooldowns.retain(|c| c.left > 1e-4);
+            self.cooldowns.retain(|c| c.left > COOLDOWN_GONE);
         }
     }
 
@@ -127,6 +127,10 @@ pub struct Resolved {
     pub max_repeats: Option<u32>,
     pub forbid_after: Vec<String>,
 }
+
+/// A cooldown at or below this (s) is none: [`NpcPlan::tick`] lets it go, and
+/// [`set_plan_cooldown`](crate::set_plan_cooldown) sets none.
+pub(crate) const COOLDOWN_GONE: f32 = 1e-4;
 
 /// The options of `plan` for a fighter with moveset `moveset`, against a target of body
 /// radius `target_radius`. Options whose input or action the moveset lacks are left out.
