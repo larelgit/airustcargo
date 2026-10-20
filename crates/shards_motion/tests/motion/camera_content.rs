@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 use serde_json::json;
-use shards_motion::camera::{CameraOffsets, CameraTuning};
+use shards_motion::camera::{CameraOffsets, CameraTuning, FitTuning};
 
 use crate::engine::*;
 
@@ -72,6 +72,28 @@ fn a_camera_definition_out_of_range_is_an_error_naming_its_file_and_field() {
     // A first load keeps the broken definition in the database; the camera does not take it.
     frames(&mut app, 3);
     assert_eq!(tuning(&app), CameraTuning::default());
+}
+
+#[test]
+fn a_fit_is_read_with_its_defaults_and_bad_numbers_are_errors() {
+    let dir = temp_dir("camera_fit");
+    write(&dir, "content/camera.camera.ron", r#"{ "default": (framing: (fit: Some((margin: 0.1)), pitch_clamp: (0.0, 0.7))) }"#);
+    let mut app = engine_app(&dir);
+    let errors: Vec<String> = app.world().resource::<shards_content::ContentDb>().errors().map(ToString::to_string).collect();
+    assert!(errors.is_empty(), "{errors:?}");
+    frames(&mut app, 3);
+    let fit = tuning(&app).framing.fit.expect("a fit");
+    assert_eq!((fit.margin, fit.tilt_max, fit.rate), (0.1, 0.6, 6.0), "what the file leaves out keeps its default");
+    let written = ron::to_string(&FitTuning::default()).unwrap();
+    assert_eq!(written, "()", "a default fit writes no field");
+
+    let dir = temp_dir("camera_fit_bad");
+    write(&dir, "content/camera.camera.ron", r#"{ "default": (framing: (fit: Some((margin: 1.0, tilt_max: 2.0, rate: 0.0)))) }"#);
+    let app = engine_app(&dir);
+    let errors: Vec<String> = app.world().resource::<shards_content::ContentDb>().errors().map(ToString::to_string).collect();
+    for needle in ["framing.fit.margin", "framing.fit.tilt_max", "framing.fit.rate"] {
+        assert!(errors.iter().any(|e| e.contains("content/camera.camera.ron") && e.contains(needle)), "{needle}: {errors:?}");
+    }
 }
 
 #[test]

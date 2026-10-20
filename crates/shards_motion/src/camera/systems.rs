@@ -14,7 +14,7 @@ use shards_settings::AccessibilitySettings;
 
 use super::lock::{angle, half_width, in_frustum, lock_candidates, pick_lock, sight_clear, switch_target, LockOnDef, Lockable, PickView};
 use super::math::{
-    aim_assist, arm_length, arm_reach, lock_framing, lock_holds, next_lock_target, orbit_angles, orbit_position, pick_lock_target,
+    aim_assist, arm_length, arm_reach, damp, fit_room, fit_tilt, lock_framing, lock_holds, next_lock_target, orbit_angles, orbit_position, pick_lock_target,
     pitch_limits, resolve_camera_collision, shake_offset_with, wrap_angle, FlickState, LockCandidate, LockView,
 };
 use super::{CameraOffsets, CameraSettings, CameraShake, CameraSystems, CameraTuning, LockOnTarget, LockPoint, ThirdPersonCamera};
@@ -373,7 +373,23 @@ fn orbit_camera(
         if reach < free {
             at = focus + (desired - focus).normalize_or_zero() * reach;
         }
-        let looking = Transform::from_translation(at).looking_at(focus, Vec3::Y);
+        // The player's own field of view plus what the game adds this frame (a sprint).
+        let fov = (settings.fov_deg + finite_or_zero(offsets.fov_add_deg)).clamp(30.0, 120.0).to_radians();
+        // Next to a big body the view turns up from the focus to keep a high lock point in
+        // frame with the player (R4); without a fit it looks at the focus, as it always did.
+        camera.tilt = match &tuning.framing.fit {
+            Some(fit) => {
+                let want = locked.map_or(0.0, |target| fit_tilt(at, focus, subject_at, target, fov * 0.5, fit));
+                // Eased toward what the target wants, but held at once to what the feet and
+                // `tilt_max` allow this frame (a wall that shortens the arm, a lower maximum).
+                damp(camera.tilt, want, fit.rate, dt).min(fit_room(at, focus, subject_at, fov * 0.5, fit))
+            }
+            None => 0.0,
+        };
+        let mut looking = Transform::from_translation(at).looking_at(focus, Vec3::Y);
+        if camera.tilt != 0.0 {
+            looking.rotation *= Quat::from_rotation_x(camera.tilt);
+        }
         let shaken = Quat::from_euler(EulerRot::YXZ, wobble.rotation.y, wobble.rotation.x, wobble.rotation.z);
         let next = Transform {
             translation: looking.translation + looking.rotation * wobble.translation,
@@ -386,11 +402,9 @@ fn orbit_camera(
 
         if let Some(mut projection) = projection
             && let Projection::Perspective(perspective) = &mut *projection
+            && (perspective.fov - fov).abs() > 1e-5
         {
-            let fov = (settings.fov_deg + finite_or_zero(offsets.fov_add_deg)).clamp(30.0, 120.0).to_radians();
-            if (perspective.fov - fov).abs() > 1e-5 {
-                perspective.fov = fov;
-            }
+            perspective.fov = fov;
         }
     }
 }
