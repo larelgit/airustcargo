@@ -5044,6 +5044,7 @@ flashes = "reduced"          # full | reduced | off
 text_scale = 1.0             # 0.5…3, for the game's UI
 fov_deg = 90.0               # 30…120
 hold_to_toggle = false       # held buttons work as toggles
+subtitles = true             # the lines of voices, in the game's UI
 
 [controls]
 mouse_sensitivity = 1.0      # 0.05…5
@@ -5063,7 +5064,7 @@ attack_assist = true         # false: attacks do not correct their direction tow
 | `graphics` | `shards_settings::apply_graphics`: the main window (fullscreen, vsync, size). The window changes when the settings change, not every frame, so the size the player dragged with the mouse is not taken back. Without a window the values are only stored. `render_scale` is applied by `shards::render_scale`: the resolution of the 3D picture, not the window scale (see "3D picture resolution" below). `shadows` is read by the game: `GraphicsSettings::shadow_quality()`; `foliage` is read by `shards_scatter` (`GraphicsSettings::foliage_density()`): at 0.5 half of the same instances stays, with no new ones (see "Foliage and small objects (E10.2)"); `interpolation` is read by `shards_motion` (render interpolation, see "Render interpolation (C8)") |
 | `audio` | `shards_audio`: the volume of the buses `music`, `sfx`, `voice`, `ui` with `master` taken into account (`AudioSettings::volume("music")`), applied to what is already playing (see "Audio") |
 | `controls` | `shards_motion`: `ControlSettings` ⇄ `InputMap` (see "Input" in "Movement (E2)"); sensitivity and the Y-axis inversion go to `CameraSettings`; `attack_assist = false` makes the controls hold `assist_off` for the player's body (see "Action timeline (B2a)") |
-| `accessibility` | `shards_motion`: the field of view and the strength of the camera shake, `MotionBlur` on the cameras that have it (the game adds the component, the setting sets the strength, 0 turns it off), `hold_to_toggle` in the input map; `shards_action`: `flashes` for the blinking of telegraphs and of off-screen markers (`reduced` — half as big and no more than 2 times a second, `off` — a steady light, `draw::pulse_at`) and `shards_ui`: `flashes` for full-screen flashes (`reduced` — at most 0.35 strong, pulses no more than 2 times a second and half as deep, eased fades, `off` — none; see "UI (E9)") |
+| `accessibility` | `shards_motion`: the field of view and the strength of the camera shake, `MotionBlur` on the cameras that have it (the game adds the component, the setting sets the strength, 0 turns it off), `hold_to_toggle` in the input map; `shards_action`: `flashes` for the blinking of telegraphs and of off-screen markers (`reduced` — half as big and no more than 2 times a second, `off` — a steady light, `draw::pulse_at`) and `shards_ui`: `flashes` for full-screen flashes (`reduced` — at most 0.35 strong, pulses no more than 2 times a second and half as deep, eased fades, `off` — none; see "UI (E9)"); `shards_audio`: `subtitles` for the lines of voices (off: the source `subtitles` is empty; see "Audio") |
 
 **3D picture resolution: `graphics.render_scale` (E8.6, E10).** The 3D world is drawn into a picture of `render_scale` x the window's pixels (with `--offscreen`, the base is the size of the `--offscreen` picture, 1280×720 by default), and the picture is stretched over the whole window with a linear filter;
 the UI, HUD, menus and the developer console stay at the window's native resolution. At 0.5 it is a quarter of the pixels (cheaper and softer), at 2 it is supersampling (four pixels for one). The module `shards::render_scale` (feature `render`, window and `--offscreen`):
@@ -5252,7 +5253,7 @@ app.add_ui_action("give_up", |world, press| {          // press: widget, screen,
 
 Engine sources (`shards`): `you.health`, `you.stamina`, `you.poise` (a bar), `you.charges:<charge>`, `you.cooldown:<action>`,
 `you.heading` (the compass), `allies`, `input.bindings:<context>.<action>` (the inputs of an action in the input map, as the `controls`
-settings make it at that moment; `Binding` reads it). "You" is the body this machine controls (`LocalPlayer`), otherwise the body
+settings make it at that moment; `Binding` reads it). The audio module adds `subtitles` and `subtitles:<lines>` (the lines of voices playing; see "Audio", "Subtitles"). "You" is the body this machine controls (`LocalPlayer`), otherwise the body
 the agent plays (`AiPlayer`). An unknown source writes one warning to the journal, and the widget stays empty.
 
 **Theme** is a definition of the `theme` kind with the id `default` (without it, the engine's theme is used): colours `text`, `dim_text`, `panel`, `backdrop`,
@@ -5487,8 +5488,8 @@ language=ru` shows all the messages of a language with their text. `text id= arg
 ```text
 $ shards act locale
 playing: en
-en English: 50 messages
-ru Русский → en: 49 messages; lacks 1: settings-fov
+en English: 51 messages
+ru Русский → en: 50 messages; lacks 1: settings-fov
 # switch: settings_set group=locale key=language value=<id>; `locale language=<id>` lists one language's text
 $ shards act text id=defeated 'args={"count": 3}' language=ru
 Повержено 3 врага
@@ -5517,6 +5518,7 @@ Three kinds of content set how the game sounds. The `shards_audio` module decide
     "warden_slam": (files: ["sounds/warden_slam.wav"], priority: 220, spatial: (near: 4.0, far: 55.0)),
     "hit": (files: ["sounds/hit_1.wav", "sounds/hit_2.wav"], priority: 120, spatial: (near: 2.0, far: 30.0), max_instances: 4),
     "ui_press": (files: ["sounds/ui_press.wav"], bus: Ui, volume: 0.5),
+    "warden_gate": (files: ["voice/warden_gate.ogg"], bus: Voice, subtitle: "@warden-gate", speaker: "@warden"),
 }
 // content/audio/arena.music.ron: music (kind `music`)
 {
@@ -5541,6 +5543,8 @@ Three kinds of content set how the game sounds. The `shards_audio` module decide
 **Where the sounds come from.** An attack's telegraph (E3) names its own sound (`telegraph: (…, sound: "warden_slam")`). It plays where the blow lands, from the attacker. An action also names a sound, at its own moment: the effect `Sound("whoosh")` (`effects: [(at: 0.2, effect: Sound("whoosh"))]`) plays from the body that acts, on the tick when the action reaches it. So a hero's swing is heard without a window, in a window, and on a co-op client (the host forwards the `ActionSound` event, as it does for a hit). An animation cue (`AnimationCue`) plays the sound with the same name from the body, if such a sound exists. But clip markers come from the clip, and a clip plays only where the model is drawn (a window or `--offscreen`). Without a window there is no such sound, and `audio` does not show it. Do not put a sound that the game must hear on every machine on a clip marker. The engine's events play the sounds listed in the mixer's `sounds`: `damaged`, `blocked`, `parried`, `evaded`, `guard_broken`, `staggered`, `died`, `healed` (from the body it happened to), and `ui_moved`, `ui_pressed`, `ui_changed`, `ui_opened`, `ui_closed` (the menus, the same everywhere; the HUD makes no sound). The game plays its own: `commands.trigger(PlaySound::new("coin", SoundAt::Entity(hero)))` or `shards::audio::play(world, "coin", SoundAt::Point { position, source: None })`.
 
 **Layered music.** A track's stems are files of one length. They start together and loop, and each layer switches its own stems on. Layers go from calm to tense. Every layer except the first has a `when` condition: the name of a condition, as in `step --until named:…` (`!name` negates it). The condition is either the engine's (`npc_near` and `npc_engaged` from the NPC module) or the game's (`add_ai_condition`). The most tense layer whose condition holds plays; otherwise the first layer does. A more tense layer comes in at once. A calmer one comes in only after it has been wanted for `hold` seconds in a row, so a pause in a fight does not cut the music. Stems fade in over `fade_in` and out over `fade_out`. The journal writes each change as a line: `[local] music: arena explore → tension`. `music_set track=boss` changes the track (the old one fades out), `track=none` is silence, `layer=combat` holds the layer whatever is happening in the game, and `layer=auto` releases it.
+
+**Subtitles (U4).** A sound with a `subtitle` has a line: a voice's words, as text or a message `@id`, with an optional `speaker` before it (`Warden: The gate holds.`). When the mixer starts the sound (heard: not dropped and not out of earshot), the line shows for the sound's length plus 0.75 s, and at least 2 s, on the voice's clock: `step` moves it, and pause holds it (a `Ui` sound's line goes by real time). The game's UI shows the lines through the source `subtitles`: `Hint(id: "subtitles", bind: "subtitles", text: "")` shows the newest two, oldest first, one per line; `subtitles:3` shows three (at most 8 are kept). Messages are resolved when the line is read, so a language switched to in the menu applies to the lines on screen, and a line can carry font spans (`[font=symbols]…[/font]`, see "Font spans (U1)"). The same line said twice while it shows (two guards bark it) shows once, for the longer time. A voice taken by a stronger sound takes its line with it once no other voice says it, and stopping every voice takes them all: a line is what is heard. The player's `accessibility.subtitles` (on by default) turns the source empty. Agents read each line as it starts in the journal, whatever the setting (`[local] subtitle: Warden: The gate holds.`), and the lines on screen in `audio` (`subtitles (shown): "Warden: The gate holds." 1.4s more`). The mixer, its lines and the setting belong to this machine: nothing of them is in a snapshot or the replay hash.
 
 **For agents.** `audio` (query, scope Player) shows what this machine hears: the track, the layer and how long it has lasted, which calmer layer is waiting for its `hold`, the stems with their volume, the buses, the voices (sound, source, distance, volume, priority, length), and the latest sounds that were not heard, with the reason, and where the listener is:
 
@@ -5574,13 +5578,13 @@ tension, combat``.
 **Playback.** The `audio` feature of the `shards` crate (enabled in the sandbox and the template) plays the mixer's decisions through Bevy audio: WAV and Ogg Vorbis. On Linux it needs `libasound2-dev` (it is already in the list of packages). Without an output device nothing sounds, but the mixer decides the same way. Each voice is a sink for its own file, with the volume from the mixer. A spatial voice stands one metre from the ears, on the side the sound comes from.
 
 **Content check.** `--check-content` and `content_check` find: a file that is missing or is not a WAV or Ogg Vorbis; stems of different lengths (``stems loop together, so they need one length: `music/calm.wav` plays 2.00 s, `sounds/beep.wav` 0.50 s``); a layer without stems; a first layer with `when` and the next one without it; a stem's layer that the track does not have (with a hint); a sound on the `Music` bus; `far` closer than `near`; `max_instances: 0`; a mixer event that the engine does not have (``no engine event `damagd` (did you
-mean `damaged`?)``); a second mixer; and an attack whose telegraph names a sound that does not exist (``action `bite` warns with sound `boon`,
+mean `damaged`?)``); a second mixer; an empty `subtitle`, a `speaker` without one, and a `subtitle` or `speaker` message (`@id`) that a language lacks; and an attack whose telegraph names a sound that does not exist (``action `bite` warns with sound `boon`,
 which no `*.sound.ron` defines (did you mean `boom`?)``) or plays it with a `Sound` effect (``action `swing` effects[0] plays sound
 `bom`, which no `*.sound.ron` defines (did you mean `boom`?)``). The journal names a layer condition that the game did not register, once, when the track plays.
 
 **Sandbox and template files** are synthesised; there are no recordings in the repository. `cargo run -p sandbox --example make_sounds` writes them again (16-bit mono WAV, noise with a seed: the same bytes on every run).
 
-Tests: `crates/shards_audio` (unit tests: WAV and Ogg lengths, falloff with distance, buses from the settings, voices and voice stealing; `tests/audio/`: the voice limit and `max_instances`, distance and source, the simulation clock, the player's volume, events, telegraphs, the `Sound` action effect and the menu, tools, music layers and `hold`, `music_set`, `local` lines, the snapshot, the content check), the scenario `crates/sandbox/scenarios/audio.scenario`, and in the template `tests/game/audio.rs` (the music switches to `combat` when the hero approaches the ground; the hero's swing sounds without a model).
+Tests: `crates/shards_audio` (unit tests: WAV and Ogg lengths, falloff with distance, buses from the settings, voices and voice stealing; `tests/audio/`: the voice limit and `max_instances`, distance and source, the simulation clock, the player's volume, events, telegraphs, the `Sound` action effect and the menu, tools, music layers and `hold`, `music_set`, `local` lines, the snapshot, the content check; `tests/audio/subtitles.rs`: a played voice's line and its time, the same line once, a taken voice's line, the setting, the language, the check), the scenario `crates/sandbox/scenarios/audio.scenario`, and in the template `tests/game/audio.rs` (the music switches to `combat` when the hero approaches the ground; the hero's swing sounds without a model).
 
 ## Stylised materials (E10.1)
 

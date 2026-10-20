@@ -22,6 +22,8 @@ shards_settings.workspace = true
 shards_action.workspace = true
 # Menu sounds, and the body a HUD is about (the listener).
 shards_ui.workspace = true
+# Subtitles: their `@id` messages, checked and shown in the language played.
+shards_locale.workspace = true
 bevy = { workspace = true, features = ["std", "serialize"] }
 serde.workspace = true
 serde_json.workspace = true

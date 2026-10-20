@@ -13,6 +13,7 @@ use shards_settings::AudioSettings;
 
 use crate::def::{AudioDef, Bus, Falloff, SoundDef, DEFAULT_VOICES};
 use crate::length::file_seconds;
+use crate::subtitles::{self, Subtitles};
 
 /// Where a sound is heard from.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -134,7 +135,7 @@ impl Mixer {
         self.drops.iter()
     }
 
-    fn now(&self, bus: Bus) -> f64 {
+    pub(crate) fn now(&self, bus: Bus) -> f64 {
         if bus == Bus::Ui { self.real_seconds } else { self.sim_seconds }
     }
 
@@ -214,11 +215,12 @@ pub fn play(world: &mut World, sound: &str, at: SoundAt) -> Result<Played, Strin
     {
         return Ok(mixer.drop_sound(sound, format!("out of earshot: {distance:.1} m, heard to {:.0} m", falloff.far)));
     }
-    let mut stole = None;
+    let (mut stole, mut taken) = (None, None);
     if let Some(max) = def.max_instances {
         let own: Vec<usize> = mixer.voices.iter().enumerate().filter(|(_, v)| v.sound == sound).map(|(i, _)| i).collect();
         if own.len() >= max as usize {
             let oldest = mixer.voices.remove(own[0]);
+            taken = Some(oldest.id);
             stole = Some(format!("its own #{} (max {max})", oldest.id));
         }
     }
@@ -233,6 +235,7 @@ pub fn play(world: &mut World, sound: &str, at: SoundAt) -> Result<Played, Strin
         match weakest {
             Some((i, priority, gain, name, id)) if (voice.priority, voice.gain) > (priority, gain) => {
                 mixer.voices.remove(i);
+                taken = Some(id);
                 stole = Some(format!("{name} #{id} (voice limit {limit})"));
             }
             _ => {
@@ -256,6 +259,11 @@ pub fn play(world: &mut World, sound: &str, at: SoundAt) -> Result<Played, Strin
     voice.length = length;
     let id = voice.id;
     mixer.voices.push(voice);
+    // What the taken voice said is no longer heard; what this one says shows.
+    if let Some(taken) = taken {
+        subtitles::cut(world, taken);
+    }
+    subtitles::start(world, sound, &def, id, length);
     Ok(Played::Started { id, stole })
 }
 
@@ -336,11 +344,15 @@ pub fn refresh(world: &mut World) {
         }
         hear(voice, listener, buses[&voice.bus]);
     }
+    if let Some(mut lines) = world.get_resource_mut::<Subtitles>() {
+        subtitles::expire(&mut lines, sim, real);
+    }
 }
 
 /// Stops every voice (a new region, a loaded save: what played belongs to the world that went).
 pub fn stop_all(world: &mut World) {
     world.resource_mut::<Mixer>().voices.clear();
+    subtitles::clear(world);
 }
 
 #[cfg(test)]
