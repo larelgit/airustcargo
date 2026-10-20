@@ -20,6 +20,7 @@ mod parts;
 mod reactions;
 mod timeline;
 mod replay;
+mod rules_costs;
 mod rules_damage;
 #[cfg(feature = "render")]
 mod render;

@@ -161,6 +161,26 @@ pub struct RulesView<'a> {
     pub class: &'a str,
 }
 
+impl<'a> RulesView<'a> {
+    /// The rules in play as a body of `class` sees them (its [`RuleClass`]; without one, `player` when it
+    /// is a player's body): `None` when no rule set is in play or the body has no class, so a body without
+    /// a class reads nothing (counts as read).
+    pub fn of(db: &'a ContentDb, rules: Option<&ActiveRules>, class: Option<&'a RuleClass>, player: bool) -> Option<Self> {
+        let class = match class {
+            Some(class) => class.0.as_str(),
+            None if player => PLAYER_CLASS,
+            None => return None,
+        };
+        Some(Self { set: active_set(db, rules)?, class })
+    }
+
+    /// [`RulesView::of`] for the body `e` as the world has it now.
+    pub fn of_entity(world: &'a World, e: Entity) -> Option<Self> {
+        let db = world.get_resource::<ContentDb>()?;
+        Self::of(db, world.get_resource::<ActiveRules>(), world.get::<RuleClass>(e), world.get::<PlayerId>(e).is_some())
+    }
+}
+
 impl RulesView<'_> {
     /// The factor of the stamina an action costs: the product of every cost rule of the class one of whose
     /// tags is one of the action's `tags` or its `id`; 1 when none matches.
@@ -321,6 +341,24 @@ mod tests {
         assert_eq!(view.perfect_bonus(), 0.05);
         let brute = RulesView { set: &set, class: "brute" };
         assert_eq!((brute.stamina_factor(&tags(&["roll"]), "roll"), brute.perfect_bonus()), (1.0, 0.0), "a class the set does not name");
+    }
+
+    #[test]
+    fn a_view_needs_a_set_in_play_and_a_class() {
+        let mut world = world("gentle", 1);
+        let brute = world.spawn(RuleClass("brute".into())).id();
+        let player = world.spawn(PlayerId(0)).id();
+        let both = world.spawn((PlayerId(1), RuleClass("brute".into()))).id();
+        let neither = world.spawn(Name::new("post")).id();
+        let class = |e| RulesView::of_entity(&world, e).map(|v| v.class);
+        assert_eq!([class(brute), class(player), class(both), class(neither)], [Some("brute"), Some("player"), Some("brute"), None]);
+        assert_eq!(RulesView::of_entity(&world, brute).map(|v| v.set.name.as_str()), Some("Gentle"), "the set in play");
+        let db = world.resource::<ContentDb>();
+        let neutral = ActiveRules { mode: String::new(), generation: 1, players: 1 };
+        let class = RuleClass("brute".into());
+        assert!(RulesView::of(db, Some(&neutral), Some(&class), false).is_none(), "neutral rules: no view");
+        assert!(RulesView::of(db, None, Some(&class), true).is_none(), "no rules: no view");
+        assert!(RulesView::of(db, world.get_resource::<ActiveRules>(), None, false).is_none(), "no class: no view");
     }
 
     #[test]
