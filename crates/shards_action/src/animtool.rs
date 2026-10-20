@@ -3,7 +3,7 @@
 //!
 //! A game gives [`Animated`] only to the bodies it dresses in a window or with `--offscreen`, so
 //! headless nothing is drawn. The tool still answers there: the choice is a pure function of the
-//! action machine, the controller and the content ([`select_clip_in`], [`select_layer_in`],
+//! action machine, the controller and the content ([`select_clip_timed`], [`select_layer_timed`],
 //! [`mount_places`]), so for a body that has no `Animated` it takes the set named by `animset=` and
 //! says what the bridge would pick. Drawn, it adds what the bridge has done: whether the body is
 //! bound, what plays on its layers, where its props sit. Every line says what it is; the pose is
@@ -19,13 +19,13 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use shards_content::ContentDb;
 use shards_core::Predicted;
-use shards_motion::{MotionState, MoveModifiers};
+use shards_motion::{LocomotionInput, MotionState, MoveModifiers};
 
 use crate::anim::{
-    mode_name, mount_places, select_clip_in, select_layer_in, AnimSet, Animated, BodyStatus, MountView, Place, PropSwaps, LEFT_KEY,
-    MODE_KEY,
+    mode_name, mount_places, phase_seek, select_clip_timed, select_layer_timed, ActionTime, AnimSet, Animated, BodyStatus, Heading,
+    MountView, Place, PropSwaps, LEFT_KEY, MODE_KEY,
 };
-use crate::def::{ActionDef, MovesetDef};
+use crate::def::{ActionDef, Face, MovesetDef};
 use crate::fighter::{Dead, Fighter};
 use crate::machine::{ActionState, Running};
 use crate::predict::PredictedAction;
@@ -87,6 +87,47 @@ fn label(world: &World, e: Entity) -> String {
     world.get::<AiId>(e).map_or_else(|| format!("{e}"), |id| id.to_string())
 }
 
+/// How a seeked clip follows the action: ` by phase` for a clip timed to the action's phases (and the
+/// phases it loops), ` evenly (the clip is timed to windup, active, recovery; the action is not)` for
+/// one timed to others, nothing for a clip without phases.
+fn seek_how(set: &AnimSet, clip: &str, action: Option<&ActionTime>) -> String {
+    let (Some(def), Some(a)) = (set.clip(clip), action) else { return String::new() };
+    if def.phases.is_empty() {
+        return String::new();
+    }
+    if phase_seek(a.phases, &def.phases, &def.loops, a.t, a.length).is_some() {
+        return if def.loops.is_empty() { " by phase".to_owned() } else { format!(" by phase, looping {}", def.loops.join(", ")) };
+    }
+    let names: Vec<&str> = def.phases.iter().map(|p| p.0.as_str()).collect();
+    format!(" evenly (the clip is timed to {}; the action is not)", names.join(", "))
+}
+
+/// The model's turn now, for a drawn body: radians from the body's facing.
+#[cfg(feature = "render")]
+fn bound_turn(world: &World, body: Entity) -> Option<f32> {
+    world.get::<crate::render::AnimationBound>(body).map(crate::render::AnimationBound::model_turn)
+}
+
+#[cfg(not(feature = "render"))]
+fn bound_turn(_: &World, _: Entity) -> Option<f32> {
+    None
+}
+
+/// ` · the model turned 90° to the run's heading (turn 0.08 s)` while a run turns the model (or one
+/// that would), and while a drawn model is still turned; nothing otherwise.
+fn turn_text(set: &AnimSet, def: Option<&ActionDef>, key: Option<&str>, now: Option<f32>) -> String {
+    let secs = key.map_or(0.0, |k| set.turn_of(k));
+    let turns = secs > 0.0 && def.is_some_and(|d| d.face == Face::Keep);
+    match now {
+        Some(yaw) if yaw != 0.0 => {
+            let why = if turns { format!("to the run's heading (turn {secs} s)") } else { "on its way back to the body's facing".to_owned() };
+            format!(" · the model turned {:.0}° {why}", yaw.to_degrees())
+        }
+        _ if turns => format!(" · the model turns to the run's heading (turn {secs} s)"),
+        _ => String::new(),
+    }
+}
+
 /// The seconds `0.21/0.60 s` of a run.
 fn clock_of(run: &Running) -> String {
     format!("{:.2}/{:.2} s", run.t, run.length)
@@ -141,30 +182,46 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
     };
     let def = run.and_then(|r| db.get::<ActionDef>(&r.action));
     let key = run.map(|r| set.action_key(&r.action, r.anim.as_deref(), def.map_or(&[], |d| d.tags.as_slice())));
-    let action = run.zip(key).map(|(r, k)| (k, r.t.min(r.length), r.length));
+    // Looked ahead by the fixed clock's overstep as the bridge looks (not an action with a hold loop).
+    let ahead = if def.is_some_and(|d| d.hold.is_some()) {
+        0.0
+    } else {
+        world.get_resource::<Time<Fixed>>().map_or(0.0, |t| t.overstep().as_secs_f32())
+    };
+    let action =
+        run.zip(key).map(|(r, k)| ActionTime::new(k, (r.t + ahead).min(r.length), r.length, def.map_or(&[], |d| d.phases.as_slice())));
     let moveset = world.get::<Fighter>(body).map(|f| f.moveset.as_str());
     let staggers = moveset
         .and_then(|m| db.get::<MovesetDef>(m))
         .and_then(|m| m.stagger.as_deref())
         .zip(run)
         .is_some_and(|(stagger, r)| r.forced && r.action == stagger);
+    let standing = MotionState::default();
+    let motion = world.get::<MotionState>(body).unwrap_or(&standing);
+    // Facing a target: the heading the bridge kept (its slack at the quarters' edges), else as it would choose now.
+    #[cfg(feature = "render")]
+    let kept = bound.map_or(Heading::Forward, |b| b.heading());
+    #[cfg(not(feature = "render"))]
+    let kept = Heading::Forward;
+    let faces = world.get::<LocomotionInput>(body).is_some_and(|l| l.face.is_some());
+    let facing = world.get::<Transform>(body).filter(|_| faces).map(|tf| Heading::of(*tf.forward(), motion.velocity, kept));
     let status = BodyStatus {
         dead: world.get::<Dead>(body).is_some(),
         staggered: staggers,
         pace: world.get::<MoveModifiers>(body).map_or(1.0, MoveModifiers::pace),
+        facing,
     };
-    let standing = MotionState::default();
-    let motion = world.get::<MotionState>(body).unwrap_or(&standing);
 
     let mut out = vec![head];
     // The body's clip.
-    let choice = select_clip_in(action, motion, status, set, moveset);
+    let choice = select_clip_timed(action, motion, status, set, moveset);
     let mut line = match choice.clip {
         Some(clip) => {
             let why = match (run, choice.seek_to) {
                 (Some(r), Some(p)) => format!(
-                    " seeked to {:.0} % (action {} at {}, phase {})",
+                    " seeked to {:.0} %{} (action {} at {}, phase {})",
                     p * 100.0,
+                    seek_how(set, clip, action.as_ref()),
                     r.action,
                     clock_of(r),
                     r.phase
@@ -173,9 +230,17 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
                 (None, Some(p)) => format!(" seeked to {:.0} % (mantle)", p * 100.0),
                 // A clip that plays once and holds (a dead body with no action running).
                 _ if !choice.looping => format!(" played once at x{:.2}{}", choice.speed, if status.dead { " (dead)" } else { "" }),
-                _ => format!(" looping at x{:.2} ({})", choice.speed, crate::anim::locomotion_state_at(motion, &set.speeds, status.pace).name()),
+                _ => {
+                    let state = crate::anim::locomotion_state_at(motion, &set.speeds, status.pace);
+                    let faced = match facing {
+                        Some(h) if choice.speed < 0.0 => format!(", facing a target, moving {}: the clip backward", h.name()),
+                        Some(h) => format!(", facing a target, moving {}", h.name()),
+                        None => String::new(),
+                    };
+                    format!(" looping at x{:.2} ({}{faced})", choice.speed, state.name())
+                }
             };
-            format!("  body: {clip}{why}")
+            format!("  body: {clip}{why}{}", turn_text(set, def, key, bound_turn(world, body)))
         }
         None => "  body: nothing for this moment (the pose stays as it is)".to_owned(),
     };
@@ -188,7 +253,7 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
     out.push(line);
 
     // The layer.
-    let layer = select_layer_in(action, status, set, moveset);
+    let layer = select_layer_timed(action, status, set, moveset);
     #[cfg(feature = "render")]
     let plays = |name: &str| bound.map(|b| (b.layer_clip(name).map(str::to_owned), b.layer_share(name)));
     let mut layers: Vec<String> = Vec::new();
@@ -285,7 +350,7 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
     if !carried.is_empty() || placed {
         let rules = run.and_then(|r| {
             let rules = set.mount_rules(&r.action, r.anim.as_deref(), def.map_or(&[], |d| d.tags.as_slice()))?;
-            Some((rules, def?, action.map_or(r.t, |(_, t, _)| t)))
+            Some((rules, def?, action.map_or(r.t, |a| a.t)))
         });
         #[allow(unused_mut, reason = "the drawn side adds the equip")]
         let mut equip = None;
