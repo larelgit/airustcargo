@@ -43,7 +43,10 @@ fn windowed() -> App {
         |config| config.asset_dir = dir.to_string_lossy().into_owned(),
         |app| {
             app.insert_resource(Lore("plain".into()));
-            app.add_ui_source("lore.line", |world, _| world.get_resource::<Lore>().map(|l| UiValue::Text(l.0.clone())));
+            // An empty line is no text at all (`UiValue::None`).
+            app.add_ui_source("lore.line", |world, _| {
+                world.get_resource::<Lore>().map(|l| if l.0.is_empty() { UiValue::None } else { UiValue::Text(l.0.clone()) })
+            });
         },
     );
     configure_session(app.world_mut(), PLAYER, &SessionChange { scope: Some(Scope::Player), ..default() }).unwrap();
@@ -101,6 +104,13 @@ fn a_marked_text_draws_its_runs_in_the_themes_named_font() {
     app.world_mut().resource_mut::<Lore>().0 = "plain [again".into();
     app.update();
     assert_eq!(runs(&mut app, "lore/bound"), ("plain [again".into(), vec![]), "the runs go");
+    // Marked, then a value that is no text: the runs go with it.
+    app.world_mut().resource_mut::<Lore>().0 = "[font=symbols]ᚦ[/font]".into();
+    app.update();
+    assert_eq!(runs(&mut app, "lore/bound").1.len(), 1);
+    app.world_mut().resource_mut::<Lore>().0 = String::new();
+    app.update();
+    assert_eq!(runs(&mut app, "lore/bound"), (String::new(), vec![]), "no stale runs under a value that is not text");
 }
 
 #[test]

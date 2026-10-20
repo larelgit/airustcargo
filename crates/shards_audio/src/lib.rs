@@ -67,7 +67,7 @@ use shards_ui::{Layer, ScreenDef, UiAppExt, UiChanged, UiFocusMoved, UiPressed, 
 pub use def::{AudioDef, Bus, Falloff, LayerDef, MusicDef, SoundDef, StemDef, EVENTS};
 pub use mixer::{bus_volume, listener, play, refresh, voice_limit, AudioListener, Dropped, Listener, Mixer, PlaySound, Played, SoundAt, Voice};
 pub use music::{force_layer, set_track, Music, Stem};
-pub use subtitles::{SubtitleLine, Subtitles};
+pub use subtitles::{LineVoice, SubtitleLine, Subtitles};
 pub use tools::{AudioArgs, MusicSetArgs, SoundPlayArgs};
 
 /// Version of the engine crates (they share one).

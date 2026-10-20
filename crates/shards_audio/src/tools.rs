@@ -56,8 +56,9 @@ fn audio(In(_): In<Call<AudioArgs>>, world: &World) -> ToolResult {
     }
     if let Some(lines) = world.get_resource::<Subtitles>().map(Subtitles::lines).filter(|l| !l.is_empty()) {
         let state = if subtitles::enabled(world) { "shown" } else { "not shown: accessibility.subtitles is off" };
+        let (sim, real) = mixer.clocks();
         let lines: Vec<String> =
-            lines.iter().map(|l| format!("\"{}\" {:.1}s more", subtitles::line_text(world, l), l.until - mixer.now(l.bus))).collect();
+            lines.iter().map(|l| format!("\"{}\" {:.1}s more", subtitles::line_text(world, l), l.left(sim, real))).collect();
         out.push_str(&format!("subtitles ({state}): {}\n", lines.join(" · ")));
     }
     match mixer.listener {
