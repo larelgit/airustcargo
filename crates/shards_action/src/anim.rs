@@ -115,6 +115,23 @@
 //! order (a typo or a phase left out). With the asset folder, a clip's `phases` must match the
 //! file's: its `phases` extra when it has one, else its length. [`phase_seek`] is the mapping.
 //!
+//! ## Facing
+//!
+//! A body that faces a target (a lock-on, an aim point) can move away from where it faces. Its
+//! gait then shows the clip of its heading from its facing ([`Heading`]: four quarters, with
+//! [`HEADING_SLACK`] at their edges), and standing still it shows a combat idle:
+//!
+//! ```ron
+//! //     locomotion: {"walk": "walk", "walk.back": "backstep", "walk.left": "strafe_l",
+//! //                  "walk.right": "strafe_r", "idle": "idle", "idle.facing": "guard_idle"},
+//! ```
+//!
+//! With no clip for a heading, `back` plays the gait's clip backward and `left` and `right` play it
+//! as it is. A switch from one gait's clip to another starts the new one at the old one's place in
+//! the stride ([`carry_phase`]). A whole-body mapping can turn the model to the heading of a run
+//! that keeps the body's facing (`face: Keep`): `actions: {"dodge": (clip: "roll", turn: 0.08)}`
+//! ([`ActionClip::turn`]; written on the `root_motion` bone).
+//!
 //! ## Sockets and props
 //!
 //! A character can carry things: a sword in the hand, a flask on the hip. A *socket* is a place on
@@ -167,7 +184,7 @@ use shards_content::{ContentDef, Refs};
 use shards_motion::{MotionMode, MotionState};
 
 use crate::clipfile::ClipFile;
-use crate::def::{ActionDef, MovesetDef, Phase, Span, EPS};
+use crate::def::{ActionDef, Face, MovesetDef, Phase, Span, EPS};
 
 /// Marks a character the animation bridge drives: `animset` is the id of its
 /// [`AnimSet`]. The glTF scene is a child entity. Presentation only: replays ignore it, so
@@ -337,8 +354,8 @@ impl DropDef {
 
 /// What an action shows (a value of an animset's `actions` or `tags`): a clip of the library,
 /// on the whole body or on one of the set's layers. Written `"swing_1"` for the whole body, or
-/// `(clip: "drink", layer: "upper")`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// `(clip: "drink", layer: "upper")`, or `(clip: "roll", turn: 0.08)`.
+#[derive(Clone, Debug, PartialEq)]
 pub struct ActionClip {
     /// Our name of the clip.
     pub clip: String,
@@ -348,17 +365,22 @@ pub struct ActionClip {
     /// sockets). Default: true for a whole-body mapping, false for a layered one; written only
     /// when it differs from that default.
     pub ends_equip: bool,
+    /// Seconds the model takes to turn to the run's heading, and back after it, for an action that
+    /// keeps the body's facing (`face: Keep`): a roll to the side under lock-on rolls the model that
+    /// way while the body still looks at its target. 0 (the default, not written): the model faces
+    /// where the body faces. Whole body only; needs `root_motion` (the turn is written on that bone).
+    pub turn: f32,
 }
 
 impl ActionClip {
     /// `clip` on the whole body.
     pub fn body(clip: impl Into<String>) -> Self {
-        Self { clip: clip.into(), layer: None, ends_equip: true }
+        Self { clip: clip.into(), layer: None, ends_equip: true, turn: 0.0 }
     }
 
     /// `clip` on `layer`.
     pub fn on(clip: impl Into<String>, layer: impl Into<String>) -> Self {
-        Self { clip: clip.into(), layer: Some(layer.into()), ends_equip: false }
+        Self { clip: clip.into(), layer: Some(layer.into()), ends_equip: false, turn: 0.0 }
     }
 }
 
@@ -372,17 +394,22 @@ impl Serialize for ActionClip {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
         let default_ends = self.layer.is_none();
+        let turns = self.turn != 0.0;
         match &self.layer {
-            None if self.ends_equip == default_ends => serializer.serialize_str(&self.clip),
+            None if self.ends_equip == default_ends && !turns => serializer.serialize_str(&self.clip),
             layer => {
                 let extra = self.ends_equip != default_ends;
-                let mut s = serializer.serialize_struct("ActionClip", 1 + usize::from(layer.is_some()) + usize::from(extra))?;
+                let fields = 1 + usize::from(layer.is_some()) + usize::from(extra) + usize::from(turns);
+                let mut s = serializer.serialize_struct("ActionClip", fields)?;
                 s.serialize_field("clip", &self.clip)?;
                 if let Some(layer) = layer {
                     s.serialize_field("layer", layer)?;
                 }
                 if extra {
                     s.serialize_field("ends_equip", &self.ends_equip)?;
+                }
+                if turns {
+                    s.serialize_field("turn", &self.turn)?;
                 }
                 s.end()
             }
@@ -408,16 +435,18 @@ impl<'de> Deserialize<'de> for ActionClip {
 
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<ActionClip, A::Error> {
                 let (mut clip, mut layer, mut ends_equip): (Option<String>, Option<String>, Option<bool>) = (None, None, None);
+                let mut turn = 0.0;
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "clip" => clip = Some(map.next_value()?),
                         "layer" => layer = map.next_value()?,
                         "ends_equip" => ends_equip = Some(map.next_value()?),
-                        other => return Err(A::Error::unknown_field(other, &["clip", "layer", "ends_equip"])),
+                        "turn" => turn = map.next_value()?,
+                        other => return Err(A::Error::unknown_field(other, &["clip", "layer", "ends_equip", "turn"])),
                     }
                 }
                 let ends_equip = ends_equip.unwrap_or(layer.is_none());
-                Ok(ActionClip { clip: clip.ok_or_else(|| A::Error::missing_field("clip"))?, layer, ends_equip })
+                Ok(ActionClip { clip: clip.ok_or_else(|| A::Error::missing_field("clip"))?, layer, ends_equip, turn })
             }
         }
         deserializer.deserialize_any(Reader)
@@ -691,6 +720,107 @@ impl Locomotion {
             Mantle => &[Air, Idle],
         }
     }
+
+    /// A gait on the ground: walk, run or sprint (the states that have headings and carry their
+    /// phase from one clip to the next).
+    pub fn is_gait(self) -> bool {
+        matches!(self, Locomotion::Walk | Locomotion::Run | Locomotion::Sprint)
+    }
+}
+
+/// Which way a body that faces a target moves, seen from where it faces ([`BodyStatus::facing`]):
+/// four quarters of 90° around its forward.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Heading {
+    #[default]
+    Forward,
+    Back,
+    /// To the body's left.
+    Left,
+    /// To the body's right.
+    Right,
+}
+
+/// Degrees a body may move past the edge of its heading's quarter before it takes the next one: a
+/// diagonal does not flicker between two clips.
+pub const HEADING_SLACK: f32 = 10.0;
+
+impl Heading {
+    pub const ALL: [Heading; 4] = [Heading::Forward, Heading::Back, Heading::Left, Heading::Right];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Heading::Forward => "forward",
+            Heading::Back => "back",
+            Heading::Left => "left",
+            Heading::Right => "right",
+        }
+    }
+
+    /// The middle of the quarter, in degrees from forward, clockwise seen from above (right +90).
+    fn centre(self) -> f32 {
+        match self {
+            Heading::Forward => 0.0,
+            Heading::Right => 90.0,
+            Heading::Back => 180.0,
+            Heading::Left => -90.0,
+        }
+    }
+
+    /// The heading of `velocity` for a body whose forward is `forward` (both read on the ground
+    /// plane): the quarter it falls in, except that `prev` is kept up to [`HEADING_SLACK`] degrees
+    /// past its edge. A body that barely moves (or faces nowhere) keeps `prev`.
+    pub fn of(forward: Vec3, velocity: Vec3, prev: Heading) -> Heading {
+        let forward = Vec3::new(forward.x, 0.0, forward.z);
+        let v = Vec3::new(velocity.x, 0.0, velocity.z);
+        if forward.length_squared() < EPS || v.length_squared() < EPS {
+            return prev;
+        }
+        // Bevy's right is +x when forward is -z: (-forward.z, 0, forward.x).
+        let right = Vec3::new(-forward.z, 0.0, forward.x);
+        let degrees = ops::atan2(v.dot(right), v.dot(forward)).to_degrees();
+        let off = |h: Heading| ((degrees - h.centre() + 180.0).rem_euclid(360.0) - 180.0).abs();
+        if off(prev) <= 45.0 + HEADING_SLACK {
+            return prev;
+        }
+        Heading::ALL.into_iter().min_by(|a, b| off(*a).total_cmp(&off(*b))).unwrap_or(prev)
+    }
+}
+
+/// The keys of `locomotion` a body that faces a target looks up first: a gait's heading (none
+/// authored: `back` plays the gait's own clip backward, `left` and `right` play it as it is) and
+/// the combat idle (none: `idle`).
+pub const FACING_KEYS: [&str; 10] = [
+    "idle.facing",
+    "walk.back",
+    "walk.left",
+    "walk.right",
+    "run.back",
+    "run.left",
+    "run.right",
+    "sprint.back",
+    "sprint.left",
+    "sprint.right",
+];
+
+/// The key of `locomotion` for `state` seen from a body that faces a target and moves toward
+/// `heading`: `walk.back`, `run.left`, `idle.facing`. `None`: forward, or a state without one.
+pub fn facing_key(state: Locomotion, heading: Heading) -> Option<&'static str> {
+    use Heading::*;
+    use Locomotion::*;
+    Some(match (state, heading) {
+        (Idle, _) => "idle.facing",
+        (Walk, Back) => "walk.back",
+        (Walk, Left) => "walk.left",
+        (Walk, Right) => "walk.right",
+        (Run, Back) => "run.back",
+        (Run, Left) => "run.left",
+        (Run, Right) => "run.right",
+        (Sprint, Back) => "sprint.back",
+        (Sprint, Left) => "sprint.left",
+        (Sprint, Right) => "sprint.right",
+        _ => return None,
+    })
 }
 
 impl AnimSet {
@@ -734,6 +864,30 @@ impl AnimSet {
     /// The clip for exactly this state, no fallbacks.
     fn exact(&self, state: Locomotion) -> Option<&str> {
         self.locomotion.get(state.name()).and_then(|clip| self.known(clip))
+    }
+
+    /// Our clip for `state` (as [`locomotion_clip`](Self::locomotion_clip) resolved it) on a body
+    /// that faces a target and moves toward `heading`: the set's `walk.back`, `run.left`,
+    /// `idle.facing` ([`facing_key`]), if it has one.
+    pub fn facing_clip(&self, state: Locomotion, heading: Heading) -> Option<&str> {
+        self.locomotion.get(facing_key(state, heading)?).and_then(|clip| self.known(clip))
+    }
+
+    /// The mapping an action looked up by `key` shows, found the way [`action_shown`](Self::action_shown)
+    /// finds it; `None` for a key that is a clip's own name (an action's `anim`), which has none.
+    pub fn mapping(&self, key: &str) -> Option<&ActionClip> {
+        let known = |m: &&ActionClip| self.clips.contains_key(&m.clip);
+        match self.actions.get(key).filter(known) {
+            Some(m) => Some(m),
+            None if self.clips.contains_key(key) => None,
+            None => self.tags.get(key).filter(known),
+        }
+    }
+
+    /// Seconds the model takes to turn to the heading of a run shown by `key` ([`ActionClip::turn`]);
+    /// 0 when it does not turn (no mapping, or one on a layer).
+    pub fn turn_of(&self, key: &str) -> f32 {
+        self.mapping(key).filter(|m| m.layer.is_none()).map_or(0.0, |m| m.turn)
     }
 
     /// `clip` if the library has it.
@@ -1052,11 +1206,14 @@ pub struct ClipChoice<'a> {
     pub blend: f32,
     /// Loops (locomotion) or plays once and holds its last pose.
     pub looping: bool,
+    /// A gait's clip (walk, run, sprint, any heading): a switch from one to another starts the new
+    /// clip where the old one was in its stride.
+    pub gait: bool,
 }
 
 impl<'a> ClipChoice<'a> {
     fn none(set: &AnimSet) -> Self {
-        Self { clip: None, seek_to: None, speed: 1.0, blend: set.blend.max(0.0), looping: false }
+        Self { clip: None, seek_to: None, speed: 1.0, blend: set.blend.max(0.0), looping: false, gait: false }
     }
 
     fn seeked(set: &AnimSet, clip: &'a str, progress: f32, action: bool) -> Self {
@@ -1066,6 +1223,7 @@ impl<'a> ClipChoice<'a> {
             speed: 0.0,
             blend: set.blend_into(clip, action),
             looping: false,
+            gait: false,
         }
     }
 }
@@ -1080,11 +1238,16 @@ pub struct BodyStatus {
     /// The factor the body's speeds are scaled by (`MoveModifiers::pace`): a slowed run is
     /// still a run, played slower, not a walk. 1: no modifier.
     pub pace: f32,
+    /// The body faces a target (a lock-on, an aim point: `LocomotionInput::face`) and moves this
+    /// way from where it faces ([`Heading::of`]): a gait shows its heading's clip (`walk.back`;
+    /// none: `back` plays the gait's clip backward, `left` and `right` play it as it is) and
+    /// standing still shows `idle.facing` (none: `idle`). `None`: it faces where it goes.
+    pub facing: Option<Heading>,
 }
 
 impl Default for BodyStatus {
     fn default() -> Self {
-        Self { dead: false, staggered: false, pace: 1.0 }
+        Self { dead: false, staggered: false, pace: 1.0, facing: None }
     }
 }
 
@@ -1240,7 +1403,8 @@ pub fn select_clip<'a>(action: Option<(&str, f32, f32)>, motion: &MotionState, s
 
 /// [`select_clip`] with the body's status: a dead body shows the `dead` clip (seeked while
 /// its death action runs, then held on its last pose; no clip: the pose it has stays), a
-/// staggered one the `stagger` clip seeked to the stagger action's progress.
+/// staggered one the `stagger` clip seeked to the stagger action's progress, and one that faces a
+/// target its heading's clips ([`BodyStatus::facing`]).
 ///
 /// An action whose clip plays on a layer is not the body's: this chooses as if it did not run
 /// ([`select_layer`] says what plays on the layer).
@@ -1295,6 +1459,7 @@ pub fn select_clip_timed<'a>(
                     speed: set.clip_speed(clip),
                     blend: set.blend_into(clip, false),
                     looping: false,
+                    gait: false,
                 }
             }
             (None, _) => ClipChoice::none(set),
@@ -1307,18 +1472,26 @@ pub fn select_clip_timed<'a>(
     }
     let state = locomotion_state_at(motion, &set.speeds, status.pace);
     let Some((resolved, clip)) = set.locomotion_clip(state) else { return ClipChoice::none(set) };
-    let clip = set.family(moveset, clip);
     if resolved == Locomotion::Mantle
         && let Some(mantle) = &motion.mantle
     {
-        return ClipChoice::seeked(set, clip, mantle.t.clamp(0.0, 1.0), false);
+        return ClipChoice::seeked(set, set.family(moveset, clip), mantle.t.clamp(0.0, 1.0), false);
     }
+    // Facing a target: the heading's clip, or the gait's own (backward for `back`).
+    let (clip, backward) = match status.facing.map(|h| (h, set.facing_clip(resolved, h))) {
+        Some((_, Some(faced))) => (faced, false),
+        Some((heading, None)) => (clip, heading == Heading::Back && resolved.is_gait()),
+        None => (clip, false),
+    };
+    let clip = set.family(moveset, clip);
+    let speed = ground_scale(resolved, motion, &set.speeds) * set.clip_speed(clip);
     ClipChoice {
         clip: Some(clip),
         seek_to: None,
-        speed: ground_scale(resolved, motion, &set.speeds) * set.clip_speed(clip),
+        speed: if backward { -speed } else { speed },
         blend: set.blend_into(clip, false),
         looping: true,
+        gait: resolved.is_gait(),
     }
 }
 
@@ -1392,6 +1565,37 @@ pub fn crossed_cues(cues: &[CueDef], prev: Option<f32>, now: f32, wrap_at: Optio
     found
 }
 
+/// Where a gait's new clip of `new_len` seconds starts when the one before it, `old_len` seconds
+/// long, was `at` seconds in: the same share of the stride, so the feet do not skip. `None` when
+/// either clip has no length.
+pub fn carry_phase(at: f32, old_len: f32, new_len: f32) -> Option<f32> {
+    (old_len > EPS && new_len > EPS && at.is_finite()).then(|| (at / old_len).rem_euclid(1.0) * new_len)
+}
+
+/// [`crossed_cues`] for a clip played backward (a gait's clip on a body backing away, at a negative
+/// speed): the cues passed going down from `prev` to `now`, in the order they were passed.
+///
+/// - `prev` `None`: the clip just started; it has passed nothing yet.
+/// - `now <= prev`: cues in `[now, prev)`.
+/// - `now > prev`: a looping clip (`wrap_at`: its length) wrapped below its start: the cues in
+///   `[0, prev)`, then those in `[now, length]`. Anything else restarted: nothing fires.
+pub fn crossed_cues_back(cues: &[CueDef], prev: Option<f32>, now: f32, wrap_at: Option<f32>) -> Vec<&CueDef> {
+    let Some(prev) = prev else { return Vec::new() };
+    let wrapped = now > prev && wrap_at.is_some();
+    let mut found: Vec<&CueDef> = cues
+        .iter()
+        .filter(|c| match wrap_at {
+            _ if now <= prev => c.at >= now - EPS && c.at < prev - EPS,
+            Some(len) => c.at < prev - EPS || (c.at >= now - EPS && c.at <= len + EPS),
+            None => false,
+        })
+        .collect();
+    // After a wrap, the cues at or after `now` are the new pass's head: they come last.
+    let head = |c: &CueDef| wrapped && c.at >= now - EPS;
+    found.sort_by(|a, b| head(a).cmp(&head(b)).then(b.at.total_cmp(&a.at)));
+    found
+}
+
 fn is_gltf(path: &str) -> bool {
     let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
     matches!(ext.as_deref(), Some("gltf" | "glb"))
@@ -1453,6 +1657,31 @@ impl AnimSet {
                     ));
                 }
             }
+        }
+    }
+
+    /// `field.turn` of an action's mapping: a number of seconds, on the whole body, with a bone to
+    /// write it on.
+    fn check_turn(&self, refs: &mut Refs, field: &str, mapping: &ActionClip) {
+        let turn = mapping.turn;
+        if !(turn >= 0.0 && turn.is_finite()) {
+            refs.error(format!("{field}.turn must be >= 0 seconds (is {turn})"));
+            return;
+        }
+        if turn == 0.0 {
+            return;
+        }
+        if let Some(layer) = &mapping.layer {
+            refs.error(format!(
+                "{field}.turn turns the whole model, and the clip plays on layer `{layer}`; leave `turn` out or play \
+                 the clip on the whole body"
+            ));
+        }
+        if self.root_motion.is_none() {
+            refs.error(format!(
+                "{field}.turn needs `root_motion`: the turn is written on that bone; name the root bone, e.g. \
+                 `root_motion: \"root\"`"
+            ));
         }
     }
 
@@ -1565,6 +1794,13 @@ impl AnimSet {
         let actions: Vec<(&str, &ActionDef)> = refs.iter::<ActionDef>().collect();
         for (id, def) in actions {
             let key = self.action_key(id, def.anim.as_deref(), &def.tags);
+            if def.face == Face::Run && self.turn_of(key) > 0.0 {
+                let field = if self.actions.contains_key(key) { "actions" } else { "tags" };
+                refs.error(format!(
+                    "{field}.{key}.turn turns the model to the heading of a run that keeps the body's facing, and \
+                     action `{id}` turns the body itself (`face: Run`); give it `face: Keep` or leave `turn` out"
+                ));
+            }
             let Some((clip, _)) = self.action_shown(key) else { continue };
             let mut shown = vec![clip];
             for renamed in self.by_moveset.values().filter_map(|table| table.get(clip)) {
@@ -1676,11 +1912,15 @@ impl ContentDef for AnimSet {
         }
         let states: Vec<&str> = Locomotion::ALL.iter().map(|s| s.name()).collect();
         for (state, clip) in &self.locomotion {
-            if Locomotion::parse(state).is_none() {
-                let hint = shards_content::db::closest(state, states.iter().copied())
+            if Locomotion::parse(state).is_none() && !FACING_KEYS.contains(&state.as_str()) {
+                let hint = shards_content::db::closest(state, states.iter().chain(FACING_KEYS.iter()).copied())
                     .map(|c| format!(" (did you mean `{c}`?)"))
                     .unwrap_or_default();
-                refs.error(format!("locomotion has an unknown state `{state}`{hint}; states: {}", states.join(", ")));
+                refs.error(format!(
+                    "locomotion has an unknown state `{state}`{hint}; states: {}; facing a target: a gait's heading \
+                     (`walk.back`, `run.left`, `sprint.right`) or `idle.facing`",
+                    states.join(", ")
+                ));
             }
             if !known(clip) {
                 unknown_clip(refs, &names, &format!("locomotion.{state}"), clip);
@@ -1710,6 +1950,7 @@ impl ContentDef for AnimSet {
                 unknown_clip(refs, &names, &format!("actions.{action}"), &mapping.clip);
             }
             self.check_layer(refs, &format!("actions.{action}"), mapping);
+            self.check_turn(refs, &format!("actions.{action}"), mapping);
         }
         for (tag, mapping) in &self.tags {
             if tag.is_empty() {
@@ -1719,6 +1960,7 @@ impl ContentDef for AnimSet {
                 unknown_clip(refs, &names, &format!("tags.{tag}"), &mapping.clip);
             }
             self.check_layer(refs, &format!("tags.{tag}"), mapping);
+            self.check_turn(refs, &format!("tags.{tag}"), mapping);
         }
         self.check_timing(refs);
         for (field, v) in [("blend", self.blend), ("action_blend", self.action_blend)] {
@@ -2442,6 +2684,168 @@ mod tests {
     }
 
     #[test]
+    fn the_heading_is_the_quarter_the_body_moves_in_and_keeps_its_slack_at_the_edges() {
+        let ahead = Vec3::NEG_Z;
+        let at = |degrees: f32| {
+            let (s, c) = ops::sin_cos(degrees.to_radians());
+            // Clockwise from forward seen from above: +90 is the body's right (+x).
+            Vec3::new(s, 0.0, -c)
+        };
+        assert_eq!(Heading::of(ahead, at(0.0), Heading::Back), Heading::Forward);
+        assert_eq!(Heading::of(ahead, at(90.0), Heading::Forward), Heading::Right);
+        assert_eq!(Heading::of(ahead, at(-90.0), Heading::Forward), Heading::Left);
+        assert_eq!(Heading::of(ahead, at(180.0), Heading::Forward), Heading::Back);
+        // A diagonal: the heading it had stays until 10 degrees past the edge.
+        assert_eq!(Heading::of(ahead, at(50.0), Heading::Forward), Heading::Forward);
+        assert_eq!(Heading::of(ahead, at(50.0), Heading::Right), Heading::Right);
+        assert_eq!(Heading::of(ahead, at(40.0), Heading::Right), Heading::Right);
+        assert_eq!(Heading::of(ahead, at(56.0), Heading::Forward), Heading::Right);
+        assert_eq!(Heading::of(ahead, at(-140.0), Heading::Left), Heading::Left);
+        assert_eq!(Heading::of(ahead, at(-150.0), Heading::Left), Heading::Back);
+        // Turned bodies: the quarter is the body's, not the world's.
+        assert_eq!(Heading::of(Vec3::X, Vec3::NEG_Z, Heading::Forward), Heading::Left);
+        assert_eq!(Heading::of(Vec3::X, Vec3::NEG_X, Heading::Forward), Heading::Back);
+        // Standing still keeps what it had.
+        assert_eq!(Heading::of(ahead, Vec3::ZERO, Heading::Left), Heading::Left);
+    }
+
+    #[test]
+    fn a_body_facing_a_target_shows_its_headings_clips_and_backs_away_on_its_gait_played_backward() {
+        let mut set = set();
+        for clip in ["walk_back", "strafe_left", "guard_idle"] {
+            set.clips.insert(clip.into(), ClipDef::default());
+        }
+        set.locomotion.insert("walk.back".into(), "walk_back".into());
+        set.locomotion.insert("walk.left".into(), "strafe_left".into());
+        set.locomotion.insert("idle.facing".into(), "guard_idle".into());
+        let facing = |h: Heading| BodyStatus { facing: Some(h), ..default() };
+        let back = select_clip_for(None, &moving(2.0), facing(Heading::Back), &set);
+        assert_eq!((back.clip, back.gait), (Some("walk_back"), true));
+        assert!(close(back.speed, 1.0), "authored: plays forward at the walk's pace: {back:?}");
+        assert_eq!(select_clip_for(None, &moving(2.0), facing(Heading::Left), &set).clip, Some("strafe_left"));
+        // No `walk.right`: the walk as it is.
+        let right = select_clip_for(None, &moving(2.0), facing(Heading::Right), &set);
+        assert_eq!(right.clip, Some("walk"));
+        assert!(close(right.speed, 1.0), "{right:?}");
+        // No `run.back`: the run played backward, at the run's pace.
+        let run_back = select_clip_for(None, &moving(5.0), facing(Heading::Back), &set);
+        assert_eq!((run_back.clip, run_back.gait, run_back.looping), (Some("run"), true, true));
+        assert!(close(run_back.speed, -1.1), "{run_back:?}");
+        // Standing: the combat idle; facing no target, the plain one.
+        let idle = select_clip_for(None, &moving(0.0), facing(Heading::Back), &set);
+        assert_eq!((idle.clip, idle.gait), (Some("guard_idle"), false));
+        assert_eq!(select_clip_for(None, &moving(0.0), BodyStatus::default(), &set).clip, Some("idle"));
+        // Facing no target, a backward walk is the walk: the body turns to where it goes.
+        assert_eq!(select_clip_for(None, &moving(2.0), BodyStatus::default(), &set).clip, Some("walk"));
+        // An action still leads, and the air has no heading.
+        let acting = select_clip_for(Some(("light_1", 0.1, 0.6)), &moving(2.0), facing(Heading::Back), &set);
+        assert_eq!((acting.clip, acting.gait), (Some("swing_1"), false));
+        let falling = MotionState { mode: MotionMode::Air, ..moving(2.0) };
+        let air = select_clip_for(None, &falling, facing(Heading::Back), &set);
+        assert!(air.clip == Some("fall") && air.speed > 0.0 && !air.gait, "{air:?}");
+        // Families rename the heading's clip too.
+        set.by_moveset.insert("brute".into(), BTreeMap::from([("walk_back".to_owned(), "strafe_left".to_owned())]));
+        assert_eq!(select_clip_in(None, &moving(2.0), facing(Heading::Back), &set, Some("brute")).clip, Some("strafe_left"));
+        assert_eq!(facing_key(Locomotion::Swim, Heading::Back), None);
+        assert_eq!(facing_key(Locomotion::Walk, Heading::Forward), None);
+        assert_eq!(FACING_KEYS.len(), 10);
+    }
+
+    #[test]
+    fn a_clip_played_backward_passes_its_cues_going_down() {
+        let cues: Vec<CueDef> = ron::from_str(r#"[(at: 0.1, cue: "a"), (at: 0.4, cue: "b"), (at: 0.7, cue: "c")]"#).unwrap();
+        fn names(found: Vec<&CueDef>) -> Vec<&str> {
+            found.into_iter().map(|c| c.cue.as_str()).collect()
+        }
+        assert_eq!(names(crossed_cues_back(&cues, None, 0.9, Some(1.0))), Vec::<&str>::new(), "just started: nothing passed");
+        assert_eq!(names(crossed_cues_back(&cues, Some(0.8), 0.3, Some(1.0))), ["c", "b"]);
+        assert_eq!(names(crossed_cues_back(&cues, Some(0.4), 0.35, Some(1.0))), Vec::<&str>::new(), "left the cue's moment, never reached it");
+        assert_eq!(names(crossed_cues_back(&cues, Some(0.5), 0.4, Some(1.0))), ["b"], "reached it");
+        // Wrapped below the start: the rest of this pass, then the end of the next.
+        assert_eq!(names(crossed_cues_back(&cues, Some(0.2), 0.6, Some(1.0))), ["a", "c"]);
+        assert_eq!(names(crossed_cues_back(&cues, Some(0.2), 0.6, None)), Vec::<&str>::new(), "not looping: a restart");
+        // Forward play is unchanged: a backward step there reads as a wrap.
+        assert_eq!(names(crossed_cues(&cues, Some(0.8), 0.3, Some(1.0))), ["a"]);
+    }
+
+    #[test]
+    fn a_gaits_stride_is_carried_to_the_next_clip() {
+        assert!(close(carry_phase(0.25, 1.0, 0.8).unwrap(), 0.2));
+        assert!(close(carry_phase(1.5, 1.0, 2.0).unwrap(), 1.0), "a time past the end is its place in the stride");
+        assert_eq!(carry_phase(0.25, 0.0, 0.8), None);
+        assert_eq!(carry_phase(0.25, 1.0, 0.0), None);
+    }
+
+    #[test]
+    fn the_facing_keys_and_the_turn_are_checked() {
+        let set = r#"{
+            "h": (source: "models/h.glb", clips: {"idle": (), "walk": (), "roll": (), "drink": ()},
+                locomotion: {"idle": "idle", "walk.bak": "walk", "idle.facing": "idle", "run.left": "walk"},
+                layers: {"upper": (root: "spine")},
+                actions: {"dodge": (clip: "roll", turn: 0.1), "lunge": (clip: "roll", turn: -1.0),
+                          "sip": (clip: "drink", layer: "upper", turn: 0.2)},
+                tags: {"evade": (clip: "roll", turn: 0.1)}),
+            "rooted": (source: "models/h.glb", clips: {"roll": ()}, actions: {"dodge": (clip: "roll", turn: 0.1)}, root_motion: "root"),
+        }"#;
+        let actions = r#"{
+            "dodge": (net_id: 1, phases: [("roll", 0.4)], face: Keep),
+            "lunge": (net_id: 2, phases: [("roll", 0.4)], face: Keep),
+            "sip": (net_id: 3, phases: [("sip", 1.0)]),
+            "spin": (net_id: 4, phases: [("roll", 0.4)], tags: ["evade"]),
+        }"#;
+        let mut kinds = ContentKinds::default();
+        kinds.register::<ActionDef>();
+        kinds.register::<AnimSet>();
+        kinds.register::<crate::def::MovesetDef>();
+        kinds.register::<crate::status::StatusDef>();
+        let sources = [
+            shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
+            shards_content::db::Source { path: "content/h.animset.ron".into(), text: set.into() },
+        ];
+        let errors: Vec<String> = ContentDb::build(&kinds, &sources).errors().map(ToString::to_string).collect();
+        let h = "content/h.animset.ron: animset `h`: ";
+        let needs_root = |field: &str| {
+            format!(
+                "{h}{field}.turn needs `root_motion`: the turn is written on that bone; name the root bone, e.g. \
+                 `root_motion: \"root\"`"
+            )
+        };
+        assert_eq!(
+            errors,
+            [
+                format!(
+                    "{h}locomotion has an unknown state `walk.bak` (did you mean `walk.back`?); states: idle, walk, run, sprint, \
+                     air, swim, glide, mantle, stagger, dead; facing a target: a gait's heading (`walk.back`, `run.left`, \
+                     `sprint.right`) or `idle.facing`"
+                ),
+                needs_root("actions.dodge"),
+                format!("{h}actions.lunge.turn must be >= 0 seconds (is -1)"),
+                format!(
+                    "{h}actions.sip.turn turns the whole model, and the clip plays on layer `upper`; leave `turn` out or play \
+                     the clip on the whole body"
+                ),
+                needs_root("actions.sip"),
+                needs_root("tags.evade"),
+                format!(
+                    "{h}tags.evade.turn turns the model to the heading of a run that keeps the body's facing, and action \
+                     `spin` turns the body itself (`face: Run`); give it `face: Keep` or leave `turn` out"
+                ),
+            ],
+            "`rooted` is fine; `sip` plays on a layer, so it has no turn to refuse for `face: Run`"
+        );
+        // The turn is written only when there is one.
+        let parse = |text: &str| -> ActionClip {
+            ron::Options::default()
+                .with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+                .from_str(text)
+                .unwrap_or_else(|e| panic!("{text}: {e}"))
+        };
+        let turned = parse(r#"(clip: "roll", turn: 0.08)"#);
+        assert_eq!(serde_json::to_value(&turned).unwrap(), serde_json::json!({"clip": "roll", "turn": 0.08f32}));
+        assert_eq!(serde_json::to_value(parse(r#"(clip: "roll", turn: 0.0)"#)).unwrap(), serde_json::json!("roll"));
+    }
+
+    #[test]
     fn the_example_in_the_docs_is_valid_content() {
         // The RON of the module docs, with the actions it names.
         let docs = include_str!("anim.rs");
@@ -2479,7 +2883,7 @@ mod tests {
             "content/h.animset.ron: animset `bad`: clips.walk.blend must be >= 0 (is -1)",
             "content/h.animset.ron: animset `bad`: clips.walk.cues[0].at must be >= 0 (is -1)",
             "content/h.animset.ron: animset `bad`: clips.walk.cues[0].cue has no name",
-            "content/h.animset.ron: animset `bad`: locomotion has an unknown state `idel` (did you mean `idle`?); states: idle, walk, run, sprint, air, swim, glide, mantle, stagger, dead",
+            "content/h.animset.ron: animset `bad`: locomotion has an unknown state `idel` (did you mean `idle`?); states: idle, walk, run, sprint, air, swim, glide, mantle, stagger, dead; facing a target: a gait's heading (`walk.back`, `run.left`, `sprint.right`) or `idle.facing`",
             "content/h.animset.ron: animset `bad`: locomotion.walk -> unknown clip `wlak` (did you mean `walk`?); clips: idle, walk",
             "content/h.animset.ron: animset `bad`: actions -> unknown action `light_2` (did you mean `light_1`?)",
             "content/h.animset.ron: animset `bad`: actions.roll -> unknown clip `dance`; clips: idle, walk",
@@ -2647,7 +3051,7 @@ mod tests {
         };
         let errors = build_with(TWO_ACTIONS, &set(r#"(clip: "idle", lyer: "upper")"#));
         assert_eq!(errors.len(), 1, "{errors:#?}");
-        assert!(errors[0].contains("Unexpected field named `lyer`") && errors[0].contains("expected one of `clip`, `layer`, or `ends_equip`"), "{errors:#?}");
+        assert!(errors[0].contains("Unexpected field named `lyer`") && errors[0].contains("expected one of `clip`, `layer`, `ends_equip`, or `turn`"), "{errors:#?}");
         let errors = build_with(TWO_ACTIONS, &set(r#"(layer: "upper")"#));
         assert!(errors.len() == 1 && errors[0].contains("missing field named `clip`"), "{errors:#?}");
         let errors = build_with(TWO_ACTIONS, &set("7"));

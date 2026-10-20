@@ -19,13 +19,13 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use shards_content::ContentDb;
 use shards_core::Predicted;
-use shards_motion::{MotionState, MoveModifiers};
+use shards_motion::{LocomotionInput, MotionState, MoveModifiers};
 
 use crate::anim::{
-    mode_name, mount_places, phase_seek, select_clip_timed, select_layer_timed, ActionTime, AnimSet, Animated, BodyStatus, MountView,
-    Place, PropSwaps, LEFT_KEY, MODE_KEY,
+    mode_name, mount_places, phase_seek, select_clip_timed, select_layer_timed, ActionTime, AnimSet, Animated, BodyStatus, Heading,
+    MountView, Place, PropSwaps, LEFT_KEY, MODE_KEY,
 };
-use crate::def::{ActionDef, MovesetDef};
+use crate::def::{ActionDef, Face, MovesetDef};
 use crate::fighter::{Dead, Fighter};
 use crate::machine::{ActionState, Running};
 use crate::predict::PredictedAction;
@@ -102,6 +102,32 @@ fn seek_how(set: &AnimSet, clip: &str, action: Option<&ActionTime>) -> String {
     format!(" evenly (the clip is timed to {}; the action is not)", names.join(", "))
 }
 
+/// The model's turn now, for a drawn body: radians from the body's facing.
+#[cfg(feature = "render")]
+fn bound_turn(world: &World, body: Entity) -> Option<f32> {
+    world.get::<crate::render::AnimationBound>(body).map(crate::render::AnimationBound::model_turn)
+}
+
+#[cfg(not(feature = "render"))]
+fn bound_turn(_: &World, _: Entity) -> Option<f32> {
+    None
+}
+
+/// ` · the model turned 90° to the run's heading (turn 0.08 s)` while a run turns the model (or one
+/// that would), and while a drawn model is still turned; nothing otherwise.
+fn turn_text(set: &AnimSet, def: Option<&ActionDef>, key: Option<&str>, now: Option<f32>) -> String {
+    let secs = key.map_or(0.0, |k| set.turn_of(k));
+    let turns = secs > 0.0 && def.is_some_and(|d| d.face == Face::Keep);
+    match now {
+        Some(yaw) if yaw != 0.0 => {
+            let why = if turns { format!("to the run's heading (turn {secs} s)") } else { "on its way back to the body's facing".to_owned() };
+            format!(" · the model turned {:.0}° {why}", yaw.to_degrees())
+        }
+        _ if turns => format!(" · the model turns to the run's heading (turn {secs} s)"),
+        _ => String::new(),
+    }
+}
+
 /// The seconds `0.21/0.60 s` of a run.
 fn clock_of(run: &Running) -> String {
     format!("{:.2}/{:.2} s", run.t, run.length)
@@ -163,13 +189,21 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
         .and_then(|m| m.stagger.as_deref())
         .zip(run)
         .is_some_and(|(stagger, r)| r.forced && r.action == stagger);
+    let standing = MotionState::default();
+    let motion = world.get::<MotionState>(body).unwrap_or(&standing);
+    // Facing a target: the heading the bridge kept (its slack at the quarters' edges), else as it would choose now.
+    #[cfg(feature = "render")]
+    let kept = bound.map_or(Heading::Forward, |b| b.heading());
+    #[cfg(not(feature = "render"))]
+    let kept = Heading::Forward;
+    let faces = world.get::<LocomotionInput>(body).is_some_and(|l| l.face.is_some());
+    let facing = world.get::<Transform>(body).filter(|_| faces).map(|tf| Heading::of(*tf.forward(), motion.velocity, kept));
     let status = BodyStatus {
         dead: world.get::<Dead>(body).is_some(),
         staggered: staggers,
         pace: world.get::<MoveModifiers>(body).map_or(1.0, MoveModifiers::pace),
+        facing,
     };
-    let standing = MotionState::default();
-    let motion = world.get::<MotionState>(body).unwrap_or(&standing);
 
     let mut out = vec![head];
     // The body's clip.
@@ -189,9 +223,17 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
                 (None, Some(p)) => format!(" seeked to {:.0} % (mantle)", p * 100.0),
                 // A clip that plays once and holds (a dead body with no action running).
                 _ if !choice.looping => format!(" played once at x{:.2}{}", choice.speed, if status.dead { " (dead)" } else { "" }),
-                _ => format!(" looping at x{:.2} ({})", choice.speed, crate::anim::locomotion_state_at(motion, &set.speeds, status.pace).name()),
+                _ => {
+                    let state = crate::anim::locomotion_state_at(motion, &set.speeds, status.pace);
+                    let faced = match facing {
+                        Some(h) if choice.speed < 0.0 => format!(", facing a target, moving {}: the clip backward", h.name()),
+                        Some(h) => format!(", facing a target, moving {}", h.name()),
+                        None => String::new(),
+                    };
+                    format!(" looping at x{:.2} ({}{faced})", choice.speed, state.name())
+                }
             };
-            format!("  body: {clip}{why}")
+            format!("  body: {clip}{why}{}", turn_text(set, def, key, bound_turn(world, body)))
         }
         None => "  body: nothing for this moment (the pose stays as it is)".to_owned(),
     };

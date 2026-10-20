@@ -21,6 +21,7 @@ pub mod hud;
 pub mod modes;
 pub mod overlay;
 pub mod props;
+mod turn;
 
 use bevy::prelude::*;
 use shards_core::LocalPlayer;
