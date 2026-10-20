@@ -373,4 +373,23 @@ fn a_gltf_model_shares_the_bridges_load_and_is_spawned_once() {
     let none = app.world_mut().spawn(other).id();
     app.update();
     assert!(app.world().get::<WorldAssetRoot>(none).is_none());
+
+    // The model changed to another file: its scene is replaced once that file is in, and the old
+    // scene's entities go.
+    let before: Vec<Entity> = app.world().get::<Children>(shown).map(|c| c.iter().collect()).unwrap_or_default();
+    assert!(!before.is_empty(), "the humanoid's scene is under the model");
+    let gestures = GltfModel::load(app.world().resource::<AssetServer>(), "models/humanoid_gestures.glb");
+    let file = gestures.file.clone();
+    app.world_mut().entity_mut(shown).insert(gestures);
+    update_until(&mut app, "the second file's scene", |app| {
+        let gltf = app.world().resource::<Assets<Gltf>>().get(&file);
+        let root = app.world().get::<WorldAssetRoot>(shown);
+        matches!((gltf, root), (Some(gltf), Some(root)) if root.0 == gltf.scenes[0])
+    });
+    for _ in 0..5 {
+        app.update();
+    }
+    assert!(before.iter().all(|e| app.world().get_entity(*e).is_err()), "the humanoid's scene is gone");
+    let spawned = &app.world().resource::<Spawned>().0;
+    assert_eq!(spawned.iter().filter(|e| **e == shown).count(), 2, "spawned once more, for the new file: {spawned:?}");
 }

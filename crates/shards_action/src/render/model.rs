@@ -23,6 +23,7 @@ use bevy::world_serialization::WorldAssetRoot;
 /// ```
 ///
 /// A file that does not load, or has no such scene, spawns nothing (the latter is warned once).
+/// Changing the component to another file or scene replaces the scene once the new file is in.
 #[derive(Component, Clone, Debug)]
 #[require(Transform, Visibility)]
 pub struct GltfModel {
@@ -53,20 +54,23 @@ pub(crate) fn plugin(app: &mut App) {
     app.add_systems(Update, spawn_models);
 }
 
-/// `Update`: the models whose file is in get their scene.
+/// `Update`: the models whose file is in get their scene, and a model changed to another file or
+/// scene gets that one (Bevy takes the old scene's entities away when the root changes; until the
+/// new file is in, the old scene stays).
 fn spawn_models(
     mut commands: Commands,
-    models: Query<(Entity, &GltfModel), Without<WorldAssetRoot>>,
+    models: Query<(Entity, &GltfModel, Option<&WorldAssetRoot>)>,
     gltfs: Option<Res<Assets<Gltf>>>,
     mut warned: Local<Vec<(AssetId<Gltf>, usize)>>,
 ) {
     let Some(gltfs) = gltfs else { return };
-    for (entity, model) in &models {
+    for (entity, model, shown) in &models {
         let Some(gltf) = gltfs.get(&model.file) else { continue };
         match gltf.scenes.get(model.scene) {
-            Some(scene) => {
+            Some(scene) if shown.is_none_or(|root| root.0 != *scene) => {
                 commands.entity(entity).insert(WorldAssetRoot(scene.clone()));
             }
+            Some(_) => {}
             None if !warned.contains(&(model.file.id(), model.scene)) => {
                 warned.push((model.file.id(), model.scene));
                 warn!("{:?} has {} scenes: no scene {} to spawn", model.file.path(), gltf.scenes.len(), model.scene);
