@@ -5411,7 +5411,7 @@ It fades in to `alpha` (0 to 1), holds and fades out; `pulses` dips that many ti
 a flash of 0 s or longer than 30 s, a rate of 0 and a depth or alpha outside 0..1. Code starts one with `shards::ui::flash(world, "reality")`
 or `commands.trigger(PlayFlash("reality".into()))` (an unknown id is a `Warn` line), and the console with `flash_play flash=reality`
 (dev; a control tool, never in a replay). One flash plays at a time: a newer one replaces the one playing. It is drawn as one full-screen
-node above the HUD and under menus and modals (`GlobalZIndex` 5), which takes no clicks, and it runs on real time (`Time<Real>`), so a hit
+node above the HUD and the off-screen threat markers (`GlobalZIndex` 2) and under menus and modals (`GlobalZIndex` 5), which takes no clicks, and it runs on real time (`Time<Real>`), so a hit
 stop that holds the clock on a boss's last blow does not hold the flash, and the pause menu opens over it. The player's
 `accessibility.flashes` shapes it on every frame: `full` as written; `reduced` at most 0.35 strong, pulses at most 2 a second and half as deep,
 fades eased and at least 0.15 s; `off` draws nothing. At every level the flash is started and journaled
