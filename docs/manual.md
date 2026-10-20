@@ -3787,7 +3787,7 @@ cargo sandbox --headless --paused --stand 2 --net-sim latency=150,loss=0.02 --po
   the body is busy. On an in-memory stand, half an hour of game time takes a few minutes. On a UDP stand (`--stand 2 --stand-udp`) the game runs
   in real time, but `step` runs its ticks at once, so `soak` drives the host ahead (in the run with seed 31, 2.7 times ahead): the clients' input arrives late more often, prediction resets more often, yet there are still no desyncs. In `cargo test` the same job is done by `shards::script::soak::run` through
   `shards::testing::StandDriver` (`crates/sandbox/tests/sandbox/soak.rs`: two minutes; the half-hour one is under `#[ignore]`). CI
-  runs three minutes on a live stand on every push; the half-hour run is `soak.yml`, every night. The very first run found that
+  runs three minutes on a live stand in every run; the half-hour run is `soak.yml`, every night. The very first run found that
   a body could leave the edge of the region: now an edge wall holds it at the edge (`edge_wall`, "Content formats").
 
 #### Prediction and smoothing (C4)
@@ -4983,7 +4983,7 @@ cargo sandbox --replay tests/replays/combat_prototype.json --verify --heavy 30
 
 **The state audit** is the static half: after the combat prototype and the region replays have played to their end, every resource in the world (`World::iter_resources`) is either registered with `add_snapshot_resource`, or named in the audit's list as outside the simulation, with why (`crates/sandbox/tests/sandbox/state_audit.rs`: Bevy's clocks and render state, registries filled at build time, presentation, settings, transport, caches named with their rebuild). A resource that is neither fails the test with its type name: register it, or add it to the list with its reason. Components get the same audit: every component that has been on an entity with an `AiId` in those games and in the yard's `net_always` ring fight (every archetype the world made, empty ones included, so a fight that ended still counts) reflects with `#[reflect(Component)]` and is registered, which is what a snapshot needs to save it, or is named in the audit's second list (`COMPONENTS_OUTSIDE`, empty today) with why; Bevy's own are left out, as snapshots leave them out. A private marker is state too: the umbrella's marker of its own `NetAlways` did not reflect, a snapshot left it out, and a game loaded in the middle of the ring fight never took that `NetAlways` off (issue #72, found by the nightly fuzz campaign's heavy checks). The reference replay test fails on `warning: replay checks leave out …`, which `--verify` prints for each gameplay component the checks cannot hash (it does not serialize through reflection; `ReplayHashing::reported_left_out`).
 
-**Proof.** `crates/sandbox/tests/sandbox/heavy.rs`: the combat prototype verifies with `--heavy 300` (on every push), and three planted bugs on the player are each caught at tick 60 and pass once fixed: a counter resource (fixed with `add_snapshot_resource`), a `Local<u32>` every 50th call (fixed by reading the tick), a derived cache (fixed with `add_snapshot_rebuild`); a failed check halts, stays off and comes back with `assert_reset`. `crates/shards/src/run.rs`: a stand's host with a guest is checked, and a host-only counter halts the stand. Every reference replay of the engine and the template passes `--verify --heavy 30` (checked on 17 October 2026, Windows 11), and the nightly job `heavy` runs them all with `--heavy 10 --heavy-span 30` from the seed's offset (see "Tests and CI").
+**Proof.** `crates/sandbox/tests/sandbox/heavy.rs`: the combat prototype verifies with `--heavy 300` (in every CI run), and three planted bugs on the player are each caught at tick 60 and pass once fixed: a counter resource (fixed with `add_snapshot_resource`), a `Local<u32>` every 50th call (fixed by reading the tick), a derived cache (fixed with `add_snapshot_rebuild`); a failed check halts, stays off and comes back with `assert_reset`. `crates/shards/src/run.rs`: a stand's host with a guest is checked, and a host-only counter halts the stand. Every reference replay of the engine and the template passes `--verify --heavy 30` (checked on 17 October 2026, Windows 11), and the nightly job `heavy` runs them all with `--heavy 10 --heavy-span 30` from the seed's offset (see "Tests and CI").
 ## Coverage
 
 Which states has a session reached? Coverage answers it for a fuzz run or a soak, and tells a fuzzer which of its calls led somewhere new. It is test-only bookkeeping: off by default, on with `--coverage` (`EngineConfig::coverage`; `cargo sandbox --headless --paused --coverage …`). It only reads the world: the resource `AiCoverage` exists only when coverage is on, and it is not in the replay hash, the replay checks or a snapshot (heavy mode's twins keep it off). A game with coverage on records the same replay as one without; `tests/sandbox/coverage.rs` compares the two recordings, and the combat prototype's reference replay verifies with `--coverage`.
@@ -7047,7 +7047,7 @@ for r in tests/replays/*.json; do xvfb-run -a cargo sandbox --replay $r --verify
 xvfb-run -a cargo test -p shards --test action_render -- --ignored --nocapture   # telegraphs, overlay, markers: two images
 ```
 
-**CI** (`.github/workflows/ci.yml`, on every push and pull request; the shared steps — `.github/actions/setup`: system packages,
+**CI** (`.github/workflows/ci.yml`, on every pull request, every push to `main`, release tags `v*` and by hand: `gh workflow run CI --ref BRANCH`; the shared steps — `.github/actions/setup`: system packages,
 the toolchain from `rust-toolchain.toml`, the cargo cache). All of the jobs' commands can be run by hand.
 
 | job | what it does |
@@ -7101,7 +7101,7 @@ and decals, budgets and the performance test, Steam, Windows builds, the crash r
 simulation maths goes through `libm`, the same on all x86_64 operating systems (section "Time and determinism"): Windows and
 Linux record reference replays byte for byte identically and check each other's recordings.
 
-CI (`.github/workflows/ci.yml`) runs on every push and pull request: `test`, `clippy`, `template`, `headless-cli` (with a
+CI (`.github/workflows/ci.yml`) runs on every pull request (once per push to its branch: there is no second run on the push itself), every push to `main`, release tags `v*`, and by hand (`gh workflow run CI --ref BRANCH`, for a branch with no pull request): `test`, `clippy`, `template`, `headless-cli` (with a
 three-minute soak on a live stand) and `replays-window` (optional: `continue-on-error`). `soak.yml` plays the half hour of
 E7's acceptance every night, and `record-replays.yml` records the reference replays on Linux on demand. Still open:
 

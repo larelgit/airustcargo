@@ -2,7 +2,7 @@
 # 150 ms one way with 2% loss, played by the seeded agents of `shards soak` for half an hour of
 # game time, the host changing the region and saving on the way. Exit code 3 (and the stand's log)
 # on the first desync. Every night, by hand, and on a push whose message contains `[soak]`.
-# CI's headless-cli job plays three minutes of the same on every push.
+# CI's headless-cli job plays three minutes of the same in every CI run.
 
 name: soak
 
