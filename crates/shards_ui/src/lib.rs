@@ -45,7 +45,8 @@
 //!   colours and sizes, the player's text size, the mouse through picking, and every widget
 //!   named for screen readers (AccessKit roles, labels, values; focus follows the UI's). Text
 //!   that names no font draws with the engine's ([`DEFAULT_FONT`]: Fira Sans, Latin, Greek and
-//!   Cyrillic); a theme names its own (`font`). The keyboard and gamepad reach the UI through
+//!   Cyrillic); a theme names its own (`font`), and more by name (`fonts`) for spans of a `Text` or `Hint`
+//!   value: `[font=symbols]word[/font]` ([`markup`]; agents and screen readers get the text without it). The keyboard and gamepad reach the UI through
 //!   the engine's input map (`menu` context), which the `shards` crate joins to it.
 //! - **The loading picture** (`EngineConfig::loading_image`, with a window or offscreen): full screen
 //!   on every frame drawn while the game loads (`Loading`) or a region loads (`RegionLoading`). A
@@ -55,6 +56,7 @@
 pub mod bind;
 pub mod def;
 pub mod flash;
+pub mod markup;
 pub mod model;
 #[cfg(feature = "render")]
 mod loading;

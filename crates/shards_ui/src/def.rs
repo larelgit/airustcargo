@@ -502,6 +502,15 @@ impl ContentDef for ScreenDef {
         for widget in &self.widgets {
             texts_of(widget, &mut counters, &mut texts);
         }
+        // A span's font is one the theme in force has (`fonts`). Only a `Text` or `Hint` value draws
+        // spans; a message (`@id`) is checked where it is drawn.
+        let fonts: Vec<&str> = refs.get::<ThemeDef>("default").map(|t| t.fonts.keys().map(String::as_str).collect()).unwrap_or_default();
+        for (text, place) in texts.iter().filter(|(text, place)| place.ends_with(" text") && !text.starts_with('@')) {
+            for font in crate::markup::fonts_named(text).into_iter().filter(|f| !fonts.contains(f)) {
+                let known = if fonts.is_empty() { "the theme `default` names none (`fonts`)".to_owned() } else { format!("fonts: {}", fonts.join(", ")) };
+                refs.error(format!("{place}: `[font={font}]` names no font of the theme; {known}"));
+            }
+        }
         shards_locale::check_messages(refs, texts);
     }
 }
@@ -664,6 +673,10 @@ pub struct ThemeDef {
     /// the engine's own (`DEFAULT_FONT`: Fira Sans, with Latin, Greek and Cyrillic letters); a game
     /// in other scripts names one.
     pub font: Option<String>,
+    /// More fonts by name, for spans of a `Text` or `Hint` value: `fonts: {"symbols": "fonts/Runes.ttf"}`,
+    /// then `[font=symbols]word[/font]` in the text ([`markup`](crate::markup)).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub fonts: BTreeMap<String, String>,
     pub font_size: f32,
     pub title_size: f32,
     pub hint_size: f32,
@@ -689,6 +702,7 @@ impl Default for ThemeDef {
             focus: "#f5d76e".into(),
             colors: colors.into_iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect(),
             font: None,
+            fonts: BTreeMap::new(),
             font_size: 18.0,
             title_size: 26.0,
             hint_size: 15.0,
@@ -746,6 +760,16 @@ impl ContentDef for ThemeDef {
             && !root.join(font).is_file()
         {
             refs.error(format!("font: no file `{font}` under the asset folder (a .ttf or .otf, `fonts/FiraSans-Regular.ttf`)"));
+        }
+        for (name, path) in &self.fonts {
+            if !good_id(name) {
+                refs.error(format!("fonts: `{name}` is not a font name: letters, digits, `_` and `-` (a text names it `[font={name}]`)"));
+            }
+            if let Some(root) = refs.asset_root()
+                && !root.join(path).is_file()
+            {
+                refs.error(format!("fonts.{name}: no file `{path}` under the asset folder (a .ttf or .otf)"));
+            }
         }
     }
 }
