@@ -68,6 +68,9 @@ fn animation(In(call): In<Call<AnimationArgs>>, world: &mut World) -> ToolResult
     {
         return Err(format!("animset `{named}` is not in content; `content_list kind=animset` lists them"));
     }
+    if args.event.is_some() && args.id.is_none() {
+        return Err("event=<name> plays an overlay on one body: name it with id=<body>".into());
+    }
     let bodies: Vec<Entity> = match args.id {
         Some(id) => vec![id.entity(world)?],
         None => {
@@ -87,10 +90,8 @@ fn animation(In(call): In<Call<AnimationArgs>>, world: &mut World) -> ToolResult
     };
     let mut out = Vec::new();
     if let Some(event) = &args.event {
-        let &[body] = bodies.as_slice() else {
-            return Err("event=<name> plays an overlay on one body: name it with id=<body>".into());
-        };
-        out.push(preview_event(world, body, args.animset.as_deref(), event)?);
+        // `id` is given (checked above): the one body.
+        out.push(preview_event(world, bodies[0], args.animset.as_deref(), event)?);
     }
     for body in bodies {
         out.push(describe(world, body, args.animset.as_deref(), args.bones)?);
@@ -127,6 +128,10 @@ fn preview_event(world: &mut World, body: Entity, named: Option<&str>, event: &s
         return Err(format!("animset `{animset}` has no overlay for `{event}`; its overlays: {have}"));
     };
     let what = overlay_text(def);
+    // The bridge starts no overlay on a dead body.
+    if world.get::<Dead>(body).is_some() {
+        return Ok(format!("overlay {event} of {animset}: {what}; {who} is dead, so nothing plays"));
+    }
     #[cfg(feature = "render")]
     {
         let clock = world.get_resource::<Time<Fixed>>().map_or(0.0, |t| t.elapsed_secs_f64() + t.overstep().as_secs_f64());

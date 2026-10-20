@@ -469,7 +469,10 @@ impl Overlay {
             if snap {
                 stopped.push(old.node);
             } else {
-                let out = old.out.map_or(blend, |o| o.clamp(0.01, 10.0));
+                // Taken over, it leaves no faster than the new clip comes in, or the walk would show
+                // through the layer in between.
+                let own = old.out.map_or(blend, |o| o.clamp(0.01, 10.0));
+                let out = if want.is_some() { own.max(blend) } else { own };
                 self.fading.push(OverlayFade { node: old.node, left: old.share, fall: 1.0 / out });
             }
         }
@@ -638,7 +641,12 @@ pub(crate) fn plugin(app: &mut App) {
 fn overlay_events(app: &mut App) {
     app.add_observer(|e: On<Blocked>, mut q: Overlaid| q.note(e.defender, "blocked"))
         .add_observer(|e: On<Parried>, mut q: Overlaid| q.note(e.defender, "parried"))
-        .add_observer(|e: On<Damaged>, mut q: Overlaid| q.note(e.target, "damaged"))
+        // A hit the body ignored (god mode, a grace period) did not land.
+        .add_observer(|e: On<Damaged>, mut q: Overlaid| {
+            if !e.invulnerable {
+                q.note(e.target, "damaged");
+            }
+        })
         .add_observer(|e: On<GuardBroken>, mut q: Overlaid| q.note(e.defender, "guard_broken"))
         .add_observer(|e: On<Staggered>, mut q: Overlaid| q.note(e.entity, "staggered"))
         .add_observer(|e: On<PartBroken>, mut q: Overlaid| q.note(e.body, "part_broken"))
@@ -2421,6 +2429,39 @@ mod tests {
     }
 
     #[test]
+    fn a_hit_the_body_ignored_starts_no_damaged_overlay() {
+        use crate::combat::{HitWeight, IgnoreReason};
+        let hurt = OVERLAID.replace(r#""landed": "#, r#""damaged": (clip: "flinch", layer: "upper", fade_out: (0.25, 0.5)), "landed": "#);
+        assert_ne!(hurt, OVERLAID);
+        let mut rig = skeleton(&hurt);
+        rig.rig.velocity(2.0);
+        rig.rig.app.update();
+        let mut rig = rig.with_events();
+        let body = rig.rig.character;
+        let hit = |ignored: bool| Damaged {
+            attacker: body,
+            target: body,
+            action: "light_1".into(),
+            amount: if ignored { 0.0 } else { 10.0 },
+            poise: 0.0,
+            hp_left: 90.0,
+            invulnerable: ignored,
+            ignore_reason: ignored.then_some(IgnoreReason::Grace),
+            weight: HitWeight::Light,
+            reaction: None,
+            absorbed: 0.0,
+            source: None,
+            part: None,
+        };
+        rig.rig.app.world_mut().trigger(hit(true));
+        rig.rig.app.update();
+        assert!(rig.bound().overlay_on("upper").is_none(), "a hit a grace period ignored did not land");
+        rig.rig.app.world_mut().trigger(hit(false));
+        rig.rig.app.update();
+        assert!(rig.bound().overlay_on("upper").is_some(), "a hit that landed flinches");
+    }
+
+    #[test]
     fn a_layered_clip_leaves_over_its_mappings_blend_out() {
         let mut rig = skeleton(OVERLAID);
         rig.rig.velocity(2.0);
@@ -2475,7 +2516,15 @@ mod tests {
         let (wa, wb) = (weight_of(&w, a).unwrap(), weight_of(&w, b).unwrap());
         assert!(near(wa, wb), "half and half after half the blend: {wa} {wb}");
         assert!(overlay.share() > 0.9999, "the walk does not show through");
+        // A clip with a short `blend_out` taken over by a slower one leaves at the new one's pace: the
+        // layer stays full (alone, it would leave over its own 0.125 s).
+        overlay.advance(0.5, &mut stopped);
+        overlay.main.as_mut().unwrap().out = Some(0.125);
+        overlay.switch(Some(("a", a, None)), 0.5, false, &mut stopped);
+        overlay.advance(0.0625, &mut stopped);
+        assert!(overlay.share() > 0.9999, "the walk does not show through: {}", overlay.share());
         // Back to a clip that was fading starts it again.
+        overlay.switch(Some(("b", b, None)), 0.5, false, &mut stopped);
         overlay.switch(Some(("a", a, None)), 0.5, false, &mut stopped);
         assert_eq!(overlay.fading.iter().map(|f| f.node).collect::<Vec<_>>(), [b]);
         assert_eq!(overlay.main.as_ref().map(|m| m.ramp), Some(0.0));

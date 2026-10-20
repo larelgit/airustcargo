@@ -132,6 +132,17 @@ fn an_event_overlay_is_previewed_and_a_bad_event_is_named() {
         fails(&mut app, "animation", json!({"id": PLAYER, "animset": "humanoid", "event": "landed"})),
         "animset `humanoid` has no overlay for `landed`; its overlays: blocked, damaged"
     );
+    // An overlay plays on one body, named, even with no body drawn; a dead body starts none.
+    assert_eq!(
+        fails(&mut app, "animation", json!({"event": "damaged"})),
+        "event=<name> plays an overlay on one body: name it with id=<body>"
+    );
+    let boss = app.world().resource::<shards::ai_core::AiIndex>().get(shards::ai_core::AiId::parse(BOSS).unwrap()).unwrap();
+    shards::action::kill(app.world_mut(), boss, None, None);
+    step(&mut app, 2);
+    let said = text(&ok(&mut app, "animation", json!({"id": BOSS, "animset": "humanoid", "event": "damaged"}))).to_owned();
+    assert!(said.starts_with("overlay damaged of humanoid: flinch on upper, in 0.04 s, out 0.15-0.35 s, 60 %; e"), "{said}");
+    assert!(said.lines().next().unwrap().ends_with(" is dead, so nothing plays"), "{said}");
 }
 
 #[test]
