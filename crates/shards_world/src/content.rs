@@ -480,6 +480,10 @@ pub struct PoiDef {
     /// Prefab spawned at the point with the region (a campfire, a boss).
     #[serde(default)]
     pub prefab: Option<String>,
+    /// What kind of landmark the point is for a compass or a map (`shrine`): its
+    /// [`LandmarkCategory`](ai_core::LandmarkCategory), which the UI theme gives a symbol.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
 }
 
 impl PoiDef {
@@ -499,6 +503,11 @@ impl ContentDef for PoiDef {
     fn validate(&self, _: &str, refs: &mut Refs) {
         if let Some(prefab) = &self.prefab {
             refs.require::<PrefabDef>(prefab, "prefab");
+        }
+        if let Some(category) = &self.category
+            && !(!category.is_empty() && category.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+        {
+            refs.error(format!("category `{category}`: letters, digits, `_` and `-` (the UI theme's `symbols` name it)"));
         }
     }
 }

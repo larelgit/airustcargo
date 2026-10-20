@@ -227,7 +227,7 @@ pub enum WidgetDef {
         #[serde(default = "allies")]
         bind: String,
     },
-    /// Stats before and after a change (`damage 12 → 15 (+3)`): fixed rows or source `bind`.
+    /// Stats before and after a change (`damage 12 â 15 (+3)`): fixed rows or source `bind`.
     Compare {
         #[serde(default)]
         id: Option<String>,
@@ -261,7 +261,7 @@ pub enum WidgetDef {
         #[serde(default)]
         setting: Option<String>,
     },
-    /// The input of an action of the controls (`jump`: `Space · Pad South`), which the player
+    /// The input of an action of the controls (`jump`: `Space Â· Pad South`), which the player
     /// changes: confirming it waits for the next key, mouse button or gamepad button (Escape
     /// cancels), and that input becomes the binding, saved in the `controls` settings. An input
     /// another action of the context reads is refused, and the widget says which action holds it.
@@ -279,7 +279,7 @@ pub enum WidgetDef {
         /// device (keyboard and mouse, or gamepad), or is added when the action has none.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         slot: Option<usize>,
-        /// What it says while it waits (`@controls-press`). Default: `Press a key or button…
+        /// What it says while it waits (`@controls-press`). Default: `Press a key or buttonâ¦
         /// (Esc cancels)`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prompt: Option<String>,
@@ -293,7 +293,7 @@ pub enum WidgetDef {
         id: String,
         label: String,
         options: Vec<String>,
-        /// What each option says, in the order of `options` (`"@difficulty-hard"`, `"Русский"`).
+        /// What each option says, in the order of `options` (`"@difficulty-hard"`, `"Ð ÑÑÑÐºÐ¸Ð¹"`).
         /// Empty: the options themselves.
         #[serde(default)]
         labels: Vec<String>,
@@ -677,6 +677,11 @@ pub struct ThemeDef {
     /// then `[font=symbols]word[/font]` in the text ([`markup`](crate::markup)).
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub fonts: BTreeMap<String, String>,
+    /// What each category of landmark is drawn as on a compass (`LandmarkCategory`, a POI's
+    /// `category`): `symbols: {"shrine": "⛩", "camp": "[font=symbols]ᚲ[/font]"}`. A category without
+    /// one shows its name only to agents and screen readers.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub symbols: BTreeMap<String, String>,
     pub font_size: f32,
     pub title_size: f32,
     pub hint_size: f32,
@@ -703,6 +708,7 @@ impl Default for ThemeDef {
             colors: colors.into_iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect(),
             font: None,
             fonts: BTreeMap::new(),
+            symbols: BTreeMap::new(),
             font_size: 18.0,
             title_size: 26.0,
             hint_size: 15.0,
@@ -769,6 +775,17 @@ impl ContentDef for ThemeDef {
                 && !root.join(path).is_file()
             {
                 refs.error(format!("fonts.{name}: no file `{path}` under the asset folder (a .ttf or .otf)"));
+            }
+        }
+        for (category, symbol) in &self.symbols {
+            if !good_id(category) {
+                refs.error(format!("symbols: `{category}` is not a category name: letters, digits, `_` and `-`"));
+            }
+            if crate::markup::plain(symbol).trim().is_empty() {
+                refs.error(format!("symbols.{category}: empty; leave the category out to draw none"));
+            }
+            for font in crate::markup::fonts_named(symbol).into_iter().filter(|f| !self.fonts.contains_key(*f)) {
+                refs.error(format!("symbols.{category}: `[font={font}]` names no font of the theme (`fonts`)"));
             }
         }
     }

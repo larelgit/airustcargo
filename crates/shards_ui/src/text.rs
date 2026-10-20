@@ -56,7 +56,8 @@ pub fn widget_line(world: &World, e: Entity, focus: Option<Entity>) -> String {
         (WidgetKind::Compass, UiValue::Heading { deg, marks }) => {
             let _ = write!(line, " {deg:.0}° {}", compass_point(*deg));
             for m in marks {
-                let _ = write!(line, " · {} {} {:.0}m", m.label, compass_point(m.bearing), m.distance);
+                let category = m.category.as_ref().map(|c| format!(" ({c})")).unwrap_or_default();
+                let _ = write!(line, " · {}{category} {} {:.0}m", m.label, compass_point(m.bearing), m.distance);
             }
         }
         (WidgetKind::Allies, UiValue::Allies(allies)) if allies.is_empty() => line.push_str(" (nobody else)"),

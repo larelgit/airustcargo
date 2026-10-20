@@ -59,7 +59,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::id::{AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible, NoTombstone, Tombstone};
+use crate::id::{AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible, LandmarkCategory, NoTombstone, Tombstone};
 use crate::journal::{self, JournalKind};
 use crate::rng::SimSeed;
 use crate::session::Scope;
@@ -1271,6 +1271,7 @@ pub(crate) fn plugin(app: &mut App) {
         .register_type::<AiVisible>()
         .register_type::<AiKind>()
         .register_type::<AiLandmark>()
+        .register_type::<LandmarkCategory>()
         .register_type::<AiImportance>()
         .register_type::<AiPlayer>()
         .register_type::<NoTombstone>()
