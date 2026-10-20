@@ -72,6 +72,7 @@ impl Falloff {
 ///         spatial: (near: 3.0, far: 45.0),
 ///     ),
 ///     "ui_press": (files: ["sounds/ui_press.wav"], bus: Ui, volume: 0.6),
+///     "warden_gate": (files: ["voice/warden_gate.ogg"], bus: Voice, subtitle: "@warden-gate", speaker: "@warden"),
 /// }
 /// ```
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -96,6 +97,13 @@ pub struct SoundDef {
     /// At most this many at once: one more takes the oldest one's voice.
     #[serde(default)]
     pub max_instances: Option<u32>,
+    /// A line shown while it plays (a voice's words): text, or a message `@id` in the language
+    /// played. Shown by a UI that binds the source `subtitles`, when `accessibility.subtitles` is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    /// Who says it, before the line (`Warden: …`): text or `@id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
 }
 
 /// The priority of a sound that names none.
@@ -133,6 +141,14 @@ impl ContentDef for SoundDef {
         for file in &self.files {
             check_file(refs, "files", file);
         }
+        if self.subtitle.as_deref().is_some_and(|s| s.trim().is_empty()) {
+            refs.error("subtitle: empty; leave it out for a sound with no line");
+        }
+        if self.speaker.is_some() && self.subtitle.is_none() {
+            refs.error("speaker without a subtitle: there is no line to put the name before");
+        }
+        let texts = [(self.subtitle.as_deref(), "`subtitle`"), (self.speaker.as_deref(), "`speaker`")];
+        shards_locale::check_messages(refs, texts.into_iter().filter_map(|(t, field)| Some((t?, field.to_owned()))));
     }
 }
 

@@ -60,6 +60,7 @@
                     Slider(id: "blur", label: "@settings-blur", min: 0.0, max: 1.0, step: 0.1, setting: "accessibility.motion_blur"),
                     Slider(id: "hit_stop", label: "@settings-hit-stop", min: 0.0, max: 1.0, step: 0.25, setting: "accessibility.hit_stop"),
                     Slider(id: "fov", label: "@settings-fov", min: 50.0, max: 110.0, step: 5.0, setting: "accessibility.fov_deg"),
+                    Toggle(id: "subtitles", label: "@settings-subtitles", setting: "accessibility.subtitles"),
                 ]),
                 // A language's name is written in that language, whichever is played.
                 Panel(id: "language", title: "@settings-language", children: [

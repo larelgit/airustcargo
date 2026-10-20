@@ -49,6 +49,7 @@ settings-flashes = Вспышки
 settings-shake = Тряска камеры
 settings-blur = Размытие движения
 settings-hit-stop = Задержка при ударе
+settings-subtitles = Субтитры
 # settings-fov is left to English: the check of content still passes, and the journal says once
 # that Russian lacks it.
 

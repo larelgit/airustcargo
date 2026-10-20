@@ -53,6 +53,7 @@ settings-shake = Camera shake
 settings-blur = Motion blur
 settings-hit-stop = Hit stop
 settings-fov = Field of view
+settings-subtitles = Subtitles
 
 settings-language = Language
 

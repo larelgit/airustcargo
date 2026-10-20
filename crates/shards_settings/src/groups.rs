@@ -298,6 +298,8 @@ pub struct AccessibilitySettings {
     pub hit_stop: f64,
     /// A hit stop only for the blows the local player takes part in, not for the fights around them.
     pub hit_stop_local_only: bool,
+    /// Lines for the sounds that have them (a voice's words), shown by the game's UI.
+    pub subtitles: bool,
 }
 
 impl Default for AccessibilitySettings {
@@ -311,6 +313,7 @@ impl Default for AccessibilitySettings {
             hold_to_toggle: false,
             hit_stop: 1.0,
             hit_stop_local_only: false,
+            subtitles: true,
         }
     }
 }

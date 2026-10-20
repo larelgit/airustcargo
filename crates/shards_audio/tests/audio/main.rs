@@ -5,6 +5,7 @@
 mod content;
 mod mixer;
 mod music;
+mod subtitles;
 
 use std::path::{Path, PathBuf};
 
