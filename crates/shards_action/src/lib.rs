@@ -144,7 +144,8 @@ use shards_motion::{ControllerSystems, ModifierSystems, MotionPlugin, MotionSyst
 use shards_rules::RulesPlugin;
 
 pub use anim::{
-    carry_phase, crossed_cues, crossed_cues_back, cut_holds, equip_open, euler_degrees, locomotion_state, locomotion_state_at, mount_places, phase_seek,
+    carry_phase, crossed_cues, crossed_cues_back, crossed_cues_in, cut_holds, equip_open, euler_degrees, locomotion_state, locomotion_state_at,
+    mount_places, phase_place, phase_seek,
     select_clip, select_clip_for, select_clip_in, select_clip_timed, select_layer, select_layer_in, select_layer_timed,
     facing_key, ActionClip, ActionTime, AnimSet, Animated, AnimationCue, BodyStatus, Heading, FACING_KEYS, HEADING_SLACK,
     Carry, ClipChoice, ClipDef, CueDef, GroundSpeeds, LayerChoice, LayerDef, Locomotion, MountMove, MountRules, MountView, Place,

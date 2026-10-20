@@ -1210,14 +1210,17 @@ pub struct ClipChoice<'a> {
     /// A gait's clip (walk, run, sprint, any heading): a switch from one to another starts the new
     /// clip where the old one was in its stride.
     pub gait: bool,
+    /// The stretch of a seeked clip that a looping phase repeats (`loops`), 0..1 of its length,
+    /// while the seek is in it: going back inside it starts the stretch over, and the cues say so.
+    pub repeats: Option<(f32, f32)>,
 }
 
 impl<'a> ClipChoice<'a> {
     fn none(set: &AnimSet) -> Self {
-        Self { clip: None, seek_to: None, speed: 1.0, blend: set.blend.max(0.0), looping: false, gait: false }
+        Self { clip: None, seek_to: None, speed: 1.0, blend: set.blend.max(0.0), looping: false, gait: false, repeats: None }
     }
 
-    fn seeked(set: &AnimSet, clip: &'a str, progress: f32, action: bool) -> Self {
+    fn seeked(set: &AnimSet, clip: &'a str, (progress, repeats): (f32, Option<(f32, f32)>), action: bool) -> Self {
         Self {
             clip: Some(clip),
             seek_to: Some(progress),
@@ -1225,6 +1228,19 @@ impl<'a> ClipChoice<'a> {
             blend: set.blend_into(clip, action),
             looping: false,
             gait: false,
+            repeats,
+        }
+    }
+
+    /// The stretch going back inside which is a wrap for the cues, in seconds of a clip `duration`
+    /// long: a looping phase's, or the whole of a looping clip.
+    pub fn wraps(&self, duration: f32) -> Option<(f32, f32)> {
+        if duration <= 0.0 {
+            return None;
+        }
+        match self.repeats {
+            Some((start, end)) => Some((start * duration, end * duration)),
+            None => self.looping.then_some((0.0, duration)),
         }
     }
 }
@@ -1348,6 +1364,13 @@ fn phases_text(phases: &[Phase]) -> String {
 /// phase. `None` when the two are not timed alike (other names, another order, a clip of no length):
 /// the clip plays evenly then. See "Phases on the clip" in the [module](self).
 pub fn phase_seek(action: &[Phase], clip: &[Phase], loops: &[String], t: f32, length: f32) -> Option<f32> {
+    phase_place(action, clip, loops, t, length).map(|(at, _)| at)
+}
+
+/// [`phase_seek`] with the stretch of the clip that repeats: `Some((start, end))`, fractions of the
+/// clip, while `t` is in a phase named in `loops`. Going back inside it is the stretch starting
+/// over, not the clip ([`crossed_cues_in`]).
+pub fn phase_place(action: &[Phase], clip: &[Phase], loops: &[String], t: f32, length: f32) -> Option<(f32, Option<(f32, f32)>)> {
     if !timed_alike(action, clip) {
         return None;
     }
@@ -1365,14 +1388,16 @@ pub fn phase_seek(action: &[Phase], clip: &[Phase], loops: &[String], t: f32, le
         let to = from + lasts;
         if t <= to || i == last {
             let into = (t - from).max(0.0);
-            let on_clip = if c.1 > EPS && loops.contains(&c.0) {
+            let looped = c.1 > EPS && loops.contains(&c.0);
+            let on_clip = if looped {
                 into % c.1
             } else if lasts > EPS {
                 (into / lasts).min(1.0) * c.1
             } else {
                 c.1
             };
-            return Some(((clip_from + on_clip) / clip_total).clamp(0.0, 1.0));
+            let stretch = looped.then(|| (clip_from / clip_total, ((clip_from + c.1) / clip_total).min(1.0)));
+            return Some((((clip_from + on_clip) / clip_total).clamp(0.0, 1.0), stretch));
         }
         from = to;
         clip_from += c.1;
@@ -1384,9 +1409,15 @@ impl AnimSet {
     /// Where on `clip` the running `action` is, 0 to 1: phase by phase when the clip is timed to the
     /// action's phases ([`phase_seek`]), else evenly over the run.
     pub fn progress(&self, clip: &str, action: &ActionTime) -> f32 {
-        let Some(def) = self.clips.get(clip) else { return even_progress(action.t, action.length) };
-        phase_seek(action.phases, &def.phases, &def.loops, action.t, action.length)
-            .unwrap_or_else(|| even_progress(action.t, action.length))
+        self.place(clip, action).0
+    }
+
+    /// [`AnimSet::progress`] with the stretch of the clip a looping phase repeats while the action
+    /// is in it, fractions of the clip ([`phase_place`]).
+    pub fn place(&self, clip: &str, action: &ActionTime) -> (f32, Option<(f32, f32)>) {
+        let even = || (even_progress(action.t, action.length), None);
+        let Some(def) = self.clips.get(clip) else { return even() };
+        phase_place(action.phases, &def.phases, &def.loops, action.t, action.length).unwrap_or_else(even)
     }
 }
 
@@ -1442,7 +1473,7 @@ pub fn select_clip_timed<'a>(
     let action = action.filter(|a| !set.is_layered(a.key));
     let seeked = |clip: &'a str, a: &ActionTime| {
         let clip = set.family(moveset, clip);
-        ClipChoice::seeked(set, clip, set.progress(clip, a), true)
+        ClipChoice::seeked(set, clip, set.place(clip, a), true)
     };
     if let Some(a) = &action
         && let Some(clip) = set.action_clip(a.key)
@@ -1461,6 +1492,7 @@ pub fn select_clip_timed<'a>(
                     blend: set.blend_into(clip, false),
                     looping: false,
                     gait: false,
+                    repeats: None,
                 }
             }
             (None, _) => ClipChoice::none(set),
@@ -1476,7 +1508,7 @@ pub fn select_clip_timed<'a>(
     if resolved == Locomotion::Mantle
         && let Some(mantle) = &motion.mantle
     {
-        return ClipChoice::seeked(set, set.family(moveset, clip), mantle.t.clamp(0.0, 1.0), false);
+        return ClipChoice::seeked(set, set.family(moveset, clip), (mantle.t.clamp(0.0, 1.0), None), false);
     }
     // Facing a target: the heading's clip, or the gait's own (backward for `back`).
     let (clip, backward) = match status.facing.map(|h| (h, set.facing_clip(resolved, h))) {
@@ -1493,6 +1525,7 @@ pub fn select_clip_timed<'a>(
         blend: set.blend_into(clip, false),
         looping: true,
         gait: resolved.is_gait(),
+        repeats: None,
     }
 }
 
@@ -1535,7 +1568,7 @@ pub fn select_layer_timed<'a>(
     let a = action?;
     let (clip, Some(layer)) = set.action_shown(a.key)? else { return None };
     let clip = set.family(moveset, clip);
-    Some(LayerChoice { layer, choice: ClipChoice::seeked(set, clip, set.progress(clip, &a), true) })
+    Some(LayerChoice { layer, choice: ClipChoice::seeked(set, clip, set.place(clip, &a), true) })
 }
 
 /// The cues the animation passed going from `prev` to `now` (seconds on the clip's
@@ -1548,20 +1581,27 @@ pub fn select_layer_timed<'a>(
 ///   rest of the last pass and the start of the new one. Anything else restarted: cues up
 ///   to `now` fire again.
 pub fn crossed_cues(cues: &[CueDef], prev: Option<f32>, now: f32, wrap_at: Option<f32>) -> Vec<&CueDef> {
+    crossed_cues_in(cues, prev, now, wrap_at.map(|length| (0.0, length)))
+}
+
+/// [`crossed_cues`] for a clip that repeats the stretch `wraps` (`(start, end)` in seconds: a
+/// looping phase's, [`ClipChoice::wraps`]; a looping clip's is `(0, length)`). Going back from inside
+/// the stretch to inside it is a wrap: the rest of the stretch, then its start up to `now`; the cues of
+/// earlier phases do not fire again. Going back from anywhere else is a restart.
+pub fn crossed_cues_in(cues: &[CueDef], prev: Option<f32>, now: f32, wraps: Option<(f32, f32)>) -> Vec<&CueDef> {
+    let inside = |at: f32, (start, end): (f32, f32)| at >= start - EPS && at <= end + EPS;
+    let wrap = wraps.filter(|&stretch| prev.is_some_and(|p| now < p && inside(p, stretch) && inside(now, stretch)));
     let mut found: Vec<&CueDef> = cues
         .iter()
-        .filter(|c| match prev {
-            None => c.at <= now + EPS,
-            Some(p) if now >= p => c.at > p + EPS && c.at <= now + EPS,
-            Some(p) => match wrap_at {
-                Some(len) => (c.at > p + EPS && c.at <= len + EPS) || c.at <= now + EPS,
-                None => c.at <= now + EPS,
-            },
+        .filter(|c| match (prev, wrap) {
+            (None, _) => c.at <= now + EPS,
+            (Some(p), _) if now >= p => c.at > p + EPS && c.at <= now + EPS,
+            (Some(p), Some((start, end))) => (c.at > p + EPS && c.at <= end + EPS) || (c.at >= start - EPS && c.at <= now + EPS),
+            (Some(_), None) => c.at <= now + EPS,
         })
         .collect();
     // After a wrap, the cues at or before `now` are the new pass's head: they come last.
-    let wrapped = wrap_at.is_some() && prev.is_some_and(|p| now < p);
-    let head = |c: &CueDef| wrapped && c.at <= now + EPS;
+    let head = |c: &CueDef| wrap.is_some() && c.at <= now + EPS;
     found.sort_by(|a, b| head(a).cmp(&head(b)).then(a.at.total_cmp(&b.at)));
     found
 }
@@ -2480,6 +2520,33 @@ mod tests {
         assert!(close(at(4.75), 2.25 / 3.0) && close(at(5.5), 1.0));
         // Without `loops` the breath is stretched over the 4 s.
         assert!(close(phase_seek(&action, &clip, &[], 2.5, 5.5).unwrap(), (0.5 + 0.75) / 3.0));
+    }
+
+    #[test]
+    fn a_looped_phase_fires_its_own_cues_on_each_pass_and_no_earlier_ones() {
+        let clip = phases(&[("fall", 0.5), ("down", 1.5), ("rise", 1.0)]);
+        let action = phases(&[("fall", 0.5), ("down", 4.0), ("rise", 1.0)]);
+        let loops = ["down".to_owned()];
+        let place = |t| phase_place(&action, &clip, &loops, t, 5.5).unwrap();
+        // The stretch is said while the action is in the looped phase, and only then.
+        assert_eq!(place(0.25).1, None);
+        let (start, end) = place(2.5).1.unwrap();
+        assert!(close(start, 0.5 / 3.0) && close(end, 2.0 / 3.0), "{start} {end}");
+        assert_eq!(place(4.75).1, None);
+        assert_eq!(phase_place(&action, &clip, &[], 2.5, 5.5).unwrap().1, None, "no `loops`, no stretch");
+
+        // On a 3 s clip: a thud as it falls, a breath in the down stretch (0.5 s to 2 s).
+        let cues = [CueDef { at: 0.3, cue: "thud".into() }, CueDef { at: 1.2, cue: "breath".into() }];
+        let fired = |prev, now, wraps| -> Vec<&str> { crossed_cues_in(&cues, prev, now, wraps).iter().map(|c| c.cue.as_str()).collect() };
+        let down = Some((0.5, 2.0));
+        assert!(fired(Some(1.9), 0.7, down).is_empty(), "the stretch starts over: no thud again");
+        assert_eq!(fired(Some(1.9), 1.3, down), ["breath"], "the breath once on the new pass");
+        assert_eq!(fired(Some(1.0), 0.6, down), ["breath"], "the rest of the last pass");
+        assert_eq!(fired(Some(1.9), 0.7, None), ["thud"], "the old rule: a restart");
+        // Going back from outside the stretch (a new run of the action) is a restart.
+        assert_eq!(fired(Some(2.5), 1.3, down), ["thud", "breath"]);
+        // The whole clip looping is the stretch from 0: as `crossed_cues` with `wrap_at`.
+        assert_eq!(fired(Some(2.9), 0.4, Some((0.0, 3.0))), ["thud"]);
     }
 
     #[test]
