@@ -24,6 +24,7 @@ settings-ui = Интерфейс
 settings-controls = Управление
 settings-look-speed = Скорость обзора
 settings-aim-speed = Скорость прицеливания
+settings-auto-centre = Автоцентрирование камеры
 settings-invert-y = Инверсия обзора
 settings-hold = Удержание как переключение
 
