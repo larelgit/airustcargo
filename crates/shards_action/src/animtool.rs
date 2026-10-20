@@ -3,7 +3,7 @@
 //!
 //! A game gives [`Animated`] only to the bodies it dresses in a window or with `--offscreen`, so
 //! headless nothing is drawn. The tool still answers there: the choice is a pure function of the
-//! action machine, the controller and the content ([`select_clip_in`], [`select_layer_in`],
+//! action machine, the controller and the content ([`select_clip_timed`], [`select_layer_timed`],
 //! [`mount_places`]), so for a body that has no `Animated` it takes the set named by `animset=` and
 //! says what the bridge would pick. Drawn, it adds what the bridge has done: whether the body is
 //! bound, what plays on its layers, where its props sit. Every line says what it is; the pose is
@@ -22,8 +22,8 @@ use shards_core::Predicted;
 use shards_motion::{MotionState, MoveModifiers};
 
 use crate::anim::{
-    mode_name, mount_places, select_clip_in, select_layer_in, AnimSet, Animated, BodyStatus, MountView, Place, PropSwaps, LEFT_KEY,
-    MODE_KEY,
+    mode_name, mount_places, phase_seek, select_clip_timed, select_layer_timed, ActionTime, AnimSet, Animated, BodyStatus, MountView,
+    Place, PropSwaps, LEFT_KEY, MODE_KEY,
 };
 use crate::def::{ActionDef, MovesetDef};
 use crate::fighter::{Dead, Fighter};
@@ -87,6 +87,21 @@ fn label(world: &World, e: Entity) -> String {
     world.get::<AiId>(e).map_or_else(|| format!("{e}"), |id| id.to_string())
 }
 
+/// How a seeked clip follows the action: ` by phase` for a clip timed to the action's phases (and the
+/// phases it loops), ` evenly (the clip is timed to windup, active, recovery; the action is not)` for
+/// one timed to others, nothing for a clip without phases.
+fn seek_how(set: &AnimSet, clip: &str, action: Option<&ActionTime>) -> String {
+    let (Some(def), Some(a)) = (set.clip(clip), action) else { return String::new() };
+    if def.phases.is_empty() {
+        return String::new();
+    }
+    if phase_seek(a.phases, &def.phases, &def.loops, a.t, a.length).is_some() {
+        return if def.loops.is_empty() { " by phase".to_owned() } else { format!(" by phase, looping {}", def.loops.join(", ")) };
+    }
+    let names: Vec<&str> = def.phases.iter().map(|p| p.0.as_str()).collect();
+    format!(" evenly (the clip is timed to {}; the action is not)", names.join(", "))
+}
+
 /// The seconds `0.21/0.60 s` of a run.
 fn clock_of(run: &Running) -> String {
     format!("{:.2}/{:.2} s", run.t, run.length)
@@ -141,7 +156,14 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
     };
     let def = run.and_then(|r| db.get::<ActionDef>(&r.action));
     let key = run.map(|r| set.action_key(&r.action, r.anim.as_deref(), def.map_or(&[], |d| d.tags.as_slice())));
-    let action = run.zip(key).map(|(r, k)| (k, r.t.min(r.length), r.length));
+    // Looked ahead by the fixed clock's overstep as the bridge looks (not an action with a hold loop).
+    let ahead = if def.is_some_and(|d| d.hold.is_some()) {
+        0.0
+    } else {
+        world.get_resource::<Time<Fixed>>().map_or(0.0, |t| t.overstep().as_secs_f32())
+    };
+    let action =
+        run.zip(key).map(|(r, k)| ActionTime::new(k, (r.t + ahead).min(r.length), r.length, def.map_or(&[], |d| d.phases.as_slice())));
     let moveset = world.get::<Fighter>(body).map(|f| f.moveset.as_str());
     let staggers = moveset
         .and_then(|m| db.get::<MovesetDef>(m))
@@ -158,13 +180,14 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
 
     let mut out = vec![head];
     // The body's clip.
-    let choice = select_clip_in(action, motion, status, set, moveset);
+    let choice = select_clip_timed(action, motion, status, set, moveset);
     let mut line = match choice.clip {
         Some(clip) => {
             let why = match (run, choice.seek_to) {
                 (Some(r), Some(p)) => format!(
-                    " seeked to {:.0} % (action {} at {}, phase {})",
+                    " seeked to {:.0} %{} (action {} at {}, phase {})",
                     p * 100.0,
+                    seek_how(set, clip, action.as_ref()),
                     r.action,
                     clock_of(r),
                     r.phase
@@ -188,7 +211,7 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
     out.push(line);
 
     // The layer.
-    let layer = select_layer_in(action, status, set, moveset);
+    let layer = select_layer_timed(action, status, set, moveset);
     #[cfg(feature = "render")]
     let plays = |name: &str| bound.map(|b| (b.layer_clip(name).map(str::to_owned), b.layer_share(name)));
     let mut layers: Vec<String> = Vec::new();
@@ -285,7 +308,7 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
     if !carried.is_empty() || placed {
         let rules = run.and_then(|r| {
             let rules = set.mount_rules(&r.action, r.anim.as_deref(), def.map_or(&[], |d| d.tags.as_slice()))?;
-            Some((rules, def?, action.map_or(r.t, |(_, t, _)| t)))
+            Some((rules, def?, action.map_or(r.t, |a| a.t)))
         });
         #[allow(unused_mut, reason = "the drawn side adds the equip")]
         let mut equip = None;

@@ -67,7 +67,7 @@ use shards_core::Predicted;
 use shards_motion::{MotionState, MoveModifiers};
 
 use crate::anim::{
-    crossed_cues, mode_name, select_clip_in, select_layer_in, AnimSet, Animated, AnimationCue, BodyStatus, ClipChoice,
+    crossed_cues_in, mode_name, select_clip_timed, select_layer_timed, ActionTime, AnimSet, Animated, AnimationCue, BodyStatus, ClipChoice,
     CueDef, LayerChoice, ModeLeft, PropSwaps, MAX_LAYERS,
 };
 use crate::def::{ActionDef, MovesetDef};
@@ -793,14 +793,14 @@ pub fn drive(
             continue;
         }
 
-        // The running action as (key, seconds in, length). One that has a hold loop (a raised
+        // The running action: its key, seconds in, length and phases. One that has a hold loop (a raised
         // block) is not looked ahead: it would run past the loop's end.
         let run = if predicted { shown.map(|p| &p.run) } else { state.and_then(|s| s.current.as_ref()) };
         let def = run.and_then(|r| db.get::<ActionDef>(&r.action));
         let action = run.map(|r| {
             let key = set.action_key(&r.action, r.anim.as_deref(), def.map_or(&[], |d| d.tags.as_slice()));
             let ahead = if def.is_some_and(|d| d.hold.is_some()) { 0.0 } else { overstep };
-            (key, (r.t + ahead).min(r.length), r.length)
+            ActionTime::new(key, (r.t + ahead).min(r.length), r.length, def.map_or(&[], |d| d.phases.as_slice()))
         });
         let staggers = fighter
             .and_then(|f| db.get::<MovesetDef>(&f.moveset))
@@ -809,7 +809,7 @@ pub fn drive(
             .is_some_and(|(stagger, r)| r.forced && r.action == stagger);
         let status = BodyStatus { dead, staggered: staggers, pace: modifiers.map_or(1.0, MoveModifiers::pace) };
         let moveset = fighter.map(|f| f.moveset.as_str());
-        let choice = select_clip_in(action, motion.unwrap_or(&standing), status, set, moveset);
+        let choice = select_clip_timed(action, motion.unwrap_or(&standing), status, set, moveset);
         let switched =
             drive_body(&mut commands, &mut bones, entity, set, built, &clips, &mut bound, &mut player, &mut transitions, &choice, frozen);
         if switched {
@@ -820,13 +820,13 @@ pub fn drive(
         let mode = motion.unwrap_or(&standing).mode;
         if !built.layered.is_empty() || !bound.overlays.is_empty() {
             // A layer that is off in this mode plays nothing: what played fades out.
-            let wanted = select_layer_in(action, status, set, moveset).filter(|l| !set.layer_off(l.layer, mode));
+            let wanted = select_layer_timed(action, status, set, moveset).filter(|l| !set.layer_off(l.layer, mode));
             let frame = LayerFrame { wanted, back_blend: choice.blend, dt: time.delta_secs(), frozen };
             drive_layers(&mut commands, &mut bones, entity, set, built, &clips, &mut bound, &mut player, &frame);
         }
 
         // The motion mode: the mounts' rules for it and for after leaving it, the drop.
-        let ended = run.zip(action).map(|(r, (key, ..))| (r.instance, set.ends_equip(key)));
+        let ended = run.zip(action).map(|(r, a)| (r.instance, set.ends_equip(a.key)));
         let moded = bound.modes.advance(&ModeFrame { set, mode, acting: run.is_some(), run: ended, clock });
         if let Some(left) = moded.fired {
             commands.trigger(ModeLeft { entity, mode: mode_name(left).to_owned() });
@@ -843,7 +843,7 @@ pub fn drive(
             db: &db,
             moveset,
             swaps,
-            run: run.zip(action).map(|(run, (key, t, _))| RunView { run, def, key, t }),
+            run: run.zip(action).map(|(run, a)| RunView { run, def, key: a.key, t: a.t }),
             clock,
             modes: moded,
         };
@@ -919,8 +919,8 @@ fn drive_body(
 
     let cues = set.clip(clip).map_or(&[][..], |c| c.cues.as_slice());
     if !cues.is_empty() {
-        let wrap = (choice.looping && duration > 0.0).then_some(duration);
-        bones.fire(commands, entity, bound.player, clip, crossed_cues(cues, bound.last_time, now, wrap));
+        // A looping clip wraps round, and so does the stretch a looping phase repeats.
+        bones.fire(commands, entity, bound.player, clip, crossed_cues_in(cues, bound.last_time, now, choice.wraps(duration)));
     }
     bound.last_time = Some(now);
     switched
@@ -979,7 +979,7 @@ fn drive_layers(
             player.play(node).set_repeat(RepeatAnimation::Never).set_speed(0.0).set_seek_time(at);
             let cues = set.clip(clip).map_or(&[][..], |c| c.cues.as_slice());
             if !cues.is_empty() {
-                bones.fire(commands, entity, model, clip, crossed_cues(cues, overlay.last_time, at, None));
+                bones.fire(commands, entity, model, clip, crossed_cues_in(cues, overlay.last_time, at, choice.wraps(duration)));
             }
             overlay.last_time = Some(at);
         }
@@ -1572,6 +1572,36 @@ mod tests {
         assert_eq!(breaths(&rig), 2, "and again on the next pass");
     }
 
+    /// Runs `id` with `t` seconds in, for `length` seconds in all (a miss's longer recovery).
+    fn run_for(rig: &mut Rig, id: &str, t: f32, length: f32, anim: Option<&str>) {
+        rig.run_action(id, t, anim);
+        rig.app.world_mut().get_mut::<ActionState>(rig.character).unwrap().current.as_mut().unwrap().length = length;
+    }
+
+    #[test]
+    fn a_looped_phase_fires_its_cues_on_each_pass_and_not_the_earlier_ones() {
+        #[derive(Resource, Default)]
+        struct Heard(Vec<AnimationCue>);
+        let mut rig = rig();
+        // The swing's recovery, the last 0.2 s of its 1 s clip, loops for as long as the recovery lasts.
+        let looped = ANIMSETS.replace(
+            r#""swing_1": (name: "Armature|Slash", cues: [(at: 0.5, cue: "swoosh")]),"#,
+            r#""swing_1": (name: "Armature|Slash", cues: [(at: 0.3, cue: "swoosh"), (at: 0.9, cue: "tick")],
+                phases: [("windup", 0.5), ("active", 0.3), ("recovery", 0.2)], loops: ["recovery"]),"#,
+        );
+        assert_ne!(looped, ANIMSETS);
+        rig.app.insert_resource(db_from(&looped));
+        rig.app.init_resource::<Heard>();
+        rig.app.add_observer(|cue: On<AnimationCue>, mut heard: ResMut<Heard>| heard.0.push(cue.event().clone()));
+        let count = |rig: &Rig, cue: &str| rig.app.world().resource::<Heard>().0.iter().filter(|c| c.cue == cue).count();
+        // `light_1` (windup 0.2, active 0.1, recovery 0.3) run for 1 s: a 0.7 s recovery, three and a half passes.
+        for (t, swooshes, ticks) in [(0.1, 0, 0), (0.15, 1, 0), (0.35, 1, 0), (0.42, 1, 1), (0.55, 1, 1), (0.63, 1, 2), (0.72, 1, 2), (0.83, 1, 3)] {
+            run_for(&mut rig, "light_1", t, 1.0, Some("swing_1"));
+            rig.app.update();
+            assert_eq!((count(&rig, "swoosh"), count(&rig, "tick")), (swooshes, ticks), "{t} s in");
+        }
+    }
+
     #[test]
     fn an_edited_animset_rebuilds_the_graph_and_rebinds() {
         let mut rig = rig();
@@ -1951,6 +1981,32 @@ mod tests {
         let heard = &rig.rig.app.world().resource::<Heard>().0;
         assert_eq!(heard.len(), 1, "{heard:?}");
         assert_eq!((heard[0].entity, heard[0].cue.as_str(), heard[0].clip.as_str()), (rig.rig.character, "gulp", "drink"));
+    }
+
+    #[test]
+    fn a_looped_phase_on_a_layer_fires_its_cues_on_each_pass_and_not_the_earlier_ones() {
+        #[derive(Resource, Default)]
+        struct Heard(Vec<AnimationCue>);
+        // `light_1` plays the drink clip on the upper body; its recovery (0.6 s to the end) loops.
+        let looped = LAYERED
+            .replace(
+                r#""drink": (blend: 0.4, cues: [(at: 0.5, cue: "gulp")]),"#,
+                r#""drink": (blend: 0.4, cues: [(at: 0.2, cue: "lift"), (at: 0.8, cue: "gulp")],
+                    phases: [("windup", 0.4), ("active", 0.2), ("recovery", 0.4)], loops: ["recovery"]),"#,
+            )
+            .replace(r#"actions: {"drink":"#, r#"actions: {"light_1": (clip: "drink", layer: "upper"), "drink":"#);
+        assert_eq!(looped.matches("lift").count() + looped.matches("\"light_1\"").count(), 2, "{looped}");
+        let mut rig = skeleton(&looped);
+        rig.rig.app.init_resource::<Heard>();
+        rig.rig.app.add_observer(|cue: On<AnimationCue>, mut heard: ResMut<Heard>| heard.0.push(cue.event().clone()));
+        let count = |rig: &Skeleton, cue: &str| rig.rig.app.world().resource::<Heard>().0.iter().filter(|c| c.cue == cue).count();
+        // Run for 1 s: a 0.7 s recovery over a 0.4 s stretch.
+        for (t, lifts, gulps) in [(0.15, 1, 0), (0.45, 1, 0), (0.55, 1, 1), (0.75, 1, 1), (0.95, 1, 2)] {
+            run_for(&mut rig.rig, "light_1", t, 1.0, None);
+            rig.rig.app.update();
+            assert_eq!(rig.bound().layer_clip("upper"), Some("drink"));
+            assert_eq!((count(&rig, "lift"), count(&rig, "gulp")), (lifts, gulps), "{t} s in");
+        }
     }
 
     #[test]
