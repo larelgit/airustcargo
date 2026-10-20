@@ -91,6 +91,23 @@ fn agents_read_the_places_in_words_and_a_rumour_as_a_direction() {
     assert!(line(&read(&mut app), "atlas/map").contains("facing E · no places"));
 }
 
+#[test]
+fn a_map_with_nothing_new_to_show_keeps_the_viewer_it_had() {
+    let mut app = game_on(assets("kept", None), false);
+    let hero = {
+        let mut q = app.world_mut().query_filtered::<Entity, With<AiPlayer>>();
+        q.single(app.world()).unwrap()
+    };
+    *app.world_mut().get_mut::<Transform>(hero).unwrap() = Transform::from_xyz(30.0, 0.0, -20.0);
+    app.update();
+    assert!(line(&read(&mut app), "atlas/map").contains("you (30, -20) facing N"));
+    // The game's source has nothing to give and there is no viewer: the map keeps all it had.
+    app.world_mut().remove_resource::<Places>();
+    app.world_mut().despawn(hero);
+    let now = line(&read(&mut app), "atlas/map").to_owned();
+    assert!(now.contains("you (30, -20) facing N · Old Shrine"), "{now}");
+}
+
 /// The marks drawn on `map`, in the order drawn: each one's centre (pixels from the map's top
 /// left), its dot's colour or the text of its symbol, and its frame's box.
 fn marks(app: &mut App) -> Vec<(Vec2, Result<Srgba, String>, Rect)> {
@@ -173,6 +190,7 @@ fn the_content_check_names_a_map_that_cannot_be_drawn() {
     let screen = r#"{ "s": (widgets: [
         Map(id: "flat", bind: "places", area: (min: (0.0, 0.0), max: (10.0, 0.0))),
         Map(id: "tiny", bind: " ", area: (min: (0.0, 0.0), max: (1.0, 1.0)), width: 0.0),
+        Map(id: "away", bind: "places", image: "../secret/valley.png", area: (min: (0.0, 0.0), max: (1.0, 1.0))),
     ]) }"#;
     let theme = r##"{ "default": (map_colors: {"lost": "#ffffff", "rumor": "grey"}) }"##;
     let sources = [
@@ -187,5 +205,7 @@ fn the_content_check_names_a_map_that_cannot_be_drawn() {
     has("map `tiny`: `bind` names the game's source of places");
     has("map_colors: `lost` is none of rumor, discovered, completed, you");
     has("map_colors.rumor: ");
-    assert_eq!(errors.len(), 5, "{errors:#?}");
+    // Checked with no asset folder too: the asset server would refuse it.
+    has("map `away`: `../secret/valley.png` is outside the asset folder");
+    assert_eq!(errors.len(), 6, "{errors:#?}");
 }

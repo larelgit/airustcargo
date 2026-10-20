@@ -549,6 +549,23 @@ fn texts_of<'a>(widget: &'a WidgetDef, counters: &mut BTreeMap<&'static str, u32
     }
 }
 
+/// Whether a picture's `path` stays under the asset folder: relative, with no `..`. The asset
+/// server refuses any other, so the picture would not be drawn.
+fn under_asset_folder(path: &str) -> bool {
+    use std::path::Component;
+    std::path::Path::new(path).components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+}
+
+/// The content check's line for a picture's `path` that is outside the asset folder or no file
+/// in it (`what`: `image `art``), if one is due.
+fn picture_problem(refs: &Refs, what: &str, path: &str) -> Option<String> {
+    if !under_asset_folder(path) {
+        return Some(format!("{what}: `{path}` is outside the asset folder (a path under it, with no `..`: `ui/key_art.png`)"));
+    }
+    let root = refs.asset_root()?;
+    (!root.join(path).is_file()).then(|| format!("{what}: no file `{path}` under the asset folder (a .png, `ui/key_art.png`)"))
+}
+
 fn check_widget(widget: &WidgetDef, refs: &mut Refs, seen: &mut BTreeSet<String>, counters: &mut BTreeMap<&'static str, u32>) {
     let id = assign_id(widget, counters);
     if !good_id(&id) {
@@ -573,10 +590,8 @@ fn check_widget(widget: &WidgetDef, refs: &mut Refs, seen: &mut BTreeSet<String>
                     refs.error(format!("image `{id}`: `{field}` is a size above 0, not {size}"));
                 }
             }
-            if let Some(root) = refs.asset_root()
-                && !root.join(path).is_file()
-            {
-                refs.error(format!("image `{id}`: no file `{path}` under the asset folder (a .png, `ui/key_art.png`)"));
+            if let Some(problem) = picture_problem(refs, &format!("image `{id}`"), path) {
+                refs.error(problem);
             }
         }
         WidgetDef::Map { area, image, width, height, bind, .. } => {
@@ -592,10 +607,9 @@ fn check_widget(widget: &WidgetDef, refs: &mut Refs, seen: &mut BTreeSet<String>
                 refs.error(format!("map `{id}`: `bind` names the game's source of places"));
             }
             if let Some(image) = image
-                && let Some(root) = refs.asset_root()
-                && !root.join(image).is_file()
+                && let Some(problem) = picture_problem(refs, &format!("map `{id}`"), image)
             {
-                refs.error(format!("map `{id}`: no file `{image}` under the asset folder (a .png)"));
+                refs.error(problem);
             }
         }
         WidgetDef::Tabs { children, .. } => {

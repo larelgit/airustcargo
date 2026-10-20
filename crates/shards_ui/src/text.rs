@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use crate::bind::live_value;
 use crate::def::Layer;
 use crate::model::{binding_state, focused, inputs_text, on_shown_page, top_screen, walk, widget_children, UiScreen, UiStack, UiValue, UiWidget, WidgetKind};
-use crate::map::{MapArea, MapPoint, MapState, MapYou};
+use crate::map::{rumour_direction, MapArea, MapPoint, MapState, MapYou};
 use crate::model::format_number;
 
 /// At most this many widget lines of the screen on top in `observe`; `ui_read` has them all.
@@ -248,12 +248,11 @@ pub(crate) fn map_words(area: &MapArea, points: &[MapPoint], you: Option<&MapYou
     if let Some(y) = you {
         parts.push(format!("you ({:.0}, {:.0}) facing {}", y.at.x, y.at.y, compass_point(y.deg)));
     }
-    let from = you.map_or(Vec2::new(area.min.0 + area.max.0, area.min.1 + area.max.1) * 0.5, |y| y.at);
     for p in points {
         let category = p.category.as_ref().map(|c| format!(" ({c})")).unwrap_or_default();
         let at = match p.state {
             MapState::Rumor => {
-                let to = p.at - from;
+                let to = rumour_direction(area, p.at, you);
                 compass_point(ops::atan2(to.x, -to.y).to_degrees().rem_euclid(360.0)).to_owned()
             }
             MapState::Discovered | MapState::Completed => format!("({:.0}, {:.0})", p.at.x, p.at.y),

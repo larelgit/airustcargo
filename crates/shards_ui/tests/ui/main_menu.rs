@@ -190,6 +190,7 @@ fn the_content_check_names_a_missing_picture_and_a_hud_for_a_main_menu() {
             "lost": (widgets: [Image(id: "art", path: "ui/missing.png")]),
             "squashed": (widgets: [Image(id: "art", path: "ui/picture.png", width: 0.0, height: -3.0)]),
             "hud_menu": (layer: Hud, main_menu: true, widgets: [Text(text: "hi")]),
+            "away": (widgets: [Image(id: "art", path: "../ui/picture.png")]),
         }"#,
     )
     .unwrap();
@@ -202,5 +203,6 @@ fn the_content_check_names_a_missing_picture_and_a_hud_for_a_main_menu() {
     has("screen `squashed`: image `art`: `width` is a size above 0, not 0");
     has("screen `squashed`: image `art`: `height` is a size above 0, not -3");
     has("screen `hud_menu`: a HUD takes no input, so it cannot be the main menu");
-    assert_eq!(errors.len(), 4, "{}", errors.join("\n"));
+    has("screen `away`: image `art`: `../ui/picture.png` is outside the asset folder");
+    assert_eq!(errors.len(), 5, "{}", errors.join("\n"));
 }

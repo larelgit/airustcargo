@@ -37,6 +37,10 @@ impl MapArea {
         if numbers.iter().any(|n| !n.is_finite()) {
             return Err(format!("area: finite numbers, not {self:?}"));
         }
+        // Each finite, yet too far apart to measure (`-f32::MAX` to `f32::MAX`).
+        if !(self.max.0 - self.min.0).is_finite() || !(self.max.1 - self.min.1).is_finite() {
+            return Err(format!("area: a width and height that are finite numbers, not {self:?}"));
+        }
         if self.max.0 <= self.min.0 || self.max.1 <= self.min.1 {
             return Err(format!(
                 "area: `max` is east and south of `min` (both its x and z are larger), not min ({}, {}) max ({}, {})",
@@ -52,6 +56,11 @@ impl MapArea {
         let span = Vec2::new(self.max.0 - self.min.0, self.max.1 - self.min.1);
         let share = (at - Vec2::new(self.min.0, self.min.1)) / span;
         (share * size).clamp(Vec2::ZERO, size)
+    }
+
+    /// Its middle (world `x`, `z`).
+    pub fn middle(&self) -> Vec2 {
+        Vec2::new(self.min.0 + self.max.0, self.min.1 + self.max.1) * 0.5
     }
 
     /// Whether world `at` is inside the area.
@@ -123,14 +132,23 @@ pub struct MapYou {
     pub deg: f32,
 }
 
+/// Which way a rumour at world `at` lies (world `x`, `z`): from the viewer (without one, the
+/// area's middle), north when the two are the same point. The mark on the map and the words a
+/// screen reader hears both go by it.
+pub fn rumour_direction(area: &MapArea, at: Vec2, you: Option<&MapYou>) -> Vec2 {
+    let dir = at - you.map_or(area.middle(), |y| y.at);
+    if dir.length_squared() < 1e-6 { Vec2::NEG_Y } else { dir }
+}
+
 /// Where a map widget's mark goes, in pixels from its top-left corner.
 pub fn mark_at(area: &MapArea, size: Vec2, point: &MapPoint, you: Option<&MapYou>) -> Vec2 {
     match point.state {
         MapState::Rumor => {
-            let from = you.map_or(size * 0.5, |y| area.to_map(size, y.at));
-            // Toward the unclamped place: the direction, not the nearest edge.
+            // From the viewer's mark (kept on the map), the way the place lies from the viewer
+            // itself: toward the place, not the nearest edge, even with the viewer off the map.
+            let from = area.to_map(size, you.map_or(area.middle(), |y| y.at));
             let span = Vec2::new(area.max.0 - area.min.0, area.max.1 - area.min.1);
-            let to = (point.at - Vec2::new(area.min.0, area.min.1)) / span * size;
+            let to = from + rumour_direction(area, point.at, you) / span * size;
             edge_toward(size, from, to)
         }
         MapState::Discovered | MapState::Completed => area.to_map(size, point.at),
@@ -171,10 +189,29 @@ mod tests {
     }
 
     #[test]
+    fn a_viewer_off_the_map_sees_a_rumour_the_way_it_lies() {
+        // Far west of the map: the ruins lie east and a little north. From the viewer's mark on
+        // the west edge they would be north-east, and their mark would sit on the top edge.
+        let you = MapYou { at: Vec2::new(-300.0, 0.0), deg: 0.0 };
+        let point = MapPoint { label: "Ruins".into(), at: Vec2::new(0.0, -50.0), state: MapState::Rumor, category: None };
+        let mark = mark_at(&AREA, SIZE, &point, Some(&you));
+        assert!(mark.distance(Vec2::new(400.0, 100.0 / 3.0)) < 1e-3, "on the east edge: {mark}");
+        let words = crate::text::map_words(&AREA, std::slice::from_ref(&point), Some(&you));
+        assert!(words.ends_with("Ruins rumor E"), "{words}");
+        // Where the viewer stands: north, on the map and in words alike.
+        let here = MapPoint { at: you.at, ..point };
+        assert_eq!(mark_at(&AREA, SIZE, &here, Some(&you)), Vec2::ZERO, "up from the viewer's mark on the west edge");
+        let words = crate::text::map_words(&AREA, &[here], Some(&you));
+        assert!(words.ends_with("Ruins rumor N"), "{words}");
+    }
+
+    #[test]
     fn an_area_names_its_mistakes() {
         assert!(AREA.check().is_ok());
         let flat = MapArea { min: (0.0, 0.0), max: (10.0, 0.0) };
         assert!(flat.check().unwrap_err().contains("`max` is east and south of `min`"));
         assert!(MapArea { min: (f32::NAN, 0.0), max: (1.0, 1.0) }.check().unwrap_err().starts_with("area: finite numbers"));
+        let huge = MapArea { min: (-f32::MAX, 0.0), max: (f32::MAX, 1.0) };
+        assert!(huge.check().unwrap_err().starts_with("area: a width and height that are finite numbers"), "its width overflows");
     }
 }

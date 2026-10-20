@@ -5316,7 +5316,7 @@ changes values, and it describes all of this to the agent in text: the menu is w
 **Widgets.** Some hold other widgets: `Panel` (title, `layout`), `List`, `Grid` (`columns`), `Tabs` (pages: `Panel`/`List`/`Grid`
 with an id; only one is shown). Some show content: `Text` (its own text or `bind`), `Hint` (a hint; an empty one is not shown), `Image` (a picture:
 `path` under the assets folder, `label` — what it shows, for the screen reader and the agent, `width` and `height` in logical pixels; give one size and
-the other follows the picture's proportions; give neither and the picture keeps its own size; the content check names a missing file and a size that is not
+the other follows the picture's proportions; give neither and the picture keeps its own size; the content check names a missing file, a path outside the assets folder (absolute, or with `..`: the asset server refuses it) and a size that is not
 greater than 0), `Bar` (`value`/`max` or
 `bind`, `color` — a theme colour name or `#rrggbb`), `Cooldown` (time until ready), `Compass` (where the player looks and the four
 nearest landmarks of each category, `you.heading:<n>` for another number; see "Compass categories"), `Allies` (ally frames: name, health, whether down), `Map` (a picture of the world with the game's places and the viewer; see "Map"), `Compare` (before → after by rows: `damage 12 →
@@ -5504,14 +5504,15 @@ come from the game's source `bind`, which returns `UiValue::Map { points, you: N
 `z`), a `MapState` (`Rumor`, `Discovered`, `Completed`) and a category. Which places a player knows of, and in what state, is the game's,
 kept in its own save section; the engine draws what the source says. A discovered or completed place is a mark where it is (on the
 nearest edge when it lies outside the area); a **rumour** is a mark on the edge, on the line from the viewer (the map's middle without one)
-toward where the place is said to be, so the map gives a direction, not the place. A mark on an edge is drawn whole, just inside it
+toward where the place is said to be, so the map gives a direction, not the place (a viewer off the map: from its mark on the edge, the
+way the place lies from the viewer itself; a viewer on the place: north). A mark on an edge is drawn whole, just inside it
 (the map clips what lies outside). The widget adds the viewer (the HUD's body: where it
-stands and faces) and draws it last. The theme's `map_colors` colour the marks by state (`rumor`, `discovered`, `completed`, and `you`;
+stands and faces) and draws it last; with no body to read (none, or one without a `Transform`) it keeps the viewer it showed while the source has nothing new. The theme's `map_colors` colour the marks by state (`rumor`, `discovered`, `completed`, and `you`;
 by default the dim text, the text, `#4fae55` and the accent), and its `symbols` draw a category as on the compass. Marks are drawn again
 in place when the places or the viewer move. Agents (`ui_read`) and screen readers read it in words, a rumour as a compass direction from
-the viewer: `atlas/map  map "Valley" you (0, 0) facing N · Old Shrine (shrine) discovered (12, -40) · Ruins rumor NE · Gate completed (5,
-5)`. The content check refuses an area whose `max` is not east and south of `min`, a size that is not above 0, an empty `bind`, a missing
-picture, and `map_colors` that name something else or are not colours.
+the viewer, the same way its mark points: `atlas/map  map "Valley" you (0, 0) facing N · Old Shrine (shrine) discovered (12, -40) · Ruins rumor NE · Gate completed (5,
+5)`. The content check refuses an area whose `max` is not east and south of `min` or that is too large to measure, a size that is not above 0, an empty `bind`, a missing
+picture or one outside the asset folder, and `map_colors` that name something else or are not colours.
 
 **Full-screen flashes** (U2). A colour over the whole picture for a moment: a reality flash, the 2–3 s glitch of a reality crack.
 A flash is content, kind `flash`:
