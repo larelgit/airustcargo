@@ -2,6 +2,7 @@
 //! driven by their behaviours, players placed (or played through tools) by the tests.
 
 mod common;
+mod audit;
 mod avoid;
 mod bodies;
 mod director;
@@ -13,6 +14,7 @@ mod navmesh;
 mod overlay;
 mod perception;
 mod replay;
+mod rules;
 mod schedule;
 mod snapshot;
 mod tools;

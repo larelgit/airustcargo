@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use bevy::prelude::*;
 use shards_action::Health;
 use shards_motion::CharacterParams;
-use shards_npc::plain_sight;
+use shards_npc::{plain_sight, NpcDrive};
 use shards_npc::prelude::*;
 
 use crate::common::*;
@@ -126,6 +126,40 @@ fn a_sentry_chases_to_its_leash_goes_home_healing_and_never_crosses() {
     for change in ["idle → chase", "chase → home", "home → idle"] {
         assert!(story.iter().any(|l| l.contains(&format!("{me} {change}"))), "no `{change}` in {story:#?}");
     }
+}
+
+/// A target at the very edge of a fighter's leash (the den guard of `npc_navmesh.scenario`): the
+/// planner walks to a goal the leash pulls 0.5 m short of the target, and must stop within its
+/// window of the target, not within its window of that goal. The jab's window ends at 1.84 m
+/// (its 1.8 m cone at the plan's cover 0.8, plus the target's body); stopping within 0.85 of it
+/// from the pulled goal left the grunt up to 2.06 m away, where only the timing of its start
+/// decided whether it ever struck.
+#[test]
+fn a_grunt_strikes_a_target_at_the_edge_of_its_leash() {
+    let mut app = app_with(record_starts);
+    let world = app.world_mut();
+    let grunt = grunt(world, "grunt", "jabber", "default", Vec3::ZERO);
+    home(world, grunt, Vec3::ZERO, 6.0);
+    let target = Vec3::new(0.0, 0.0, -6.0);
+    player(world, 0, target);
+    let (mut pulled_ticks, mut widest, mut farthest) = (0, 0.0_f32, 0.0_f32);
+    for _ in 0..300 {
+        step(&mut app, 1);
+        farthest = farthest.max(flat_distance(feet(&app, grunt), Vec3::ZERO));
+        let drive = app.world().get::<NpcDrive>(grunt).expect("an NPC has a drive");
+        // Where the drive may stop it: anywhere within `within` of the goal the leash pulled 0.5 m
+        // short of the target.
+        if let Some(goal) = drive.goal.filter(|g| (flat_distance(*g, target) - 0.5).abs() < 0.05) {
+            pulled_ticks += 1;
+            widest = widest.max(drive.within + flat_distance(goal, target));
+        }
+    }
+    assert!(pulled_ticks > 0, "the leash never pulled its goal short: the test does not reach the edge");
+    assert!(widest <= 1.8, "it may stop {widest:.2} m from its target, beyond its 1.8 m jab");
+    let jabs = app.world().resource::<Started>().0.iter().filter(|(_, e, a)| *e == grunt && a == "jab").count();
+    let off = flat_distance(feet(&app, grunt), target);
+    assert!(jabs > 0, "it never struck: it stands {off:.2} m from its target");
+    assert!(farthest <= 6.0, "within its leash and the room for a body: {farthest:.2} m");
 }
 
 /// Outside any region: an NPC on a 4 m block sees its target below. A straight walk would

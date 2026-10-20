@@ -32,6 +32,7 @@ use shards_action::{ActionState, Charges, Cooldowns, Dead, Downed, Fighter, Figh
 use shards_content::ContentDb;
 use shards_core::{flat, Intent};
 use shards_motion::{CharacterController, CharacterParams, Collider, MotionState, PhysicsWorld};
+use shards_rules::{ActiveRules, RuleClass, RulesView};
 
 use crate::brain::{clamp_to_leash, salt, Home, Npc, NpcBrain, NpcDrive, NpcThink};
 use crate::def::{AttackPlanDef, DirectorDef, Role, WaitRole};
@@ -157,6 +158,14 @@ pub(crate) struct Fighting {
     pub dead: Has<Dead>,
     /// Orders in it: an agent took the NPC over (`move_to`, `attack`), it is out of the fight.
     pub intent: Option<&'static Intent>,
+    /// Its rule class: what the rules make its actions cost ([`npc_rules`]).
+    pub class: Option<&'static RuleClass>,
+}
+
+/// The rules in play as an NPC of `class` sees them (`shards_rules`), for its view ([`npc_view`]): an NPC
+/// is never a player's body, so without a class it has none.
+pub(crate) fn npc_rules<'a>(db: &'a ContentDb, rules: Option<&ActiveRules>, class: Option<&'a RuleClass>) -> Option<RulesView<'a>> {
+    RulesView::of(db, rules, class, false)
 }
 
 impl FightingItem<'_, '_> {
@@ -167,7 +176,7 @@ impl FightingItem<'_, '_> {
 }
 
 /// What `can_start` reads about a fighting NPC: its action state and resources, how it moves now,
-/// and, for the landing a leap needs, `site`.
+/// for the landing a leap needs, `site`, and the rules it fights under ([`npc_rules`]).
 #[allow(clippy::too_many_arguments, reason = "the fields of one fighter, passed apart for the borrows")]
 pub(crate) fn npc_view<'a>(
     db: &'a ContentDb,
@@ -178,6 +187,7 @@ pub(crate) fn npc_view<'a>(
     resources: (Option<&'a Stamina>, Option<&'a Cooldowns>, Option<&'a Charges>),
     motion: Option<&MotionState>,
     site: Option<LeapSite<'a>>,
+    rules: Option<RulesView<'a>>,
 ) -> FighterView<'a> {
     FighterView {
         stamina: resources.0,
@@ -186,7 +196,7 @@ pub(crate) fn npc_view<'a>(
         mode: motion.map(|m| m.mode),
         off_ground: shards_action::off_ground(motion),
         leap: site,
-        ..FighterView::new(db, &fighter.moveset, state, held, dead)
+        ..FighterView::new(db, &fighter.moveset, state, held, dead, rules)
     }
 }
 
@@ -253,6 +263,7 @@ pub(crate) fn direct(
     physics: Res<PhysicsWorld>,
     players: Players,
     targets: Targets,
+    rules: Option<Res<ActiveRules>>,
     mut npcs: Query<Fighting>,
 ) {
     let dt = time.delta_secs();
@@ -415,7 +426,7 @@ pub(crate) fn direct(
         }
     }
     asking.sort();
-    let cx = FightCx { db: &db, physics: &physics, tick: tick.0, dt, players };
+    let cx = FightCx { db: &db, physics: &physics, tick: tick.0, dt, players, rules: rules.as_deref() };
     for (_, _, entity) in asking {
         // Judged on the NPC's read-only view, by the rules the planner chooses by: some option
         // must pass, distance aside (no token for a strike that would come too soon after

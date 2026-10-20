@@ -5,6 +5,7 @@ mod bindings;
 mod common;
 mod controls;
 mod draw;
+mod flash;
 mod main_menu;
 mod menus;
 mod screens;

@@ -34,6 +34,10 @@
 //!   `ui_open` and `ui_close`. The journal says `ui: opened pause`, `ui: pause/resume pressed
 //!   (close)`, `ui: settings/text_size 1 → 1.25`. Code hears [`UiPressed`], [`UiChanged`],
 //!   [`UiFocusMoved`] and [`UiScreenChanged`].
+//! - **Full-screen flashes** ([`flash`](mod@flash), kind `flash`): a colour over the whole picture for a
+//!   moment (a reality flash, a glitch's pulses), above the HUD and under menus, on real time, as
+//!   `accessibility.flashes` allows (`reduced` softer and slower, `off` none). Code calls
+//!   [`flash()`] or triggers [`PlayFlash`]; the dev tool `flash_play` plays one.
 //! - **This machine's, not the simulation's**: no widget has an `AiId` (opening a menu shifts no
 //!   id), screens are outside snapshots and the replay hash, and a host does not send them. The
 //!   tools that change them are actions, so a replay presses the same buttons at the same ticks.
@@ -50,6 +54,7 @@
 
 pub mod bind;
 pub mod def;
+pub mod flash;
 pub mod model;
 #[cfg(feature = "render")]
 mod loading;
@@ -66,13 +71,14 @@ use shards_core::{EngineAppExt, EngineState, PauseState};
 
 pub use bind::{live_value, read_source, viewer, UiActionFn, UiActions, UiPress, UiSourceFn, UiSources};
 pub use def::{Anchor, ButtonAction, CompareRow, Layer, Layout, ScreenDef, ThemeDef, WidgetDef};
+pub use flash::{flash, FlashDef, PlayFlash, ScreenFlash};
 #[cfg(feature = "render")]
 pub use loading::LoadingScreen;
 pub use model::{
     capturing, focused, top_screen, Ally, BoundInput, BoundInputs, Mark, Nav, UiChanged, UiFocusMoved, UiPressed, UiScreen, UiScreenChanged,
     UiStack, UiValue, UiWidget, WidgetKind, BINDINGS_SOURCE, DEFAULT_PROMPT,
 };
-pub use tools::{UiClickArgs, UiCloseArgs, UiNavigateArgs, UiOpenArgs, UiReadArgs, UiSetArgs};
+pub use tools::{FlashPlayArgs, UiClickArgs, UiCloseArgs, UiNavigateArgs, UiOpenArgs, UiReadArgs, UiSetArgs};
 
 #[cfg(feature = "render")]
 pub use render::DEFAULT_FONT;
@@ -138,6 +144,8 @@ impl Plugin for UiPlugin {
         );
         app.add_content::<ScreenDef>()
             .add_content::<ThemeDef>()
+            .add_content::<FlashDef>()
+            .init_resource::<ScreenFlash>()
             .init_resource::<UiStack>()
             .init_resource::<UiSources>()
             .init_resource::<UiActions>()
@@ -153,6 +161,8 @@ impl Plugin for UiPlugin {
             .add_systems(OnExit(PauseState::Paused), model::close_pausing_screens)
             .configure_sets(Update, UiSystems::Model.after(shards_locale::LocaleSystems::Build))
             .add_systems(Update, (model::rebuild_edited_screens, model::retell_screens, bind::refresh_values).chain().in_set(UiSystems::Model))
+            .add_systems(Update, flash::end_flashes.in_set(UiSystems::Model))
+            .add_observer(flash::on_play)
             // Another language: open screens say it again before the call that switched returns.
             .add_observer(|_: On<shards_locale::TextChanged>, mut commands: Commands| commands.queue(model::retell_screens));
         tools::register(app.world_mut());
@@ -160,6 +170,7 @@ impl Plugin for UiPlugin {
         {
             render::plugin(app);
             loading::plugin(app);
+            app.add_systems(PostUpdate, flash::draw_flash.in_set(UiSystems::Draw).run_if(ai_core::display::drawn));
         }
     }
 
@@ -171,10 +182,11 @@ impl Plugin for UiPlugin {
     }
 }
 
-/// `ai/status` → `ui: {screens, input, focus}`.
+/// `ai/status` → `ui: {screens, input, focus, flash}`.
 fn status(world: &World) -> Value {
     let screens: Vec<&str> = world.get_resource::<UiStack>().map(|s| s.screens().map(|(n, _)| n).collect()).unwrap_or_default();
     let input = top_screen(world).and_then(|e| world.get::<UiScreen>(e)).map(|s| s.name.clone());
     let focus = focused(world).and_then(|e| world.get::<UiWidget>(e)).map(|w| w.path.clone());
-    json!({"screens": screens, "input": input, "focus": focus})
+    let flash = world.get_resource::<ScreenFlash>().and_then(|f| f.0.as_ref().map(|f| f.id.clone()));
+    json!({"screens": screens, "input": input, "focus": focus, "flash": flash})
 }
