@@ -2017,7 +2017,7 @@ A JSON object can be typed in as text (the *String* type): text that holds a JSO
 | `trigger` | `LevelMarker`, a `Volume` sensor, and its collider | `Trigger "goal"` |
 | `interactable` | `LevelMarker` | `Interactable "door"` |
 | `camp` | `LevelMarker` | `Camp "bandits"` |
-| `landmark` | `LevelMarker`, `AiLandmark`, `AiKind` from the marker's name | in the LANDMARKS line | (a `LandmarkCategory = "shrine"` property gives it a compass category)
+| `landmark` | `LevelMarker`, `AiLandmark`, `AiKind` from the marker's name | in the LANDMARKS line; a `LandmarkCategory = "shrine"` property gives it a compass category |
 | `custom:<name>` | `LevelMarker` | no (needs an `AiKind`; add it as a component) |
 
 The nodes of the file `crates/sandbox/assets/tiles/ruin.gltf` (a ruin of 16 × 16 m, exported from Blender 5.2.2 in the *Embedded* variant; `tools/blender/ruin_tile.py` builds the export, and the template keeps a copy of the same file) are: the floor `Ground`, the walls `Wall.North`, `Wall.West`, `Rubble`, `Column` with `collider = auto`; `Camp` (`marker = camp`, `name = ruin_camp`), `Arch` (`marker = landmark`, `name = Ruin`), and four `Edge.N/E/S/W` with `socket = grass`. The test `the_committed_ruin_is_the_tile_the_spec_describes` (`crates/sandbox/tests/sandbox/tiles.rs`) checks the export against the tile's description: the same nodes, properties, world transforms and mesh bounds. After you change the ruin:
