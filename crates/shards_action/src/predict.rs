@@ -40,10 +40,11 @@ use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::input_names::SPRINT;
-use shards_core::{Intent, NetPrediction, Predicted};
+use shards_core::{Intent, NetPrediction, PlayerId, Predicted};
 use shards_motion::{
     CharacterController, CharacterParams, Collider, Ghost, Launch, LocomotionInput, MotionState, MoveModifiers, PhysicsWorld,
 };
+use shards_rules::{ActiveRules, RuleClass, RulesView};
 
 use crate::combat::{Died, Downed, Revived, WentDown};
 use crate::context::{arm_idle, fresh_press, guard_press, step_arm, ContextInputs, GuardArm, Pairing, RunHalted};
@@ -165,6 +166,10 @@ pub(crate) struct PredictedBody {
     arm: Option<&'static GuardArm>,
     halted: Option<&'static RunHalted>,
     pairing: Option<&'static Pairing>,
+    /// The body's rule class, and whether it is a player's: what the rules make an action cost, read from
+    /// the replicated rules as the host's machine reads them.
+    class: Option<&'static RuleClass>,
+    player: Has<PlayerId>,
 }
 
 /// `NetSet::Predict`, after `MotionSystems::PredictIntent`, before the controller: see the
@@ -182,6 +187,7 @@ pub(crate) fn predict_actions(
     positions: Query<(&Transform, Option<&CharacterParams>, Option<&Collider>)>,
     parts: Query<&crate::parts::Part>,
     fallen: Query<(Has<Dead>, Has<Downed>)>,
+    rules: Option<Res<ActiveRules>>,
     mut bodies: Query<PredictedBody, With<Predicted>>,
 ) {
     let dt = time.delta_secs();
@@ -419,7 +425,7 @@ pub(crate) fn predict_actions(
         leap: site,
         context: b.context,
         downed: b.downed,
-        ..FighterView::new(&db, &b.fighter.moveset, &local, &b.intent.held, b.dead)
+        ..FighterView::new(&db, &b.fighter.moveset, &local, &b.intent.held, b.dead, RulesView::of(&db, rules.as_deref(), b.class, b.player))
     };
     let choice = (!b.dead && !b.downed).then(|| choose_in(&view, &predictor.queued, dt)).flatten();
     // A paired action is not predicted (13a, "Context staleness"): whether it starts depends on the

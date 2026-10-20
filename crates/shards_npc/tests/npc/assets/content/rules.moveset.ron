@@ -1,0 +1,4 @@
+// The moveset of the rules test (C3.4a, `rules.rs`): one jab that costs stamina.
+{
+    "spender": (inputs: {"light": "dear_jab"}, stagger: "grunt_stagger"),
+}

@@ -23,6 +23,7 @@ use shards_action::{can_start, ActionDef, MovesetDef};
 use shards_motion::PhysicsWorld;
 use shards_content::ContentDb;
 use shards_core::flat;
+use shards_rules::ActiveRules;
 
 use crate::brain::{clamp_to_leash, salt};
 use crate::def::{AttackPlanDef, DirectorDef, SequenceBan};
@@ -414,13 +415,14 @@ pub(crate) fn plan_attacks(
     physics: Res<PhysicsWorld>,
     players: Players,
     targets: Targets,
+    rules: Option<Res<ActiveRules>>,
     mut npcs: Query<Fighting>,
 ) {
     let dt = time.delta_secs();
     let players = living_players(&players);
-    let cx = FightCx { db: &db, physics: &physics, tick: tick.0, dt, players };
+    let cx = FightCx { db: &db, physics: &physics, tick: tick.0, dt, players, rules: rules.as_deref() };
     let mut inflight = InFlight::collect(npcs.iter().map(|f| (*f.id, f.token.held.as_ref())));
-    let mut notes = plan_notes(&db, npcs.iter(), tick.0, dt);
+    let mut notes = plan_notes(&db, rules.as_deref(), npcs.iter(), tick.0, dt);
     for (id, entity) in order(&npcs) {
         let (mut grant, target, radius, distance) = {
             let Ok(mut f) = npcs.get_mut(entity) else { continue };
@@ -847,7 +849,7 @@ mod tests {
         fn judge(&self, db: &ContentDb, scope: &ai_core::SimScope) -> Judged {
             let view = shards_action::FighterView {
                 cooldowns: self.cooldowns.as_ref(),
-                ..shards_action::FighterView::new(db, "m", &self.state, &self.held, self.dead)
+                ..shards_action::FighterView::new(db, "m", &self.state, &self.held, self.dead, None)
             };
             let inputs = Inputs {
                 plan_def: &self.plan_def,
