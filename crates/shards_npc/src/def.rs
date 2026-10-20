@@ -851,9 +851,11 @@ impl ContentDef for AttackPlanDef {
             // error (an `input` option's action is not known without a moveset, and a history entry
             // carries its action's tags); a plan option's tags and name count, every plan's (phase
             // plans share one history), and so does every moveset input name (the names of `auto`
-            // options).
-            let mut known: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-            known.extend(refs.iter::<ActionDef>().flat_map(|(_, a)| a.tags.iter().map(String::as_str)));
+            // options). The live lists are narrower: a live tag is only ever an action's (the action a
+            // zone, a summon or a spawn runs; `LiveZones::tags`), never a plan option's tag or name.
+            let action_tags: std::collections::BTreeSet<&str> =
+                refs.iter::<ActionDef>().flat_map(|(_, a)| a.tags.iter().map(String::as_str)).collect();
+            let mut known = action_tags.clone();
             for (_, plan) in refs.iter::<AttackPlanDef>() {
                 for o in &plan.options {
                     known.extend(o.tags.iter().map(String::as_str));
@@ -863,11 +865,19 @@ impl ContentDef for AttackPlanDef {
             known.extend(refs.iter::<MovesetDef>().flat_map(|(_, m)| m.inputs.keys().map(String::as_str)));
             for (i, o) in self.options.iter().enumerate() {
                 for (field, tags) in o.tag_rules() {
-                    for tag in tags.iter().filter(|t| !t.is_empty() && !known.contains(t.as_str())) {
-                        let hint = shards_content::db::closest(tag, known.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
-                        refs.error(format!(
-                            "options[{i}].{field} names `{tag}`, which no action, no plan option and no moveset input in the content carries: it never applies{hint}"
-                        ));
+                    let live = field != "forbid_after";
+                    let pool = if live { &action_tags } else { &known };
+                    for tag in tags.iter().filter(|t| !t.is_empty() && !pool.contains(t.as_str())) {
+                        let hint = shards_content::db::closest(tag, pool.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
+                        refs.error(if live {
+                            format!(
+                                "options[{i}].{field} names `{tag}`, which no action in the content carries: a live tag is a tag of the action a zone, a summon or a spawn runs (not a plan option's), so it never applies{hint}"
+                            )
+                        } else {
+                            format!(
+                                "options[{i}].{field} names `{tag}`, which no action, no plan option and no moveset input in the content carries: it never applies{hint}"
+                            )
+                        });
                     }
                 }
             }
@@ -1262,6 +1272,8 @@ mod tests {
             ], zone_margin: -1.0),
             "q": (options: [(input: "light")], zone_margin: 1.5),
             "r": (options: [(input: "trap", forbid_while: ["capture"])], zone_margin: 1.0),
+            // `snare` is only this option's tag: fine for `forbid_after` (history carries it), never live.
+            "s": (options: [(input: "trap", tags: ["snare"], forbid_after: ["snare"], forbid_while: ["snare"])]),
         }"#;
         let actions = r#"{ "puddle": (net_id: 1, phases: [("active", 1.0)], tags: ["capture", "long"]) }"#;
         let db = ContentDb::build(&kinds, &[source("content/p.attack_plan.ron", plans), source("content/a.action.ron", actions)]);
@@ -1275,9 +1287,13 @@ mod tests {
                 at("p", "zone_margin must be >= 0 and finite (is -1)"),
                 at(
                     "p",
-                    "options[0].solo_forbid_while names `lnog`, which no action, no plan option and no moveset input in the content carries: it never applies (did you mean `long`?)"
+                    "options[0].solo_forbid_while names `lnog`, which no action in the content carries: a live tag is a tag of the action a zone, a summon or a spawn runs (not a plan option's), so it never applies (did you mean `long`?)"
                 ),
                 at("q", "zone_margin without any forbid_while or solo_forbid_while reads nothing; set the forbids or leave it out"),
+                at(
+                    "s",
+                    "options[0].forbid_while names `snare`, which no action in the content carries: a live tag is a tag of the action a zone, a summon or a spawn runs (not a plan option's), so it never applies"
+                ),
             ]
         );
     }
