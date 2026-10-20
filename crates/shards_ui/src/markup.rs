@@ -74,11 +74,8 @@ fn tokens(text: &str) -> Vec<Token<'_>> {
     out
 }
 
-/// The runs of `text` and the font of each, in order; neighbours in one font are one run, and no run
-/// is empty. Text without markup is one run in the theme's font (none for an empty text).
-pub fn spans(text: &str) -> Vec<Span<'_>> {
-    let tokens = tokens(text);
-    // Which tags pair up: a close takes the nearest open before it that is still open.
+/// Which tokens are tags that pair up: a close takes the nearest open before it that is still open.
+fn paired(tokens: &[Token]) -> Vec<bool> {
     let mut paired = vec![false; tokens.len()];
     let mut open: Vec<usize> = Vec::new();
     for (i, token) in tokens.iter().enumerate() {
@@ -93,6 +90,14 @@ pub fn spans(text: &str) -> Vec<Span<'_>> {
             Token::Text(_) => {}
         }
     }
+    paired
+}
+
+/// The runs of `text` and the font of each, in order; neighbours in one font are one run, and no run
+/// is empty. Text without markup is one run in the theme's font (none for an empty text).
+pub fn spans(text: &str) -> Vec<Span<'_>> {
+    let tokens = tokens(text);
+    let paired = paired(&tokens);
     let mut out: Vec<Span> = Vec::new();
     let mut fonts: Vec<&str> = Vec::new();
     for (i, token) in tokens.iter().enumerate() {
@@ -134,11 +139,14 @@ pub fn has_spans(text: &str) -> bool {
     text.contains(OPEN) && spans(text).iter().any(|s| s.font.is_some())
 }
 
-/// The fonts `text` names in tags that pair up, each once, in order.
+/// The fonts `text` names in tags that pair up, each once, in order (an empty pair too: it draws
+/// nothing, but a typo in it is still a typo).
 pub fn fonts_named(text: &str) -> Vec<&str> {
+    let tokens = tokens(text);
+    let paired = paired(&tokens);
     let mut out: Vec<&str> = Vec::new();
-    for span in spans(text) {
-        if let Some(font) = span.font
+    for (token, paired) in tokens.iter().zip(paired) {
+        if let (Token::Open(_, font), true) = (*token, paired)
             && !out.contains(&font)
         {
             out.push(font);
@@ -188,6 +196,7 @@ mod tests {
         assert_eq!(plain("a [font=symbols]b"), "a [font=symbols]b");
         assert!(matches!(plain("nothing"), Cow::Borrowed("nothing")));
         assert_eq!(fonts_named("[font=a]x[font=b]y[/font][/font] [font=a]z[/font] [font=c]"), ["a", "b"]);
+        assert_eq!(fonts_named("[font=a][/font] [font=b]"), ["a"], "an empty pair names its font; an open never closed does not");
         assert!(has_spans("x [font=a]y[/font]") && !has_spans("x [font=a]y") && !has_spans("[x]"));
     }
 }
