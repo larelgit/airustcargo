@@ -14,7 +14,7 @@ act? ui_close screen=pause
 act settings_set group=locale reset=true
 act locale
 expect result contains "playing: en"
-expect result contains "ru Русский → en: 50 messages; lacks 1: settings-fov"
+expect result contains "ru Русский → en: 52 messages; lacks 1: settings-fov"
 
 # --- whole phrases with parameters: a number picks each language's plural form, and a phrase
 # goes into a phrase whole, never glued from pieces

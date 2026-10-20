@@ -11,8 +11,9 @@
 //!   changed in the settings menu applies to what is playing.
 //! - **Sounds** ([`SoundDef`]): an attack's telegraph plays the sound it names where the attack
 //!   will land; an action's `Sound` effect plays one from its actor at its time (a swing's
-//!   whoosh); a clip's cue plays a sound of that name from the body, but only where a model is
-//!   drawn and plays the clip; the mixer gives the engine's events (`damaged`, `blocked`, `died`,
+//!   whoosh); a clip's cue plays a sound of that name from the body (from where the cue's bone is
+//!   when it names one, at a volume scaled by the cue's `strength`: [`play_scaled`]), but only where a
+//!   model is drawn and plays the clip; the mixer gives the engine's events (`damaged`, `blocked`, `died`,
 //!   `ui_pressed`, …) the sounds it names; a game plays its own with [`play`] or the [`PlaySound`]
 //!   event.
 //! - **Voices** ([`Mixer`]): at most the mixer's `voices` play at once. One more takes the voice of
@@ -65,7 +66,10 @@ use shards_core::EngineAppExt;
 use shards_ui::{Layer, ScreenDef, UiAppExt, UiChanged, UiFocusMoved, UiPressed, UiScreenChanged};
 
 pub use def::{AudioDef, Bus, Falloff, LayerDef, MusicDef, SoundDef, StemDef, EVENTS};
-pub use mixer::{bus_volume, listener, play, refresh, voice_limit, AudioListener, Dropped, Listener, Mixer, PlaySound, Played, SoundAt, Voice};
+pub use mixer::{
+    bus_volume, listener, play, play_scaled, refresh, voice_limit, AudioListener, Dropped, Listener, Mixer, PlaySound, Played,
+    SoundAt, Voice,
+};
 pub use music::{force_layer, set_track, Music, Stem};
 pub use subtitles::{LineVoice, SubtitleLine, Subtitles};
 pub use tools::{AudioArgs, MusicSetArgs, SoundPlayArgs};
@@ -182,12 +186,15 @@ fn on_action_sound(sound: On<ActionSound>, mut commands: Commands) {
     });
 }
 
-/// A clip's cue: the sound of that name from the body, if there is one (cues are for effects too).
+/// A clip's cue: the sound of that name, if there is one (cues are for effects too). From the body,
+/// or from where the cue's bone is when it names one (a point: it stays where the foot fell, it does
+/// not follow the body), at the cue's strength as its gain.
 fn on_animation_cue(cue: On<AnimationCue>, mut commands: Commands) {
-    let AnimationCue { entity, cue, .. } = cue.event().clone();
+    let AnimationCue { entity, cue, at, strength, .. } = cue.event().clone();
     commands.queue(move |world: &mut World| {
         if world.resource::<ContentDb>().get::<SoundDef>(&cue).is_some() {
-            mixer::play_quietly(world, &cue, SoundAt::Entity(entity), "a clip's cue");
+            let place = at.map_or(SoundAt::Entity(entity), |position| SoundAt::Point { position, source: Some(entity) });
+            mixer::play_quietly_scaled(world, &cue, place, strength, "a clip's cue");
         }
     });
 }

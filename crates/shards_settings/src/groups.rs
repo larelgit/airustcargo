@@ -218,6 +218,12 @@ pub struct ControlSettings {
     pub hold_or_toggle: std::collections::BTreeMap<String, String>,
     /// Look speed multiplier (0.05 to 5).
     pub mouse_sensitivity: f64,
+    /// Look speed multiplier while the game says the player aims (0.05 to 5): a ranged attack
+    /// or a zoom turns the view by this instead of `mouse_sensitivity` (K1).
+    pub aim_sensitivity: f64,
+    /// Free look turns back behind the player's body when the look is left alone and the body
+    /// walks (K2). Off by default.
+    pub camera_auto_centre: bool,
     /// Looking up moves the camera up instead of down.
     pub invert_y: bool,
     /// Attacks may correct their direction toward the lock-on target (the attack assist). Off:
@@ -232,6 +238,8 @@ impl Default for ControlSettings {
             bindings: Default::default(),
             hold_or_toggle: Default::default(),
             mouse_sensitivity: 1.0,
+            aim_sensitivity: 1.0,
+            camera_auto_centre: false,
             invert_y: false,
             attack_assist: true,
         }
@@ -244,9 +252,15 @@ impl ControlSettings {
         if self.mouse_sensitivity.is_finite() { self.mouse_sensitivity.clamp(0.05, 5.0) as f32 } else { 1.0 }
     }
 
+    /// The look speed multiplier while aiming, within 0.05 to 5.
+    pub fn aim_sensitivity(&self) -> f32 {
+        if self.aim_sensitivity.is_finite() { self.aim_sensitivity.clamp(0.05, 5.0) as f32 } else { 1.0 }
+    }
+
     /// Why these values are not allowed, if they are not.
     pub fn check(&self) -> Result<(), String> {
         range("controls.mouse_sensitivity", self.mouse_sensitivity, 0.05, 5.0)?;
+        range("controls.aim_sensitivity", self.aim_sensitivity, 0.05, 5.0)?;
         for (key, mode) in &self.hold_or_toggle {
             if !matches!(mode.trim().to_ascii_lowercase().as_str(), "press" | "hold" | "toggle" | "press_hold") {
                 return Err(format!("controls.hold_or_toggle.{key} `{mode}` is not one of press, hold, toggle, press_hold"));

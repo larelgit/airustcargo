@@ -131,6 +131,59 @@ fn the_engines_events_cues_and_menus_play_the_sounds_content_gives_them() {
 }
 
 #[test]
+fn a_clip_cue_sounds_from_its_bones_point_and_its_strength_is_the_gain() {
+    use shards::action::AnimationCue;
+    use shards::audio::play_scaled;
+    let assets = Folder::new("cue_bone");
+    let mut app = game(&assets);
+    let hero = entity(&app, HERO);
+    let cue = |app: &mut App, event: AnimationCue| {
+        app.world_mut().trigger(event);
+        app.world_mut().flush();
+        voices(app).pop().expect("the cue sounds")
+    };
+
+    // A cue at the body: from the body, following it, at the sound's own volume.
+    let body = cue(&mut app, AnimationCue::new(hero, "beep", "walk"));
+    assert_eq!((body.source, body.position, body.volume), (Some(hero), Some(Vec3::ZERO), 1.0));
+
+    // A cue at a bone: from that point, which does not follow the body, and still the hero's sound.
+    let foot = Vec3::new(1.0, 0.1, -2.0);
+    let at_bone = |strength| AnimationCue { bone: Some("foot.L".into()), at: Some(foot), strength, ..AnimationCue::new(hero, "beep", "walk") };
+    let full = cue(&mut app, at_bone(1.0));
+    assert_eq!(
+        (full.sound.as_str(), full.position, full.source, full.source_id.map(|i| i.to_string()), full.volume),
+        ("beep", Some(foot), None, Some(HERO.to_owned()), 1.0)
+    );
+    // Its strength is the linear gain: half the volume, half what is heard.
+    let half = cue(&mut app, at_bone(0.5));
+    assert_eq!((half.position, half.volume), (Some(foot), 0.5));
+    assert!(full.gain > 0.0, "{}", full.gain);
+    near(half.gain, full.gain * 0.5);
+    // The foot stays where it fell when the body moves; the body's own voice follows it.
+    app.world_mut().get_mut::<Transform>(hero).unwrap().translation = Vec3::new(0.0, 0.0, 1.0);
+    refresh(app.world_mut());
+    let after: Vec<Option<Vec3>> = voices(&app).iter().map(|v| v.position).collect();
+    assert_eq!(after, [Some(Vec3::new(0.0, 0.0, 1.0)), Some(foot), Some(foot)]);
+
+    // No strength, no sound: not a silent voice that takes a place, and not a drop to report.
+    let (started, dropped) = {
+        let mixer = app.world().resource::<Mixer>();
+        (mixer.started, mixer.dropped)
+    };
+    for strength in [0.0, -1.0, f32::NAN] {
+        app.world_mut().trigger(at_bone(strength));
+        app.world_mut().flush();
+    }
+    let mixer = app.world().resource::<Mixer>();
+    assert_eq!((mixer.voices().len(), mixer.started, mixer.dropped), (3, started, dropped));
+    assert!(matches!(play_scaled(app.world_mut(), "beep", SoundAt::Everywhere, 0.0), Ok(Played::Dropped(_))));
+    // A strength above 1 is louder than the sound's own volume.
+    let loud = cue(&mut app, at_bone(2.0));
+    assert_eq!(loud.volume, 2.0);
+}
+
+#[test]
 fn audio_and_observe_say_what_plays_and_sound_play_explains_a_wrong_call() {
     let assets = Folder::new("tools");
     let mut app = game(&assets);

@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 use serde_json::json;
-use shards_motion::camera::{CameraOffsets, CameraTuning};
+use shards_motion::camera::{CameraOffsets, CameraTuning, FitTuning};
 
 use crate::engine::*;
 
@@ -75,6 +75,28 @@ fn a_camera_definition_out_of_range_is_an_error_naming_its_file_and_field() {
 }
 
 #[test]
+fn a_fit_is_read_with_its_defaults_and_bad_numbers_are_errors() {
+    let dir = temp_dir("camera_fit");
+    write(&dir, "content/camera.camera.ron", r#"{ "default": (framing: (fit: Some((margin: 0.1)), pitch_clamp: (0.0, 0.7))) }"#);
+    let mut app = engine_app(&dir);
+    let errors: Vec<String> = app.world().resource::<shards_content::ContentDb>().errors().map(ToString::to_string).collect();
+    assert!(errors.is_empty(), "{errors:?}");
+    frames(&mut app, 3);
+    let fit = tuning(&app).framing.fit.expect("a fit");
+    assert_eq!((fit.margin, fit.tilt_max, fit.rate), (0.1, 0.6, 6.0), "what the file leaves out keeps its default");
+    let written = ron::to_string(&FitTuning::default()).unwrap();
+    assert_eq!(written, "()", "a default fit writes no field");
+
+    let dir = temp_dir("camera_fit_bad");
+    write(&dir, "content/camera.camera.ron", r#"{ "default": (framing: (fit: Some((margin: 1.0, tilt_max: 2.0, rate: 0.0)))) }"#);
+    let app = engine_app(&dir);
+    let errors: Vec<String> = app.world().resource::<shards_content::ContentDb>().errors().map(ToString::to_string).collect();
+    for needle in ["framing.fit.margin", "framing.fit.tilt_max", "framing.fit.rate"] {
+        assert!(errors.iter().any(|e| e.contains("content/camera.camera.ron") && e.contains(needle)), "{needle}: {errors:?}");
+    }
+}
+
+#[test]
 fn a_typo_in_a_camera_definition_is_an_error() {
     let dir = temp_dir("camera_typo");
     write(&dir, "content/camera.camera.ron", r#"{ "default": (pich: (-1.0, 1.0)) }"#);
@@ -101,4 +123,41 @@ fn a_lock_on_definition_is_read_and_one_out_of_range_is_an_error_naming_its_file
     for needle in ["range is -1", "aim_height is 1.5", "weights.view is -0.5"] {
         assert!(errors.iter().any(|e| e.contains("content/lock.lock_on.ron") && e.contains(needle)), "{needle}: {errors:?}");
     }
+}
+
+#[test]
+fn a_shot_plays_only_where_the_game_is_drawn_and_a_bad_one_names_its_file_and_key() {
+    let dir = temp_dir("camera_shot");
+    write(
+        &dir,
+        "content/scenes.shot.ron",
+        r#"{
+            "still": (keys: [(at: 0.0, eye: At((0.0, 5.0, 5.0)), look: At((0.0, 0.0, 0.0)))]),
+            "muddled": (keys: [
+                (at: 2.0, eye: At((0.0, 1.0, 0.0)), look: At((0.0, 1.0, 0.0))),
+                (at: 1.0, eye: At((0.0, 5.0, 5.0)), look: At((0.0, 0.0, 0.0)), fov_deg: 150.0),
+            ], blend_out_s: -1.0),
+        }"#,
+    );
+    // A misspelt field of a point is an error, not a point at the body's origin.
+    write(&dir, "content/typo.shot.ron", r#"{"typo": (keys: [(at: 0.0, eye: On(role: "boss", ofset: (0.0, 3.0, 0.0)), look: At((0.0, 0.0, 0.0)))])}"#);
+    let mut app = engine_app(&dir);
+    let errors: Vec<String> = app.world().resource::<shards_content::ContentDb>().errors().map(ToString::to_string).collect();
+    for needle in [
+        "keys[0]: `eye` and `look` are the same place",
+        "keys[1].at 1: not after the key before it (2); keys go in time order",
+        "keys[1].fov_deg 150: 10 to 120 degrees",
+        "blend_out_s -1: 0 to 10 s",
+    ] {
+        assert!(errors.iter().any(|e| e.contains("content/scenes.shot.ron") && e.contains(needle)), "{needle}: {errors:?}");
+    }
+    assert!(errors.iter().any(|e| e.contains("content/typo.shot.ron") && e.contains("ofset")), "{errors:?}");
+    assert_eq!(errors.len(), 5, "{errors:?}");
+    let e = fails(&mut app, "play_shot", json!({"id": "muddled"}));
+    assert!(e.contains("shot `muddled` cannot play: keys[0]: `eye` and `look` are the same place"), "{e}");
+    // No window, no camera: nothing to play a shot on.
+    let e = fails(&mut app, "play_shot", json!({"id": "still"}));
+    assert!(e.contains("no camera to play a shot on") && e.contains("a headless game has none"), "{e}");
+    assert_eq!(fails(&mut app, "stop_shot", json!({})), "no shot is playing");
+    assert!(app.world().resource::<shards_motion::camera::Shots>().playing().is_none());
 }

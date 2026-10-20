@@ -13,10 +13,11 @@
 //!   rules' moves run from 0 and the [`ModeLeft`] event fires);
 //! - how far the model is lowered ([`DropDef`](crate::DropDef)).
 //!
-//! The drop is written by [`apply_model`], the `AnimSystems::Model` stage: on the set's
-//! `root_motion` bone, after the clips and [`hold_root_motion`](super::bridge::hold_root_motion)
-//! have written it, before transforms propagate, never on the model child that carries the render
-//! interpolation. Presentation only: nothing here is read by the simulation.
+//! The drop is written by [`apply_model`], the `AnimSystems::Model` stage (with the model's turn,
+//! [`turn`](super::turn)): on the set's `root_motion` bone, after the clips and
+//! [`hold_root_motion`](super::bridge::hold_root_motion) have written it, before transforms
+//! propagate, never on the model child that carries the render interpolation. Presentation only:
+//! nothing here is read by the simulation.
 
 use bevy::prelude::*;
 use shards_motion::MotionMode;
@@ -26,8 +27,7 @@ use crate::anim::{equip_open, mode_name, AnimSet, Animated, MountRules};
 
 /// The stages of the model's own writes in `PostUpdate`, after the clips are applied and the render
 /// interpolation has moved the model, before transforms propagate: the root bone goes back on the
-/// ground (`Root`), then the model is offset (`Model`: the drop; later slices add the facing, the
-/// stride and the lunge).
+/// ground (`Root`), then the model is offset (`Model`: the drop and the turn).
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AnimSystems {
     /// The set's `root_motion` bone back at its rest along the ground.
@@ -250,13 +250,14 @@ fn local_drop(parent: &GlobalTransform, depth: f32) -> Vec3 {
     parent.to_matrix().inverse().transform_vector3(Vec3::NEG_Y * depth)
 }
 
-/// `PostUpdate`, `AnimSystems::Model`: the drop written on the `root_motion` bone, on top of what the
-/// clips and `hold_root_motion` left this frame. The offset is the world's down turned into the
-/// bone's parent space, so a model scaled to its body drops by metres, not by rig units.
+/// `PostUpdate`, `AnimSystems::Model`: the drop and the model's turn ([`Turn`](super::turn::Turn))
+/// written on the `root_motion` bone, on top of what the clips and `hold_root_motion` left this
+/// frame. The drop is the world's down turned into the bone's parent space, so a model scaled to its
+/// body drops by metres, not by rig units; the turn is about the world's up seen from there.
 ///
 /// The clips write the bone every frame they have a curve for it; when none does the bone still has
 /// last frame's offset, so that one is taken off first (a component that is exactly what this stage
-/// wrote is not the clips'). Held bodies keep their drop, written again as the paused clips are.
+/// wrote is not the clips'). Held bodies keep their drop and turn, written again as the paused clips are.
 pub(crate) fn apply_model(
     mut animated: Query<&mut AnimationBound, With<Animated>>,
     parents: Query<&ChildOf>,
@@ -266,10 +267,19 @@ pub(crate) fn apply_model(
     for mut bound in &mut animated {
         let Some((bone, _)) = bound.root else { continue };
         let depth = bound.modes.depth;
-        if depth <= 0.0 && bound.modes.written.is_none() {
+        let drops = depth > 0.0 || bound.modes.written.is_some();
+        let turns = bound.turn.yaw() != 0.0 || bound.turn.written.is_some();
+        if !drops && !turns {
             continue;
         }
         let Ok(mut transform) = transforms.get_mut(bone) else { continue };
+        let parent = parents.get(bone).ok().and_then(|parent| globals.get(parent.parent()).ok());
+        if turns {
+            bound.turn.write(bone, &mut transform, parent);
+        }
+        if !drops {
+            continue;
+        }
         let mut base = transform.translation;
         if let Some((_, written, offset)) = bound.modes.written.filter(|(on, ..)| *on == bone) {
             for axis in 0..3 {
@@ -278,11 +288,7 @@ pub(crate) fn apply_model(
                 }
             }
         }
-        let offset = parents
-            .get(bone)
-            .ok()
-            .and_then(|parent| globals.get(parent.parent()).ok())
-            .map_or(Vec3::NEG_Y * depth, |parent| local_drop(parent, depth));
+        let offset = parent.map_or(Vec3::NEG_Y * depth, |parent| local_drop(parent, depth));
         // A parent squashed to nothing has no inverse: the drop is then in the bone's own units.
         let offset = if offset.is_finite() { offset } else { Vec3::NEG_Y * depth };
         transform.translation = base + offset;
