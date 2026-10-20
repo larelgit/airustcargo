@@ -73,8 +73,8 @@ use shards_core::Predicted;
 use shards_motion::{LocomotionInput, MotionState, MoveModifiers};
 
 use crate::anim::{
-    carry_phase, crossed_cues, crossed_cues_back, mode_name, select_clip_timed, select_layer_timed, ActionTime, AnimSet, Animated,
-    AnimationCue, BodyStatus, ClipChoice, Heading, LayerChoice, ModeLeft, OverlayDef, PropSwaps, MAX_LAYERS,
+    carry_phase, crossed_cues, crossed_cues_back, crossed_cues_in, mode_name, select_clip_timed, select_layer_timed, ActionTime, AnimSet,
+    Animated, AnimationCue, BodyStatus, ClipChoice, Heading, LayerChoice, ModeLeft, OverlayDef, PropSwaps, MAX_LAYERS,
 };
 use crate::combat::{Blocked, Damaged, GuardBroken, Parried, Staggered};
 use crate::def::{ActionDef, Face, MovesetDef};
@@ -235,6 +235,9 @@ pub struct AnimationBound {
     gait: bool,
     /// Seconds on that clip's timeline at the last frame, for cues.
     last_time: Option<f32>,
+    /// That clip was set to play backward at the last frame. Bevy moves a clip after [`drive`], so
+    /// the time it went since then went the way set then, whatever this frame sets.
+    backward: bool,
     /// Which way the body moved from where it faced at the last frame (kept for the slack at the
     /// quarters' edges; forward while it faces no target).
     heading: Heading,
@@ -269,6 +272,7 @@ impl AnimationBound {
             clip: None,
             gait: false,
             last_time: None,
+            backward: false,
             heading: Heading::Forward,
             root: None,
             ready: BTreeSet::new(),
@@ -1103,20 +1107,25 @@ fn drive_body(
         }
     };
 
+    // A gait's clip played backward (a body backing away from its target) passes its cues going down.
+    let backward = choice.seek_to.is_none() && choice.speed < 0.0;
     let cues = set.clip(clip).map_or(&[][..], |c| c.cues.as_slice());
     if !cues.is_empty() {
-        let wrap = (choice.looping && duration > 0.0).then_some(duration);
-        // A gait's clip played backward (a body backing away from its target) passes its cues going down.
-        let crossed = if choice.seek_to.is_none() && choice.speed < 0.0 {
-            crossed_cues_back(cues, bound.last_time, now, wrap)
+        // Since the last frame the clip went the way set then (a walk that turns round now, as a
+        // lock-on ends, went back until now): a seek or a new clip has gone nowhere yet. Going on, a
+        // looping clip wraps round, and so does the stretch a looping phase repeats.
+        let went_back = if switched || choice.seek_to.is_some() { backward } else { bound.backward };
+        let crossed = if went_back {
+            crossed_cues_back(cues, bound.last_time, now, (choice.looping && duration > 0.0).then_some(duration))
         } else {
-            crossed_cues(cues, bound.last_time, now, wrap)
+            crossed_cues_in(cues, bound.last_time, now, choice.wraps(duration))
         };
         for cue in crossed {
             commands.trigger(AnimationCue { entity, cue: cue.cue.clone(), clip: clip.to_owned() });
         }
     }
     bound.last_time = Some(now);
+    bound.backward = backward;
     switched
 }
 
@@ -1192,7 +1201,7 @@ fn drive_layers(
             player.play(node).set_repeat(RepeatAnimation::Never).set_speed(0.0).set_seek_time(at);
             let cues = set.clip(clip).map_or(&[][..], |c| c.cues.as_slice());
             if !cues.is_empty() {
-                for cue in crossed_cues(cues, overlay.last_time, at, None) {
+                for cue in crossed_cues_in(cues, overlay.last_time, at, choice.wraps(duration)) {
                     commands.trigger(AnimationCue { entity, cue: cue.cue.clone(), clip: clip.to_owned() });
                 }
             }
@@ -1761,6 +1770,36 @@ mod tests {
         assert_eq!(breaths(&rig), 2, "and again on the next pass");
     }
 
+    /// Runs `id` with `t` seconds in, for `length` seconds in all (a miss's longer recovery).
+    fn run_for(rig: &mut Rig, id: &str, t: f32, length: f32, anim: Option<&str>) {
+        rig.run_action(id, t, anim);
+        rig.app.world_mut().get_mut::<ActionState>(rig.character).unwrap().current.as_mut().unwrap().length = length;
+    }
+
+    #[test]
+    fn a_looped_phase_fires_its_cues_on_each_pass_and_not_the_earlier_ones() {
+        #[derive(Resource, Default)]
+        struct Heard(Vec<AnimationCue>);
+        let mut rig = rig();
+        // The swing's recovery, the last 0.2 s of its 1 s clip, loops for as long as the recovery lasts.
+        let looped = ANIMSETS.replace(
+            r#""swing_1": (name: "Armature|Slash", cues: [(at: 0.5, cue: "swoosh")]),"#,
+            r#""swing_1": (name: "Armature|Slash", cues: [(at: 0.3, cue: "swoosh"), (at: 0.9, cue: "tick")],
+                phases: [("windup", 0.5), ("active", 0.3), ("recovery", 0.2)], loops: ["recovery"]),"#,
+        );
+        assert_ne!(looped, ANIMSETS);
+        rig.app.insert_resource(db_from(&looped));
+        rig.app.init_resource::<Heard>();
+        rig.app.add_observer(|cue: On<AnimationCue>, mut heard: ResMut<Heard>| heard.0.push(cue.event().clone()));
+        let count = |rig: &Rig, cue: &str| rig.app.world().resource::<Heard>().0.iter().filter(|c| c.cue == cue).count();
+        // `light_1` (windup 0.2, active 0.1, recovery 0.3) run for 1 s: a 0.7 s recovery, three and a half passes.
+        for (t, swooshes, ticks) in [(0.1, 0, 0), (0.15, 1, 0), (0.35, 1, 0), (0.42, 1, 1), (0.55, 1, 1), (0.63, 1, 2), (0.72, 1, 2), (0.83, 1, 3)] {
+            run_for(&mut rig, "light_1", t, 1.0, Some("swing_1"));
+            rig.app.update();
+            assert_eq!((count(&rig, "swoosh"), count(&rig, "tick")), (swooshes, ticks), "{t} s in");
+        }
+    }
+
     #[test]
     fn an_edited_animset_rebuilds_the_graph_and_rebinds() {
         let mut rig = rig();
@@ -1886,6 +1925,36 @@ mod tests {
         let (_, speed) = rig.clip_at("walk");
         assert!((speed - 1.0).abs() < 1e-4, "{speed}");
         assert_eq!(rig.bound().heading(), Heading::Forward);
+    }
+
+    #[test]
+    fn a_walk_that_turns_round_fires_only_the_cues_it_passed() {
+        #[derive(Resource, Default)]
+        struct Heard(Vec<AnimationCue>);
+        let mut rig = rig();
+        let stepped = ANIMSETS.replace(r#""walk": (),"#, r#""walk": (cues: [(at: 0.25, cue: "left"), (at: 0.75, cue: "right")]),"#);
+        assert_ne!(stepped, ANIMSETS);
+        rig.app.insert_resource(db_from(&stepped));
+        rig.app.init_resource::<Heard>();
+        rig.app.add_observer(|cue: On<AnimationCue>, mut heard: ResMut<Heard>| heard.0.push(cue.event().clone()));
+        // Frames of 0.1 s on the 1 s walk: a step every 0.5 s, so a frame passes one step at most.
+        rig.app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(100)));
+        rig.app.world_mut().entity_mut(rig.character).insert((Transform::default(), LocomotionInput::default()));
+        rig.velocity(-2.0);
+        let mut steps = Vec::new();
+        // Backing away from a target, then walking on facing where it goes (the lock-on let go),
+        // then facing the target again: the walk turns round twice on the same clip.
+        for face in [Some(Vec3::NEG_Z), None, Some(Vec3::NEG_Z)] {
+            rig.app.world_mut().get_mut::<LocomotionInput>(rig.character).unwrap().face = face;
+            for _ in 0..8 {
+                let before = rig.app.world().resource::<Heard>().0.len();
+                rig.app.update();
+                assert_eq!(rig.main_clip().as_deref(), Some("walk"));
+                steps.push(rig.app.world().resource::<Heard>().0.len() - before);
+            }
+        }
+        assert!(steps.iter().all(|n| *n <= 1), "no burst of steps as the walk turns round: {steps:?}");
+        assert!(steps.iter().sum::<usize>() >= 3, "every 0.8 s of walk passes a step: {steps:?}");
     }
 
     #[test]
@@ -2282,6 +2351,32 @@ mod tests {
         let heard = &rig.rig.app.world().resource::<Heard>().0;
         assert_eq!(heard.len(), 1, "{heard:?}");
         assert_eq!((heard[0].entity, heard[0].cue.as_str(), heard[0].clip.as_str()), (rig.rig.character, "gulp", "drink"));
+    }
+
+    #[test]
+    fn a_looped_phase_on_a_layer_fires_its_cues_on_each_pass_and_not_the_earlier_ones() {
+        #[derive(Resource, Default)]
+        struct Heard(Vec<AnimationCue>);
+        // `light_1` plays the drink clip on the upper body; its recovery (0.6 s to the end) loops.
+        let looped = LAYERED
+            .replace(
+                r#""drink": (blend: 0.4, cues: [(at: 0.5, cue: "gulp")]),"#,
+                r#""drink": (blend: 0.4, cues: [(at: 0.2, cue: "lift"), (at: 0.8, cue: "gulp")],
+                    phases: [("windup", 0.4), ("active", 0.2), ("recovery", 0.4)], loops: ["recovery"]),"#,
+            )
+            .replace(r#"actions: {"drink":"#, r#"actions: {"light_1": (clip: "drink", layer: "upper"), "drink":"#);
+        assert_eq!(looped.matches("lift").count() + looped.matches("\"light_1\"").count(), 2, "{looped}");
+        let mut rig = skeleton(&looped);
+        rig.rig.app.init_resource::<Heard>();
+        rig.rig.app.add_observer(|cue: On<AnimationCue>, mut heard: ResMut<Heard>| heard.0.push(cue.event().clone()));
+        let count = |rig: &Skeleton, cue: &str| rig.rig.app.world().resource::<Heard>().0.iter().filter(|c| c.cue == cue).count();
+        // Run for 1 s: a 0.7 s recovery over a 0.4 s stretch.
+        for (t, lifts, gulps) in [(0.15, 1, 0), (0.45, 1, 0), (0.55, 1, 1), (0.75, 1, 1), (0.95, 1, 2)] {
+            run_for(&mut rig.rig, "light_1", t, 1.0, None);
+            rig.rig.app.update();
+            assert_eq!(rig.bound().layer_clip("upper"), Some("drink"));
+            assert_eq!((count(&rig, "lift"), count(&rig, "gulp")), (lifts, gulps), "{t} s in");
+        }
     }
 
     #[test]
