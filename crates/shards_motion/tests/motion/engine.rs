@@ -4,6 +4,7 @@
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use ai_core::{call_tool, AiKind, AiPlayer, CallOutcome, SimGate};
@@ -48,9 +49,13 @@ pub fn text(out: &CallOutcome) -> String {
     out.result.as_str().map_or_else(|| out.result.to_string(), str::to_owned)
 }
 
-/// An asset folder of its own for each test.
+/// An asset folder of its own for each call: `cargo test` runs a binary's tests on threads of one
+/// process, and two tests (or one test's two worlds) that ask for the same name must not empty
+/// each other's folder.
 pub fn temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("shards_motion_{name}_{}", std::process::id()));
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    let call = CALLS.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("shards_motion_{name}_{}_{call}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

@@ -19,8 +19,8 @@ use std::f32::consts::PI;
 
 use shards::action::Animated;
 use shards::ai_core::highlight::AiOverlay;
-use shards::bevy::gltf::GltfAssetLabel;
-use shards::bevy::world_serialization::{WorldAsset, WorldAssetRoot};
+use shards::action::render::GltfModel;
+use shards::bevy::gltf::Gltf;
 use shards::ai_core::sim;
 use shards::motion::{CharacterController, Collider, Shape, Volume, VolumeKind};
 use shards::prelude::*;
@@ -50,8 +50,9 @@ struct Palette {
     /// A ball of radius 1, few faces.
     ball: Handle<Mesh>,
     post: Handle<Mesh>,
-    /// The humanoid's scene.
-    humanoid: Handle<WorldAsset>,
+    /// The humanoid's file, loaded whole: the animation bridge loads it for its clips too, and one
+    /// handle reads it once (a `#Scene0` load would read it again and could spawn the model twice).
+    humanoid: Handle<Gltf>,
     /// Under every look (`content/look/sandbox.look.ron`): the look gives the colour and the light.
     base: Handle<StandardMaterial>,
     water: Handle<StandardMaterial>,
@@ -71,7 +72,7 @@ fn setup_assets(
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         ball: meshes.add(Sphere::new(1.0).mesh().ico(1).expect("one subdivision is within the icosphere's limit")),
         post: meshes.add(Cylinder::new(0.08, 1.6)),
-        humanoid: assets.load(GltfAssetLabel::Scene(0).from_asset("models/humanoid.glb")),
+        humanoid: assets.load("models/humanoid.glb"),
         base,
         water,
         goal,
@@ -144,7 +145,7 @@ fn dress(
             };
             e.insert(Animated::new("humanoid"));
             e.with_children(|c| {
-                let mut model = c.spawn((WorldAssetRoot(palette.humanoid.clone()), model));
+                let mut model = c.spawn((GltfModel::new(palette.humanoid.clone()), model));
                 if !looked {
                     model.insert(Look::new("stone"));
                 }

@@ -6,6 +6,8 @@
 //! - [`overlay`]: **ground telegraphs** (always on) and the **combat overlay** (the
 //!   `combat_overlay` tool, F2), drawn with gizmos from the lists of [`crate::draw`].
 //! - [`hud`]: **off-screen warnings**, Bevy UI markers on the screen edge.
+//! - [`model`]: **models** from a glTF file loaded whole ([`GltfModel`]), read once even when the
+//!   bridge loads the same file for its clips.
 //!
 //! The plugin adds only what the app can show: the bridge needs Bevy's `AnimationPlugin`, the
 //! overlays the `GizmoPlugin` (both in `DefaultPlugins`). The overlays and the markers draw only
@@ -18,6 +20,7 @@
 
 pub mod bridge;
 pub mod hud;
+pub mod model;
 pub mod modes;
 pub mod overlay;
 pub mod props;
@@ -29,6 +32,7 @@ use shards_settings::AccessibilitySettings;
 
 pub use bridge::{AnimGraphs, AnimStats, AnimationBound};
 pub use hud::ThreatHud;
+pub use model::GltfModel;
 pub use modes::AnimSystems;
 pub use props::{PropOf, Sockets};
 pub use overlay::{CombatOverlay, CombatOverlayGizmos, TelegraphGizmos, TelegraphSettings};
@@ -36,6 +40,7 @@ pub use overlay::{CombatOverlay, CombatOverlayGizmos, TelegraphGizmos, Telegraph
 pub(crate) fn plugin(app: &mut App) {
     overlay::plugin(app);
     hud::plugin(app);
+    model::plugin(app);
     app.add_systems(Update, apply_flashes);
     if app.is_plugin_added::<bevy::animation::AnimationPlugin>() {
         bridge::plugin(app);

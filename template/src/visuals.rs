@@ -13,8 +13,7 @@
 use std::f32::consts::PI;
 
 use shards::action::Animated;
-use shards::bevy::gltf::GltfAssetLabel;
-use shards::bevy::world_serialization::WorldAssetRoot;
+use shards::action::render::GltfModel;
 use shards::look::Look;
 use shards::motion::{CharacterController, Shape};
 use shards::prelude::*;
@@ -67,7 +66,9 @@ fn dress(
                 rotation: Quat::from_rotation_y(PI),
                 scale: Vec3::splat(height / MODEL_HEIGHT),
             };
-            let model = (WorldAssetRoot(assets.load(GltfAssetLabel::Scene(0).from_asset("models/humanoid.glb"))), at);
+            // The file loaded whole: the animation bridge loads it for its clips too, and one handle
+            // reads it once (a `#Scene0` load would read it again and could spawn the model twice).
+            let model = (GltfModel::load(&assets, "models/humanoid.glb"), at);
             let mut e = commands.entity(entity);
             e.insert((Visibility::default(), Animated::new("humanoid")));
             if looked { e.with_child(model) } else { e.with_child((model, Look::new("stone"))) };
