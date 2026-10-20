@@ -182,7 +182,14 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
     };
     let def = run.and_then(|r| db.get::<ActionDef>(&r.action));
     let key = run.map(|r| set.action_key(&r.action, r.anim.as_deref(), def.map_or(&[], |d| d.tags.as_slice())));
-    let action = run.zip(key).map(|(r, k)| ActionTime::new(k, r.t.min(r.length), r.length, def.map_or(&[], |d| d.phases.as_slice())));
+    // Looked ahead by the fixed clock's overstep as the bridge looks (not an action with a hold loop).
+    let ahead = if def.is_some_and(|d| d.hold.is_some()) {
+        0.0
+    } else {
+        world.get_resource::<Time<Fixed>>().map_or(0.0, |t| t.overstep().as_secs_f32())
+    };
+    let action =
+        run.zip(key).map(|(r, k)| ActionTime::new(k, (r.t + ahead).min(r.length), r.length, def.map_or(&[], |d| d.phases.as_slice())));
     let moveset = world.get::<Fighter>(body).map(|f| f.moveset.as_str());
     let staggers = moveset
         .and_then(|m| db.get::<MovesetDef>(m))
