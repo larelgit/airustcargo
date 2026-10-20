@@ -4521,13 +4521,13 @@ are visible in the journal (`[agent] console: regen {"region":"wilds","seed":7}`
 
 **The menu** (F10 in a window; the `dev_menu` tool) — entries grouped by section. The engine's modules register their own entries for their own
 tools (`add_dev_entry`): time (pause, step, slow motion, snapshots, the error report), the world (the region and its seed, a check of this seed
-with the generator and of 200 such regions, colliders, tiles, mesh looks and their outlines, foliage, effects), rules (the next rule set), combat (immortality, healing, hitboxes, telegraph decals), AI (NPC minds, navmesh), networking
+with the generator and of 200 such regions, colliders, tiles, mesh looks and their outlines, foliage, effects), rules (the next rule set), combat (immortality, healing and reviving, going down: your own body or another's with a bleed-out, hitboxes, telegraph decals), AI (NPC minds, navmesh), networking
 (links, simulated lag), saves (a check). After them come the game's own entries from its content. A switch shows the line for its other
 state (`npc_overlay on=false` while the overlay is on). An entry that needs a value puts its line in the console for you to finish in a window, and the tool asks you to run it with values. An entry with nothing to act on right now says why:
 
 ```text
 $ shards act dev_menu
-dev menu: 43 entries (F10 in a window); `dev_menu run=<id>` runs one, `console line=...` runs any line
+dev menu: 45 entries (F10 in a window); `dev_menu run=<id>` runs one, `console line=...` runs any line
 time
   pause            Pause / resume                          resume
   step             One tick (while paused)                 step ticks=1
