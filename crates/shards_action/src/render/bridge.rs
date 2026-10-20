@@ -521,15 +521,16 @@ impl Overlay {
     }
 
     /// `dt` seconds on: the weight each node plays with. The clips fading out come first, newest
-    /// first, each with what is left of its share of what is not yet taken (as
-    /// `AnimationTransitions` does it); the main clip gets its ramp, or what the others leave.
+    /// first, each with what is left of its share, at most what is not yet taken (a fade's `left`
+    /// is the share of the layer it had, so a clip taken over in the middle of its own ramp keeps
+    /// the share it showed); the main clip gets its ramp, or what the others leave.
     /// Nodes that have faded out go to `stopped`.
     fn advance(&mut self, dt: f32, stopped: &mut Vec<AnimationNodeIndex>) -> Vec<(AnimationNodeIndex, f32)> {
         let mut shares = Vec::with_capacity(self.fading.len() + 1);
         let mut free = 1.0;
         for fade in self.fading.iter_mut().rev() {
             fade.left = (fade.left - fade.fall * dt).max(0.0);
-            let share = fade.left * free;
+            let share = fade.left.min(free);
             free -= share;
             shares.push((fade.node, share));
         }
@@ -2752,6 +2753,18 @@ mod tests {
         overlay.switch(Some(("a", a, None)), 0.5, false, &mut stopped);
         assert_eq!(overlay.fading.iter().map(|f| f.node).collect::<Vec<_>>(), [b]);
         assert_eq!(overlay.main.as_ref().map(|m| m.ramp), Some(0.0));
+        // Taken over twice in a row (a cancel window): each clip keeps the share it showed, so the
+        // layer does not drop to the walk the moment the third clip starts.
+        let c = AnimationNodeIndex::new(3);
+        let mut chained = Overlay::default();
+        chained.switch(Some(("a", a, None)), 0.5, true, &mut stopped);
+        chained.advance(0.0, &mut stopped);
+        chained.switch(Some(("b", b, None)), 0.5, false, &mut stopped);
+        let w = chained.advance(0.15, &mut stopped);
+        assert!(chained.share() > 0.9999, "a 0.7 and b 0.3: {w:?}");
+        chained.switch(Some(("c", c, None)), 0.5, false, &mut stopped);
+        chained.advance(0.0, &mut stopped);
+        assert!(chained.share() > 0.9999, "a 0.7 and b 0.3 still, c not in yet: {}", chained.share());
         // The clock stopped: everything snaps, and what played stops.
         stopped.clear();
         overlay.switch(None, 0.5, true, &mut stopped);
