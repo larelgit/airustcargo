@@ -521,7 +521,7 @@ The game's numbers and definitions live in files, not in code: attacks, prefabs,
 
 - An id is a non-empty string without spaces or control characters; it is unique within its content kind across all files.
 - The engine registers its own content kinds: `prefab`, `locomotion`, `action`, `moveset`, `status`, `combat_tuning`, `animset`, `prop`,
-  `input_map`, the camera `camera` and `lock_on`, levels `level`, world `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`,
+  `input_map`, the camera `camera`, `lock_on` and `shot` (see "Scene cameras (K3)"), levels `level`, world `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`,
   voxels `voxel_palette` and `voxel_region`, enemies `behavior`, `perception`, `director`, `attack_plan`, `npc_tuning` and `nav`,
   encounters `encounter` and `encounter_rules` (see "Encounters (G9)"), sound `audio`, `sound` and `music`, screens `screen` and `theme`, `locale`, `save`, `net`, `perf`, `devmenu`, mesh looks `look` (see "Stylised materials (E10.1)"),
   foliage `scatter` (see "Foliage and small objects (E10.2)"), effects `effect` and `fx` (see "Effects and decals
@@ -1006,6 +1006,8 @@ For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, spr
 | `flick.stick_rearm` | `None`: no latch | the stick must come back below this before it can switch again; a lock taken with the stick already over starts disarmed |
 | `trauma.decay` | `1.4` (`TRAUMA_DECAY`, linear) | trauma drained per second |
 | `trauma.shift_m` / `pitch_deg` / `yaw_deg` / `roll_deg` | `0.12` / `2` / `2` / `3` | the most a shake of trauma 1 moves and turns the view (scaled by trauma squared) |
+| `auto_centre.delay_s` / `rate` / `min_speed` / `max_turn_deg` | `1.5` / `2.5` / `0.5` / `150` | the auto-centre (K2, below; only while the player's `controls.camera_auto_centre` is on): real seconds the look must be left alone; how fast the view turns behind the body, 1/s; the least walking speed on the ground, m/s; a body facing farther than this from the camera's forward (degrees, at most 180) does not swing it round |
+| `auto_centre.pitch` | `None`: the pitch stays the player's | a tilt the auto-centre eases toward with the yaw (radians, within `pitch`) |
 
 The ranges of `pitch`, `follow_rate`, the rates, thresholds and amplitudes are content errors when out of range (a rate must be above 0, a re-arm level below the threshold, and so on). `framing.pitch_clamp` must not have its low end above its high end, and `framing.fit` needs a margin in [0, 1), a `tilt_max` within [0, π/2 − 0.02] and a rate above 0; it may be wider than `pitch`, since the framed pitch is then held to the pitch limits like any other. Two things stay constants on purpose: the engine's 30..120 limit on the field of view (the player's setting is clamped to it too) and the shake's noise frequencies (the look of the noise, not a feel number).
 
@@ -1015,6 +1017,40 @@ The ranges of `pitch`, `follow_rate`, the rates, thresholds and amplitudes are c
 
 *Offsets.* `CameraOffsets` (a resource, neutral by default) is what a game's systems add to the base values; `orbit_camera` reads it after them, every frame: `fov_add_deg` is added to the player's field of view before the engine's 30..120 limit (sprint widening, a finisher's punch); `focus_dip_m` lowers the camera and what it looks at together, so the picture drops without tilting (a landing dip; negative raises); `pitch_min` / `pitch_max` narrow the tuning's pitch range (an override outside it is held to it), and the stored pitch is clamped to the result (a swim cap: the camera stays above the water; lifting the cap does not push the pitch back up); `aiming` says the player aims (what aiming is, a ranged technique or a zoom, is the game's): free look then turns by the player's `aim_sensitivity` instead of `sensitivity` (K1), and a lock frames as it always does. **The writer owns its value**: the system that writes a field sets it on every frame it wants an effect and puts it back to `0.0` / `None` / `false` itself when it is done. The camera only reads: it never decays, sums or stores an offset, and it never writes `CameraSettings`, `ThirdPersonCamera::focus` or the stored pitch except through the clamp above, so an offset stays as its writer left it until the writer puts it back (a writer that stops without resetting
 leaves its effect on). Two systems that want the same field must be combined by the game into one writer. Write in `PostUpdate` before `CameraSystems::Orbit` to be seen on the same frame (the set is empty without the `render` feature, so the writers run and are testable headless).
+
+*Auto-centre (K2).* With the player's `controls.camera_auto_centre` on (`CameraSettings::auto_centre`; off by default, so no picture changes until the player asks), free look turns back behind the body it follows once the player leaves the look alone: after `auto_centre.delay_s` real seconds with no look input (`ThirdPersonCamera::look_idle_s`), while the body walks at least `min_speed` on the ground (measured from where the body is drawn, frame to frame: not from the focus, which goes on catching up after the body stops), the yaw eases toward behind the body's facing at `rate` (the exact exponential), and the pitch toward `auto_centre.pitch` when it is set. A body facing more than `max_turn_deg` from the camera's forward (one walking toward the camera) does not swing it round, and one standing still keeps the view. Any look input, a lock, a jump of the focus and a body placed farther than `body_snap_distance` in one frame (a teleport, a respawn; `ThirdPersonCamera::subject_seen`) start the wait over; a lock frames as it always does. The step is `camera::math::auto_centre`; like the rest of the camera it runs on `Time<Real>`, outside the simulation, so nothing in a replay or a snapshot changes. The sandbox has the toggle in its settings' controls.
+
+**Scene cameras (K3).** A shot is a short camera move a game plays over the orbit camera: a scene of half a minute, a boss's entrance of a few seconds (GDD §6.3, §15.1). It is content, kind `shot` (`*.shot.ron`, `shards::motion::camera::ShotDef`; presentation, so it is not in the content hash a replay checks):
+
+```ron
+// content/scenes/warden_intro.shot.ron
+{
+    "warden_intro": (
+        keys: [
+            (at: 0.0, eye: On(role: "boss", offset: (0.0, 2.0, -7.0), local: true), look: On(role: "boss", offset: (0.0, 3.0, 0.0))),
+            (at: 4.0, eye: On(role: "boss", offset: (2.0, 1.0, -4.0), local: true), look: On(role: "boss", offset: (0.0, 4.0, 0.0)),
+             fov_deg: 45.0, ease: InOut),
+            (at: 4.5, eye: At((0.0, 3.0, 12.0)), look: On(role: "hero"), cut: true),
+            (at: 6.0, eye: At((0.0, 2.0, 9.0)), look: On(role: "hero", offset: (0.0, 1.5, 0.0))),
+        ],
+        blend_in_s: 0.5,   // default 0: the shot starts where its first key is
+        blend_out_s: 0.8,  // default 0.5
+        skippable: true,   // default
+    ),
+}
+```
+
+- *Keys*: where the camera stands (`eye`) and what it looks at (`look`) at `at` seconds from the start, in time order (at most 120 s), and optionally the field of view (`fov_deg`, 10 to 120; without one, the player's). Between two keys the camera moves from one to the other, the later key's `ease` (`Linear`, the default, or `InOut`) shaping the move; a `cut` key is jumped to at its time (the camera holds the key before until then). Before the first key the camera holds it; the shot ends at the last.
+- *Points*: `At((x, y, z))` is a place in the world; `On(role:, offset:, local:)` a place on a body the game names when it plays the shot: its position plus `offset`, turned with the body when `local` (its forward is `-z`). A body that goes while the shot plays (despawned, a dead enemy taken away) holds the last place it was seen.
+- *Playing*: `shards::motion::camera::shot::play(world, id, &roles)` (`roles`: role name → entity) starts it on this machine's camera; `stop` is the game's skip (refused for a shot with `skippable: false`), `cancel` ends any. A shot blends in over `blend_in_s` from what the camera showed and back to where the orbit camera is over `blend_out_s`, at its end or when stopped (from what the camera showed then: a blend in longer than the shot goes back from where it got to); a second `play` ends the first as skipped. `play` is refused, with what to fix, for a shot that is missing or has problems, a role not given or given that the shot has not, a body that does not exist, and where nothing is drawn: a headless game has no `ThirdPersonCamera`, so a shot only plays in a window or `--offscreen`.
+- *The orbit camera meanwhile* stands still: its yaw and pitch stay as they were (the move axes keep their meaning), look input turns nothing, and lock-on picks and switches nothing (a lock the player had is framed again after the shot). Shake and the game's `CameraOffsets` do not touch the shot.
+- *Time* is `Time<Virtual>`: the pause menu pauses a shot, a slowed game slows it, and in a game started `--paused` it moves only by `step`. It is drawn in `PostUpdate` after `CameraSystems::Orbit`.
+- *Messages*: the observer events `ShotStarted { id }` and `ShotEnded { id, skipped }` (`skipped`: stopped before the last key, or replaced), journal lines `shot ID starts: 6.0s, boss=e5` and `shot ID ends (done|skipped)` (`Local`), and an `observe` line `SHOT warden_intro 2.4/6.0s skippable, roles boss=e5` (or `SHOT warden_intro stopped, back to the orbit camera in 0.3s`). The resource `Shots` says which plays (`Shots::playing`).
+- *Tools* (developer): `play_shot id=warden_intro role.boss=e5 role.hero=e1` and `stop_shot` (`force=true` cancels one that is not skippable).
+- *What stays the game's*: blocking the player's input during a scene, letterbox bars and subtitles, pausing or slowing the simulation, and which button skips (it calls `stop`).
+- `--check-content` names a shot with no keys, keys out of time order or past 120 s, a key whose `eye` and `look` are the same place, a field of view outside 10 to 120, an empty role, a number that is not finite, a blend outside 0 to 10 s, and a field a key or a point does not have (a misspelt `ofset`).
+
+The simulation never reads the camera: nothing of a shot is in a snapshot or a replay.
 
 **The camera next to a big body (R4).** A locked camera looks at the player's head. Next to a body several times the player's height,
 a lock point on it (a horn, a core high in its chest; "Lock points (R3)") leaves the top of the frame, while the frame's bottom
@@ -5098,6 +5134,7 @@ subtitles = true             # the lines of voices, in the game's UI
 [controls]
 mouse_sensitivity = 1.0      # 0.05…5
 aim_sensitivity = 1.0        # 0.05…5, while the game says the player aims (`CameraOffsets::aiming`)
+camera_auto_centre = false   # true: free look turns back behind the walking body (K2)
 invert_y = false
 attack_assist = true         # false: attacks do not correct their direction toward the lock-on target (holds `assist_off`)
 
@@ -5113,7 +5150,7 @@ attack_assist = true         # false: attacks do not correct their direction tow
 |---|---|
 | `graphics` | `shards_settings::apply_graphics`: the main window (fullscreen, vsync, size). The window changes when the settings change, not every frame, so the size the player dragged with the mouse is not taken back. Without a window the values are only stored. `render_scale` is applied by `shards::render_scale`: the resolution of the 3D picture, not the window scale (see "3D picture resolution" below). `shadows` is read by the game: `GraphicsSettings::shadow_quality()`; `foliage` is read by `shards_scatter` (`GraphicsSettings::foliage_density()`): at 0.5 half of the same instances stays, with no new ones (see "Foliage and small objects (E10.2)"); `interpolation` is read by `shards_motion` (render interpolation, see "Render interpolation (C8)") |
 | `audio` | `shards_audio`: the volume of the buses `music`, `sfx`, `voice`, `ui` with `master` taken into account (`AudioSettings::volume("music")`), applied to what is already playing (see "Audio") |
-| `controls` | `shards_motion`: `ControlSettings` ⇄ `InputMap` (see "Input" in "Movement (E2)"); the two look speeds (`mouse_sensitivity`, and `aim_sensitivity` while the game sets `CameraOffsets::aiming`) and the Y-axis inversion go to `CameraSettings`; `attack_assist = false` makes the controls hold `assist_off` for the player's body (see "Action timeline (B2a)") |
+| `controls` | `shards_motion`: `ControlSettings` ⇄ `InputMap` (see "Input" in "Movement (E2)"); the two look speeds (`mouse_sensitivity`, and `aim_sensitivity` while the game sets `CameraOffsets::aiming`), the Y-axis inversion and `camera_auto_centre` go to `CameraSettings`; `attack_assist = false` makes the controls hold `assist_off` for the player's body (see "Action timeline (B2a)") |
 | `accessibility` | `shards_motion`: the field of view and the strength of the camera shake, `MotionBlur` on the cameras that have it (the game adds the component, the setting sets the strength, 0 turns it off), `hold_to_toggle` in the input map; `shards_action`: `flashes` for the blinking of telegraphs and of off-screen markers (`reduced` — half as big and no more than 2 times a second, `off` — a steady light, `draw::pulse_at`) and `shards_ui`: `flashes` for full-screen flashes (`reduced` — at most 0.35 strong, pulses no more than 2 times a second and half as deep, eased fades, `off` — none; see "UI (E9)"); `shards_audio`: `subtitles` for the lines of voices (off: the source `subtitles` is empty; see "Audio") |
 
 **3D picture resolution: `graphics.render_scale` (E8.6, E10).** The 3D world is drawn into a picture of `render_scale` x the window's pixels (with `--offscreen`, the base is the size of the `--offscreen` picture, 1280×720 by default), and the picture is stretched over the whole window with a linear filter;
@@ -5538,8 +5575,8 @@ language=ru` shows all the messages of a language with their text. `text id= arg
 ```text
 $ shards act locale
 playing: en
-en English: 52 messages
-ru Русский → en: 51 messages; lacks 1: settings-fov
+en English: 53 messages
+ru Русский → en: 52 messages; lacks 1: settings-fov
 # switch: settings_set group=locale key=language value=<id>; `locale language=<id>` lists one language's text
 $ shards act text id=defeated 'args={"count": 3}' language=ru
 Повержено 3 врага

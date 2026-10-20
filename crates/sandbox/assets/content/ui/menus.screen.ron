@@ -33,6 +33,7 @@
                 Panel(id: "controls", title: "@settings-controls", children: [
                     Slider(id: "sensitivity", label: "@settings-look-speed", min: 0.25, max: 3.0, step: 0.25, setting: "controls.mouse_sensitivity"),
                     Slider(id: "aim_sensitivity", label: "@settings-aim-speed", min: 0.25, max: 3.0, step: 0.25, setting: "controls.aim_sensitivity"),
+                    Toggle(id: "auto_centre", label: "@settings-auto-centre", setting: "controls.camera_auto_centre"),
                     Toggle(id: "invert_y", label: "@settings-invert-y", setting: "controls.invert_y"),
                     Toggle(id: "hold", label: "@settings-hold", setting: "accessibility.hold_to_toggle"),
                     // The buttons of `gameplay`: confirm one and press the new key, mouse button or

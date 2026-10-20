@@ -221,6 +221,9 @@ pub struct ControlSettings {
     /// Look speed multiplier while the game says the player aims (0.05 to 5): a ranged attack
     /// or a zoom turns the view by this instead of `mouse_sensitivity` (K1).
     pub aim_sensitivity: f64,
+    /// Free look turns back behind the player's body when the look is left alone and the body
+    /// walks (K2). Off by default.
+    pub camera_auto_centre: bool,
     /// Looking up moves the camera up instead of down.
     pub invert_y: bool,
     /// Attacks may correct their direction toward the lock-on target (the attack assist). Off:
@@ -236,6 +239,7 @@ impl Default for ControlSettings {
             hold_or_toggle: Default::default(),
             mouse_sensitivity: 1.0,
             aim_sensitivity: 1.0,
+            camera_auto_centre: false,
             invert_y: false,
             attack_assist: true,
         }

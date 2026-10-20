@@ -41,6 +41,10 @@ is_default!(roll_deg_is_default, f32, 3.0);
 is_default!(fit_margin_is_default, f32, 0.15);
 is_default!(tilt_max_is_default, f32, 0.6);
 is_default!(fit_rate_is_default, f32, 6.0);
+is_default!(delay_is_default, f32, 1.5);
+is_default!(centre_rate_is_default, f32, 2.5);
+is_default!(min_speed_is_default, f32, 0.5);
+is_default!(max_turn_is_default, f32, 150.0);
 
 fn is_false(v: &bool) -> bool {
     !*v
@@ -107,6 +111,39 @@ pub struct FitTuning {
 impl Default for FitTuning {
     fn default() -> Self {
         Self { margin: 0.15, tilt_max: 0.6, rate: 6.0 }
+    }
+}
+
+/// How a free-look camera turns back behind the body it follows when the player leaves the look
+/// alone and walks (K2). Only while the player's `controls.camera_auto_centre` is on
+/// (`CameraSettings::auto_centre`); a lock frames as it does.
+#[derive(Reflect, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[reflect(Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct AutoCentreTuning {
+    /// How long the look must be left alone first (real seconds).
+    #[serde(skip_serializing_if = "delay_is_default")]
+    pub delay_s: f32,
+    /// How fast the camera turns behind the body (1/s, exact exponential).
+    #[serde(skip_serializing_if = "centre_rate_is_default")]
+    pub rate: f32,
+    /// The body must move at least this fast on the ground (m/s, as it is drawn): one standing
+    /// still keeps the view the player left.
+    #[serde(skip_serializing_if = "min_speed_is_default")]
+    pub min_speed: f32,
+    /// A body facing more than this from the camera's forward (degrees) does not swing it round:
+    /// one walking toward the camera keeps the view.
+    #[serde(skip_serializing_if = "max_turn_is_default")]
+    pub max_turn_deg: f32,
+    /// A tilt to ease toward with the yaw (radians, positive looks down). `None`: the pitch is
+    /// left as the player set it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pitch: Option<f32>,
+}
+
+impl Default for AutoCentreTuning {
+    fn default() -> Self {
+        Self { delay_s: 1.5, rate: 2.5, min_speed: 0.5, max_turn_deg: 150.0, pitch: None }
     }
 }
 
@@ -256,6 +293,9 @@ pub struct CameraTuning {
     /// The shake.
     #[serde(skip_serializing_if = "TraumaTuning::is_default")]
     pub trauma: TraumaTuning,
+    /// Turning back behind the body when the player leaves the look alone (K2).
+    #[serde(skip_serializing_if = "AutoCentreTuning::is_default")]
+    pub auto_centre: AutoCentreTuning,
 }
 
 impl Default for CameraTuning {
@@ -270,6 +310,7 @@ impl Default for CameraTuning {
             arm: ArmTuning::default(),
             flick: FlickTuning::default(),
             trauma: TraumaTuning::default(),
+            auto_centre: AutoCentreTuning::default(),
         }
     }
 }
@@ -283,7 +324,7 @@ macro_rules! impl_is_default {
         }
     )*};
 }
-impl_is_default!(FramingTuning, ArmTuning, FlickTuning, TraumaTuning);
+impl_is_default!(FramingTuning, ArmTuning, FlickTuning, TraumaTuning, AutoCentreTuning);
 
 impl ContentDef for CameraTuning {
     const KIND: &'static str = "camera";
@@ -404,6 +445,19 @@ impl CameraTuning {
                 out.push(format!("trauma.{name} is {v} degrees, more than 45 is not a shake"));
             }
         }
+        let centre = &self.auto_centre;
+        non_negative("auto_centre.delay_s", centre.delay_s, &mut out);
+        positive_rate("auto_centre.rate", centre.rate, &mut out);
+        non_negative("auto_centre.min_speed", centre.min_speed, &mut out);
+        if finite("auto_centre.max_turn_deg", centre.max_turn_deg, &mut out) && !(0.0..=180.0).contains(&centre.max_turn_deg) {
+            out.push(format!("auto_centre.max_turn_deg {} must be within [0, 180] degrees", centre.max_turn_deg));
+        }
+        if let Some(pitch) = centre.pitch
+            && finite("auto_centre.pitch", pitch, &mut out)
+            && (pitch < lo || pitch > hi)
+        {
+            out.push(format!("auto_centre.pitch {pitch} is outside the pitch limits ({lo}, {hi})"));
+        }
         out
     }
 }
@@ -464,6 +518,7 @@ mod tests {
         assert_eq!((t.release_factor, t.framing.yaw_rate, t.framing.pitch_rate), (1.3, 7.0, 7.0));
         assert_eq!((t.arm.radius, t.arm.min_distance), (0.25, 0.7));
         assert_eq!((t.flick.cooldown_s, t.trauma.decay), (0.35, 1.4));
+        assert_eq!((t.auto_centre.delay_s, t.auto_centre.rate, t.auto_centre.max_turn_deg), (1.5, 2.5, 150.0));
         assert!(errors(&t).is_empty(), "{:?}", errors(&t));
     }
 
@@ -501,5 +556,9 @@ mod tests {
         assert!(bad(|t| t.framing.pitch_clamp = (0.7, 0.15))[0].contains("pitch_clamp"));
         assert!(bad(|t| t.trauma.roll_deg = 90.0)[0].contains("roll_deg"));
         assert!(bad(|t| t.flick.mouse_decay_px_s = Some(f32::NAN))[0].contains("finite"));
+        assert!(bad(|t| t.auto_centre.rate = 0.0)[0].contains("auto_centre.rate"));
+        assert!(bad(|t| t.auto_centre.delay_s = -1.0)[0].contains("auto_centre.delay_s"));
+        assert!(bad(|t| t.auto_centre.max_turn_deg = 200.0)[0].contains("auto_centre.max_turn_deg"));
+        assert!(bad(|t| t.auto_centre.pitch = Some(1.5))[0].contains("auto_centre.pitch 1.5 is outside the pitch limits"));
     }
 }

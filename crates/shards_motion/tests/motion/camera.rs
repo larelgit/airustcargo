@@ -16,6 +16,8 @@ use shards_settings::AccessibilitySettings;
 
 use crate::common::*;
 
+mod shot;
+
 struct Scene {
     app: App,
     player: Entity,
@@ -321,6 +323,107 @@ fn cam(s: &Scene) -> ThirdPersonCamera {
 
 fn camera_at(s: &Scene) -> Vec3 {
     s.app.world().get::<Transform>(s.camera).unwrap().translation
+}
+
+/// A scene whose frames are 0.1 s of real time each (the camera's clock), the auto-centre (K2)
+/// on or off, no aim assist.
+fn timed_scene(auto_centre: bool) -> Scene {
+    let mut s = scene();
+    s.app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(100)));
+    {
+        let mut settings = s.app.world_mut().resource_mut::<CameraSettings>();
+        // No aim assist: a look turns the view by exactly what the mouse says.
+        (settings.auto_centre, settings.aim_assist) = (auto_centre, 0.0);
+    }
+    s
+}
+
+/// The player walks `frames` frames at 2 m/s along `dir`, facing it; the camera's yaw after.
+fn walk(s: &mut Scene, dir: Vec3, frames: usize) -> f32 {
+    walk_by(s, dir, 0.2, frames)
+}
+
+/// The player moves `step` meters a frame along `dir`, facing it, for `frames` frames; the
+/// camera's yaw after.
+fn walk_by(s: &mut Scene, dir: Vec3, step: f32, frames: usize) -> f32 {
+    for _ in 0..frames {
+        let mut tf = s.app.world_mut().get_mut::<Transform>(s.player).unwrap();
+        tf.translation += dir * step;
+        tf.look_to(dir, Vec3::Y);
+        s.app.update();
+    }
+    cam(s).yaw
+}
+
+#[test]
+fn left_alone_the_view_turns_behind_a_walking_body_when_the_player_wants_it() {
+    use std::f32::consts::FRAC_PI_2;
+    // Off (the default): walking east leaves the view where the player left it.
+    let mut s = timed_scene(false);
+    assert!(!CameraSettings::default().auto_centre);
+    assert_eq!(walk(&mut s, Vec3::X, 40), 0.0);
+
+    // On: nothing for the first 1.5 s, then the view turns behind the body, west of it.
+    let mut s = timed_scene(true);
+    assert_eq!(walk(&mut s, Vec3::X, 14), 0.0, "1.4 s: the look not left alone long enough");
+    let behind = walk(&mut s, Vec3::X, 30);
+    assert!((behind + FRAC_PI_2).abs() < 0.01, "behind a body walking east: {behind}");
+
+    // A look starts the wait over: the player's own turn stays for another 1.5 s.
+    s.app.insert_resource(AccumulatedMouseMotion { delta: Vec2::new(40.0, 0.0) });
+    s.app.update();
+    s.app.insert_resource(AccumulatedMouseMotion::default());
+    let looked = cam(&s).yaw;
+    assert!((looked - (behind - 0.1)).abs() < 1e-4, "{looked}");
+    assert_eq!(walk(&mut s, Vec3::NEG_Z, 14), looked);
+    // Then it turns behind the body walking away from it, north.
+    let north = walk(&mut s, Vec3::NEG_Z, 30);
+    assert!(north.abs() < 0.01, "{north}");
+
+    // A body walking toward the camera does not swing it round.
+    let mut s = timed_scene(true);
+    assert_eq!(walk(&mut s, Vec3::Z, 40), 0.0);
+    // Nor does one standing still.
+    let mut s = timed_scene(true);
+    s.app.world_mut().get_mut::<Transform>(s.player).unwrap().look_to(Vec3::X, Vec3::Y);
+    assert_eq!(walk(&mut s, Vec3::new(1e-4, 0.0, 0.0), 40), 0.0);
+}
+
+#[test]
+fn a_short_teleport_starts_the_wait_over_and_a_stop_stops_the_turn_at_once() {
+    use std::f32::consts::FRAC_PI_2;
+    // A body placed 5 m away (past `body_snap_distance`, short of the focus's `snap_distance`)
+    // was not walked there: the wait starts over on that frame.
+    let mut s = timed_scene(true);
+    assert_eq!(walk(&mut s, Vec3::X, 14), 0.0);
+    assert_eq!(walk_by(&mut s, Vec3::X, 5.0, 1), 0.0);
+    assert_eq!(cam(&s).look_idle_s, 0.1, "the teleport's frame starts the wait over");
+    assert_eq!(walk(&mut s, Vec3::X, 13), 0.0, "1.4 s after the teleport");
+    assert!(walk(&mut s, Vec3::X, 2) < 0.0, "then it turns");
+
+    // A body that stops from a run stops the turn on the same frame, while the focus still
+    // catches up with it.
+    let mut s = timed_scene(true);
+    let turning = walk_by(&mut s, Vec3::X, 0.6, 20);
+    assert!(turning < 0.0 && turning > -FRAC_PI_2 + 0.1, "turning, not yet behind: {turning}");
+    let focus = cam(&s).focus;
+    assert_eq!(walk_by(&mut s, Vec3::X, 0.0, 1), turning, "standing still");
+    assert!(cam(&s).focus.x - focus.x > 0.05, "the focus still caught up");
+}
+
+#[test]
+fn a_lock_frames_the_same_with_the_auto_centre_on() {
+    let locked = |on: bool| {
+        let mut s = timed_scene(on);
+        tap_lock(&mut s);
+        assert_eq!(target(&s), Some(id(&s.app, s.near)));
+        walk(&mut s, Vec3::X, 40);
+        assert_eq!(target(&s), Some(id(&s.app, s.near)), "still locked");
+        (cam(&s).yaw, cam(&s).look_idle_s)
+    };
+    let (on, off) = (locked(true), locked(false));
+    assert!((on.0 - off.0).abs() < 1e-6, "{on:?} {off:?}");
+    assert_eq!((on.1, off.1), (0.0, 0.0), "a lock starts the wait over");
 }
 
 #[test]

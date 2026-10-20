@@ -24,6 +24,7 @@ settings-ui = Interface
 settings-controls = Controls
 settings-look-speed = Look speed
 settings-aim-speed = Aim speed
+settings-auto-centre = Camera auto-centre
 settings-invert-y = Invert look
 settings-hold = Hold to toggle
 
