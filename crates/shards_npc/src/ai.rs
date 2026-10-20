@@ -1,7 +1,7 @@
 //! What the AI layer sees of NPCs: a fragment of their line (`chase e5 · token · leash
 //! 12/20m`), journal lines for state changes, tokens and plan memory, and the tools `npc_state`,
-//! `npc_schedule`, `nav_path` (queries), `npc_set_state`, `npc_plan_reset` and `npc_plan_cooldown`
-//! (dev).
+//! `npc_schedule`, `nav_path` (queries), `plan_audit` (a dev query), `npc_set_state`, `npc_plan_reset`
+//! and `npc_plan_cooldown` (dev).
 
 use ai_core::prelude::*;
 use ai_core::spatial::{compass, fmt_pos, relative};
@@ -11,6 +11,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use shards_content::db::closest;
+use shards_content::{ContentDb, PrefabDef};
 use shards_core::flat;
 use shards_motion::perception::{Leg, PathPlan, StepKind};
 use shards_rules::RulesAppExt;
@@ -18,6 +19,8 @@ use shards_motion::{physics::sync_physics, CharacterController, CharacterParams,
 
 use crate::brain::{force_state, Home, Npc, NpcBrain, NpcDrive, NpcStateChanged, NpcThink};
 use crate::chain::{ChainPressed, ChainRefused, NpcChain};
+use crate::audit::{field, follow_pairs, plan_hits, prefab_component, unreachable_options, FollowPair};
+use crate::def::AttackPlanDef;
 use crate::director::{AttackToken, TokenGranted, TokenReturned};
 use crate::memory::{forgotten, reset_plan, set_plan_cooldown, CooldownSet, PlanCooldownSet, PlanReset};
 use crate::nav::{local_grid_path, local_grid_route, NavAgent, NavPaths, NAVMESH};
@@ -63,6 +66,7 @@ pub(crate) fn register(app: &mut App) {
         .add_ai_query("npc_state", Scope::Player, npc_state)
         .add_ai_query("npc_schedule", Scope::Player, npc_schedule)
         .add_ai_query("nav_path", Scope::Player, nav_path)
+        .add_ai_query("plan_audit", Scope::Dev, plan_audit)
         .add_ai_tool("npc_set_state", Scope::Dev, npc_set_state)
         .add_ai_tool("npc_plan_reset", Scope::Dev, npc_plan_reset)
         .add_ai_tool("npc_plan_cooldown", Scope::Dev, npc_plan_cooldown)
@@ -665,4 +669,104 @@ fn npc_plan_cooldown(In(call): In<Call<NpcPlanCooldownArgs>>, world: &mut World)
     };
     let entity = args.id.entity(world)?;
     set_plan_cooldown(world, entity, &args.option, args.seconds, how)
+}
+/// The content-only audit of an attack plan with a moveset (N8e): every pair of options the plan lets
+/// follow, with the shortest gap between the first one's danger and the second one's first hit
+/// (shortest first); with `min_gap`, the pairs closer than that under `short`; every hit an NPC of the
+/// plan can deal, with how often it can land in one attack; the options the moveset cannot press. The
+/// verdict (what is too short, what kills) is the game's. Reads content only.
+#[derive(Deserialize, JsonSchema)]
+pub struct PlanAuditArgs {
+    /// The `attack_plan` id.
+    pub plan: String,
+    /// The `moveset` id of an NPC that fights by it. Without it the answer names the movesets of the prefabs that do.
+    pub moveset: Option<String>,
+    /// Seconds: list the pairs with a shorter gap under `short`.
+    pub min_gap: Option<f32>,
+    /// The factor on the plan's shortest rest (a difficulty's pause factor, below 1 on a hard one); default 1.
+    pub rest_scale: Option<f32>,
+}
+
+fn plan_audit(In(call): In<Call<PlanAuditArgs>>, db: Res<ContentDb>) -> ToolResult<Value> {
+    let args = call.args;
+    if let Some(gap) = args.min_gap
+        && !(gap >= 0.0 && gap.is_finite())
+    {
+        return Err(format!("min_gap must be >= 0 and finite (is {gap})"));
+    }
+    let rest_scale = args.rest_scale.unwrap_or(1.0);
+    if !(rest_scale > 0.0 && rest_scale.is_finite()) {
+        return Err(format!("rest_scale must be > 0 and finite (is {rest_scale})"));
+    }
+    let Some(moveset) = args.moveset else {
+        let used = movesets_of_plan(&db, &args.plan)?;
+        let used = if used.is_empty() { "no prefab's NPC names this plan".to_owned() } else { format!("the plan's NPCs use: {}", used.join(", ")) };
+        return Err(format!("plan_audit needs moveset=<id>; {used}"));
+    };
+    let pairs = follow_pairs(&db, &args.plan, &moveset, rest_scale)?;
+    let hits = plan_hits(&db, &args.plan, &moveset)?;
+    let unreachable = unreachable_options(&db, &args.plan, &moveset)?;
+    // In f64, so 0.7 reads 0.7 and not 0.699999988.
+    let round = |v: f32| (f64::from(v) * 100.0).round() / 100.0;
+    let pair = |p: &FollowPair| {
+        let mut v = json!({"a": p.a, "b": p.b, "gap": round(p.gap), "a_end": round(p.a_end), "b_first": round(p.b_first)});
+        if p.chained {
+            v["chained"] = json!(true);
+        }
+        v
+    };
+    let mut answer = json!({
+        "plan": args.plan,
+        "moveset": moveset,
+        "rest_scale": rest_scale,
+        "pairs": pairs.iter().map(pair).collect::<Vec<_>>(),
+        "hits": hits,
+        "unreachable": unreachable,
+    });
+    if let Some(min_gap) = args.min_gap {
+        let short: Vec<Value> = pairs
+            .iter()
+            .filter(|p| p.gap < min_gap)
+            .map(|p| {
+                let chain = if p.chained { " (through its chain)" } else { "" };
+                let mut v = pair(p);
+                v["why"] = json!(format!("{}'s danger lasts until {:.2} s{chain}; {} hits from {:.2} s", p.a, p.a_end, p.b, p.b_first));
+                v
+            })
+            .collect();
+        answer["short"] = json!(short);
+    }
+    Ok(answer)
+}
+
+/// The movesets of the prefabs whose `Npc` fights by plan `plan` (what they extend included), sorted.
+/// An unknown plan is an error with a "did you mean".
+fn movesets_of_plan(db: &ContentDb, plan: &str) -> Result<Vec<String>, String> {
+    if db.peek::<AttackPlanDef>(plan).is_none() {
+        let hint = closest(plan, db.peek_ids::<AttackPlanDef>()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
+        return Err(format!("no attack_plan `{plan}`{hint}"));
+    }
+    let mut used = std::collections::BTreeSet::new();
+    for (id, _) in db.peek_iter::<PrefabDef>() {
+        // A child's component replaces its parent's whole: the nearest `Npc` and `Fighter` count. The
+        // plan is written `Some("warden")`, or `"warden"` (content reads RON with implicit `Some`).
+        let npc_plan = prefab_component(db, id, "Npc").and_then(|npc| match field(&npc, "plan")? {
+            ron::Value::String(p) => Some(p),
+            ron::Value::Option(Some(p)) => match *p {
+                ron::Value::String(p) => Some(p),
+                _ => None,
+            },
+            _ => None,
+        });
+        let moveset = prefab_component(db, id, "Fighter").and_then(|f| match field(&f, "moveset") {
+            Some(ron::Value::String(m)) => Some(m),
+            _ => None,
+        });
+        if npc_plan.as_deref() == Some(plan)
+            && let Some(m) = moveset
+        {
+            used.insert(m);
+        }
+    }
+    Ok(used.into_iter().collect())
 }

@@ -239,3 +239,19 @@ fn prefabs_spawn_the_sandbox_characters() {
         text(&refused)
     );
 }
+
+/// The plan audit (N8e) on the sandbox's own warden: without a moveset it names the one the warden's
+/// prefab fights with, and with it the plan's pairs and hits come from the content.
+#[test]
+fn the_wardens_plan_is_audited_with_the_moveset_its_prefab_names() {
+    let mut app = sandbox::test_app(42);
+    let err = fails(&mut app, "plan_audit", json!({"plan": "warden"}));
+    assert!(err.contains("plan_audit needs moveset=<id>; the plan's NPCs use: warden"), "{err}");
+    let out = ok(&mut app, "plan_audit", json!({"plan": "warden", "moveset": "warden", "min_gap": 0.7})).result;
+    let pairs = out["pairs"].as_array().unwrap();
+    assert!(!pairs.is_empty() && out["short"].is_array(), "{out}");
+    // The warden's plan bans two zone attacks in a row.
+    assert!(pairs.iter().all(|p| !(p["a"] == "heavy" && p["b"] == "heavy")), "{out}");
+    assert!(out["hits"].as_array().unwrap().len() >= 4, "every attack's hits: {out}");
+    assert_eq!(out["unreachable"], json!([]));
+}
