@@ -19,6 +19,7 @@ fn settings_lists_every_group_as_lines() {
         "controls.bindings = {}",
         "controls.mouse_sensitivity = 1",
         "controls.aim_sensitivity = 1",
+        "controls.camera_auto_centre = false",
         "accessibility.camera_shake = 1",
         "accessibility.flashes = \"full\"",
         "accessibility.fov_deg = 70",

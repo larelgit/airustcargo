@@ -1034,6 +1034,10 @@ fn the_look_and_accessibility_settings_reach_the_camera() {
     app.update();
     let camera = app.world().resource::<CameraSettings>().clone();
     assert_eq!((camera.sensitivity, camera.aim_sensitivity), (2.0, 0.5));
+    assert!(!camera.auto_centre, "the auto-centre is off until the player turns it on");
+    ok(&mut app, "settings_set", json!({"group": "controls", "key": "camera_auto_centre", "value": "true"}));
+    app.update();
+    assert!(app.world().resource::<CameraSettings>().auto_centre);
     // No shake at all is off, not "very little".
     ok(&mut app, "settings_set", json!({"group": "accessibility", "key": "camera_shake", "value": "0"}));
     app.update();

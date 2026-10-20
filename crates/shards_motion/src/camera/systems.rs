@@ -14,8 +14,8 @@ use shards_settings::AccessibilitySettings;
 
 use super::lock::{angle, half_width, in_frustum, lock_candidates, pick_lock, sight_clear, switch_target, LockOnDef, Lockable, PickView};
 use super::math::{
-    aim_assist, arm_length, arm_reach, damp, fit_room, fit_tilt, lock_framing, lock_holds, next_lock_target, orbit_angles, orbit_position, pick_lock_target,
-    pitch_limits, resolve_camera_collision, shake_offset_with, wrap_angle, FlickState, LockCandidate, LockView,
+    aim_assist, arm_length, arm_reach, auto_centre, damp, fit_room, fit_tilt, lock_framing, lock_holds, next_lock_target, orbit_angles, orbit_position,
+    pick_lock_target, pitch_limits, resolve_camera_collision, shake_offset_with, wrap_angle, FlickState, LockCandidate, LockView,
 };
 use super::{CameraOffsets, CameraSettings, CameraShake, CameraSystems, CameraTuning, LockOnTarget, LockPoint, ThirdPersonCamera};
 use crate::input::{ControlState, ControlSystems};
@@ -335,27 +335,48 @@ fn orbit_camera(
             // A jump (a teleport, a respawn): nothing of the old place to catch up from.
             camera.focus = head;
             camera.arm_reach = 0.0;
+            camera.look_idle_s = 0.0;
         } else {
             camera.focus = camera.focus.lerp(head, rate);
         }
+        // How fast the followed body walks on the ground, where it is drawn (m/s): from the body
+        // itself, since the focus goes on catching up after it stops. A body that moved farther
+        // than `body_snap_distance` since the last frame was placed (a teleport too short to
+        // jump the focus): it did not walk, and the wait starts over.
+        let seen = camera.subject_seen.replace(subject_at);
+        let placed = seen.is_some_and(|was| was.distance(subject_at) > tuning.body_snap_distance);
+        if placed {
+            camera.look_idle_s = 0.0;
+        }
+        let ground = seen.map_or(0.0, |was| Vec2::new(subject_at.x - was.x, subject_at.z - was.z).length());
+        let walk = if dt > 0.0 && !placed { ground / dt } else { 0.0 };
 
         match locked {
             // Framing a target: behind the player, looking at it. The look axis flicks targets.
             Some(target) => {
                 (camera.yaw, camera.pitch) = lock_framing(camera.yaw, camera.pitch, camera.focus, target, &tuning.framing, dt);
+                camera.look_idle_s = 0.0;
             }
             // Free look: the player's turn, bent toward a target near the crosshair.
             None => {
                 let up = if settings.invert_y { -1.0 } else { 1.0 };
                 // Aiming turns by its own speed (K1): the game says when the player aims.
                 let speed = if offsets.aiming { settings.aim_sensitivity } else { settings.sensitivity };
-                let look = state.axis("look") * speed;
+                let raw = state.axis("look");
+                let look = raw * speed;
                 let mut turn = Vec2::new(-look.x, -look.y * up);
                 if let Some(error) = crosshair_error(&camera, &lockable).filter(|_| settings.aim_assist > 0.0) {
                     turn = aim_assist(turn, error, settings.aim_assist);
                 }
                 camera.yaw = wrap_angle(camera.yaw + turn.x);
                 camera.pitch += turn.y;
+                // Left alone, the view turns back behind a walking body (K2), when the player wants it.
+                camera.look_idle_s = if raw == Vec2::ZERO { camera.look_idle_s + dt } else { 0.0 };
+                if settings.auto_centre {
+                    let facing = *subject_tf.forward();
+                    (camera.yaw, camera.pitch) =
+                        auto_centre(camera.yaw, camera.pitch, facing, walk, camera.look_idle_s, &tuning.auto_centre, dt);
+                }
             }
         }
         // The stored pitch is held to the limits, so a cap that lifts does not find it far past it.
