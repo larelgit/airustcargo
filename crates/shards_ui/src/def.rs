@@ -840,6 +840,11 @@ impl ContentDef for ThemeDef {
             if crate::markup::plain(symbol).trim().is_empty() {
                 refs.error(format!("symbols.{category}: empty; leave the category out to draw none"));
             }
+            if let Some(tag) = crate::markup::unpaired(symbol) {
+                refs.error(format!(
+                    "symbols.{category}: `{tag}` pairs with no tag and would be drawn as text; close each `[font=name]` with `[/font]`"
+                ));
+            }
             for font in crate::markup::fonts_named(symbol).into_iter().filter(|f| !self.fonts.contains_key(*f)) {
                 refs.error(format!("symbols.{category}: `[font={font}]` names no font of the theme (`fonts`)"));
             }

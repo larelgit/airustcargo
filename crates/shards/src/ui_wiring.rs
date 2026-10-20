@@ -192,8 +192,10 @@ fn heading(world: &World, arg: &str) -> Option<UiValue> {
 /// The landmark of `category` ([`LandmarkCategory`]) nearest the body this machine plays (the
 /// HUD's viewer), and how far it is on the ground (m): what a game pulses a sound or a needle by
 /// (an `add_ai_condition` reading it, which the music's layers and a HUD can wait on). `None`
-/// without a viewer or such a landmark.
+/// without a viewer or such a landmark. The category is matched trimmed, as `you.nearest:<category>`
+/// matches it.
 pub fn nearest_landmark(world: &World, category: &str) -> Option<(Entity, f32)> {
+    let category = category.trim();
     let at = world.get::<Transform>(viewer(world)?)?.translation;
     landmarks(world, at)?
         .into_iter()
@@ -205,7 +207,7 @@ pub fn nearest_landmark(world: &World, category: &str) -> Option<(Entity, f32)> 
 /// `you.nearest:<category>`: how far the nearest landmark of that category is (m); no value without one.
 fn nearest(world: &World, category: &str) -> Option<UiValue> {
     viewer(world)?;
-    Some(nearest_landmark(world, category.trim()).map_or(UiValue::None, |(_, d)| UiValue::Number(d)))
+    Some(nearest_landmark(world, category).map_or(UiValue::None, |(_, d)| UiValue::Number(d)))
 }
 
 /// The other players, by number: name, health, down or not.

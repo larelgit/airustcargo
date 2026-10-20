@@ -5416,7 +5416,7 @@ the game brings its own.
 `AiLandmark` with it): a point of interest's `category` (`*.poi.ron`), a level node's `LandmarkCategory = "shrine"` property, a prefab's
 component or the game's code gives it. The compass (`you.heading`) keeps the 4 nearest landmarks of each category, and the 4 nearest of
 those without one, nearest first, so a far shrine is not pushed off by near pillars; `you.heading:2` keeps two of each. The theme draws a
-category as a symbol before the name: `symbols: {"shrine": "⛩", "camp": "[font=symbols]ᚲ[/font]"}` (a symbol may name a theme font; a
+category as a symbol before the name: `symbols: {"shrine": "⛩", "camp": "[font=symbols]ᚲ[/font]"}` (a symbol may name a theme font, and its tags must pair up: the content check refuses one that would be drawn as text; a
 category without one is drawn as before). Screen readers and `ui_read` get the category's name in words (`Shrine (shrine) N
 5m`). The source `you.nearest:<category>` gives how far the nearest landmark of that category is on the ground (m, a `Number`; no value
 without one), and `shards::nearest_landmark(world, category)` gives it to code with its entity: a game pulses a sound or a needle by it
@@ -5452,8 +5452,8 @@ A flash is content, kind `flash`:
 ```
 
 It fades in to `alpha` (0 to 1), holds and fades out; `pulses` dips that many times from its start, `pulse_rate` a second,
-`pulse_depth` deep (1, the default: to nothing). `color` is `#rrggbb`: the content check refuses `#rrggbbaa` (the strength is `alpha`),
-a flash of 0 s or longer than 30 s, a rate of 0 and a depth or alpha outside 0..1. Code starts one with `shards::ui::flash(world, "reality")`
+`pulse_depth` deep (1, the default: to nothing). `color` is `#rrggbb` or `#rgb`: the content check refuses `#rrggbbaa` (the strength is `alpha`),
+a flash of 0 s or longer than 30 s, a `pulse_rate` of 0 or less when `pulses` is above 0, and a depth or alpha outside 0..1. Code starts one with `shards::ui::flash(world, "reality")`
 or `commands.trigger(PlayFlash("reality".into()))` (an unknown id is a `Warn` line), and the console with `flash_play flash=reality`
 (dev; a control tool, never in a replay). One flash plays at a time: a newer one replaces the one playing. It is drawn as one full-screen
 node above the HUD and the off-screen threat markers (`GlobalZIndex` 2) and under menus and modals (`GlobalZIndex` 5), which takes no clicks, and it runs on real time (`Time<Real>`), so a hit
