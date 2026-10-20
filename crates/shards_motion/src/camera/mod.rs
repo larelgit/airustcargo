@@ -101,8 +101,8 @@ impl ThirdPersonCamera {
     }
 }
 
-/// How the camera feels. `fov_deg`, `shake`, `shake_intensity`, `sensitivity` and `invert_y`
-/// are the player's choices: they follow the accessibility and control settings (E8.6, saved
+/// How the camera feels. `fov_deg`, `shake`, `shake_intensity`, `sensitivity`, `aim_sensitivity`
+/// and `invert_y` are the player's choices: they follow the accessibility and control settings (E8.6, saved
 /// in `settings.toml`) whenever those change. The rest is the game's.
 #[derive(Resource, Reflect, Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[reflect(Resource, Default)]
@@ -112,6 +112,8 @@ pub struct CameraSettings {
     pub fov_deg: f32,
     /// Look speed multiplier.
     pub sensitivity: f32,
+    /// Look speed multiplier while the game says the player aims ([`CameraOffsets::aiming`]).
+    pub aim_sensitivity: f32,
     /// Looking up moves the camera up instead of down.
     pub invert_y: bool,
     /// Whether hits shake the camera.
@@ -133,6 +135,7 @@ impl Default for CameraSettings {
         Self {
             fov_deg: 70.0,
             sensitivity: 1.0,
+            aim_sensitivity: 1.0,
             invert_y: false,
             shake: true,
             shake_intensity: 1.0,
@@ -208,8 +211,9 @@ pub(crate) fn plugin(app: &mut App) {
 
 /// `PreUpdate`: what the player set (E8.6) becomes how the camera feels. The field of view and
 /// the shake come from the accessibility settings (`camera_shake` 0 is no shake at all, anything
-/// above it is how hard), the look speed and its inversion from the controls. A game that wants
-/// other defaults inserts its own settings resources before the settings store starts.
+/// above it is how hard), the look speeds (free and aiming) and the inversion from the controls.
+/// A game that wants other defaults inserts its own settings resources before the settings store
+/// starts.
 /// Presentation only: nothing the simulation reads.
 fn apply_player_settings(
     accessibility: Option<Res<AccessibilitySettings>>,
@@ -226,6 +230,7 @@ fn apply_player_settings(
         shake: shake > 0.0,
         shake_intensity: shake,
         sensitivity: controls.sensitivity(),
+        aim_sensitivity: controls.aim_sensitivity(),
         invert_y: controls.invert_y,
         ..camera.clone()
     };

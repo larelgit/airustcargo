@@ -1029,6 +1029,11 @@ fn the_look_and_accessibility_settings_reach_the_camera() {
     app.update();
     let camera = app.world().resource::<CameraSettings>().clone();
     assert_eq!((camera.fov_deg, camera.shake, camera.shake_intensity, camera.sensitivity, camera.invert_y), (95.0, true, 0.3, 2.0, true));
+    assert_eq!(camera.aim_sensitivity, 1.0, "aiming keeps its own speed");
+    ok(&mut app, "settings_set", json!({"group": "controls", "key": "aim_sensitivity", "value": "0.5"}));
+    app.update();
+    let camera = app.world().resource::<CameraSettings>().clone();
+    assert_eq!((camera.sensitivity, camera.aim_sensitivity), (2.0, 0.5));
     // No shake at all is off, not "very little".
     ok(&mut app, "settings_set", json!({"group": "accessibility", "key": "camera_shake", "value": "0"}));
     app.update();
