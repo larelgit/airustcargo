@@ -102,6 +102,8 @@ pub fn set_plan_cooldown(world: &mut World, entity: Entity, option: &str, second
         CooldownSet::AtLeast => was.max(seconds),
         CooldownSet::Exactly => seconds,
     };
+    // One the planner would let go on its next tick is none: no entry and no line for it.
+    let left = if left > crate::planner::COOLDOWN_GONE { left } else { 0.0 };
     if left != was {
         // Kept sorted by name, as `NpcPlan::remember` keeps it; 0 takes the entry out.
         plan.cooldowns.retain(|c| c.name != option);

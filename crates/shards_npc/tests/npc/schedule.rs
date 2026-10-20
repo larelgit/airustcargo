@@ -257,6 +257,9 @@ fn a_cooldown_is_set_at_least_or_exactly() {
     // Exactly shortens, and 0 takes the entry out.
     set(&mut app, json!({"id": who, "option": "heavy", "seconds": 1.0, "mode": "exactly"}));
     assert_eq!(set(&mut app, json!({"id": who, "option": "heavy", "seconds": 0.0})), format!("{who} heavy: cooldown 0.00 s (was 1.00 s)"));
+    // A cooldown the planner would let go on its next tick (1e-4 s or less) is none.
+    let args = json!({"id": who, "option": "heavy", "seconds": 0.00005});
+    assert_eq!(set(&mut app, args), format!("{who} heavy: cooldown 0.00 s (was 0.00 s)"));
     assert_eq!(left(&app), [("turn".to_owned(), 3.0)]);
     // A line per change, none for the call that changed nothing.
     let changed: Vec<String> = lines(&app, " cooldown ").into_iter().map(|l| l.split_once(' ').unwrap().1.to_owned()).collect();
