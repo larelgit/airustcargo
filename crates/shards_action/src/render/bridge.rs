@@ -64,18 +64,19 @@ use bevy::world_serialization::WorldInstanceReady;
 use ai_core::{AiId, PresentationHolds};
 use shards_content::ContentDb;
 use shards_core::Predicted;
-use shards_motion::{MotionState, MoveModifiers};
+use shards_motion::{LocomotionInput, MotionState, MoveModifiers};
 
 use crate::anim::{
-    crossed_cues_in, mode_name, select_clip_timed, select_layer_timed, ActionTime, AnimSet, Animated, AnimationCue, BodyStatus, ClipChoice,
-    CueDef, LayerChoice, ModeLeft, PropSwaps, MAX_LAYERS,
+    carry_phase, crossed_cues_back, crossed_cues_in, mode_name, select_clip_timed, select_layer_timed, ActionTime, AnimSet, Animated,
+    AnimationCue, BodyStatus, ClipChoice, CueDef, Heading, LayerChoice, ModeLeft, PropSwaps, MAX_LAYERS,
 };
-use crate::def::{ActionDef, MovesetDef};
+use crate::def::{ActionDef, Face, MovesetDef};
 use crate::fighter::{Dead, Fighter};
 use crate::machine::ActionState;
 use crate::predict::PredictedAction;
 use crate::render::modes::{self, AnimSystems, ModeFrame, ModeState};
 use crate::render::props::{self, skeleton, MountEnv, MountFrame, MountState, PropOf, RunView};
+use crate::render::turn::{yaw_between, Turn};
 
 /// A seeked clip stops this far (seconds) before its end: Bevy's player wraps a time at the
 /// duration back to zero, which would show the first pose in place of the last.
@@ -211,8 +212,16 @@ pub struct AnimationBound {
     graph: AssetId<AnimationGraph>,
     /// The clip (our name) playing as the main one.
     clip: Option<String>,
+    /// That clip is a gait's: the next gait's clip starts where it was in its stride.
+    gait: bool,
     /// Seconds on that clip's timeline at the last frame, for cues.
     last_time: Option<f32>,
+    /// That clip was set to play backward at the last frame. Bevy moves a clip after [`drive`], so
+    /// the time it went since then went the way set then, whatever this frame sets.
+    backward: bool,
+    /// Which way the body moved from where it faced at the last frame (kept for the slack at the
+    /// quarters' edges; forward while it faces no target).
+    heading: Heading,
     /// The set's `root_motion` bone under the player and its rest translation, once found.
     pub(crate) root: Option<(Entity, Vec3)>,
     /// The set's layers whose bones the model has: only on these can an action's clip play.
@@ -228,6 +237,8 @@ pub struct AnimationBound {
     /// The motion mode it is drawn in and the clocks that hang on it: the mode's mount rules, the
     /// draw after leaving it, the drop.
     pub(crate) modes: ModeState,
+    /// How far the model is turned from the body's facing (a run's `turn`).
+    pub(crate) turn: Turn,
 }
 
 impl AnimationBound {
@@ -237,7 +248,10 @@ impl AnimationBound {
             player,
             graph,
             clip: None,
+            gait: false,
             last_time: None,
+            backward: false,
+            heading: Heading::Forward,
             root: None,
             ready: BTreeSet::new(),
             overlays: BTreeMap::new(),
@@ -245,6 +259,7 @@ impl AnimationBound {
             held_since: None,
             mounts: MountState::default(),
             modes: ModeState::default(),
+            turn: Turn::default(),
         }
     }
 
@@ -305,6 +320,17 @@ impl AnimationBound {
     /// Metres the model is lowered now (a swing afloat; the set's `drops`).
     pub fn drop_depth(&self) -> f32 {
         self.modes.depth()
+    }
+
+    /// Radians the model is turned by from the body's facing, about the world's up (a run's `turn`).
+    pub fn model_turn(&self) -> f32 {
+        self.turn.yaw()
+    }
+
+    /// Which way the body moves from where it faces, as its gait's clip was last chosen (forward
+    /// while it faces no target).
+    pub fn heading(&self) -> Heading {
+        self.heading
     }
 
     /// The motion mode the body is drawn in, once the bridge has seen it.
@@ -622,6 +648,7 @@ pub fn bind_players(
             // equip nor leaves a second set of props under the bones.
             mounts: bound.map(|b| b.mounts.taken_over()).unwrap_or_default(),
             modes: bound.map(|b| b.modes.taken_over()).unwrap_or_default(),
+            turn: bound.map(|b| b.turn.taken_over()).unwrap_or_default(),
             ..AnimationBound::new(player, graph.id())
         });
     }
@@ -725,6 +752,10 @@ pub struct Driven {
     /// For [`PresentationHolds`].
     id: Option<&'static AiId>,
     motion: Option<&'static MotionState>,
+    /// Whether the body faces a target (`face`), for the heading's clips.
+    loco: Option<&'static LocomotionInput>,
+    /// Where the body faces.
+    transform: Option<&'static Transform>,
     modifiers: Option<&'static MoveModifiers>,
     fighter: Option<&'static Fighter>,
     dead: Has<Dead>,
@@ -742,7 +773,8 @@ pub fn drive(
     db: Option<Res<ContentDb>>,
     graphs: Res<AnimGraphs>,
     clips: Res<Assets<AnimationClip>>,
-    mut animated: Query<Driven>,
+    // Disjoint from the props' transforms (`mounting`): a character is never a prop.
+    mut animated: Query<Driven, Without<PropOf>>,
     mut players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
     mut mounting: MountEnv,
     mut bones: CueBones,
@@ -758,8 +790,22 @@ pub fn drive(
     let now = real.elapsed();
     let frozen = time.delta_secs() <= 0.0;
     let standing = MotionState::default();
-    for DrivenItem { entity, animated: set_ref, mut bound, state, shown, predicted, id, motion, modifiers, fighter, dead, swaps } in
-        &mut animated
+    for DrivenItem {
+        entity,
+        animated: set_ref,
+        mut bound,
+        state,
+        shown,
+        predicted,
+        id,
+        motion,
+        loco,
+        transform,
+        modifiers,
+        fighter,
+        dead,
+        swaps,
+    } in &mut animated
     {
         let (Some(set), Some(built)) = (db.get::<AnimSet>(&set_ref.animset), graphs.built(&set_ref.animset)) else {
             continue;
@@ -783,6 +829,7 @@ pub fn drive(
                 if let Some(since) = bound.held_since.take() {
                     bound.mounts.shift(clock - since);
                     bound.modes.shift(clock - since);
+                    bound.turn.shift(clock - since);
                 }
             }
         }
@@ -807,9 +854,19 @@ pub fn drive(
             .and_then(|m| m.stagger.as_deref())
             .zip(run)
             .is_some_and(|(stagger, r)| r.forced && r.action == stagger);
-        let status = BodyStatus { dead, staggered: staggers, pace: modifiers.map_or(1.0, MoveModifiers::pace) };
+        // Facing a target: which way the body moves from where it faces (the gaits' heading clips).
+        let moving = motion.unwrap_or(&standing);
+        let faces = transform.filter(|_| loco.is_some_and(|l| l.face.is_some()));
+        let kept = bound.heading;
+        bound.heading = faces.map_or(Heading::Forward, |tf| Heading::of(*tf.forward(), moving.velocity, kept));
+        let status = BodyStatus {
+            dead,
+            staggered: staggers,
+            pace: modifiers.map_or(1.0, MoveModifiers::pace),
+            facing: faces.map(|_| bound.heading),
+        };
         let moveset = fighter.map(|f| f.moveset.as_str());
-        let choice = select_clip_timed(action, motion.unwrap_or(&standing), status, set, moveset);
+        let choice = select_clip_timed(action, moving, status, set, moveset);
         let switched =
             drive_body(&mut commands, &mut bones, entity, set, built, &clips, &mut bound, &mut player, &mut transitions, &choice, frozen);
         if switched {
@@ -817,7 +874,15 @@ pub fn drive(
             // age the wait): a `@left` wait ends with it.
             bound.modes.note_switch(clock, choice.blend.clamp(0.01, 10.0));
         }
-        let mode = motion.unwrap_or(&standing).mode;
+        // The model's turn: to the heading of a run that keeps the body's facing, while its mapping
+        // turns the model; back to the body's facing after it.
+        let turning = run.zip(action).zip(transform).and_then(|((r, a), tf)| {
+            let secs = set.turn_of(a.key);
+            let keeps = def.is_some_and(|d| d.face == Face::Keep);
+            (secs > 0.0 && keeps).then(|| yaw_between(*tf.forward(), r.facing).map(|yaw| (yaw, secs))).flatten()
+        });
+        bound.turn.advance(turning, clock);
+        let mode = moving.mode;
         if !built.layered.is_empty() || !bound.overlays.is_empty() {
             // A layer that is off in this mode plays nothing: what played fades out.
             let wanted = select_layer_timed(action, status, set, moveset).filter(|l| !set.layer_off(l.layer, mode));
@@ -883,24 +948,36 @@ fn drive_body(
     let duration = clips.get(handle).map_or(0.0, |c| c.duration());
     let mut switched = false;
     if bound.clip.as_deref() != Some(clip) {
-        if bound.clip.is_none() || frozen {
+        // From a gait's clip to a gait's clip (a walk to a run, to a strafe): the new one starts
+        // where the old one was in its stride, so the feet do not skip.
+        let carried = if bound.gait && choice.gait {
+            let old = bound.clip.as_deref().and_then(|c| built.nodes.get(c)).and_then(|(_, h)| clips.get(h));
+            old.zip(bound.last_time).and_then(|(old, at)| carry_phase(at, old.duration(), duration))
+        } else {
+            None
+        };
+        let active = if bound.clip.is_none() || frozen {
             // Nothing to blend from, or the clock is stopped (a paused simulation, an agent
             // stepping tick by tick): a fade would never advance and leave the old pose
             // standing, so the new clip snaps in.
             player.stop_all();
             *transitions = AnimationTransitions::new();
-            transitions.play(player, *node, Duration::ZERO);
-            switched = true;
+            transitions.play(player, *node, Duration::ZERO)
         } else {
             // Not zero (Bevy's fade divides by it), not absurd (a typo in content must not
             // overflow a `Duration`).
             let blend = choice.blend.clamp(0.01, 10.0);
-            transitions.play(player, *node, Duration::from_secs_f32(blend));
-            switched = true;
+            transitions.play(player, *node, Duration::from_secs_f32(blend))
+        };
+        if let Some(at) = carried {
+            active.set_seek_time(at);
         }
+        switched = true;
         bound.clip = Some(clip.to_owned());
-        bound.last_time = None;
+        // A carried stride has passed nothing yet: its cues count from where it starts.
+        bound.last_time = carried;
     }
+    bound.gait = choice.gait;
     let Some(active) = player.animation_mut(*node) else { return switched };
     active.set_repeat(if choice.looping { RepeatAnimation::Forever } else { RepeatAnimation::Never });
     let now = match choice.seek_to {
@@ -917,12 +994,23 @@ fn drive_body(
         }
     };
 
+    // A gait's clip played backward (a body backing away from its target) passes its cues going down.
+    let backward = choice.seek_to.is_none() && choice.speed < 0.0;
     let cues = set.clip(clip).map_or(&[][..], |c| c.cues.as_slice());
     if !cues.is_empty() {
-        // A looping clip wraps round, and so does the stretch a looping phase repeats.
-        bones.fire(commands, entity, bound.player, clip, crossed_cues_in(cues, bound.last_time, now, choice.wraps(duration)));
+        // Since the last frame the clip went the way set then (a walk that turns round now, as a
+        // lock-on ends, went back until now): a seek or a new clip has gone nowhere yet. Going on, a
+        // looping clip wraps round, and so does the stretch a looping phase repeats.
+        let went_back = if switched || choice.seek_to.is_some() { backward } else { bound.backward };
+        let crossed = if went_back {
+            crossed_cues_back(cues, bound.last_time, now, (choice.looping && duration > 0.0).then_some(duration))
+        } else {
+            crossed_cues_in(cues, bound.last_time, now, choice.wraps(duration))
+        };
+        bones.fire(commands, entity, bound.player, clip, crossed);
     }
     bound.last_time = Some(now);
+    bound.backward = backward;
     switched
 }
 
@@ -1116,6 +1204,7 @@ mod tests {
         "stagger": (net_id: 3, phases: [("stagger", 0.8)]),
         "drink": (net_id: 4, phases: [("drink", 1.0)]),
         "guard": (net_id: 5, phases: [("guard", 1.0)]),
+        "sidestep": (net_id: 6, phases: [("step", 0.4)], face: Keep),
     }"#;
     const MOVESETS: &str = r#"{ "hero": (inputs: {"light": "light_1", "dodge": "roll"}, stagger: "stagger") }"#;
     const ANIMSETS: &str = r#"{ "humanoid": (
@@ -1694,6 +1783,133 @@ mod tests {
         rig.app.world_mut().get_mut::<Transform>(bone).unwrap().translation = Vec3::new(0.5, 0.2, 3.0);
         rig.app.update();
         assert_eq!(rig.app.world().get::<Transform>(bone).unwrap().translation, Vec3::new(0.5, 0.2, 3.0));
+    }
+
+    // --- facing (D1.3) ---------------------------------------------------------------------
+
+    impl Rig {
+        fn bound(&self) -> &AnimationBound {
+            self.app.world().get::<AnimationBound>(self.character).unwrap()
+        }
+
+        fn clip_at(&self, clip: &str) -> (f32, f32) {
+            let p = self.playing().into_iter().find(|p| p.0 == clip).unwrap_or_else(|| panic!("{clip} is not playing"));
+            (p.1, p.2)
+        }
+    }
+
+    #[test]
+    fn facing_a_target_the_body_backs_away_on_its_walk_played_backward() {
+        let mut rig = rig();
+        let faced = LocomotionInput { face: Some(Vec3::NEG_Z), ..default() };
+        rig.app.world_mut().entity_mut(rig.character).insert((Transform::default(), faced));
+        // The body faces -z and moves +z: away from its target.
+        rig.velocity(-2.0);
+        rig.app.update();
+        assert_eq!(rig.main_clip().as_deref(), Some("walk"));
+        let (_, speed) = rig.clip_at("walk");
+        assert!((speed + 1.0).abs() < 1e-4, "no `walk.back`: the walk backward, speed {speed}");
+        assert_eq!(rig.bound().heading(), Heading::Back);
+        // Facing no target, the body turns to where it goes: the walk plays forward.
+        rig.app.world_mut().get_mut::<LocomotionInput>(rig.character).unwrap().face = None;
+        rig.app.update();
+        let (_, speed) = rig.clip_at("walk");
+        assert!((speed - 1.0).abs() < 1e-4, "{speed}");
+        assert_eq!(rig.bound().heading(), Heading::Forward);
+    }
+
+    #[test]
+    fn a_walk_that_turns_round_fires_only_the_cues_it_passed() {
+        #[derive(Resource, Default)]
+        struct Heard(Vec<AnimationCue>);
+        let mut rig = rig();
+        let stepped = ANIMSETS.replace(r#""walk": (),"#, r#""walk": (cues: [(at: 0.25, cue: "left"), (at: 0.75, cue: "right")]),"#);
+        assert_ne!(stepped, ANIMSETS);
+        rig.app.insert_resource(db_from(&stepped));
+        rig.app.init_resource::<Heard>();
+        rig.app.add_observer(|cue: On<AnimationCue>, mut heard: ResMut<Heard>| heard.0.push(cue.event().clone()));
+        // Frames of 0.1 s on the 1 s walk: a step every 0.5 s, so a frame passes one step at most.
+        rig.app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(100)));
+        rig.app.world_mut().entity_mut(rig.character).insert((Transform::default(), LocomotionInput::default()));
+        rig.velocity(-2.0);
+        let mut steps = Vec::new();
+        // Backing away from a target, then walking on facing where it goes (the lock-on let go),
+        // then facing the target again: the walk turns round twice on the same clip.
+        for face in [Some(Vec3::NEG_Z), None, Some(Vec3::NEG_Z)] {
+            rig.app.world_mut().get_mut::<LocomotionInput>(rig.character).unwrap().face = face;
+            for _ in 0..8 {
+                let before = rig.app.world().resource::<Heard>().0.len();
+                rig.app.update();
+                assert_eq!(rig.main_clip().as_deref(), Some("walk"));
+                steps.push(rig.app.world().resource::<Heard>().0.len() - before);
+            }
+        }
+        assert!(steps.iter().all(|n| *n <= 1), "no burst of steps as the walk turns round: {steps:?}");
+        assert!(steps.iter().sum::<usize>() >= 3, "every 0.8 s of walk passes a step: {steps:?}");
+    }
+
+    #[test]
+    fn a_switch_between_gaits_carries_the_stride() {
+        let mut rig = rig();
+        rig.velocity(2.0);
+        rig.app.update();
+        assert_eq!(rig.main_clip().as_deref(), Some("walk"));
+        // A quarter into the 1 s walk.
+        let walk = rig.nodes["walk"];
+        rig.app.world_mut().get_mut::<AnimationPlayer>(rig.player).unwrap().animation_mut(walk).unwrap().set_seek_time(0.25);
+        rig.app.update();
+        rig.velocity(6.0);
+        rig.app.update();
+        assert_eq!(rig.main_clip().as_deref(), Some("run"));
+        let (at, _) = rig.clip_at("run");
+        assert!((at - 0.2).abs() < 1e-4, "a quarter into the 0.8 s run: {at}");
+        // Idle is no gait: a walk after it starts at its own start.
+        rig.velocity(0.0);
+        rig.app.update();
+        rig.velocity(2.0);
+        rig.app.update();
+        assert_eq!(rig.clip_at("walk").0, 0.0);
+    }
+
+    #[test]
+    fn a_run_that_keeps_the_bodys_facing_turns_the_model_to_its_heading_and_back() {
+        let mut rig = rig();
+        let edited = ANIMSETS.replace(
+            "actions: {\"roll\": \"idle\"},",
+            "actions: {\"roll\": \"idle\", \"sidestep\": (clip: \"walk\", turn: 0.1)}, root_motion: \"root\",",
+        );
+        assert_ne!(edited, ANIMSETS);
+        rig.app.insert_resource(db_from(&edited));
+        rig.app.add_systems(PostUpdate, (hold_root_motion, modes::apply_model).chain().after(bevy::app::AnimationSystems));
+        let bone = rig.app.world_mut().spawn((Name::new("root"), Transform::default())).id();
+        rig.app.world_mut().entity_mut(rig.player).add_child(bone);
+        rig.app.world_mut().entity_mut(rig.character).insert(Transform::default());
+        rig.app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(10)));
+        rig.app.update();
+        // A step to the right (+x) while the body keeps facing -z.
+        let def = db_from(&edited).get::<ActionDef>("sidestep").cloned().unwrap();
+        let mut run = Running::new("sidestep", &def, 0, Vec3::X, None, Some("dodge".into()));
+        run.t = 0.1;
+        rig.app.world_mut().get_mut::<ActionState>(rig.character).unwrap().current = Some(run);
+        rig.app.update();
+        rig.app.update();
+        let partway = rig.bound().model_turn();
+        assert!(partway < -0.1 && partway > -1.5, "on its way: {partway}");
+        for _ in 0..40 {
+            rig.app.update();
+        }
+        let rotation = rig.app.world().get::<Transform>(bone).unwrap().rotation;
+        let right = Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2);
+        assert!(rotation.angle_between(right) < 1e-3, "the model faces the step: {rotation:?}");
+        assert!((rig.bound().model_turn() + std::f32::consts::FRAC_PI_2).abs() < 1e-3);
+        // The run is over: the model comes back to the body's facing, and the bone is left as the clips leave it.
+        rig.app.world_mut().get_mut::<ActionState>(rig.character).unwrap().current = None;
+        for _ in 0..40 {
+            rig.app.update();
+        }
+        assert_eq!(rig.bound().model_turn(), 0.0);
+        let rotation = rig.app.world().get::<Transform>(bone).unwrap().rotation;
+        assert!(rotation.angle_between(Quat::IDENTITY) < 1e-5, "{rotation:?}");
     }
 
     // --- layers ---------------------------------------------------------------------------

@@ -45,14 +45,19 @@
             "taunt": (source: "models/humanoid_gestures.glb"),
             "drink": (source: "models/humanoid_gestures.glb", blend: 0.12, phases: [("drink", 1.0), ("recover", 0.3)]),
         },
+        // No strafe or backstep clips yet: a body locked on to a target that backs away plays its walk or
+        // run backward, and one that steps to the side plays it as it is (`walk.back`, `walk.left`,
+        // `idle.facing` and the rest would take over once the model has them).
         locomotion: {"idle": "idle", "walk": "walk", "run": "run", "stagger": "stagger", "dead": "death"},
         // The upper body: the spine and everything on it (the head, the arms). The legs are the rest.
         layers: {"upper": (root: "spine", off_in: ["water"])},
         // Actions find their clips by their `anim` (light_1, roll, claw, slash, ...) and play on the
         // whole body. The flask's drink is mapped here, and on the layer `upper`: the player drinks
         // while the legs go on walking or running (the drink asks for no `anim`: the action's state
-        // is the simulation's, and the picture decides how to show it).
-        actions: {"drink": (clip: "drink", layer: "upper"), "spar_stroke": "light_1"},
+        // is the simulation's, and the picture decides how to show it). The spar's roll that keeps
+        // the body's facing turns the model to the roll's heading over 0.08 s (and back after it), so a
+        // roll to the side under lock-on rolls that way while the body still looks at its target.
+        actions: {"drink": (clip: "drink", layer: "upper"), "spar_stroke": "light_1", "spar_roll_keep": (clip: "roll", turn: 0.08)},
         blend: 0.2,
         action_blend: 0.06,
         // The walk's feet keep pace at 2 m/s, the run's at 4.5 m/s.
