@@ -142,25 +142,29 @@ fn bindings(world: &World, arg: &str) -> Option<UiValue> {
 
 /// Degrees clockwise from north (-Z) of a direction on the ground.
 fn bearing(dir: Vec3) -> f32 {
-    ops::atan2(dir.x, -dir.z).to_degrees().rem_euclid(360.0)
+    // `+ 0.0` turns a -0 (straight north with `x` at -0) into 0: `0°`, never `-0°`.
+    ops::atan2(dir.x, -dir.z).to_degrees().rem_euclid(360.0) + 0.0
 }
 
 /// Marks a compass keeps of each landmark category, and of the landmarks without one, nearest
 /// first (`you.heading:2` keeps two).
 pub const MARKS_PER_CATEGORY: usize = 4;
 
-/// The landmarks around `from`: entity, label, category, ground offset; in `AiId` order.
-fn landmarks(world: &World, from: Vec3) -> Option<Vec<(Entity, String, Option<String>, Vec3)>> {
+/// A landmark as a compass reads it: entity, label, category, ground offset from the viewer.
+type Landmark = (Entity, String, Option<String>, Vec3);
+
+/// The landmarks around `from`, in `AiId` order.
+fn landmarks(world: &World, from: Vec3) -> Option<Vec<Landmark>> {
     let mut landmarks = world.try_query_filtered::<(Entity, &Transform, Option<&AiId>, Option<&LandmarkCategory>), With<AiLandmark>>()?;
-    let mut all: Vec<(Option<AiId>, Entity, String, Option<String>, Vec3)> = landmarks
+    let mut all: Vec<(Option<AiId>, Landmark)> = landmarks
         .iter(world)
         .map(|(e, t, id, category)| {
             let label = world.get::<Name>(e).map_or_else(|| ai_core::label(world, e), |n| n.as_str().to_owned());
-            (id.copied(), e, label, category.map(|c| c.0.clone()), t.translation - from)
+            (id.copied(), (e, label, category.map(|c| c.0.clone()), t.translation - from))
         })
         .collect();
-    all.sort_by_key(|(id, ..)| *id);
-    Some(all.into_iter().map(|(_, e, label, category, to)| (e, label, category, to)).collect())
+    all.sort_by_key(|(id, _)| *id);
+    Some(all.into_iter().map(|(_, landmark)| landmark).collect())
 }
 
 /// Where the viewer faces, and the nearest landmarks of each category ([`MARKS_PER_CATEGORY`], or

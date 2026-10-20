@@ -76,7 +76,13 @@ fn windowed() -> App {
     std::fs::write(dir.join("fonts/symbols.ttf"), DEFAULT_FONT).unwrap();
     let theme = r#"{ "default": (fonts: {"symbols": "fonts/symbols.ttf"}, symbols: {"shrine": "⛩", "camp": "[font=symbols]ᚲ[/font]"}) }"#;
     std::fs::write(dir.join("content/ui/look.theme.ron"), theme).unwrap();
-    let mut app = testing::test_app(|config| config.asset_dir = dir.to_string_lossy().into_owned(), with_landmarks);
+    let mut app = testing::test_app(
+        |config| config.asset_dir = dir.to_string_lossy().into_owned(),
+        |app| {
+            app.add_systems(OnEnter(EngineState::InGame), spawn_hero);
+            with_landmarks(app);
+        },
+    );
     configure_session(app.world_mut(), PLAYER, &SessionChange { scope: Some(Scope::Player), ..default() }).unwrap();
     app.world_mut().spawn(Window::default());
     app.update();

@@ -310,7 +310,7 @@ fn value_text(w: &UiWidget) -> String {
         (WidgetKind::Choice { .. }, UiValue::Choice(v)) => format!("< {} >", w.kind.option_label(v)),
         (WidgetKind::Binding { .. }, UiValue::Bindings(bound)) => {
             let shown: Vec<&str> = w.kind.shown_inputs(&bound.inputs).iter().map(|i| i.label.as_str()).collect();
-            if shown.is_empty() { "-".to_owned() } else { shown.join(" Â· ") }
+            if shown.is_empty() { "-".to_owned() } else { shown.join(" · ") }
         }
         (WidgetKind::Binding { .. }, UiValue::Text(why)) => why.clone(),
         (WidgetKind::Map { area, .. }, UiValue::Map { points, you }) => crate::text::map_words(area, points, you.as_ref()),
