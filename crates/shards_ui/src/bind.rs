@@ -151,16 +151,17 @@ pub(crate) fn refresh_values(world: &mut World, mut warned: Local<BTreeSet<Strin
 }
 
 /// A map's places with the viewer on them: where the body this machine plays stands and which
-/// way it faces. Other values as they are.
+/// way it faces. With no viewer to read (none, or a body with no `Transform`), the viewer the
+/// value already has stays. Other values as they are.
 fn with_viewer(world: &World, kind: &WidgetKind, value: UiValue) -> UiValue {
     match (kind, value) {
-        (WidgetKind::Map { .. }, UiValue::Map { points, .. }) => {
-            let you = viewer(world).and_then(|e| world.get::<Transform>(e)).map(|t| {
+        (WidgetKind::Map { .. }, UiValue::Map { points, you }) => {
+            let seen = viewer(world).and_then(|e| world.get::<Transform>(e)).map(|t| {
                 let ahead = t.forward();
                 let deg = ops::atan2(ahead.x, -ahead.z).to_degrees().rem_euclid(360.0);
                 MapYou { at: Vec2::new(t.translation.x, t.translation.z), deg }
             });
-            UiValue::Map { points, you }
+            UiValue::Map { points, you: seen.or(you) }
         }
         (_, value) => value,
     }
