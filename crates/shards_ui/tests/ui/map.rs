@@ -129,11 +129,11 @@ fn marks(app: &mut App) -> Vec<(Vec2, Result<Srgba, String>)> {
 
 #[test]
 fn places_are_marks_where_they_are_a_rumour_on_the_edge_and_the_viewer_last() {
-    let theme = r#"{ "default": (
+    let theme = r##"{ "default": (
         fonts: {"symbols": "fonts/symbols.ttf"},
         symbols: {"shrine": "[font=symbols]ᛋ[/font]"},
         map_colors: {"completed": "#00ff00", "you": "#ff0000"},
-    ) }"#;
+    ) }"##;
     let mut app = game_on(assets("marks", Some(theme)), true);
     let drawn = marks(&mut app);
     let near = |a: Vec2, b: Vec2| (a - b).length() < 0.01;
@@ -169,7 +169,7 @@ fn the_content_check_names_a_map_that_cannot_be_drawn() {
         Map(id: "flat", bind: "places", area: (min: (0.0, 0.0), max: (10.0, 0.0))),
         Map(id: "tiny", bind: " ", area: (min: (0.0, 0.0), max: (1.0, 1.0)), width: 0.0),
     ]) }"#;
-    let theme = r#"{ "default": (map_colors: {"lost": "#ffffff", "rumor": "grey"}) }"#;
+    let theme = r##"{ "default": (map_colors: {"lost": "#ffffff", "rumor": "grey"}) }"##;
     let sources = [
         Source { path: "content/s.screen.ron".into(), text: screen.into() },
         Source { path: "content/t.theme.ron".into(), text: theme.into() },

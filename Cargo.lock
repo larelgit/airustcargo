@@ -5485,6 +5485,7 @@ dependencies = [
  "shards_action",
  "shards_content",
  "shards_core",
+ "shards_locale",
  "shards_settings",
  "shards_ui",
 ]
