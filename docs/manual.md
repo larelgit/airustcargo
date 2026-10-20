@@ -4502,7 +4502,7 @@ state (`npc_overlay on=false` while the overlay is on). An entry that needs a va
 
 ```text
 $ shards act dev_menu
-dev menu: 43 entries (F10 in a window); `dev_menu run=<id>` runs one, `console line=...` runs any line
+dev menu: 45 entries (F10 in a window); `dev_menu run=<id>` runs one, `console line=...` runs any line
 time
   pause            Pause / resume                          resume
   step             One tick (while paused)                 step ticks=1
