@@ -521,7 +521,7 @@ The game's numbers and definitions live in files, not in code: attacks, prefabs,
 
 - An id is a non-empty string without spaces or control characters; it is unique within its content kind across all files.
 - The engine registers its own content kinds: `prefab`, `locomotion`, `action`, `moveset`, `status`, `combat_tuning`, `animset`, `prop`,
-  `input_map`, the camera `camera` and `lock_on`, levels `level`, world `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`,
+  `input_map`, the camera `camera`, `lock_on` and `shot` (see "Scene cameras (K3)"), levels `level`, world `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`,
   voxels `voxel_palette` and `voxel_region`, enemies `behavior`, `perception`, `director`, `attack_plan`, `npc_tuning` and `nav`,
   encounters `encounter` and `encounter_rules` (see "Encounters (G9)"), sound `audio`, `sound` and `music`, screens `screen` and `theme`, `locale`, `save`, `net`, `perf`, `devmenu`, mesh looks `look` (see "Stylised materials (E10.1)"),
   foliage `scatter` (see "Foliage and small objects (E10.2)"), effects `effect` and `fx` (see "Effects and decals
@@ -1019,6 +1019,38 @@ The ranges of `pitch`, `follow_rate`, the rates, thresholds and amplitudes are c
 leaves its effect on). Two systems that want the same field must be combined by the game into one writer. Write in `PostUpdate` before `CameraSystems::Orbit` to be seen on the same frame (the set is empty without the `render` feature, so the writers run and are testable headless).
 
 *Auto-centre (K2).* With the player's `controls.camera_auto_centre` on (`CameraSettings::auto_centre`; off by default, so no picture changes until the player asks), free look turns back behind the body it follows once the player leaves the look alone: after `auto_centre.delay_s` real seconds with no look input (`ThirdPersonCamera::look_idle_s`), while the body walks at least `min_speed` on the ground (measured by the focus, which follows the body where it is drawn), the yaw eases toward behind the body's facing at `rate` (the exact exponential), and the pitch toward `auto_centre.pitch` when it is set. A body facing more than `max_turn_deg` from the camera's forward (one walking toward the camera) does not swing it round, and one standing still keeps the view. Any look input, a lock and a jump of the focus (a teleport, a respawn) start the wait over; a lock frames as it always does. The step is `camera::math::auto_centre`; like the rest of the camera it runs on `Time<Real>`, outside the simulation, so nothing in a replay or a snapshot changes. The sandbox has the toggle in its settings' controls.
+
+**Scene cameras (K3).** A shot is a short camera move a game plays over the orbit camera: a scene of half a minute, a boss's entrance of a few seconds (GDD §6.3, §15.1). It is content, kind `shot` (`*.shot.ron`, `shards::motion::camera::ShotDef`; presentation, so it is not in the content hash a replay checks):
+
+```ron
+// content/scenes/warden_intro.shot.ron
+{
+    "warden_intro": (
+        keys: [
+            (at: 0.0, eye: On(role: "boss", offset: (0.0, 2.0, -7.0), local: true), look: On(role: "boss", offset: (0.0, 3.0, 0.0))),
+            (at: 4.0, eye: On(role: "boss", offset: (2.0, 1.0, -4.0), local: true), look: On(role: "boss", offset: (0.0, 4.0, 0.0)),
+             fov_deg: 45.0, ease: InOut),
+            (at: 4.5, eye: At((0.0, 3.0, 12.0)), look: On(role: "hero"), cut: true),
+            (at: 6.0, eye: At((0.0, 2.0, 9.0)), look: On(role: "hero", offset: (0.0, 1.5, 0.0))),
+        ],
+        blend_in_s: 0.5,   // default 0: the shot starts where its first key is
+        blend_out_s: 0.8,  // default 0.5
+        skippable: true,   // default
+    ),
+}
+```
+
+- *Keys*: where the camera stands (`eye`) and what it looks at (`look`) at `at` seconds from the start, in time order (at most 120 s), and optionally the field of view (`fov_deg`, 10 to 120; without one, the player's). Between two keys the camera moves from one to the other, the later key's `ease` (`Linear`, the default, or `InOut`) shaping the move; a `cut` key is jumped to at its time (the camera holds the key before until then). Before the first key the camera holds it; the shot ends at the last.
+- *Points*: `At((x, y, z))` is a place in the world; `On(role:, offset:, local:)` a place on a body the game names when it plays the shot: its position plus `offset`, turned with the body when `local` (its forward is `-z`). A body that goes while the shot plays (despawned, a dead enemy taken away) holds the last place it was seen.
+- *Playing*: `shards::motion::camera::shot::play(world, id, &roles)` (`roles`: role name → entity) starts it on this machine's camera; `stop` is the game's skip (refused for a shot with `skippable: false`), `cancel` ends any. A shot blends in over `blend_in_s` from what the camera showed and back to where the orbit camera is over `blend_out_s`, at its end or when stopped; a second `play` ends the first as skipped. `play` is refused, with what to fix, for a shot that is missing or has problems, a role not given or given that the shot has not, a body that does not exist, and where nothing is drawn: a headless game has no `ThirdPersonCamera`, so a shot only plays in a window or `--offscreen`.
+- *The orbit camera meanwhile* stands still: its yaw and pitch stay as they were (the move axes keep their meaning), look input turns nothing, and lock-on picks and switches nothing (a lock the player had is framed again after the shot). Shake and the game's `CameraOffsets` do not touch the shot.
+- *Time* is `Time<Virtual>`: the pause menu pauses a shot, a slowed game slows it, and in a game started `--paused` it moves only by `step`. It is drawn in `PostUpdate` after `CameraSystems::Orbit`.
+- *Messages*: the observer events `ShotStarted { id }` and `ShotEnded { id, skipped }` (`skipped`: stopped before the last key, or replaced), journal lines `shot ID starts: 6.0s, boss=e5` and `shot ID ends (done|skipped)` (`Local`), and an `observe` line `SHOT warden_intro 2.4/6.0s skippable, roles boss=e5` (or `SHOT warden_intro stopped, back to the orbit camera in 0.3s`). The resource `Shots` says which plays (`Shots::playing`).
+- *Tools* (developer): `play_shot id=warden_intro role.boss=e5 role.hero=e1` and `stop_shot` (`force=true` cancels one that is not skippable).
+- *What stays the game's*: blocking the player's input during a scene, letterbox bars and subtitles, pausing or slowing the simulation, and which button skips (it calls `stop`).
+- `--check-content` names a shot with no keys, keys out of time order or past 120 s, a key whose `eye` and `look` are the same place, a field of view outside 10 to 120, an empty role, a number that is not finite, and a blend outside 0 to 10 s.
+
+The simulation never reads the camera: nothing of a shot is in a snapshot or a replay.
 
 **The camera next to a big body (R4).** A locked camera looks at the player's head. Next to a body several times the player's height,
 a lock point on it (a horn, a core high in its chest; "Lock points (R3)") leaves the top of the frame, while the frame's bottom

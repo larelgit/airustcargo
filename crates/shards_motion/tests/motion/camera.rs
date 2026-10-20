@@ -16,6 +16,8 @@ use shards_settings::AccessibilitySettings;
 
 use crate::common::*;
 
+mod shot;
+
 struct Scene {
     app: App,
     player: Entity,
