@@ -92,8 +92,8 @@ fn agents_read_the_places_in_words_and_a_rumour_as_a_direction() {
 }
 
 /// The marks drawn on `map`, in the order drawn: each one's centre (pixels from the map's top
-/// left) and its dot's colour, or the text of its symbol.
-fn marks(app: &mut App) -> Vec<(Vec2, Result<Srgba, String>)> {
+/// left), its dot's colour or the text of its symbol, and its frame's box.
+fn marks(app: &mut App) -> Vec<(Vec2, Result<Srgba, String>, Rect)> {
     let e = {
         let mut q = app.world_mut().query::<(Entity, &UiWidget)>();
         q.iter(app.world()).find(|(_, w)| w.path == "atlas/map").map(|(e, _)| e).unwrap()
@@ -108,7 +108,8 @@ fn marks(app: &mut App) -> Vec<(Vec2, Result<Srgba, String>)> {
         .filter(|c| app.world().get::<ImageNode>(*c).is_none())
         .map(|c| {
             let node = app.world().get::<Node>(c).unwrap();
-            let centre = Vec2::new(px(node.left) + px(node.width) * 0.5, px(node.top) + px(node.height) * 0.5);
+            let frame = Rect::new(px(node.left), px(node.top), px(node.left) + px(node.width), px(node.top) + px(node.height));
+            let centre = frame.center();
             let inside = app.world().get::<Children>(c).unwrap()[0];
             // A symbol is a text (every UI node has a background, a text's is clear); a dot is not.
             let look = match app.world().get::<Text>(inside) {
@@ -122,7 +123,7 @@ fn marks(app: &mut App) -> Vec<(Vec2, Result<Srgba, String>)> {
                 }
                 None => Ok(app.world().get::<BackgroundColor>(inside).unwrap().0.to_srgba()),
             };
-            (centre, look)
+            (centre, look, frame)
         })
         .collect()
 }
@@ -140,7 +141,11 @@ fn places_are_marks_where_they_are_a_rumour_on_the_edge_and_the_viewer_last() {
     assert_eq!(drawn.len(), 4, "{drawn:?}");
     assert!(near(drawn[0].0, Vec2::new(112.0, 60.0)), "the shrine, 12 m east and 40 m north of the middle: {drawn:?}");
     assert_eq!(drawn[0].1, Err("ᛋ".into()), "drawn as its category's symbol");
-    assert!(near(drawn[1].0, Vec2::new(200.0, 0.0)), "the ruins heard of to the north-east: the corner that way, not where they are");
+    // The ruins heard of to the north-east: the corner that way, not where they are, drawn whole
+    // inside it (the map clips what is outside).
+    let ruins = drawn[1].2;
+    assert!(ruins.width() > 0.0 && near(Vec2::new(ruins.max.x, ruins.min.y), Vec2::new(200.0, 0.0)), "in the north-east corner: {drawn:?}");
+    assert!(drawn.iter().all(|d| d.2.min.x >= 0.0 && d.2.min.y >= 0.0 && d.2.max.x <= 200.0 && d.2.max.y <= 200.0), "every mark whole on the map: {drawn:?}");
     assert!(near(drawn[2].0, Vec2::new(105.0, 105.0)));
     assert_eq!(drawn[2].1, Ok(Srgba::rgb_u8(0, 255, 0)), "the theme's colour for a place done with");
     assert!(near(drawn[3].0, Vec2::new(100.0, 100.0)) && drawn[3].1 == Ok(Srgba::rgb_u8(255, 0, 0)), "the viewer, last, in its colour");

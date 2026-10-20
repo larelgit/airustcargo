@@ -5431,7 +5431,8 @@ come from the game's source `bind`, which returns `UiValue::Map { points, you: N
 `z`), a `MapState` (`Rumor`, `Discovered`, `Completed`) and a category. Which places a player knows of, and in what state, is the game's,
 kept in its own save section; the engine draws what the source says. A discovered or completed place is a mark where it is (on the
 nearest edge when it lies outside the area); a **rumour** is a mark on the edge, on the line from the viewer (the map's middle without one)
-toward where the place is said to be, so the map gives a direction, not the place. The widget adds the viewer (the HUD's body: where it
+toward where the place is said to be, so the map gives a direction, not the place. A mark on an edge is drawn whole, just inside it
+(the map clips what lies outside). The widget adds the viewer (the HUD's body: where it
 stands and faces) and draws it last. The theme's `map_colors` colour the marks by state (`rumor`, `discovered`, `completed`, and `you`;
 by default the dim text, the text, `#4fae55` and the accent), and its `symbols` draw a category as on the compass. Marks are drawn again
 in place when the places or the viewer move. Agents (`ui_read`) and screen readers read it in words, a rumour as a compass direction from

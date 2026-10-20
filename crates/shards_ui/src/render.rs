@@ -358,10 +358,12 @@ fn draw_map_marks(world: &mut World, e: Entity, w: &UiWidget) {
     let mut marks = Vec::new();
     let mut place = |world: &mut World, at: Vec2, rgba: [u8; 4], symbol: Option<&str>, side: f32| {
         let side = side * 2.0;
+        // A mark on the edge (a rumor, a place off the area) is drawn inside it: the map clips.
+        let inside = |at: f32, length: f32| (at - side * 0.5).clamp(0.0, (length - side).max(0.0));
         let frame = Node {
             position_type: PositionType::Absolute,
-            left: Val::Px(at.x - side * 0.5),
-            top: Val::Px(at.y - side * 0.5),
+            left: Val::Px(inside(at.x, size.x)),
+            top: Val::Px(inside(at.y, size.y)),
             width: Val::Px(side),
             height: Val::Px(side),
             justify_content: JustifyContent::Center,
