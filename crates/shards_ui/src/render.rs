@@ -71,6 +71,10 @@ struct UnknownFonts(std::collections::BTreeSet<String>);
 #[derive(Component)]
 struct Runs(Vec<Entity>);
 
+/// A map's marks (places and the viewer), drawn again whole when they move.
+#[derive(Component)]
+struct MapMarks(Vec<Entity>);
+
 /// A full-screen node holding a screen's root, placed by its anchor.
 #[derive(Component)]
 struct Frame;
@@ -129,7 +133,7 @@ fn draw(world: &mut World) {
         }
         let in_place = before.as_ref().is_some_and(|b| {
             b.focused == now.focused && b.shown == now.shown && UiWidget { value: UiValue::None, ..b.widget.clone() } == UiWidget { value: UiValue::None, ..now.widget.clone() }
-        }) && matches!(now.widget.kind, WidgetKind::Bar { .. } | WidgetKind::Slider { .. } | WidgetKind::Cooldown | WidgetKind::Text | WidgetKind::Hint | WidgetKind::Compass);
+        }) && matches!(now.widget.kind, WidgetKind::Bar { .. } | WidgetKind::Slider { .. } | WidgetKind::Cooldown | WidgetKind::Text | WidgetKind::Hint | WidgetKind::Compass | WidgetKind::Map { .. });
         if in_place {
             update_value(world, e, &now.widget);
         } else {
@@ -309,6 +313,7 @@ fn value_text(w: &UiWidget) -> String {
             if shown.is_empty() { "-".to_owned() } else { shown.join(" · ") }
         }
         (WidgetKind::Binding { .. }, UiValue::Text(why)) => why.clone(),
+        (WidgetKind::Map { area, .. }, UiValue::Map { points, you }) => crate::text::map_words(area, points, you.as_ref()),
         _ => String::new(),
     }
 }
@@ -335,6 +340,61 @@ fn fill(w: &UiWidget) -> f32 {
     share.clamp(0.0, 1.0) * 100.0
 }
 
+/// A map's marks over its picture, drawn again whole: a dot for each place in its state's colour
+/// (the category's symbol from the theme instead, where it has one), a rumour on the edge toward
+/// it, the viewer last. Each mark is a box centred on its point.
+fn draw_map_marks(world: &mut World, e: Entity, w: &UiWidget) {
+    if let Some(MapMarks(old)) = world.entity_mut(e).take::<MapMarks>() {
+        for mark in old {
+            if let Ok(mark) = world.get_entity_mut(mark) {
+                mark.despawn();
+            }
+        }
+    }
+    let (WidgetKind::Map { area, width, height, .. }, UiValue::Map { points, you }) = (&w.kind, &w.value) else { return };
+    let size = Vec2::new(*width, *height);
+    let t = theme(world);
+    let dot = t.hint_size * 0.6;
+    let mut marks = Vec::new();
+    let mut place = |world: &mut World, at: Vec2, rgba: [u8; 4], symbol: Option<&str>, side: f32| {
+        let side = side * 2.0;
+        // A mark on the edge (a rumor, a place off the area) is drawn inside it: the map clips.
+        let inside = |at: f32, length: f32| (at - side * 0.5).clamp(0.0, (length - side).max(0.0));
+        let frame = Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(inside(at.x, size.x)),
+            top: Val::Px(inside(at.y, size.y)),
+            width: Val::Px(side),
+            height: Val::Px(side),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        };
+        let mark = world.spawn((Part, frame, Pickable::IGNORE, ChildOf(e))).id();
+        match symbol {
+            Some(symbol) => {
+                let font = font(world, |t| t.hint_size);
+                let text = world.spawn((Part, Text::new(""), font, TextColor(color(rgba)), Pickable::IGNORE, ChildOf(mark))).id();
+                draw_runs(world, text, symbol);
+            }
+            None => {
+                let round = Node { width: Val::Px(side * 0.5), height: Val::Px(side * 0.5), border_radius: BorderRadius::MAX, ..default() };
+                world.spawn((Part, round, BackgroundColor(color(rgba)), Pickable::IGNORE, ChildOf(mark)));
+            }
+        }
+        marks.push(mark);
+    };
+    for p in points {
+        let at = crate::map::mark_at(area, size, p, you.as_ref());
+        let symbol = p.category.as_ref().and_then(|c| t.symbols.get(c)).map(String::as_str);
+        place(world, at, t.map_color(p.state.name()), symbol, dot);
+    }
+    if let Some(y) = you {
+        place(world, area.to_map(size, y.at), t.map_color("you"), None, dot * 1.25);
+    }
+    world.entity_mut(e).insert(MapMarks(marks));
+}
+
 /// A value changed and nothing else: the fill and the value text follow.
 fn update_value(world: &mut World, e: Entity, w: &UiWidget) {
     let (fill_part, value_part) = world.get::<Parts>(e).map_or((None, None), |p| (p.fill, p.value));
@@ -357,6 +417,7 @@ fn update_value(world: &mut World, e: Entity, w: &UiWidget) {
                 let drawn = compass_drawn(&world.resource::<Look>().theme, *deg, marks);
                 draw_runs(world, e, &drawn);
             }
+            (WidgetKind::Map { .. }, _) => draw_map_marks(world, e, w),
             _ => {
                 if let Some(mut t) = world.get_mut::<Text>(e) {
                     t.0 = text;
@@ -408,6 +469,7 @@ fn role(w: &UiWidget, screen: Option<Layer>) -> Role {
         (WidgetKind::Text | WidgetKind::Compass | WidgetKind::Cooldown | WidgetKind::Compare, _) => Role::Label,
         (WidgetKind::Hint, _) => Role::Status,
         (WidgetKind::Image { .. }, _) => Role::Image,
+        (WidgetKind::Map { .. }, _) => Role::Image,
         (WidgetKind::Button { .. }, _) => Role::Button,
         (WidgetKind::Bar { .. }, _) => Role::ProgressIndicator,
         (WidgetKind::Allies, _) => Role::List,
@@ -506,6 +568,20 @@ fn redraw(world: &mut World, e: Entity, state: &Drawn) {
             let picture = (Part, Node { width: fill(width), height: fill(height), ..default() }, ImageNode::new(image), AccessibilityNode(unseen));
             let picture = world.spawn((picture, ChildOf(e))).id();
             parts.all.push(picture);
+        }
+        WidgetKind::Map { image, width, height, .. } => {
+            let node = Node { display, width: Val::Px(*width), height: Val::Px(*height), overflow: Overflow::clip(), ..default() };
+            world.entity_mut(e).insert(node);
+            if let Some(path) = image {
+                // A part screen readers skip, as an image widget's picture is.
+                let image = world.resource::<AssetServer>().load(path.clone());
+                let mut unseen = A11yNode::new(Role::Image);
+                unseen.set_hidden();
+                let whole = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
+                let picture = world.spawn((Part, whole, ImageNode::new(image), AccessibilityNode(unseen), Pickable::IGNORE, ChildOf(e))).id();
+                parts.all.push(picture);
+            }
+            draw_map_marks(world, e, w);
         }
         WidgetKind::Button { .. } => {
             let node = Node {

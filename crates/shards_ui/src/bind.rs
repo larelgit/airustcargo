@@ -12,6 +12,7 @@ use bevy::prelude::*;
 use shards_core::LocalPlayer;
 use shards_settings::SettingsRegistry;
 
+use crate::map::MapYou;
 use crate::model::{UiValue, UiWidget, WidgetKind};
 
 /// The body a HUD is about: the one this machine's controls drive (`LocalPlayer`), else the one
@@ -96,11 +97,12 @@ pub fn read_source(world: &World, bind: &str) -> Result<Option<UiValue>, String>
 /// The value `widget` has now: its source's, its player setting's, or its own.
 pub fn live_value(world: &World, widget: &UiWidget) -> UiValue {
     if let Some(bind) = &widget.bind {
-        return match read_source(world, bind) {
+        let value = match read_source(world, bind) {
             Ok(Some(value)) => value,
             // Nothing to show (no viewer): the widget keeps what it had.
             Ok(None) | Err(_) => widget.value.clone(),
         };
+        return with_viewer(world, &widget.kind, value);
     }
     if let Some(key) = &widget.setting
         && let Some(text) = world.get_resource::<SettingsRegistry>().and_then(|r| r.value(world, key))
@@ -145,5 +147,22 @@ pub(crate) fn refresh_values(world: &mut World, mut warned: Local<BTreeSet<Strin
         if let Some(mut widget) = world.get_mut::<UiWidget>(e) {
             widget.value = value;
         }
+    }
+}
+
+/// A map's places with the viewer on them: where the body this machine plays stands and which
+/// way it faces. With no viewer to read (none, or a body with no `Transform`), the viewer the
+/// value already has stays. Other values as they are.
+fn with_viewer(world: &World, kind: &WidgetKind, value: UiValue) -> UiValue {
+    match (kind, value) {
+        (WidgetKind::Map { .. }, UiValue::Map { points, you }) => {
+            let seen = viewer(world).and_then(|e| world.get::<Transform>(e)).map(|t| {
+                let ahead = t.forward();
+                let deg = ops::atan2(ahead.x, -ahead.z).to_degrees().rem_euclid(360.0);
+                MapYou { at: Vec2::new(t.translation.x, t.translation.z), deg }
+            });
+            UiValue::Map { points, you: seen.or(you) }
+        }
+        (_, value) => value,
     }
 }
