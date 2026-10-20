@@ -5,7 +5,7 @@
 use serde_json::json;
 use shards::action::AnimationCue;
 use shards::bevy::mesh::MeshTag;
-use shards::fx::{EffectAt, FxParticle, Particles, PlayEffect};
+use shards::fx::{EffectAt, FxParticle, Particle, Particles, PlayEffect};
 
 use crate::*;
 
@@ -153,6 +153,84 @@ fn an_effect_with_a_rate_goes_on_emitting_as_the_clock_runs() {
     assert_eq!(particles.effects["dust"].pool.started, 16);
 }
 
+/// Takes the live particles of `effect` out of its pool.
+fn take(app: &mut App, effect: &str) -> Vec<Particle> {
+    let mut particles = app.world_mut().resource_mut::<Particles>();
+    let pool = &mut particles.effects.get_mut(effect).expect("played").pool;
+    pool.slots.iter_mut().filter_map(Option::take).collect()
+}
+
+#[test]
+fn a_cue_at_a_bone_plays_at_that_point_and_its_strength_scales_the_burst() {
+    let assets = Folder::new("cue_strength");
+    let mut app = drawn(&assets);
+    let hero = fighter(app.world_mut(), "hero", "heroes", Vec3::new(2.0, 0.0, 0.0), Vec3::NEG_Z, 100.0);
+    app.update();
+    // `swoosh` is the table's `glow`: 4 particles of 0.08 to 0.12 m, at the point or the feet.
+    let foot = Vec3::new(1.0, 0.25, 3.0);
+    let cue = |at: Option<Vec3>, strength: f32| AnimationCue {
+        bone: at.map(|_| "foot.L".to_owned()),
+        at,
+        strength,
+        ..AnimationCue::new(hero, "swoosh", "walk")
+    };
+    let play = |app: &mut App, event: AnimationCue| {
+        app.world_mut().trigger(event);
+        app.world_mut().flush();
+        take(app, "glow")
+    };
+    let sizes = |burst: &[Particle]| burst.iter().fold((f32::MAX, 0.0f32), |(lo, hi), p| (lo.min(p.size), hi.max(p.size)));
+
+    // A cue at a bone: where the bone is, not the body's feet.
+    let full = play(&mut app, cue(Some(foot), 1.0));
+    assert_eq!(full.len(), 4);
+    assert!(full.iter().all(|p| p.origin == foot), "{:?}", full.iter().map(|p| p.origin).collect::<Vec<_>>());
+    let (lo, hi) = sizes(&full);
+    assert!(lo >= 0.08 && hi <= 0.12, "as the effect says: {lo} to {hi}");
+
+    // Half the strength: half the particles, half the size.
+    let half = play(&mut app, cue(Some(foot), 0.5));
+    assert_eq!(half.len(), 2);
+    assert!(half.iter().all(|p| p.origin == foot));
+    let (lo, hi) = sizes(&half);
+    assert!(lo >= 0.04 - 1e-6 && hi <= 0.06 + 1e-6, "{lo} to {hi}");
+    // A faint one still shows a particle; a strong one is a bigger burst.
+    assert_eq!(play(&mut app, cue(Some(foot), 0.1)).len(), 1);
+    let strong = play(&mut app, cue(Some(foot), 2.0));
+    assert_eq!(strong.len(), 8);
+    assert!(sizes(&strong).0 >= 0.16 - 1e-6);
+
+    // Strength 0 plays nothing, and a strength that is no number neither.
+    let started = |app: &App| (app.world().resource::<Particles>().effects["glow"].pool.started, app.world().resource::<Particles>().played);
+    let before = started(&app);
+    for strength in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+        assert!(play(&mut app, cue(Some(foot), strength)).is_empty(), "strength {strength}");
+    }
+    assert_eq!(started(&app), before, "nothing started and nothing counted");
+
+    // Without a bone the cue is the body's: its feet, at the strength it has.
+    let feet = play(&mut app, cue(None, 0.5));
+    assert_eq!(feet.len(), 2);
+    assert!(feet.iter().all(|p| p.origin == Vec3::new(2.0, 0.0, 0.0)), "{:?}", feet.iter().map(|p| p.origin).collect::<Vec<_>>());
+
+    // An effect with a rate scales what it emits later too: 6 + 10 at full strength, 3 + 5 at half,
+    // each as big as half, over the same half second (10 a second, not 20).
+    let played = shards::fx::play_scaled(app.world_mut(), "dust", EffectAt::Point(foot), None, 0.5).unwrap();
+    assert_eq!((played.particles, played.later), (3, 5));
+    step(&mut app, 16);
+    app.update();
+    let particles = app.world().resource::<Particles>();
+    assert_eq!((particles.emitters.len(), particles.effects["dust"].pool.started), (1, 5), "0.27 s in: two more, still going");
+    step(&mut app, 16);
+    app.update();
+    let particles = app.world().resource::<Particles>();
+    assert!(particles.emitters.is_empty(), "done emitting");
+    assert_eq!(particles.effects["dust"].pool.started, 8);
+    let dust = take(&mut app, "dust");
+    assert_eq!(dust.len(), 8);
+    assert!(dust.iter().all(|p| p.size <= 0.06 + 1e-6), "{:?}", dust.iter().map(|p| p.size).collect::<Vec<_>>());
+}
+
 #[test]
 fn the_tables_events_and_cues_play_their_effects() {
     let assets = Folder::new("events");
@@ -176,7 +254,7 @@ fn the_tables_events_and_cues_play_their_effects() {
     let e = id(&app, hero);
     ok(&mut app, "heal", json!({"id": e}));
     assert_eq!(live(&app, "glow"), 4);
-    app.world_mut().trigger(AnimationCue { entity: hero, cue: "swoosh".into(), clip: "slash".into() });
+    app.world_mut().trigger(AnimationCue::new(hero, "swoosh", "slash"));
     app.world_mut().flush();
     assert_eq!(live(&app, "glow"), 8);
     // A game's own play; one of an effect no content defines is journaled once.
