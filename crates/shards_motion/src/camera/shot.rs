@@ -61,6 +61,7 @@ pub const BLEND_MAX_S: f32 = 10.0;
 
 /// A place a shot's camera stands at or looks at.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub enum ShotPoint {
     /// A place in the world.
     At(Vec3),
@@ -490,6 +491,17 @@ fn end(world: &mut World, skipped: bool) {
     world.trigger(ShotEnded { id: playing.id, skipped });
 }
 
+/// What a playing shot shows on camera `e` at `t` s in, where the shot itself is at `shot`: for
+/// its first `blend_in_s`, the blend in from what the camera showed when the shot started.
+#[cfg(feature = "render")]
+fn blended_in(playing: &Playing, e: Entity, t: f32, shot: ShotPose) -> ShotPose {
+    let blend_in = playing.def.blend_in_s;
+    match playing.from.get(&e) {
+        Some(from) if blend_in > 0.0 && t < blend_in => blend(*from, shot, t / blend_in),
+        _ => shot,
+    }
+}
+
 /// `PostUpdate`, after the orbit camera: the shot's pose on every camera, blended in from what it
 /// showed and back out to where the orbit camera is.
 #[cfg(feature = "render")]
@@ -519,8 +531,10 @@ fn show_shot(world: &mut World) {
         let t = (t_now - playing.started) as f32;
         let duration = playing.def.duration();
         if playing.ending.is_none() && t >= duration {
+            // The way back starts from what the shot shows at its end: a blend in longer than
+            // the shot is cut short where it got to, not jumped to the last key.
             let end_frame = sample(&playing.def, duration, &playing.seen, base_fov).pose();
-            let from = orbit.keys().map(|e| (*e, end_frame)).collect();
+            let from = orbit.keys().map(|e| (*e, blended_in(playing, *e, duration, end_frame))).collect();
             playing.ending = Some(Ending { at: playing.started + f64::from(duration), skipped: false, from });
         }
         match &playing.ending {
@@ -539,13 +553,8 @@ fn show_shot(world: &mut World) {
             }
             None => {
                 let shot = sample(&playing.def, t, &playing.seen, base_fov).pose();
-                let blend_in = playing.def.blend_in_s;
                 for e in orbit.keys() {
-                    let pose = match playing.from.get(e) {
-                        Some(from) if blend_in > 0.0 && t < blend_in => blend(*from, shot, t / blend_in),
-                        _ => shot,
-                    };
-                    poses.insert(*e, pose);
+                    poses.insert(*e, blended_in(playing, *e, t, shot));
                 }
             }
         }

@@ -17,6 +17,7 @@ use super::{cam, id, tap_lock, target, timed_scene, Scene};
 ///   the boss, narrowing to 40°; back to the orbit camera over 1 s.
 /// - `follow`: 4 m south of the boss and 2 m up, looking at it, for 10 s; the default blend out.
 /// - `locked`: a still view that cannot be skipped, with no blend out.
+/// - `brief`: a still view far above and behind, 1 s long with a 3 s blend in: it ends first.
 const SHOTS: &str = r#"{
     "intro": (
         keys: [
@@ -36,6 +37,14 @@ const SHOTS: &str = r#"{
         ],
         skippable: false,
         blend_out_s: 0.0,
+    ),
+    "brief": (
+        keys: [
+            (at: 0.0, eye: At((0.0, 20.0, 30.0)), look: At((0.0, 0.0, 0.0))),
+            (at: 1.0, eye: At((0.0, 20.0, 30.0)), look: At((0.0, 0.0, 0.0))),
+        ],
+        blend_in_s: 3.0,
+        blend_out_s: 1.0,
     ),
 }"#;
 
@@ -223,4 +232,27 @@ fn a_shot_is_refused_what_it_cannot_follow_and_one_that_cannot_be_skipped_is_can
     ok(&mut s, "play_shot", json!({"id": "follow", "role.boss": boss}));
     assert_eq!(playing(&s).as_deref(), Some("follow"));
     assert_eq!(ended(&s).last(), Some(&("intro".to_owned(), true)));
+}
+
+#[test]
+fn a_shot_shorter_than_its_blend_in_goes_back_from_where_the_blend_got_to() {
+    let mut s = shots();
+    let orbit_at = pose(&s).0;
+    let far = Vec3::new(0.0, 20.0, 30.0);
+    ok(&mut s, "play_shot", json!({"id": "brief"}));
+    // The camera never jumps: a little toward the shot on each frame, then back.
+    let (mut at, mut closest) = (orbit_at, f32::MAX);
+    for frame in 1..=25 {
+        frames(&mut s, 1);
+        let now = pose(&s).0;
+        assert!(now.distance(at) < 3.0, "frame {frame}: a jump from {at} to {now}");
+        closest = closest.min(now.distance(far));
+        at = now;
+    }
+    // The blend in was a third of the way when the shot ended: back from there, the shot's own
+    // place never reached.
+    let way = orbit_at.distance(far);
+    assert!(closest > way * 0.5, "{closest} of {way}");
+    assert_eq!(ended(&s), [("brief".to_owned(), false)]);
+    assert!(near(pose(&s).0, orbit_at));
 }

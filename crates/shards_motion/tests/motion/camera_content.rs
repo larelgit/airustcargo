@@ -139,6 +139,8 @@ fn a_shot_plays_only_where_the_game_is_drawn_and_a_bad_one_names_its_file_and_ke
             ], blend_out_s: -1.0),
         }"#,
     );
+    // A misspelt field of a point is an error, not a point at the body's origin.
+    write(&dir, "content/typo.shot.ron", r#"{"typo": (keys: [(at: 0.0, eye: On(role: "boss", ofset: (0.0, 3.0, 0.0)), look: At((0.0, 0.0, 0.0)))])}"#);
     let mut app = engine_app(&dir);
     let errors: Vec<String> = app.world().resource::<shards_content::ContentDb>().errors().map(ToString::to_string).collect();
     for needle in [
@@ -149,7 +151,8 @@ fn a_shot_plays_only_where_the_game_is_drawn_and_a_bad_one_names_its_file_and_ke
     ] {
         assert!(errors.iter().any(|e| e.contains("content/scenes.shot.ron") && e.contains(needle)), "{needle}: {errors:?}");
     }
-    assert_eq!(errors.len(), 4, "{errors:?}");
+    assert!(errors.iter().any(|e| e.contains("content/typo.shot.ron") && e.contains("ofset")), "{errors:?}");
+    assert_eq!(errors.len(), 5, "{errors:?}");
     let e = fails(&mut app, "play_shot", json!({"id": "muddled"}));
     assert!(e.contains("shot `muddled` cannot play: keys[0]: `eye` and `look` are the same place"), "{e}");
     // No window, no camera: nothing to play a shot on.
