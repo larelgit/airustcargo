@@ -5383,6 +5383,17 @@ an AccessKit node: a role (`Dialog`, `Button`, `Slider`, `ProgressIndicator`, �
 menu. Text is drawn in the theme's font (`font: "fonts/MyFont.ttf"`, a file in the assets folder; the content check looks for it); without one,
 the engine's default font is used (`shards::ui::DEFAULT_FONT`, Fira Sans: Latin, Greek, Cyrillic).
 
+**Font spans** (U1). A theme names more fonts (`fonts: {"symbols": "fonts/Runes.ttf"}`), and the value of a `Text` or `Hint`
+widget draws a run in one with `[font=name]…[/font]`: `the door said [font=symbols]ᚱᚢᚾ[/font].` draws the word in `symbols` and the rest
+in the theme's font, at the widget's size and colour. The value can come from the screen, a message (`@id`: square brackets survive
+Fluent, which owns `{…}`) or a source, and it is drawn again in place when it changes (one `TextSpan` per run). Tags nest; a tag that is
+never closed, a `[/font]` with nothing open and a name that is not letters, digits, `_` and `-` are drawn as written. Other texts
+(labels, titles) are drawn as written. Screen readers, `ui_read` and `observe` get the text without the tags
+(`shards::ui::markup::plain`). The content check refuses a theme font name that is not a name or whose file is missing, and a span in a
+screen's `Text` or `Hint` that names a font the theme `default` lacks; a message or a source is checked where it is drawn: such a run is
+drawn in the theme's font, and the journal says so once (`ui: [font=nope] names no font of the theme…`). The engine ships no symbol font:
+the game brings its own.
+
 **Full-screen flashes** (U2). A colour over the whole picture for a moment: a reality flash, the 2–3 s glitch of a reality crack.
 A flash is content, kind `flash`:
 
@@ -5411,7 +5422,8 @@ Tests: `crates/shards_ui` (unit tests for parsing and navigation; `tests/ui/`: s
 without a GPU, a replay with pressed buttons, an edit to a screen in a running game and the refusal of a broken one, the main menu, the image and
 the loading image — `main_menu.rs`; `bindings.rs` — rebinding through `ui_set`, a refusal that names the action, waiting for
 a key, a mouse button and a gamepad button, Escape, which does not close the screen, a replay; `flash.rs` — a flash frame by frame,
-`reduced` and `off`, a newer flash and the trigger, the tool, the content check), `template/tests/game/main_menu.rs` (the path
+`reduced` and `off`, a newer flash and the trigger, the tool, the content check; `fonts.rs` — runs in a named font, drawn again in place,
+a font the theme lacks, the text without markup for agents and screen readers, the content check), `template/tests/game/main_menu.rs` (the path
 through the menu gives the same game and the same replay as without it; "Continue" with a save and without one), scenarios
 `crates/sandbox/scenarios/ui.scenario` and `template/scenarios/menus.scenario`.
 
