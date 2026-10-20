@@ -340,9 +340,15 @@ fn timed_scene(auto_centre: bool) -> Scene {
 
 /// The player walks `frames` frames at 2 m/s along `dir`, facing it; the camera's yaw after.
 fn walk(s: &mut Scene, dir: Vec3, frames: usize) -> f32 {
+    walk_by(s, dir, 0.2, frames)
+}
+
+/// The player moves `step` meters a frame along `dir`, facing it, for `frames` frames; the
+/// camera's yaw after.
+fn walk_by(s: &mut Scene, dir: Vec3, step: f32, frames: usize) -> f32 {
     for _ in 0..frames {
         let mut tf = s.app.world_mut().get_mut::<Transform>(s.player).unwrap();
-        tf.translation += dir * 0.2;
+        tf.translation += dir * step;
         tf.look_to(dir, Vec3::Y);
         s.app.update();
     }
@@ -381,6 +387,28 @@ fn left_alone_the_view_turns_behind_a_walking_body_when_the_player_wants_it() {
     let mut s = timed_scene(true);
     s.app.world_mut().get_mut::<Transform>(s.player).unwrap().look_to(Vec3::X, Vec3::Y);
     assert_eq!(walk(&mut s, Vec3::new(1e-4, 0.0, 0.0), 40), 0.0);
+}
+
+#[test]
+fn a_short_teleport_starts_the_wait_over_and_a_stop_stops_the_turn_at_once() {
+    use std::f32::consts::FRAC_PI_2;
+    // A body placed 5 m away (past `body_snap_distance`, short of the focus's `snap_distance`)
+    // was not walked there: the wait starts over on that frame.
+    let mut s = timed_scene(true);
+    assert_eq!(walk(&mut s, Vec3::X, 14), 0.0);
+    assert_eq!(walk_by(&mut s, Vec3::X, 5.0, 1), 0.0);
+    assert_eq!(cam(&s).look_idle_s, 0.1, "the teleport's frame starts the wait over");
+    assert_eq!(walk(&mut s, Vec3::X, 13), 0.0, "1.4 s after the teleport");
+    assert!(walk(&mut s, Vec3::X, 2) < 0.0, "then it turns");
+
+    // A body that stops from a run stops the turn on the same frame, while the focus still
+    // catches up with it.
+    let mut s = timed_scene(true);
+    let turning = walk_by(&mut s, Vec3::X, 0.6, 20);
+    assert!(turning < 0.0 && turning > -FRAC_PI_2 + 0.1, "turning, not yet behind: {turning}");
+    let focus = cam(&s).focus;
+    assert_eq!(walk_by(&mut s, Vec3::X, 0.0, 1), turning, "standing still");
+    assert!(cam(&s).focus.x - focus.x > 0.05, "the focus still caught up");
 }
 
 #[test]

@@ -339,7 +339,6 @@ fn orbit_camera(
         let subject_at = shown_translation(subject.unwrap_or(Entity::PLACEHOLDER), subject_tf, &children, &visuals);
         let head = subject_at + Vec3::Y * camera.height;
         let rate = 1.0 - ops::exp(-tuning.follow_rate.unwrap_or(camera.follow_rate) * dt);
-        let before = camera.focus;
         if camera.focus == Vec3::ZERO || camera.focus.distance(head) > tuning.snap_distance {
             // A jump (a teleport, a respawn): nothing of the old place to catch up from.
             camera.focus = head;
@@ -348,9 +347,17 @@ fn orbit_camera(
         } else {
             camera.focus = camera.focus.lerp(head, rate);
         }
-        // How fast the followed body walks on the ground, as the focus follows it where it is drawn (m/s).
-        let ground = Vec2::new(camera.focus.x - before.x, camera.focus.z - before.z).length();
-        let walk = if dt > 0.0 { ground / dt } else { 0.0 };
+        // How fast the followed body walks on the ground, where it is drawn (m/s): from the body
+        // itself, since the focus goes on catching up after it stops. A body that moved farther
+        // than `body_snap_distance` since the last frame was placed (a teleport too short to
+        // jump the focus): it did not walk, and the wait starts over.
+        let seen = camera.subject_seen.replace(subject_at);
+        let placed = seen.is_some_and(|was| was.distance(subject_at) > tuning.body_snap_distance);
+        if placed {
+            camera.look_idle_s = 0.0;
+        }
+        let ground = seen.map_or(0.0, |was| Vec2::new(subject_at.x - was.x, subject_at.z - was.z).length());
+        let walk = if dt > 0.0 && !placed { ground / dt } else { 0.0 };
 
         match locked {
             _ if in_shot => camera.look_idle_s = 0.0,
