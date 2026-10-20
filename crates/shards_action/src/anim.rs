@@ -77,9 +77,25 @@
 //! While the action runs, the layer's bones follow its clip, seeked to the action's progress
 //! like any other, and every other bone keeps its locomotion clip. The blends are the usual
 //! ones: into the action's clip over that clip's `blend` (or `action_blend`), back to
-//! locomotion over the locomotion clip's. [`select_layer`] says what plays on a layer;
+//! locomotion over the locomotion clip's, or over the mapping's own `blend_out` (`(clip:
+//! "drink", layer: "upper", blend_out: 0.075)`). [`select_layer`] says what plays on a layer;
 //! [`select_clip_for`] chooses as if the action did not run. Picture only, like the rest of
 //! the set.
+//!
+//! ## Event overlays
+//!
+//! An engine event that names a body ([`OVERLAY_EVENTS`]: a hit it blocked or took, a parry, a
+//! guard broken, a stagger, a part broken, a landing) can play a clip on a layer for a while, over
+//! whatever the layer plays:
+//!
+//! ```ron
+//! //     overlays: {"damaged": (clip: "flinch", layer: "upper", fade_out: (0.2, 0.35), strength: 0.7)},
+//! ```
+//!
+//! The clip plays from its start on the simulation's clock, comes in over `fade_in` (0 by default),
+//! fades out between the two ages of `fade_out` and ends at the second; it takes at most `strength`
+//! of the layer's bones ([`OverlayDef::share`]), and the action's own clip there goes on under it.
+//! The same event again starts it over.
 //!
 //! ## Root motion
 //!
@@ -406,6 +422,68 @@ impl DropDef {
     }
 }
 
+/// The engine's events an animset's `overlays` can answer, and the body each one plays on.
+pub const OVERLAY_EVENTS: [(&str, &str); 7] = [
+    ("blocked", "a hit met the body's guard"),
+    ("parried", "the body parried a hit"),
+    ("damaged", "a hit landed on the body"),
+    ("guard_broken", "the body's guard broke"),
+    ("staggered", "the body staggered"),
+    ("part_broken", "one of the body's parts broke"),
+    ("landed", "the body came down from a fall or a jump"),
+];
+
+/// A clip played on one of the set's layers for a while when an engine event names the body (an
+/// animset's `overlays`, by [`OVERLAY_EVENTS`]): `"damaged": (clip: "flinch", layer: "upper",
+/// fade_out: (0.2, 0.35), strength: 0.7)`. It plays from the clip's start on the simulation's clock
+/// (a pause holds it, a `step` moves it), over whatever the layer plays: the running action's own
+/// clip there goes on under it and is back as it fades. The same event again starts it over.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct OverlayDef {
+    /// Our name of the clip.
+    pub clip: String,
+    /// The layer it plays on (a key of the set's `layers`).
+    pub layer: String,
+    /// Seconds it takes to come in (linearly); 0, the default: at once.
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub fade_in: f32,
+    /// Seconds after the event between which it fades out (smoothly); it ends at the second.
+    pub fade_out: (f32, f32),
+    /// The most of the layer's bones it takes: above 0, at most 1 (the default).
+    #[serde(default = "full_strength", skip_serializing_if = "is_one")]
+    pub strength: f32,
+}
+
+fn full_strength() -> f32 {
+    1.0
+}
+
+impl OverlayDef {
+    /// Its share of the layer's bones `age` seconds after the event: `strength`, faded in from
+    /// `from` (0 to 1: 0, or the part of `strength` it had when the same event came again) and out.
+    pub fn share(&self, age: f32, from: f32) -> f32 {
+        let (out_from, out_to) = self.fade_out;
+        if self.ended(age) {
+            return 0.0;
+        }
+        let age = age.max(0.0);
+        let rise = if self.fade_in > 0.0 { (from + age / self.fade_in).min(1.0) } else { 1.0 };
+        let fall = if age <= out_from {
+            1.0
+        } else {
+            let x = ((age - out_from) / (out_to - out_from)).min(1.0);
+            1.0 - x * x * (3.0 - 2.0 * x)
+        };
+        rise * fall * self.strength
+    }
+
+    /// Whether it is over `age` seconds after the event.
+    pub fn ended(&self, age: f32) -> bool {
+        age >= self.fade_out.1
+    }
+}
+
 /// What an action shows (a value of an animset's `actions` or `tags`): a clip of the library,
 /// on the whole body or on one of the set's layers. Written `"swing_1"` for the whole body, or
 /// `(clip: "drink", layer: "upper")`, or `(clip: "roll", turn: 0.08)`.
@@ -424,17 +502,21 @@ pub struct ActionClip {
     /// way while the body still looks at its target. 0 (the default, not written): the model faces
     /// where the body faces. Whole body only; needs `root_motion` (the turn is written on that bone).
     pub turn: f32,
+    /// Seconds its clip on a layer takes to leave when the action ends (or another action's clip takes
+    /// the layer). `None` (the default, not written): the blend of what the body shows next. Layered
+    /// mappings only.
+    pub blend_out: Option<f32>,
 }
 
 impl ActionClip {
     /// `clip` on the whole body.
     pub fn body(clip: impl Into<String>) -> Self {
-        Self { clip: clip.into(), layer: None, ends_equip: true, turn: 0.0 }
+        Self { clip: clip.into(), layer: None, ends_equip: true, turn: 0.0, blend_out: None }
     }
 
     /// `clip` on `layer`.
     pub fn on(clip: impl Into<String>, layer: impl Into<String>) -> Self {
-        Self { clip: clip.into(), layer: Some(layer.into()), ends_equip: false, turn: 0.0 }
+        Self { clip: clip.into(), layer: Some(layer.into()), ends_equip: false, turn: 0.0, blend_out: None }
     }
 }
 
@@ -450,10 +532,11 @@ impl Serialize for ActionClip {
         let default_ends = self.layer.is_none();
         let turns = self.turn != 0.0;
         match &self.layer {
-            None if self.ends_equip == default_ends && !turns => serializer.serialize_str(&self.clip),
+            None if self.ends_equip == default_ends && !turns && self.blend_out.is_none() => serializer.serialize_str(&self.clip),
             layer => {
                 let extra = self.ends_equip != default_ends;
-                let fields = 1 + usize::from(layer.is_some()) + usize::from(extra) + usize::from(turns);
+                let fields =
+                    1 + usize::from(layer.is_some()) + usize::from(extra) + usize::from(turns) + usize::from(self.blend_out.is_some());
                 let mut s = serializer.serialize_struct("ActionClip", fields)?;
                 s.serialize_field("clip", &self.clip)?;
                 if let Some(layer) = layer {
@@ -464,6 +547,9 @@ impl Serialize for ActionClip {
                 }
                 if turns {
                     s.serialize_field("turn", &self.turn)?;
+                }
+                if let Some(out) = self.blend_out {
+                    s.serialize_field("blend_out", &out)?;
                 }
                 s.end()
             }
@@ -489,18 +575,20 @@ impl<'de> Deserialize<'de> for ActionClip {
 
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<ActionClip, A::Error> {
                 let (mut clip, mut layer, mut ends_equip): (Option<String>, Option<String>, Option<bool>) = (None, None, None);
-                let mut turn = 0.0;
+                let (mut turn, mut blend_out) = (0.0, None);
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "clip" => clip = Some(map.next_value()?),
                         "layer" => layer = map.next_value()?,
                         "ends_equip" => ends_equip = Some(map.next_value()?),
                         "turn" => turn = map.next_value()?,
-                        other => return Err(A::Error::unknown_field(other, &["clip", "layer", "ends_equip", "turn"])),
+                        "blend_out" => blend_out = map.next_value()?,
+                        other => return Err(A::Error::unknown_field(other, &["clip", "layer", "ends_equip", "turn", "blend_out"])),
                     }
                 }
                 let ends_equip = ends_equip.unwrap_or(layer.is_none());
-                Ok(ActionClip { clip: clip.ok_or_else(|| A::Error::missing_field("clip"))?, layer, ends_equip, turn })
+                let clip = clip.ok_or_else(|| A::Error::missing_field("clip"))?;
+                Ok(ActionClip { clip, layer, ends_equip, turn, blend_out })
             }
         }
         deserializer.deserialize_any(Reader)
@@ -562,6 +650,10 @@ pub struct AnimSet {
     /// swing afloat). Written on the `root_motion` bone, so the set needs one.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub drops: BTreeMap<String, DropDef>,
+    /// Event overlays: engine event ([`OVERLAY_EVENTS`]) -> the clip that plays on a layer for a
+    /// while when the event names the body (a flinch on the upper body when it is hit).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub overlays: BTreeMap<String, OverlayDef>,
 }
 
 fn is_zero(v: &Vec3) -> bool {
@@ -1589,6 +1681,8 @@ pub struct LayerChoice<'a> {
     pub layer: &'a str,
     /// The clip on it, always seeked to the action's progress: gameplay leads here too.
     pub choice: ClipChoice<'a>,
+    /// Seconds the clip takes to leave the layer ([`ActionClip::blend_out`]), if the mapping says.
+    pub blend_out: Option<f32>,
 }
 
 /// The clip that plays on a layer now, if the running action is mapped to one. `action` is the
@@ -1620,8 +1714,9 @@ pub fn select_layer_timed<'a>(
     }
     let a = action?;
     let (clip, Some(layer)) = set.action_shown(a.key)? else { return None };
+    let blend_out = set.mapping(a.key).and_then(|m| m.blend_out);
     let clip = set.family(moveset, clip);
-    Some(LayerChoice { layer, choice: ClipChoice::seeked(set, clip, set.place(clip, &a), true) })
+    Some(LayerChoice { layer, choice: ClipChoice::seeked(set, clip, set.place(clip, &a), true), blend_out })
 }
 
 /// The cues the animation passed going from `prev` to `now` (seconds on the clip's
@@ -1792,9 +1887,60 @@ impl AnimSet {
         }
     }
 
+    /// `field.blend_out` of an action's mapping: a number of seconds, for a clip on a layer.
+    fn check_blend_out(refs: &mut Refs, field: &str, mapping: &ActionClip) {
+        let Some(out) = mapping.blend_out else { return };
+        if !(out >= 0.0 && out.is_finite()) {
+            refs.error(format!("{field}.blend_out must be >= 0 seconds (is {out})"));
+        }
+        if mapping.layer.is_none() {
+            refs.error(format!(
+                "{field}.blend_out is how a clip leaves its layer, and the clip plays on the whole body (the blend of \
+                 what the body shows next takes it over); leave `blend_out` out or give the mapping a `layer`"
+            ));
+        }
+    }
+
+    /// `overlays`: known events, clips and layers, an envelope that ends, a strength that shows.
+    fn check_overlays(&self, refs: &mut Refs, names: &[&str]) {
+        let events: Vec<&str> = OVERLAY_EVENTS.iter().map(|(event, _)| *event).collect();
+        for (event, overlay) in &self.overlays {
+            let field = format!("overlays.{event}");
+            if !events.contains(&event.as_str()) {
+                let hint =
+                    shards_content::db::closest(event, events.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
+                refs.error(format!("overlays has an unknown event `{event}`{hint}; events: {}", events.join(", ")));
+            }
+            if !self.clips.contains_key(&overlay.clip) {
+                unknown_clip(refs, names, &field, &overlay.clip);
+            }
+            self.check_layer_name(refs, &field, &overlay.layer);
+            let fade_in = overlay.fade_in;
+            if !(fade_in >= 0.0 && fade_in.is_finite()) {
+                refs.error(format!("{field}.fade_in must be >= 0 seconds (is {fade_in})"));
+            }
+            let (from, to) = overlay.fade_out;
+            if !(from >= 0.0 && to > 0.0 && from <= to && to.is_finite()) {
+                refs.error(format!(
+                    "{field}.fade_out must be (start, end) in seconds after the event, 0 <= start <= end and end > 0 \
+                     (is ({from}, {to})); the overlay fades out between them and ends at `end`"
+                ));
+            }
+            let strength = overlay.strength;
+            if !(strength > 0.0 && strength <= 1.0) {
+                refs.error(format!("{field}.strength must be above 0 and at most 1 (is {strength})"));
+            }
+        }
+    }
+
     /// `field.layer` of an action's mapping names one of the set's layers.
     fn check_layer(&self, refs: &mut Refs, field: &str, mapping: &ActionClip) {
         let Some(layer) = mapping.layer.as_deref() else { return };
+        self.check_layer_name(refs, field, layer);
+    }
+
+    /// `field.layer` names one of the set's layers.
+    fn check_layer_name(&self, refs: &mut Refs, field: &str, layer: &str) {
         if self.layers.contains_key(layer) {
             return;
         }
@@ -2084,6 +2230,7 @@ impl ContentDef for AnimSet {
             }
             self.check_layer(refs, &format!("actions.{action}"), mapping);
             self.check_turn(refs, &format!("actions.{action}"), mapping);
+            Self::check_blend_out(refs, &format!("actions.{action}"), mapping);
         }
         for (tag, mapping) in &self.tags {
             if tag.is_empty() {
@@ -2094,7 +2241,9 @@ impl ContentDef for AnimSet {
             }
             self.check_layer(refs, &format!("tags.{tag}"), mapping);
             self.check_turn(refs, &format!("tags.{tag}"), mapping);
+            Self::check_blend_out(refs, &format!("tags.{tag}"), mapping);
         }
+        self.check_overlays(refs, &names);
         self.check_timing(refs);
         for (field, v) in [("blend", self.blend), ("action_blend", self.action_blend)] {
             if !(v >= 0.0 && v.is_finite()) {
@@ -3006,6 +3155,86 @@ mod tests {
     }
 
     #[test]
+    fn an_overlay_comes_in_holds_its_strength_and_fades_out_smoothly() {
+        let def = OverlayDef { clip: "hit".into(), layer: "upper".into(), fade_in: 0.1, fade_out: (0.3, 0.5), strength: 0.8 };
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-5;
+        assert!(near(def.share(0.0, 0.0), 0.0));
+        assert!(near(def.share(0.05, 0.0), 0.4), "half way in, linearly");
+        assert!(near(def.share(0.2, 0.0), 0.8), "all in: its strength");
+        // A quarter of the way out the smoothstep has taken 0.15625 of it, half way a half.
+        assert!(near(def.share(0.35, 0.0), 0.8 * (1.0 - 0.15625)), "{}", def.share(0.35, 0.0));
+        assert!(near(def.share(0.4, 0.0), 0.4));
+        assert!(!def.ended(0.49) && def.ended(0.5));
+        assert!(near(def.share(0.5, 0.0), 0.0), "over at the end of its fade out");
+        assert!(near(def.share(0.0, 0.5), 0.4), "the same event again picks up from where it was");
+        let at_once = OverlayDef { fade_in: 0.0, fade_out: (0.2, 0.2), ..def };
+        assert!(near(at_once.share(0.0, 0.0), 0.8) && near(at_once.share(0.19, 0.0), 0.8));
+        assert!(at_once.ended(0.2), "a fade out with no length ends at once");
+    }
+
+    #[test]
+    fn overlays_and_blend_out_are_checked() {
+        let set = r#"{
+            "h": (source: "models/h.glb", clips: {"idle": (), "hit": (), "drink": ()},
+                layers: {"upper": (root: "spine")},
+                actions: {"sip": (clip: "drink", layer: "upper", blend_out: 0.075), "gulp": (clip: "drink", blend_out: -1.0)},
+                overlays: {
+                    "damaged": (clip: "hit", layer: "upper", fade_out: (0.2, 0.35), strength: 0.7),
+                    "damage": (clip: "hitt", layer: "uper", fade_in: -0.1, fade_out: (0.3, 0.2), strength: 1.5),
+                }),
+        }"#;
+        let actions = r#"{
+            "sip": (net_id: 1, phases: [("sip", 1.0)]),
+            "gulp": (net_id: 2, phases: [("gulp", 1.0)]),
+        }"#;
+        let mut kinds = ContentKinds::default();
+        kinds.register::<ActionDef>();
+        kinds.register::<AnimSet>();
+        kinds.register::<crate::def::MovesetDef>();
+        kinds.register::<crate::status::StatusDef>();
+        let sources = [
+            shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
+            shards_content::db::Source { path: "content/h.animset.ron".into(), text: set.into() },
+        ];
+        let db = ContentDb::build(&kinds, &sources);
+        let errors: Vec<String> = db.errors().map(ToString::to_string).collect();
+        let h = "content/h.animset.ron: animset `h`: ";
+        assert_eq!(
+            errors,
+            [
+                format!("{h}actions.gulp.blend_out must be >= 0 seconds (is -1)"),
+                format!(
+                    "{h}actions.gulp.blend_out is how a clip leaves its layer, and the clip plays on the whole body (the blend \
+                     of what the body shows next takes it over); leave `blend_out` out or give the mapping a `layer`"
+                ),
+                format!(
+                    "{h}overlays has an unknown event `damage` (did you mean `damaged`?); events: blocked, parried, damaged, \
+                     guard_broken, staggered, part_broken, landed"
+                ),
+                format!("{h}overlays.damage -> unknown clip `hitt` (did you mean `hit`?); clips: drink, hit, idle"),
+                format!("{h}overlays.damage.layer -> unknown layer `uper` (did you mean `upper`?); layers: upper"),
+                format!("{h}overlays.damage.fade_in must be >= 0 seconds (is -0.1)"),
+                format!(
+                    "{h}overlays.damage.fade_out must be (start, end) in seconds after the event, 0 <= start <= end and end > 0 \
+                     (is (0.3, 0.2)); the overlay fades out between them and ends at `end`"
+                ),
+                format!("{h}overlays.damage.strength must be above 0 and at most 1 (is 1.5)"),
+            ],
+            "`sip` and `damaged` are fine"
+        );
+        // Written only when they are not the defaults.
+        let set = db.get::<AnimSet>("h").unwrap();
+        assert_eq!(
+            serde_json::to_value(&set.actions["sip"]).unwrap(),
+            serde_json::json!({"clip": "drink", "layer": "upper", "blend_out": 0.075f32})
+        );
+        assert_eq!(
+            serde_json::to_value(&set.overlays["damaged"]).unwrap(),
+            serde_json::json!({"clip": "hit", "layer": "upper", "fade_out": [0.2f32, 0.35f32], "strength": 0.7f32})
+        );
+    }
+
+    #[test]
     fn the_stagger_and_dead_clips_are_checked_against_the_movesets_stagger_and_death_actions() {
         // A moveset's stagger or death action that maps no clip of its own is seeked on the set's
         // `stagger` or `dead` clip (in that moveset's family) by its phases: a typo there is the same error.
@@ -3335,7 +3564,7 @@ mod tests {
         };
         let errors = build_with(TWO_ACTIONS, &set(r#"(clip: "idle", lyer: "upper")"#));
         assert_eq!(errors.len(), 1, "{errors:#?}");
-        assert!(errors[0].contains("Unexpected field named `lyer`") && errors[0].contains("expected one of `clip`, `layer`, `ends_equip`, or `turn`"), "{errors:#?}");
+        assert!(errors[0].contains("Unexpected field named `lyer`") && errors[0].contains("expected one of `clip`, `layer`, `ends_equip`, `turn`, or `blend_out`"), "{errors:#?}");
         let errors = build_with(TWO_ACTIONS, &set(r#"(layer: "upper")"#));
         assert!(errors.len() == 1 && errors[0].contains("missing field named `clip`"), "{errors:#?}");
         let errors = build_with(TWO_ACTIONS, &set("7"));

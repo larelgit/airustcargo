@@ -6,8 +6,9 @@
 //! action machine, the controller and the content ([`select_clip_timed`], [`select_layer_timed`],
 //! [`mount_places`]), so for a body that has no `Animated` it takes the set named by `animset=` and
 //! says what the bridge would pick. Drawn, it adds what the bridge has done: whether the body is
-//! bound, what plays on its layers, where its props sit. Every line says what it is; the pose is
-//! never read from the bones.
+//! bound, what plays on its layers (an event overlay too), where its props sit. Every line says what
+//! it is; the pose is never read from the bones. `event=` starts an event overlay on a drawn body
+//! (the picture only), to see one without landing a hit.
 
 use std::collections::BTreeMap;
 
@@ -23,7 +24,7 @@ use shards_motion::{LocomotionInput, MotionState, MoveModifiers};
 
 use crate::anim::{
     mode_name, mount_places, phase_seek, select_clip_timed, select_layer_timed, ActionTime, AnimSet, Animated, BodyStatus, Heading,
-    MountView, Place, PropSwaps, LEFT_KEY, MODE_KEY,
+    MountView, OverlayDef, Place, PropSwaps, LEFT_KEY, MODE_KEY, OVERLAY_EVENTS,
 };
 use crate::def::{ActionDef, Face, MovesetDef};
 use crate::fighter::{Dead, Fighter};
@@ -43,6 +44,7 @@ pub(crate) fn register(app: &mut App) {
 /// What the bridge shows for a body, from the action machine, the controller and the content. A
 /// body with `Animated` shows its set; for any other pass `animset=` (nothing is drawn headless,
 /// so this says what the bridge would choose). Without `id`, every animated body, one line each.
+/// `event=` plays an event overlay on a drawn body, as if the engine event had named it.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct AnimationArgs {
     /// The body (an entity id). Default: every animated body.
@@ -52,6 +54,10 @@ pub struct AnimationArgs {
     /// Also the places of the bones the set names (sockets), in the world.
     #[serde(default)]
     pub bones: bool,
+    /// Plays the overlay the body's set gives this engine event (`damaged`, `blocked`, `landed`,
+    /// ...) on the drawn body from the next frame, as if the event had named it: the picture only,
+    /// nothing in the simulation. Needs `id`.
+    pub event: Option<String>,
 }
 
 fn animation(In(call): In<Call<AnimationArgs>>, world: &mut World) -> ToolResult {
@@ -61,6 +67,9 @@ fn animation(In(call): In<Call<AnimationArgs>>, world: &mut World) -> ToolResult
         && db.get::<AnimSet>(named).is_none()
     {
         return Err(format!("animset `{named}` is not in content; `content_list kind=animset` lists them"));
+    }
+    if args.event.is_some() && args.id.is_none() {
+        return Err("event=<name> plays an overlay on one body: name it with id=<body>".into());
     }
     let bodies: Vec<Entity> = match args.id {
         Some(id) => vec![id.entity(world)?],
@@ -79,8 +88,59 @@ fn animation(In(call): In<Call<AnimationArgs>>, world: &mut World) -> ToolResult
             found.into_iter().map(|(_, e)| e).collect()
         }
     };
-    let lines: Result<Vec<String>, String> = bodies.into_iter().map(|e| describe(world, e, args.animset.as_deref(), args.bones)).collect();
-    Ok(lines?.join("\n"))
+    let mut out = Vec::new();
+    if let Some(event) = &args.event {
+        // `id` is given (checked above): the one body.
+        out.push(preview_event(world, bodies[0], args.animset.as_deref(), event)?);
+    }
+    for body in bodies {
+        out.push(describe(world, body, args.animset.as_deref(), args.bones)?);
+    }
+    Ok(out.join("\n"))
+}
+
+/// `hit on upper, in 0.05 s, out 0.20-0.35 s, 70 %`: an overlay as content gives it.
+fn overlay_text(def: &OverlayDef) -> String {
+    let fade_in = if def.fade_in > 0.0 { format!(", in {:.2} s", def.fade_in) } else { String::new() };
+    let (from, to) = def.fade_out;
+    format!("{} on {}{fade_in}, out {from:.2}-{to:.2} s, {:.0} %", def.clip, def.layer, def.strength * 100.0)
+}
+
+/// `event=`: the overlay the body's set gives `event`, started on the drawn body (the picture only).
+fn preview_event(world: &mut World, body: Entity, named: Option<&str>, event: &str) -> Result<String, String> {
+    let events: Vec<&str> = OVERLAY_EVENTS.iter().map(|(e, _)| *e).collect();
+    if !events.contains(&event) {
+        let hint =
+            shards_content::db::closest(event, events.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
+        return Err(format!("event `{event}` is no engine event an overlay answers{hint}; events: {}", events.join(", ")));
+    }
+    let who = label(world, body);
+    let animset = world
+        .get::<Animated>(body)
+        .map(|a| a.animset.clone())
+        .or_else(|| named.map(str::to_owned))
+        .ok_or_else(|| format!("{who} is not animated; pass animset=<id> to see what a set's overlay would be"))?;
+    let db = world.resource::<ContentDb>();
+    let set = db.get::<AnimSet>(&animset).ok_or_else(|| format!("animset `{animset}` is not in content; `content_list kind=animset` lists them"))?;
+    let Some(def) = set.overlays.get(event) else {
+        let have: Vec<&str> = set.overlays.keys().map(String::as_str).collect();
+        let have = if have.is_empty() { "none".to_owned() } else { have.join(", ") };
+        return Err(format!("animset `{animset}` has no overlay for `{event}`; its overlays: {have}"));
+    };
+    let what = overlay_text(def);
+    // The bridge starts no overlay on a dead body.
+    if world.get::<Dead>(body).is_some() {
+        return Ok(format!("overlay {event} of {animset}: {what}; {who} is dead, so nothing plays"));
+    }
+    #[cfg(feature = "render")]
+    {
+        let clock = world.get_resource::<Time<Fixed>>().map_or(0.0, |t| t.elapsed_secs_f64() + t.overstep().as_secs_f64());
+        if let Some(mut bound) = world.get_mut::<crate::render::AnimationBound>(body) {
+            bound.note_event(event, clock);
+            return Ok(format!("overlay {event} starts on {who} from the next frame: {what} (the picture only)"));
+        }
+    }
+    Ok(format!("overlay {event} of {animset}: {what}; {who} is not drawn (a window or --offscreen draws it), so nothing plays"))
 }
 
 fn label(world: &World, e: Entity) -> String {
@@ -267,10 +327,18 @@ fn describe(world: &World, body: Entity, named: Option<&str>, bones: bool) -> Re
         if let Some((Some(clip), share)) = plays(name) {
             text = format!("{name}: {clip} {:.0} %", share * 100.0);
         }
+        #[cfg(feature = "render")]
+        if let Some(play) = bound.and_then(|b| b.overlay_on(name)) {
+            text.push_str(&format!(" · overlay {} ({}) at {:.2} s, {:.0} %", play.event, play.clip, play.age, play.share * 100.0));
+        }
         layers.push(text);
     }
     if !layers.is_empty() {
         out.push(format!("  layers: {}", layers.join(" · ")));
+    }
+    if !set.overlays.is_empty() {
+        let list: Vec<String> = set.overlays.iter().map(|(event, def)| format!("{event}: {}", overlay_text(def))).collect();
+        out.push(format!("  overlays: {}", list.join(" · ")));
     }
 
     // The motion mode: what hangs on it (mode rules, the draw after leaving, a layer off, a drop).
