@@ -1329,7 +1329,13 @@ impl AnimSet {
                 if !file.has_animation(wanted) {
                     refs.error(format!("clips.{name} -> `{source}` has no animation `{wanted}`; it has: {have}"));
                 }
-                for (i, cue) in self.clips[name].cues.iter().enumerate() {
+            }
+            if source != self.source {
+                continue;
+            }
+            // A cue's bone is found under the model, whichever file its clip comes from.
+            for (name, clip) in &self.clips {
+                for (i, cue) in clip.cues.iter().enumerate() {
                     if let Some(bone) = cue.bone.as_deref().filter(|b| !b.is_empty())
                         && !file.has_node(bone)
                     {
@@ -1338,9 +1344,6 @@ impl AnimSet {
                         ));
                     }
                 }
-            }
-            if source != self.source {
-                continue;
             }
             if let Some(bone) = self.root_motion.as_deref().filter(|b| !b.is_empty()) {
                 if !file.has_node(bone) {
