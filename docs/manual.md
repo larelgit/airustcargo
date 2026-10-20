@@ -2077,7 +2077,7 @@ A JSON object can be typed in as text (the *String* type): text that holds a JSO
 | `trigger` | `LevelMarker`, a `Volume` sensor, and its collider | `Trigger "goal"` |
 | `interactable` | `LevelMarker` | `Interactable "door"` |
 | `camp` | `LevelMarker` | `Camp "bandits"` |
-| `landmark` | `LevelMarker`, `AiLandmark`, `AiKind` from the marker's name | in the LANDMARKS line |
+| `landmark` | `LevelMarker`, `AiLandmark`, `AiKind` from the marker's name | in the LANDMARKS line; a `LandmarkCategory = "shrine"` property gives it a compass category |
 | `custom:<name>` | `LevelMarker` | no (needs an `AiKind`; add it as a component) |
 
 The nodes of the file `crates/sandbox/assets/tiles/ruin.gltf` (a ruin of 16 × 16 m, exported from Blender 5.2.2 in the *Embedded* variant; `tools/blender/ruin_tile.py` builds the export, and the template keeps a copy of the same file) are: the floor `Ground`, the walls `Wall.North`, `Wall.West`, `Rubble`, `Column` with `collider = auto`; `Camp` (`marker = camp`, `name = ruin_camp`), `Arch` (`marker = landmark`, `name = Ruin`), and four `Edge.N/E/S/W` with `socket = grass`. The test `the_committed_ruin_is_the_tile_the_spec_describes` (`crates/sandbox/tests/sandbox/tiles.rs`) checks the export against the tile's description: the same nodes, properties, world transforms and mesh bounds. After you change the ruin:
@@ -2398,8 +2398,11 @@ Also `pairs` (which different kinds join, symmetrically), `forbid` (they join wi
 {
     "spawn": (label: Some("Spawn")),
     "camp":  (label: Some("Camp"), prefab: Some("camp_skeleton")),    // the camp spawns a skeleton when the region is built
+    "shrine": (category: Some("shrine")),                             // a compass draws it as the theme's shrine symbol
 }
 ```
+
+A point with a `category` (letters, digits, `_` and `-`) gets `LandmarkCategory` on its landmark entity: a compass keeps the nearest of each category and draws the theme's symbol for it (see "Compass categories" in "UI (E9)"). The component is not simulation: the replay check leaves it out, as it does `AiLandmark`, while snapshots and co-op clients keep it. The point's definition is still content a replay reads, so giving an existing point a category changes the content part of the replays that build its region (record them again).
 
 **Region** (`*.region.ron`).
 
@@ -5316,7 +5319,7 @@ with an id; only one is shown). Some show content: `Text` (its own text or `bind
 the other follows the picture's proportions; give neither and the picture keeps its own size; the content check names a missing file and a size that is not
 greater than 0), `Bar` (`value`/`max` or
 `bind`, `color` — a theme colour name or `#rrggbb`), `Cooldown` (time until ready), `Compass` (where the player looks and the four
-nearest points of interest), `Allies` (ally frames: name, health, whether down), `Compare` (before → after by rows: `damage 12 →
+nearest landmarks of each category, `you.heading:<n>` for another number; see "Compass categories"), `Allies` (ally frames: name, health, whether down), `Compare` (before → after by rows: `damage 12 →
 15 (+3)`). These take input: `Button` (`action`), `Slider` (`min`, `max`, `step`), `Toggle`, `Choice` (`options`); the last three have
 `setting: "group.key"` — a player setting: the widget shows it and changes it through `settings_set` (its checks, the write to
 `settings.toml`, the journal entry `settings: …`). `Binding` (`context`, `action`, `slot`) — a key or button of an action that the player
@@ -5339,7 +5342,7 @@ app.add_ui_action("give_up", |world, press| {          // press: widget, screen,
 ```
 
 Engine sources (`shards`): `you.health`, `you.stamina`, `you.poise` (a bar), `you.charges:<charge>`, `you.cooldown:<action>`,
-`you.heading` (the compass), `allies`, `input.bindings:<context>.<action>` (the inputs of an action in the input map, as the `controls`
+`you.heading` (the compass), `you.nearest:<category>` (how far the nearest landmark of a category is, m; no value without one), `allies`, `input.bindings:<context>.<action>` (the inputs of an action in the input map, as the `controls`
 settings make it at that moment; `Binding` reads it). The audio module adds `subtitles` and `subtitles:<lines>` (the lines of voices playing; see "Audio", "Subtitles"). "You" is the body this machine controls (`LocalPlayer`), otherwise the body
 the agent plays (`AiPlayer`). An unknown source writes one warning to the journal, and the widget stays empty.
 
@@ -5482,6 +5485,18 @@ screen's `Text` or `Hint` that names a font the theme `default` lacks; a message
 drawn in the theme's font, and the journal says so once (`ui: [font=nope] names no font of the theme…`). The engine ships no symbol font:
 the game brings its own.
 
+**Compass categories** (U3a). A landmark can have a category (`LandmarkCategory("shrine")`, an `ai_core` component that brings
+`AiLandmark` with it): a point of interest's `category` (`*.poi.ron`), a level node's `LandmarkCategory = "shrine"` property, a prefab's
+component or the game's code gives it. The compass (`you.heading`) keeps the 4 nearest landmarks of each category, and the 4 nearest of
+those without one, nearest first, so a far shrine is not pushed off by near pillars; `you.heading:2` keeps two of each. The theme draws a
+category as a symbol before the name: `symbols: {"shrine": "⛩", "camp": "[font=symbols]ᚲ[/font]"}` (a symbol may name a theme font, and its tags must pair up: the content check refuses one that would be drawn as text; a
+category without one is drawn as before). Screen readers and `ui_read` get the category's name in words (`Shrine (shrine) N
+5m`). The source `you.nearest:<category>` gives how far the nearest landmark of that category is on the ground (m, a `Number`; no value
+without one), and `shards::nearest_landmark(world, category)` gives it to code with its entity: a game pulses a sound or a needle by it
+through a condition of its own (`add_ai_condition`, which the music's layers can wait on). The category is identity, not simulation: like
+`AiLandmark` it is left out of the replay check and `inspect`, and snapshots and co-op clients keep it. The content check refuses a
+category or a symbol name that is not letters, digits, `_` and `-`, an empty symbol, and a symbol's span font the theme lacks.
+
 **Full-screen flashes** (U2). A colour over the whole picture for a moment: a reality flash, the 2–3 s glitch of a reality crack.
 A flash is content, kind `flash`:
 
@@ -5511,7 +5526,7 @@ without a GPU, a replay with pressed buttons, an edit to a screen in a running g
 the loading image — `main_menu.rs`; `bindings.rs` — rebinding through `ui_set`, a refusal that names the action, waiting for
 a key, a mouse button and a gamepad button, Escape, which does not close the screen, a replay; `flash.rs` — a flash frame by frame,
 `reduced` and `off`, a newer flash and the trigger, the tool, the content check; `fonts.rs` — runs in a named font, drawn again in place,
-a font the theme lacks, the text without markup for agents and screen readers, the content check), `template/tests/game/main_menu.rs` (the path
+a font the theme lacks, the text without markup for agents and screen readers, the content check; `compass.rs` — the nearest landmarks of each category, `you.nearest`, the category outside the replay check, symbols drawn and named to screen readers, the content check), `template/tests/game/main_menu.rs` (the path
 through the menu gives the same game and the same replay as without it; "Continue" with a save and without one), scenarios
 `crates/sandbox/scenarios/ui.scenario` and `template/scenarios/menus.scenario`.
 

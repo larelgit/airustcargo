@@ -13,7 +13,9 @@
 //! The source `input.bindings` ([`shards_ui::BINDINGS_SOURCE`]) gives binding widgets the inputs of
 //! an action, as the `controls` settings make them now.
 
-use ai_core::AiLandmark;
+use std::collections::BTreeMap;
+
+use ai_core::{AiId, AiLandmark, LandmarkCategory};
 use bevy::prelude::*;
 use serde_json::json;
 use shards_action::fighter::{Charges, Cooldowns, Dead, Health, Poise, Stamina};
@@ -59,6 +61,7 @@ impl Plugin for EngineUiPlugin {
             .add_ui_source("rules.summary", |w, mode| rules_set(w, mode).and_then(|set| rules_text(w, &set.summary)))
             .add_ui_source("rules.blocked", rules_blocked)
             .add_ui_source("you.heading", heading)
+            .add_ui_source("you.nearest", nearest)
             .add_ui_source("allies", allies)
             .add_ui_source(BINDINGS_SOURCE, bindings)
             .init_resource::<MenuControls>()
@@ -139,26 +142,72 @@ fn bindings(world: &World, arg: &str) -> Option<UiValue> {
 
 /// Degrees clockwise from north (-Z) of a direction on the ground.
 fn bearing(dir: Vec3) -> f32 {
-    ops::atan2(dir.x, -dir.z).to_degrees().rem_euclid(360.0)
+    // `+ 0.0` turns a -0 (straight north with `x` at -0) into 0: `0°`, never `-0°`.
+    ops::atan2(dir.x, -dir.z).to_degrees().rem_euclid(360.0) + 0.0
 }
 
-/// Where the viewer faces, and the four nearest landmarks.
-fn heading(world: &World, _: &str) -> Option<UiValue> {
+/// Marks a compass keeps of each landmark category, and of the landmarks without one, nearest
+/// first (`you.heading:2` keeps two).
+pub const MARKS_PER_CATEGORY: usize = 4;
+
+/// A landmark as a compass reads it: entity, label, category, ground offset from the viewer.
+type Landmark = (Entity, String, Option<String>, Vec3);
+
+/// The landmarks around `from`, in `AiId` order.
+fn landmarks(world: &World, from: Vec3) -> Option<Vec<Landmark>> {
+    let mut landmarks = world.try_query_filtered::<(Entity, &Transform, Option<&AiId>, Option<&LandmarkCategory>), With<AiLandmark>>()?;
+    let mut all: Vec<(Option<AiId>, Landmark)> = landmarks
+        .iter(world)
+        .map(|(e, t, id, category)| {
+            let label = world.get::<Name>(e).map_or_else(|| ai_core::label(world, e), |n| n.as_str().to_owned());
+            (id.copied(), (e, label, category.map(|c| c.0.clone()), t.translation - from))
+        })
+        .collect();
+    all.sort_by_key(|(id, _)| *id);
+    Some(all.into_iter().map(|(_, landmark)| landmark).collect())
+}
+
+/// Where the viewer faces, and the nearest landmarks of each category ([`MARKS_PER_CATEGORY`], or
+/// the number after `:`).
+fn heading(world: &World, arg: &str) -> Option<UiValue> {
     let me = viewer(world)?;
     let at = world.get::<Transform>(me)?;
     let deg = bearing(at.forward().as_vec3());
-    let mut landmarks = world.try_query_filtered::<(Entity, &Transform), With<AiLandmark>>()?;
-    let mut marks: Vec<Mark> = landmarks
-        .iter(world)
-        .map(|(e, t)| {
-            let to = t.translation - at.translation;
-            let label = world.get::<Name>(e).map_or_else(|| ai_core::label(world, e), |n| n.as_str().to_owned());
-            Mark { label, bearing: bearing(to), distance: Vec2::new(to.x, to.z).length() }
-        })
+    let keep = arg.trim().parse::<usize>().ok().filter(|n| *n > 0).unwrap_or(MARKS_PER_CATEGORY);
+    let mut marks: Vec<Mark> = landmarks(world, at.translation)?
+        .into_iter()
+        .map(|(_, label, category, to)| Mark { label, bearing: bearing(to), distance: Vec2::new(to.x, to.z).length(), category })
         .collect();
+    // Stable: equal distances and labels stay in `AiId` order.
     marks.sort_by(|a, b| a.distance.total_cmp(&b.distance).then_with(|| a.label.cmp(&b.label)));
-    marks.truncate(4);
+    let mut kept: BTreeMap<Option<String>, usize> = BTreeMap::new();
+    marks.retain(|m| {
+        let n = kept.entry(m.category.clone()).or_default();
+        *n += 1;
+        *n <= keep
+    });
     Some(UiValue::Heading { deg, marks })
+}
+
+/// The landmark of `category` ([`LandmarkCategory`]) nearest the body this machine plays (the
+/// HUD's viewer), and how far it is on the ground (m): what a game pulses a sound or a needle by
+/// (an `add_ai_condition` reading it, which the music's layers and a HUD can wait on). `None`
+/// without a viewer or such a landmark. The category is matched trimmed, as `you.nearest:<category>`
+/// matches it.
+pub fn nearest_landmark(world: &World, category: &str) -> Option<(Entity, f32)> {
+    let category = category.trim();
+    let at = world.get::<Transform>(viewer(world)?)?.translation;
+    landmarks(world, at)?
+        .into_iter()
+        .filter(|(_, _, c, _)| c.as_deref() == Some(category))
+        .map(|(e, _, _, to)| (e, Vec2::new(to.x, to.z).length()))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+}
+
+/// `you.nearest:<category>`: how far the nearest landmark of that category is (m); no value without one.
+fn nearest(world: &World, category: &str) -> Option<UiValue> {
+    viewer(world)?;
+    Some(nearest_landmark(world, category).map_or(UiValue::None, |(_, d)| UiValue::Number(d)))
 }
 
 /// The other players, by number: name, health, down or not.

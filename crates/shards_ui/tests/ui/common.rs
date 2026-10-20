@@ -32,7 +32,8 @@ pub fn game_with(setup: impl FnOnce(&mut App)) -> App {
     app
 }
 
-fn spawn_hero(mut commands: Commands) {
+/// The hero the tests play: the HUD's viewer.
+pub fn spawn_hero(mut commands: Commands) {
     commands.spawn((Name::new("Hero"), AiKind::new("Hero"), AiPlayer, Health::new(100.0), Stamina::default(), Transform::default()));
 }
 
@@ -96,4 +97,18 @@ pub fn hero_health(app: &mut App) -> f32 {
 /// A line of `ui_read` that starts with `path`, with its indentation trimmed.
 pub fn line<'a>(tree: &'a str, path: &str) -> &'a str {
     tree.lines().map(str::trim_start).find(|l| l.starts_with(&format!("{path}  "))).unwrap_or_else(|| panic!("no line for {path} in:\n{tree}"))
+}
+
+/// Copies folder `from` into `to` (a test's own asset folder, made from [`ASSETS`]).
+pub fn copy_dir(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
 }

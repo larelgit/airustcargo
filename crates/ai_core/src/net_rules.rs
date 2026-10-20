@@ -6,7 +6,7 @@
 //! leave out ([`replay_ignore`](crate::AiAppExt::replay_ignore): cosmetics and caches), minus
 //! the ones a module says stay on each machine ([`net_ignore`](crate::AiAppExt::net_ignore):
 //! "this is my body", prediction bookkeeping). That is the [`state_hash`](crate::replay::state_hash)
-//! rule plus the identity markers (`AiKind`, `AiVisible`, `AiLandmark`) the hash leaves out:
+//! rule plus the identity markers (`AiKind`, `AiVisible`, `AiLandmark`, `LandmarkCategory`) the hash leaves out:
 //! a client needs them to see the entity at all.
 //!
 //! Resources: every [`add_snapshot_resource`](crate::AiAppExt::add_snapshot_resource) except

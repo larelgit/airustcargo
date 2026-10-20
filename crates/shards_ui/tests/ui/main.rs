@@ -3,6 +3,7 @@
 
 mod bindings;
 mod common;
+mod compass;
 mod controls;
 mod draw;
 mod flash;

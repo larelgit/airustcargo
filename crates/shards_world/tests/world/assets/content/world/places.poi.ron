@@ -2,7 +2,7 @@
 {
     "spawn": (),
     "camp": (prefab: "campfire"),
-    "shrine": (),
+    "shrine": (category: "shrine"),
     "chest": (),
     "ruin": (label: "Ruins"),
     "boss": (),

@@ -85,6 +85,15 @@ pub struct AiImportance(pub f32);
 #[require(AiVisible)]
 pub struct AiLandmark;
 
+/// What kind of landmark it is, for a compass or a map (`shrine`, `camp`): a name the game
+/// chooses, which the UI theme draws as a symbol (`symbols`). Like [`AiLandmark`] it is identity,
+/// not simulation: a snapshot and a co-op client keep it, and the replay check leaves it out, so
+/// naming or renaming a category changes no replay.
+#[derive(Component, Reflect, Default, Clone, Debug, PartialEq, Eq)]
+#[reflect(Component, Default)]
+#[require(AiLandmark)]
+pub struct LandmarkCategory(pub String);
+
 /// The entity the local player controls: default viewpoint and default "you"
 /// for agent sessions that do not set their own subject.
 #[derive(Component, Reflect, Default, Clone, Copy, Debug)]

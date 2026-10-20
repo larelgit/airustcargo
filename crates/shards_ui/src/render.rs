@@ -23,7 +23,7 @@ use shards_settings::AccessibilitySettings;
 use crate::bind::live_value;
 use crate::def::{Anchor, Layer, Layout, ThemeDef};
 use crate::model::{binding_state, focused, on_shown_page, UiScreen, UiValue, UiWidget, WidgetKind};
-use crate::model::{format_number, widget_children};
+use crate::model::{format_number, widget_children, Mark};
 use crate::markup;
 use crate::text::compass_point;
 use crate::{CapturedClicks, UiSystems};
@@ -296,7 +296,8 @@ fn value_text(w: &UiWidget) -> String {
         (WidgetKind::Compass, UiValue::Heading { deg, marks }) => {
             let mut text = format!("{} ({:.0} deg)", compass_point(*deg), deg);
             for m in marks {
-                text.push_str(&format!("  |  {} {} {:.0}m", m.label, compass_point(m.bearing), m.distance));
+                let category = m.category.as_ref().map(|c| format!(" ({c})")).unwrap_or_default();
+                text.push_str(&format!("  |  {}{category} {} {:.0}m", m.label, compass_point(m.bearing), m.distance));
             }
             text
         }
@@ -310,6 +311,18 @@ fn value_text(w: &UiWidget) -> String {
         (WidgetKind::Binding { .. }, UiValue::Text(why)) => why.clone(),
         _ => String::new(),
     }
+}
+
+/// A compass as drawn: each mark with its category's symbol from the theme, where it has one (a
+/// symbol may name a font: `[font=symbols]ᚲ[/font]`). Screen readers get [`value_text`]: the
+/// category's name in words.
+fn compass_drawn(theme: &ThemeDef, deg: f32, marks: &[Mark]) -> String {
+    let mut text = format!("{} ({:.0} deg)", compass_point(deg), deg);
+    for m in marks {
+        let symbol = m.category.as_ref().and_then(|c| theme.symbols.get(c)).map(|s| format!("{s} ")).unwrap_or_default();
+        text.push_str(&format!("  |  {symbol}{} {} {:.0}m", m.label, compass_point(m.bearing), m.distance));
+    }
+    text
 }
 
 /// The share of a bar or slider that is filled, in percent.
@@ -340,6 +353,10 @@ fn update_value(world: &mut World, e: Entity, w: &UiWidget) {
         None => match (&w.kind, &w.value) {
             // Any value, text or not: the spans of an earlier one go.
             (WidgetKind::Text | WidgetKind::Hint, _) => draw_runs(world, e, &text),
+            (WidgetKind::Compass, UiValue::Heading { deg, marks }) => {
+                let drawn = compass_drawn(&world.resource::<Look>().theme, *deg, marks);
+                draw_runs(world, e, &drawn);
+            }
             _ => {
                 if let Some(mut t) = world.get_mut::<Text>(e) {
                     t.0 = text;
@@ -470,6 +487,10 @@ fn redraw(world: &mut World, e: Entity, state: &Drawn) {
             world.entity_mut(e).insert((Node { display, ..default() }, Text::new(value_text(w)), font, TextColor(color(rgba))));
             if matches!(w.kind, WidgetKind::Text | WidgetKind::Hint) {
                 draw_runs(world, e, &value_text(w));
+            }
+            if let (WidgetKind::Compass, UiValue::Heading { deg, marks }) = (&w.kind, &w.value) {
+                let drawn = compass_drawn(&world.resource::<Look>().theme, *deg, marks);
+                draw_runs(world, e, &drawn);
             }
         }
         WidgetKind::Image { path, width, height } => {

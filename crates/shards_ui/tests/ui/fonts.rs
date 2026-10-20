@@ -36,19 +36,6 @@ fn assets() -> PathBuf {
     dir
 }
 
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap() {
-        let entry = entry.unwrap();
-        let target = to.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            copy_dir(&entry.path(), &target);
-        } else {
-            std::fs::copy(entry.path(), target).unwrap();
-        }
-    }
-}
-
 /// The engine on [`assets`], with a window entity (drawing, without a GPU).
 fn windowed() -> App {
     let dir = assets();

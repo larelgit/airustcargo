@@ -4,7 +4,7 @@
 
 use serde_json::json;
 use shards::ai_core::replay::{self, state_hash};
-use shards::ai_core::{AiId, AiIndex, AiLandmark};
+use shards::ai_core::{AiId, AiIndex, AiLandmark, LandmarkCategory};
 use shards::motion::{ColliderId, PhysicsWorld};
 use shards::testing;
 use shards::world::generate::generate;
@@ -32,6 +32,14 @@ fn the_start_region_stands_before_the_game_spawns_its_hero() {
     assert!(pos(&app, hero).distance(spawn) < 0.01, "the hero stands at the spawn");
     let landmarks = app.world_mut().query_filtered::<&Poi, With<AiLandmark>>().iter(app.world()).count();
     assert_eq!(landmarks, expected.pois.len());
+    // A point whose kind names a category carries it, for a compass: the meadow's one shrine.
+    let categories: Vec<(String, String)> = app
+        .world_mut()
+        .query::<(&Poi, &LandmarkCategory)>()
+        .iter(app.world())
+        .map(|(p, c)| (p.poi.clone(), c.0.clone()))
+        .collect();
+    assert_eq!(categories, [("shrine".to_owned(), "shrine".to_owned())]);
 
     ok(&mut app, "step", json!({"ticks": 20}));
     assert!(app.world().resource::<PhysicsWorld>().len() >= 64, "every tile's ground collides");

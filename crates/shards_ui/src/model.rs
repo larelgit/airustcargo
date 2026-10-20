@@ -192,6 +192,8 @@ pub struct Mark {
     /// Bearing from the viewer, degrees clockwise from north.
     pub bearing: f32,
     pub distance: f32,
+    /// Its `LandmarkCategory` (`shrine`), which the theme's `symbols` draw.
+    pub category: Option<String>,
 }
 
 /// Another player, in an ally frame.
