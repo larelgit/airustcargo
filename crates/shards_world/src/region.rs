@@ -27,7 +27,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use ai_core::journal::{self, JournalKind};
-use ai_core::{AiId, AiKind, AiLandmark, AiPlayer, AiReplay, SimGate, SimSeed, Snapshot};
+use ai_core::{AiId, AiKind, AiLandmark, AiPlayer, AiReplay, LandmarkCategory, SimGate, SimSeed, Snapshot};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_content::prefab::check_prefab;
@@ -691,14 +691,18 @@ fn spawn_parts(world: &mut World, manifest: &RegionManifest, plans: &[TilePlan],
         }
     }
     for poi in &manifest.pois {
-        let (label, prefab) = {
+        let (label, prefab, category) = {
             let def = world.resource::<ContentDb>().get::<PoiDef>(&poi.poi);
-            (PoiDef::label_of(def, &poi.poi), def.and_then(|d| d.prefab.clone()))
+            (PoiDef::label_of(def, &poi.poi), def.and_then(|d| d.prefab.clone()), def.and_then(|d| d.category.clone()))
         };
         let tile = TileId { x: poi.cell[0], y: poi.cell[1] };
         let tf = Transform::from_translation(poi.position());
         let marker = (AiLandmark, AiKind::new(label), Name::new(poi.id.clone()), Poi { id: poi.id.clone(), poi: poi.poi.clone() });
-        spawned.push(world.spawn((marker, tile, RegionPart, tf)).id());
+        let point = world.spawn((marker, tile, RegionPart, tf)).id();
+        if let Some(category) = category {
+            world.entity_mut(point).insert(LandmarkCategory(category));
+        }
+        spawned.push(point);
         if let Some(prefab) = prefab {
             let entity = spawn_prefab(world, &prefab, tf, None).map_err(|e| format!("poi `{}`: {e}", poi.poi))?;
             world.entity_mut(entity).insert((tile, RegionPart));

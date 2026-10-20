@@ -13,6 +13,7 @@ use bevy::prelude::*;
 use crate::bind::live_value;
 use crate::def::Layer;
 use crate::model::{binding_state, focused, inputs_text, on_shown_page, top_screen, walk, widget_children, UiScreen, UiStack, UiValue, UiWidget, WidgetKind};
+use crate::map::{MapArea, MapPoint, MapState, MapYou};
 use crate::model::format_number;
 
 /// At most this many widget lines of the screen on top in `observe`; `ui_read` has them all.
@@ -56,8 +57,12 @@ pub fn widget_line(world: &World, e: Entity, focus: Option<Entity>) -> String {
         (WidgetKind::Compass, UiValue::Heading { deg, marks }) => {
             let _ = write!(line, " {deg:.0}° {}", compass_point(*deg));
             for m in marks {
-                let _ = write!(line, " · {} {} {:.0}m", m.label, compass_point(m.bearing), m.distance);
+                let category = m.category.as_ref().map(|c| format!(" ({c})")).unwrap_or_default();
+                let _ = write!(line, " · {}{category} {} {:.0}m", m.label, compass_point(m.bearing), m.distance);
             }
+        }
+        (WidgetKind::Map { area, .. }, UiValue::Map { points, you }) => {
+            let _ = write!(line, " {}", map_words(area, points, you.as_ref()));
         }
         (WidgetKind::Allies, UiValue::Allies(allies)) if allies.is_empty() => line.push_str(" (nobody else)"),
         (WidgetKind::Allies, UiValue::Allies(allies)) => {
@@ -234,6 +239,31 @@ pub(crate) fn observe_section(world: &World) -> Vec<String> {
         lines.push(format!("  … {} more (ui_read)", listed.len() - OBSERVE_LINES));
     }
     lines
+}
+
+/// A map in words, as agents and screen readers get it: the viewer, then each place, a rumour as
+/// the compass direction toward it from the viewer (from the map's middle without one).
+pub(crate) fn map_words(area: &MapArea, points: &[MapPoint], you: Option<&MapYou>) -> String {
+    let mut parts = Vec::new();
+    if let Some(y) = you {
+        parts.push(format!("you ({:.0}, {:.0}) facing {}", y.at.x, y.at.y, compass_point(y.deg)));
+    }
+    let from = you.map_or(Vec2::new(area.min.0 + area.max.0, area.min.1 + area.max.1) * 0.5, |y| y.at);
+    for p in points {
+        let category = p.category.as_ref().map(|c| format!(" ({c})")).unwrap_or_default();
+        let at = match p.state {
+            MapState::Rumor => {
+                let to = p.at - from;
+                compass_point(ops::atan2(to.x, -to.y).to_degrees().rem_euclid(360.0)).to_owned()
+            }
+            MapState::Discovered | MapState::Completed => format!("({:.0}, {:.0})", p.at.x, p.at.y),
+        };
+        parts.push(format!("{}{category} {} {at}", p.label, p.state.name()));
+    }
+    if points.is_empty() {
+        parts.push("no places".to_owned());
+    }
+    parts.join(" · ")
 }
 
 #[cfg(test)]

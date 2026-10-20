@@ -3,10 +3,12 @@
 
 mod bindings;
 mod common;
+mod compass;
 mod controls;
 mod draw;
 mod flash;
 mod fonts;
 mod main_menu;
+mod map;
 mod menus;
 mod screens;

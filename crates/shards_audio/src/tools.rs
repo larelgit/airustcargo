@@ -11,6 +11,7 @@ use shards_content::ContentDb;
 use crate::def::{Bus, MusicDef};
 use crate::mixer::{bus_volume, play, voice_limit, Mixer, Played, SoundAt};
 use crate::music::{check_layer, force_layer, set_track, summary, Music};
+use crate::subtitles::{self, Subtitles};
 
 /// How many voices the `audio` tool lists before it counts the rest.
 const VOICES_SHOWN: usize = 12;
@@ -22,8 +23,8 @@ pub(crate) fn register(world: &mut World) {
 }
 
 /// What this machine hears: the music (track, layer, stems), the buses' volumes, the voices
-/// playing (sound, source, distance, how loud, priority) and the sounds dropped lately. Change
-/// volumes with `settings_set group=audio key=<bus> value=0.5`.
+/// playing (sound, source, distance, how loud, priority), the sounds dropped lately and the
+/// subtitles showing. Change volumes with `settings_set group=audio key=<bus> value=0.5`.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct AudioArgs {}
 
@@ -52,6 +53,13 @@ fn audio(In(_): In<Call<AudioArgs>>, world: &World) -> ToolResult {
     }
     for drop in mixer.drops() {
         out.push_str(&format!("  dropped {} at {:.1}s: {}\n", drop.sound, drop.at, drop.reason));
+    }
+    if let Some(lines) = world.get_resource::<Subtitles>().map(Subtitles::lines).filter(|l| !l.is_empty()) {
+        let state = if subtitles::enabled(world) { "shown" } else { "not shown: accessibility.subtitles is off" };
+        let (sim, real) = mixer.clocks();
+        let lines: Vec<String> =
+            lines.iter().map(|l| format!("\"{}\" {:.1}s more", subtitles::line_text(world, l), l.left(sim, real))).collect();
+        out.push_str(&format!("subtitles ({state}): {}\n", lines.join(" · ")));
     }
     match mixer.listener {
         Some(ear) => {

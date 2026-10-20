@@ -26,6 +26,10 @@
 //!   whose condition holds is played (conditions by name, as `step --until named:…` takes them:
 //!   the NPC module's `npc_near` and `npc_engaged`, or the game's), at once when it is more
 //!   intense, after the track's `hold` when it is calmer; stems fade in and out.
+//! - **Subtitles** ([`subtitles`]): a sound with a `subtitle` (a voice's words, text or `@id`, and
+//!   a `speaker`) shows its line while it plays and a moment after; the game's UI binds the source
+//!   `subtitles` (the newest lines, in the language played), and `accessibility.subtitles` turns
+//!   them off. The journal says `[local] subtitle: Warden: The gate holds.`
 //! - **Agents** read it all with `audio`, and `observe` says the layer (`MUSIC  arena: combat for
 //!   6.2s`); the journal says `[local] music: arena explore → combat`. `sound_play` plays a
 //!   sound by the mixer's rules and `music_set` changes the track or holds a layer (dev).
@@ -46,6 +50,7 @@ pub mod def;
 pub mod length;
 pub mod mixer;
 pub mod music;
+pub mod subtitles;
 #[cfg(feature = "playback")]
 mod playback;
 mod tools;
@@ -58,7 +63,7 @@ use shards_action::{
 };
 use shards_content::{ContentAppExt, ContentDb};
 use shards_core::EngineAppExt;
-use shards_ui::{Layer, ScreenDef, UiChanged, UiFocusMoved, UiPressed, UiScreenChanged};
+use shards_ui::{Layer, ScreenDef, UiAppExt, UiChanged, UiFocusMoved, UiPressed, UiScreenChanged};
 
 pub use def::{AudioDef, Bus, Falloff, LayerDef, MusicDef, SoundDef, StemDef, EVENTS};
 pub use mixer::{
@@ -66,6 +71,7 @@ pub use mixer::{
     SoundAt, Voice,
 };
 pub use music::{force_layer, set_track, Music, Stem};
+pub use subtitles::{LineVoice, SubtitleLine, Subtitles};
 pub use tools::{AudioArgs, MusicSetArgs, SoundPlayArgs};
 
 /// Version of the engine crates (they share one).
@@ -103,6 +109,8 @@ impl Plugin for AudioPlugin {
             .init_resource::<Mixer>()
             .init_resource::<Music>()
             .init_resource::<music::UnknownConditions>()
+            .init_resource::<Subtitles>()
+            .add_ui_source("subtitles", subtitles::source)
             .register_type::<Music>()
             .add_snapshot_resource::<Music>()
             .add_engine_module("audio", VERSION)

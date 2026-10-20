@@ -92,7 +92,7 @@ pub use describe::{
 };
 pub use dev::{DevCommand, DevEntry, DevLine, DevMenu};
 pub use failures::{ai_core_error_handler, AiFailures, SystemFailure};
-pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible, NoTombstone};
+pub use id::{label, AiId, AiImportance, AiIndex, AiLandmark, AiPlayer, AiVisible, LandmarkCategory, NoTombstone};
 pub use coverage::AiCoverage;
 pub use heavy::{HeavyConfig, HeavyFailure, HeavyTwin};
 pub use hold::{ClockHold, PresentationHolds};

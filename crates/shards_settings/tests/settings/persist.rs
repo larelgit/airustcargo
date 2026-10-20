@@ -23,6 +23,8 @@ fn change_everything(app: &mut shards::bevy::prelude::App) {
         ("audio", "sfx", "0.75"),
         ("audio", "voice", "0.1"),
         ("controls", "mouse_sensitivity", "2.5"),
+        ("controls", "aim_sensitivity", "0.5"),
+        ("controls", "camera_auto_centre", "true"),
         ("controls", "invert_y", "true"),
         ("controls", "bindings.gameplay.jump", "[\"Key(KeyJ)\", \"GamepadButton(South)\"]"),
         ("controls", "hold_or_toggle.gameplay.block", "toggle"),
@@ -792,4 +794,5 @@ fn a_file_saved_before_hit_stop_existed_loads_and_takes_the_defaults_for_it() {
     assert_eq!(a.fov_deg, 95.0);
     assert_eq!(a.hit_stop, AccessibilitySettings::default().hit_stop, "the missing hit_stop is the default");
     assert_eq!(a.hit_stop_local_only, AccessibilitySettings::default().hit_stop_local_only);
+    assert!(a.subtitles, "the missing subtitles are on, as by default");
 }

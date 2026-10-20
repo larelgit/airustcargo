@@ -105,7 +105,7 @@ pub use shards_core::EngineConfig;
 pub use tile_levels::TileLevelsPlugin;
 pub use audio_wiring::EngineAudioPlugin;
 pub use encounter_wiring::EngineEncounterPlugin;
-pub use ui_wiring::{EngineUiPlugin, PAUSE_SCREEN};
+pub use ui_wiring::{nearest_landmark, EngineUiPlugin, MARKS_PER_CATEGORY, PAUSE_SCREEN};
 
 // glam keeps its SIMD. Its `scalar-math` feature (parry3d's `enhanced-determinism` turns it on, and
 // a feature is on for the whole build once any crate asks) drops the 16-byte alignment of `Vec4` and

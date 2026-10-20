@@ -85,7 +85,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 215 definitions in 64 files
+cargo shards content check                 # ok: 216 definitions in 65 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -108,7 +108,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 215 definitions in 64 files
+# ok: 216 definitions in 65 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -521,7 +521,7 @@ The game's numbers and definitions live in files, not in code: attacks, prefabs,
 
 - An id is a non-empty string without spaces or control characters; it is unique within its content kind across all files.
 - The engine registers its own content kinds: `prefab`, `locomotion`, `action`, `moveset`, `status`, `combat_tuning`, `animset`, `prop`,
-  `input_map`, the camera `camera` and `lock_on`, levels `level`, world `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`,
+  `input_map`, the camera `camera`, `lock_on` and `shot` (see "Scene cameras (K3)"), levels `level`, world `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`,
   voxels `voxel_palette` and `voxel_region`, enemies `behavior`, `perception`, `director`, `attack_plan`, `npc_tuning` and `nav`,
   encounters `encounter` and `encounter_rules` (see "Encounters (G9)"), sound `audio`, `sound` and `music`, screens `screen` and `theme`, `locale`, `save`, `net`, `perf`, `devmenu`, mesh looks `look` (see "Stylised materials (E10.1)"),
   foliage `scatter` (see "Foliage and small objects (E10.2)"), effects `effect` and `fx` (see "Effects and decals
@@ -598,7 +598,7 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 215 definitions in 64 files
+content: 216 definitions in 65 files
   action  70
   animset  1
   attack_plan  3
@@ -649,7 +649,7 @@ content: 215 definitions in 64 files
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 215 definitions in 64
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 214 definitions in 64
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -805,9 +805,10 @@ game despawns them. The rules:
   Without an `AiId` it counts as level geometry, which a snapshot does not hold: the `static_colliders` check compares the
   colliders without an `AiId` and refuses a load into a game where they differ (one that has not laid the same collider, with
   the same id and pose, before loading), and a client never gets it.
-- *Navigation.* The navmesh cuts out a laid collider but bakes no walkable surface on top of it (see "Navigation and NPCs (E6)").
-  So a route (`move_to path=true`, an NPC's path) never leads onto laid ground. A plain move walks onto it, and a ledge up to
-  `mantle_height` is climbed.
+- *Navigation.* The navmesh cuts out a laid collider at its next refresh but bakes no walkable surface on top of it (see
+  "Navigation and NPCs (E6)"). Each tick's NPC routing refreshes it first; `move_to path=true` and `path_to` read it as it
+  stands, so a route they plan before that refresh (on the tick the ground is laid) can still cross it. After it, a route never
+  leads onto laid ground. A plain move walks onto it, and a ledge up to `mantle_height` is climbed.
 - *Foliage.* The scatter does not clear the grass under a collider laid after the layout (see "What counts as ground and what
   as solid" in "Foliage and small objects (E10.2)"). That rule belongs to the scatter, not to the controller.
 
@@ -993,6 +994,8 @@ For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, spr
 | `framing.pitch_target` | `None`: the pitch of the line from the target to the focus | a fixed pitch to frame at |
 | `framing.pitch_clamp` | `(0.15, 0.7)` | the range that geometric pitch is held to |
 | `framing.min_horizontal` | `0` (always frames) | nearer than this to the target (m, on the ground, from the focus) the camera stops framing |
+| `framing.fit` | `None`: the view looks at the focus | keep the player and a locked target high on a big body in frame together (R4, below); `Some(())` takes the defaults of its fields |
+| `framing.fit.margin` / `tilt_max` / `rate` | `0.15` / `0.6` / `6` | how far inside the top and bottom edges the target and the feet are kept (a share of half the frame's height, below 1); the most the view turns up (radians); how fast the turn catches up and goes back after the lock, 1/s |
 | `arm.radius` / `arm.min_distance` | `0.25` / `0.7` (`CAMERA_RADIUS`, `MIN_DISTANCE`) | the sphere a wall pulls in; never closer than this to the focus |
 | `arm.follow_rate` | `None`: at once | how fast the arm grows back after a wall let go of it, and how fast its nominal length follows `ThirdPersonCamera::distance`, 1/s. It always shortens at once |
 | `flick.mouse_threshold_px` | `14` (`FLICK` 0.035 rad at the standard map's 0.0025 rad/px) | horizontal mouse pixels, summed, that switch the lock-on target |
@@ -1003,15 +1006,68 @@ For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, spr
 | `flick.stick_rearm` | `None`: no latch | the stick must come back below this before it can switch again; a lock taken with the stick already over starts disarmed |
 | `trauma.decay` | `1.4` (`TRAUMA_DECAY`, linear) | trauma drained per second |
 | `trauma.shift_m` / `pitch_deg` / `yaw_deg` / `roll_deg` | `0.12` / `2` / `2` / `3` | the most a shake of trauma 1 moves and turns the view (scaled by trauma squared) |
+| `auto_centre.delay_s` / `rate` / `min_speed` / `max_turn_deg` | `1.5` / `2.5` / `0.5` / `150` | the auto-centre (K2, below; only while the player's `controls.camera_auto_centre` is on): real seconds the look must be left alone; how fast the view turns behind the body, 1/s; the least walking speed on the ground, m/s; a body facing farther than this from the camera's forward (degrees, at most 180) does not swing it round |
+| `auto_centre.pitch` | `None`: the pitch stays the player's | a tilt the auto-centre eases toward with the yaw (radians, within `pitch`) |
 
-The ranges of `pitch`, `follow_rate`, the rates, thresholds and amplitudes are content errors when out of range (a rate must be above 0, a re-arm level below the threshold, and so on). `framing.pitch_clamp` must not have its low end above its high end; it may be wider than `pitch`, since the framed pitch is then held to the pitch limits like any other. Two things stay constants on purpose: the engine's 30..120 limit on the field of view (the player's setting is clamped to it too) and the shake's noise frequencies (the look of the noise, not a feel number).
+The ranges of `pitch`, `follow_rate`, the rates, thresholds and amplitudes are content errors when out of range (a rate must be above 0, a re-arm level below the threshold, and so on). `framing.pitch_clamp` must not have its low end above its high end, and `framing.fit` needs a margin in [0, 1), a `tilt_max` within [0, π/2 − 0.02] and a rate above 0; it may be wider than `pitch`, since the framed pitch is then held to the pitch limits like any other. Two things stay constants on purpose: the engine's 30..120 limit on the field of view (the player's setting is clamped to it too) and the shake's noise frequencies (the look of the noise, not a feel number).
 
 *Smoothing.* Every smoothing is the exact exponential `1 - exp(-rate * dt)` through `bevy::math::ops::exp`, so it does not depend on the frame rate (`damp`, `lock_framing`, `arm_reach`). `critically_damped_step(x, v, target, omega, dt)` is the closed form of a critically damped spring (for a landing dip: kick `v`, aim at 0); one step of `2 dt` equals two of `dt`. *The arm*: a wall pulls it in at once; once it lets go the shortfall below the nominal length shrinks at `arm.follow_rate` (the rate acts on the shortfall, so a plain zoom is smoothed once, by `arm_length`; `ThirdPersonCamera::arm_reach` is where it stood last frame, `arm_length` its nominal length), never past what is free and never closer than `arm.min_distance` (as far as the room allows). A jump of the focus (a teleport) resets it.
 
 *Flick.* The flick thresholds are in raw units, so they are the old constants only at the standard map, mouse sensitivity 1.0 and 60 Hz: before, the mouse flick read the scaled, sensitivity-adjusted axis (0.035 rad) and the stick flick also carried the frame time. Now the player's sensitivity and a binding's scale do not move the flick, and the stick flick does not depend on the frame rate. A stick's flick reads its deflection before its response `curve` and its scales (`scale`, or C9's `scale_x` / `scale_y` per axis), so a look curve or a faster yaw does not move the stick threshold either. An inverted stick binding (a negative scale on that axis) keeps its flipped side. If both devices flick in one frame the mouse wins and the stick is not asked. The mouse is measured in raw pixels and the stick in deflection, both from `ControlState` (`look_pointer_px()`, `look_stick()`); the `look` axis stays the scaled sum. The cooldown runs on the simulation clock, `Time<Virtual>`: a paused game does not run it down, a slowed one runs it down slowly. The mouse's sum drains on the frame clock (`Time<Real>`): that is input, not the game. Follow, framing, arm and shake stay on `Time<Real>`, so a paused game still shows its camera settle. There is no look grace after a spawn. Gameplay reads the stored `ThirdPersonCamera::yaw` (`input` turns the move axes by it): the shake only moves the camera's `Transform`.
 
-*Offsets.* `CameraOffsets` (a resource, neutral by default) is what a game's systems add to the base values; `orbit_camera` reads it after them, every frame: `fov_add_deg` is added to the player's field of view before the engine's 30..120 limit (sprint widening, a finisher's punch); `focus_dip_m` lowers the camera and what it looks at together, so the picture drops without tilting (a landing dip; negative raises); `pitch_min` / `pitch_max` narrow the tuning's pitch range (an override outside it is held to it), and the stored pitch is clamped to the result (a swim cap: the camera stays above the water; lifting the cap does not push the pitch back up). **The writer owns its value**: the system that writes a field sets it on every frame it wants an effect and puts it back to `0.0` / `None` itself when it is done. The camera only reads: it never decays, sums or stores an offset, and it never writes `CameraSettings`, `ThirdPersonCamera::focus` or the stored pitch except through the clamp above, so an offset stays as its writer left it until the writer puts it back (a writer that stops without resetting
+*Offsets.* `CameraOffsets` (a resource, neutral by default) is what a game's systems add to the base values; `orbit_camera` reads it after them, every frame: `fov_add_deg` is added to the player's field of view before the engine's 30..120 limit (sprint widening, a finisher's punch); `focus_dip_m` lowers the camera and what it looks at together, so the picture drops without tilting (a landing dip; negative raises); `pitch_min` / `pitch_max` narrow the tuning's pitch range (an override outside it is held to it), and the stored pitch is clamped to the result (a swim cap: the camera stays above the water; lifting the cap does not push the pitch back up); `aiming` says the player aims (what aiming is, a ranged technique or a zoom, is the game's): free look then turns by the player's `aim_sensitivity` instead of `sensitivity` (K1), and a lock frames as it always does. **The writer owns its value**: the system that writes a field sets it on every frame it wants an effect and puts it back to `0.0` / `None` / `false` itself when it is done. The camera only reads: it never decays, sums or stores an offset, and it never writes `CameraSettings`, `ThirdPersonCamera::focus` or the stored pitch except through the clamp above, so an offset stays as its writer left it until the writer puts it back (a writer that stops without resetting
 leaves its effect on). Two systems that want the same field must be combined by the game into one writer. Write in `PostUpdate` before `CameraSystems::Orbit` to be seen on the same frame (the set is empty without the `render` feature, so the writers run and are testable headless).
+
+*Auto-centre (K2).* With the player's `controls.camera_auto_centre` on (`CameraSettings::auto_centre`; off by default, so no picture changes until the player asks), free look turns back behind the body it follows once the player leaves the look alone: after `auto_centre.delay_s` real seconds with no look input (`ThirdPersonCamera::look_idle_s`), while the body walks at least `min_speed` on the ground (measured from where the body is drawn, frame to frame: not from the focus, which goes on catching up after the body stops), the yaw eases toward behind the body's facing at `rate` (the exact exponential), and the pitch toward `auto_centre.pitch` when it is set. A body facing more than `max_turn_deg` from the camera's forward (one walking toward the camera) does not swing it round, and one standing still keeps the view. Any look input, a lock, a jump of the focus and a body placed farther than `body_snap_distance` in one frame (a teleport, a respawn; `ThirdPersonCamera::subject_seen`) start the wait over; a lock frames as it always does. The step is `camera::math::auto_centre`; like the rest of the camera it runs on `Time<Real>`, outside the simulation, so nothing in a replay or a snapshot changes. The sandbox has the toggle in its settings' controls.
+
+**Scene cameras (K3).** A shot is a short camera move a game plays over the orbit camera: a scene of half a minute, a boss's entrance of a few seconds (GDD §6.3, §15.1). It is content, kind `shot` (`*.shot.ron`, `shards::motion::camera::ShotDef`; presentation, so it is not in the content hash a replay checks):
+
+```ron
+// content/scenes/warden_intro.shot.ron
+{
+    "warden_intro": (
+        keys: [
+            (at: 0.0, eye: On(role: "boss", offset: (0.0, 2.0, -7.0), local: true), look: On(role: "boss", offset: (0.0, 3.0, 0.0))),
+            (at: 4.0, eye: On(role: "boss", offset: (2.0, 1.0, -4.0), local: true), look: On(role: "boss", offset: (0.0, 4.0, 0.0)),
+             fov_deg: 45.0, ease: InOut),
+            (at: 4.5, eye: At((0.0, 3.0, 12.0)), look: On(role: "hero"), cut: true),
+            (at: 6.0, eye: At((0.0, 2.0, 9.0)), look: On(role: "hero", offset: (0.0, 1.5, 0.0))),
+        ],
+        blend_in_s: 0.5,   // default 0: the shot starts where its first key is
+        blend_out_s: 0.8,  // default 0.5
+        skippable: true,   // default
+    ),
+}
+```
+
+- *Keys*: where the camera stands (`eye`) and what it looks at (`look`) at `at` seconds from the start (0 or more, each key strictly later than the one before it, at most 120 s), and optionally the field of view (`fov_deg`, 10 to 120; without one, the player's). Between two keys the camera moves from one to the other, the later key's `ease` (`Linear`, the default, or `InOut`) shaping the move; a `cut` key is jumped to at its time (the camera holds the key before until then). Before the first key the camera holds it; the shot ends at the last.
+- *Points*: `At((x, y, z))` is a place in the world; `On(role:, offset:, local:)` a place on a body the game names when it plays the shot: its position where it is drawn (between ticks, as the orbit camera follows it) plus `offset`, turned with the body when `local` (its forward is `-z`). If the body disappears while the shot plays (it is despawned, or loses its `Transform`: a dead enemy taken away), its points stay at the last place it was seen until the shot ends.
+- *Playing*: `shards::motion::camera::shot::play(world, id, &roles)` (`roles`: role name → entity) starts it on this machine's camera; `stop` is the game's skip (refused for a shot with `skippable: false`), `cancel` ends any. A shot blends in over `blend_in_s` from what the camera showed and back to where the orbit camera is over `blend_out_s`, at its end or when stopped (from what the camera showed then: a blend in longer than the shot goes back from where it got to); a second `play` ends the first as skipped. `play` is refused, with what to fix, for a shot that is missing or has problems, a role the shot uses with no body given for it, a role given that the shot does not use (both are refused: the roles given must be exactly the shot's), a body that does not exist, and where nothing is drawn: a headless game has no `ThirdPersonCamera`, so a shot only plays in a window or `--offscreen`.
+- *The orbit camera meanwhile* stands still: its yaw and pitch stay as they were (the move axes keep their meaning), look input turns nothing, and lock-on picks and switches nothing (a lock the player had is framed again after the shot). Shake and the game's `CameraOffsets` do not touch the shot.
+- *Time* is `Time<Virtual>`: the pause menu pauses a shot, a slowed game slows it, and in a game started `--paused` it moves only by `step`. It is drawn in `PostUpdate` after `CameraSystems::Orbit`.
+- *Messages*: the observer events `ShotStarted { id }` and `ShotEnded { id, skipped }` (`skipped`: stopped before the last key, or replaced), journal lines `shot ID starts: 6.0s, boss=e5` and `shot ID ends (done|skipped)` (`Local`), and an `observe` line `SHOT warden_intro 2.4/6.0s skippable, roles boss=e5` (or `SHOT warden_intro stopped, back to the orbit camera in 0.3s`). The resource `Shots` says which plays (`Shots::playing`).
+- *Tools* (developer): `play_shot id=warden_intro role.boss=e5 role.hero=e1` and `stop_shot` (`force=true` cancels one that is not skippable).
+- *What stays the game's*: blocking the player's input during a scene, letterbox bars and subtitles, pausing or slowing the simulation, and which button skips (it calls `stop`).
+- `--check-content` names a shot with no keys, a key time below 0, not strictly later than the key before it (two keys at the same time included) or past 120 s, a key whose `eye` and `look` are the same place, a field of view outside 10 to 120, an empty role, a number that is not finite, a blend outside 0 to 10 s, a key without one of its required fields (`at`, `eye`, `look`), and an unknown field on a shot, a key or a point (a misspelt `ofset` for `offset`); the error names the file and the field.
+
+The simulation never reads the camera: nothing of a shot is in a snapshot or a replay.
+
+**The camera next to a big body (R4).** A locked camera looks at the player's head. Next to a body several times the player's height,
+a lock point on it (a horn, a core high in its chest; "Lock points (R3)") leaves the top of the frame, while the frame's bottom
+third, below the player's feet, stays empty. The measurement (`tests/motion/camera_big.rs`, `measure`, through the real
+`orbit_camera`, at the defaults: arm 5.5 m, focus 1.5 m, 70°): the feet sit at y −0.37 of the frame (−1 bottom, 1 top), and a
+point 6 m up at 2 m ahead, 9 m up at 8 m and 12 m up at any distance reach its top edge or pass it. A `framing.fit` keeps both: the camera stands
+where the framing puts it, but its view turns up from the focus about its own horizontal axis (`ThirdPersonCamera::tilt`,
+`fit_tilt`) just far enough to put the target on the top margin, and never so far that the feet leave the bottom margin; when
+both cannot be kept, the player is. Both are measured in the camera's own frame, so a target off to the side (a camera still
+turning to a new lock) lands where the frame's height says. The turn eases toward the target at `fit.rate`, but the feet's limit
+and `tilt_max` (`fit_room`) hold it on every frame: a wall that shortens the arm or a lower `tilt_max` never lets the feet out (the player and the threat, not the whole silhouette). With the defaults a point fits up
+to about 9 m at 2 m ahead, 10 m at 4 m, and 12 m from 6 m out. The fit never tilts the view below the focus, a target the frame
+already holds (a body of a person's height, framed at its chest) gives the very same camera as without a fit, and after the lock
+the view comes back to the focus at `fit.rate`. A lower camera needs no new number: `framing.pitch_clamp`'s low end is how far
+down the framed arm may go (`(0.0, 0.7)` keeps it level with the head next to a big body). Without a `fit` nothing changes. The
+lock pick and the flick read the camera's `Transform`, so with a tilt they measure from what the player sees. The far plane
+(Bevy's default 1000 m) did not need a number. The sandbox's `combat/camera.camera.ron` turns the fit on for its colossus.
 
 **Lock-on rules (C6).** With a `lock_on` definition (content kind `lock_on`, `*.lock_on.ron`, the id `default` (another id is a content error: the engine reads no other), hot reload; `shards::motion::camera::LockOnDef`), lock-on is a simulation rule rather than the camera's: the camera, the `lock_on` tool and the check of every lock use the same plain functions (`shards::motion::camera::lock`), so a window and a headless run decide alike. Without one, everything above holds as it was (the camera's own pick, switch and release, no check), and a game sees no change; the sandbox has one, the template none.
 
@@ -1930,7 +1986,7 @@ spawns the colossus as part of the yard region, so the `regen` that ends it take
 puts it (per-action part poses would be a later slice). The body's guard arc and its hurtbox-based checks are the body's, not
 the part's. A part is no ground to stand on: it lies on `HURTBOX`, not `WORLD`. A body lying still is made ground by
 colliders the game lays and lifts ("Ground laid in the middle of play (R2)" in "Movement (E2)"). A camera for a body this big
-is R4.
+is "The camera next to a big body (R4)" in "Movement (E2)".
 
 ### Lock points (R3)
 
@@ -1964,8 +2020,8 @@ pair, and the parts check refuses `lock_body: false` with no lock point).
 - *Co-op*: a client's lock on a point is its input; the host checks it like any lock, and the markers come with the part.
 
 **Limits, on purpose.** Points are where their parts are: they follow the body's transform, not its animation. The flick is
-horizontal only (a point straight above another, a horn over the core, is reached by name); a vertical flick belongs to the
-big-body camera (R4).
+horizontal only (a point straight above another, a horn over the core, is reached by name). The big-body camera (R4) keeps a high
+point in frame; it adds no vertical flick.
 
 
 ## Levels from Blender (E4.2)
@@ -2021,7 +2077,7 @@ A JSON object can be typed in as text (the *String* type): text that holds a JSO
 | `trigger` | `LevelMarker`, a `Volume` sensor, and its collider | `Trigger "goal"` |
 | `interactable` | `LevelMarker` | `Interactable "door"` |
 | `camp` | `LevelMarker` | `Camp "bandits"` |
-| `landmark` | `LevelMarker`, `AiLandmark`, `AiKind` from the marker's name | in the LANDMARKS line |
+| `landmark` | `LevelMarker`, `AiLandmark`, `AiKind` from the marker's name | in the LANDMARKS line; a `LandmarkCategory = "shrine"` property gives it a compass category |
 | `custom:<name>` | `LevelMarker` | no (needs an `AiKind`; add it as a component) |
 
 The nodes of the file `crates/sandbox/assets/tiles/ruin.gltf` (a ruin of 16 × 16 m, exported from Blender 5.2.2 in the *Embedded* variant; `tools/blender/ruin_tile.py` builds the export, and the template keeps a copy of the same file) are: the floor `Ground`, the walls `Wall.North`, `Wall.West`, `Rubble`, `Column` with `collider = auto`; `Camp` (`marker = camp`, `name = ruin_camp`), `Arch` (`marker = landmark`, `name = Ruin`), and four `Edge.N/E/S/W` with `socket = grass`. The test `the_committed_ruin_is_the_tile_the_spec_describes` (`crates/sandbox/tests/sandbox/tiles.rs`) checks the export against the tile's description: the same nodes, properties, world transforms and mesh bounds. After you change the ruin:
@@ -2342,8 +2398,11 @@ Also `pairs` (which different kinds join, symmetrically), `forbid` (they join wi
 {
     "spawn": (label: Some("Spawn")),
     "camp":  (label: Some("Camp"), prefab: Some("camp_skeleton")),    // the camp spawns a skeleton when the region is built
+    "shrine": (category: Some("shrine")),                             // a compass draws it as the theme's shrine symbol
 }
 ```
+
+A point with a `category` (letters, digits, `_` and `-`) gets `LandmarkCategory` on its landmark entity: a compass keeps the nearest of each category and draws the theme's symbol for it (see "Compass categories" in "UI (E9)"). The component is not simulation: the replay check leaves it out, as it does `AiLandmark`, while snapshots and co-op clients keep it. The point's definition is still content a replay reads, so giving an existing point a category changes the content part of the replays that build its region (record them again).
 
 **Region** (`*.region.ron`).
 
@@ -5100,9 +5159,12 @@ flashes = "reduced"          # full | reduced | off
 text_scale = 1.0             # 0.5…3, for the game's UI
 fov_deg = 90.0               # 30…120
 hold_to_toggle = false       # held buttons work as toggles
+subtitles = true             # the lines of voices, in the game's UI
 
 [controls]
 mouse_sensitivity = 1.0      # 0.05…5
+aim_sensitivity = 1.0        # 0.05…5, while the game says the player aims (`CameraOffsets::aiming`)
+camera_auto_centre = false   # true: free look turns back behind the walking body (K2)
 invert_y = false
 attack_assist = true         # false: attacks do not correct their direction toward the lock-on target (holds `assist_off`)
 
@@ -5118,8 +5180,8 @@ attack_assist = true         # false: attacks do not correct their direction tow
 |---|---|
 | `graphics` | `shards_settings::apply_graphics`: the main window (fullscreen, vsync, size). The window changes when the settings change, not every frame, so the size the player dragged with the mouse is not taken back. Without a window the values are only stored. `render_scale` is applied by `shards::render_scale`: the resolution of the 3D picture, not the window scale (see "3D picture resolution" below). `shadows` is read by the game: `GraphicsSettings::shadow_quality()`; `foliage` is read by `shards_scatter` (`GraphicsSettings::foliage_density()`): at 0.5 half of the same instances stays, with no new ones (see "Foliage and small objects (E10.2)"); `interpolation` is read by `shards_motion` (render interpolation, see "Render interpolation (C8)") |
 | `audio` | `shards_audio`: the volume of the buses `music`, `sfx`, `voice`, `ui` with `master` taken into account (`AudioSettings::volume("music")`), applied to what is already playing (see "Audio") |
-| `controls` | `shards_motion`: `ControlSettings` ⇄ `InputMap` (see "Input" in "Movement (E2)"); sensitivity and the Y-axis inversion go to `CameraSettings`; `attack_assist = false` makes the controls hold `assist_off` for the player's body (see "Action timeline (B2a)") |
-| `accessibility` | `shards_motion`: the field of view and the strength of the camera shake, `MotionBlur` on the cameras that have it (the game adds the component, the setting sets the strength, 0 turns it off), `hold_to_toggle` in the input map; `shards_action`: `flashes` for the blinking of telegraphs and of off-screen markers (`reduced` — half as big and no more than 2 times a second, `off` — a steady light, `draw::pulse_at`) and `shards_ui`: `flashes` for full-screen flashes (`reduced` — at most 0.35 strong, pulses no more than 2 times a second and half as deep, eased fades, `off` — none; see "UI (E9)") |
+| `controls` | `shards_motion`: `ControlSettings` ⇄ `InputMap` (see "Input" in "Movement (E2)"); the two look speeds (`mouse_sensitivity`, and `aim_sensitivity` while the game sets `CameraOffsets::aiming`), the Y-axis inversion and `camera_auto_centre` go to `CameraSettings`; `attack_assist = false` makes the controls hold `assist_off` for the player's body (see "Action timeline (B2a)") |
+| `accessibility` | `shards_motion`: the field of view and the strength of the camera shake, `MotionBlur` on the cameras that have it (the game adds the component, the setting sets the strength, 0 turns it off), `hold_to_toggle` in the input map; `shards_action`: `flashes` for the blinking of telegraphs and of off-screen markers (`reduced` — half as big and no more than 2 times a second, `off` — a steady light, `draw::pulse_at`) and `shards_ui`: `flashes` for full-screen flashes (`reduced` — at most 0.35 strong, pulses no more than 2 times a second and half as deep, eased fades, `off` — none; see "UI (E9)"); `shards_audio`: `subtitles` for the lines of voices (off: the source `subtitles` is empty; see "Audio") |
 
 **3D picture resolution: `graphics.render_scale` (E8.6, E10).** The 3D world is drawn into a picture of `render_scale` x the window's pixels (with `--offscreen`, the base is the size of the `--offscreen` picture, 1280×720 by default), and the picture is stretched over the whole window with a linear filter;
 the UI, HUD, menus and the developer console stay at the window's native resolution. At 0.5 it is a quarter of the pixels (cheaper and softer), at 2 it is supersampling (four pixels for one). The module `shards::render_scale` (feature `render`, window and `--offscreen`):
@@ -5284,7 +5346,7 @@ with an id; only one is shown). Some show content: `Text` (its own text or `bind
 the other follows the picture's proportions; give neither and the picture keeps its own size; the content check names a missing file and a size that is not
 greater than 0), `Bar` (`value`/`max` or
 `bind`, `color` — a theme colour name or `#rrggbb`), `Cooldown` (time until ready), `Compass` (where the player looks and the four
-nearest points of interest), `Allies` (ally frames: name, health, whether down), `Compare` (before → after by rows: `damage 12 →
+nearest landmarks of each category, `you.heading:<n>` for another number; see "Compass categories"), `Allies` (ally frames: name, health, whether down), `Map` (a picture of the world with the game's places and the viewer; see "Map"), `Compare` (before → after by rows: `damage 12 →
 15 (+3)`). These take input: `Button` (`action`), `Slider` (`min`, `max`, `step`), `Toggle`, `Choice` (`options`); the last three have
 `setting: "group.key"` — a player setting: the widget shows it and changes it through `settings_set` (its checks, the write to
 `settings.toml`, the journal entry `settings: …`). `Binding` (`context`, `action`, `slot`) — a key or button of an action that the player
@@ -5307,8 +5369,8 @@ app.add_ui_action("give_up", |world, press| {          // press: widget, screen,
 ```
 
 Engine sources (`shards`): `you.health`, `you.stamina`, `you.poise` (a bar), `you.charges:<charge>`, `you.cooldown:<action>`,
-`you.heading` (the compass), `allies`, `input.bindings:<context>.<action>` (the inputs of an action in the input map, as the `controls`
-settings make it at that moment; `Binding` reads it). "You" is the body this machine controls (`LocalPlayer`), otherwise the body
+`you.heading` (the compass), `you.nearest:<category>` (how far the nearest landmark of a category is, m; no value without one), `allies`, `input.bindings:<context>.<action>` (the inputs of an action in the input map, as the `controls`
+settings make it at that moment; `Binding` reads it). The audio module adds `subtitles` and `subtitles:<lines>` (the lines of voices playing; see "Audio", "Subtitles"). "You" is the body this machine controls (`LocalPlayer`), otherwise the body
 the agent plays (`AiPlayer`). An unknown source writes one warning to the journal, and the widget stays empty.
 
 **Theme** is a definition of the `theme` kind with the id `default` (without it, the engine's theme is used): colours `text`, `dim_text`, `panel`, `backdrop`,
@@ -5450,6 +5512,34 @@ screen's `Text` or `Hint` that names a font the theme `default` lacks; a message
 drawn in the theme's font, and the journal says so once (`ui: [font=nope] names no font of the theme…`). The engine ships no symbol font:
 the game brings its own.
 
+**Compass categories** (U3a). A landmark can have a category (`LandmarkCategory("shrine")`, an `ai_core` component that brings
+`AiLandmark` with it): a point of interest's `category` (`*.poi.ron`), a level node's `LandmarkCategory = "shrine"` property, a prefab's
+component or the game's code gives it. The compass (`you.heading`) keeps the 4 nearest landmarks of each category, and the 4 nearest of
+those without one, nearest first, so a far shrine is not pushed off by near pillars; `you.heading:2` keeps two of each. The theme draws a
+category as a symbol before the name: `symbols: {"shrine": "⛩", "camp": "[font=symbols]ᚲ[/font]"}` (a symbol may name a theme font, and its tags must pair up: the content check refuses one that would be drawn as text; a
+category without one is drawn as before). Screen readers and `ui_read` get the category's name in words (`Shrine (shrine) N
+5m`). The source `you.nearest:<category>` gives how far the nearest landmark of that category is on the ground (m, a `Number`; no value
+without one), and `shards::nearest_landmark(world, category)` gives it to code with its entity: a game pulses a sound or a needle by it
+through a condition of its own (`add_ai_condition`, which the music's layers can wait on). The category is identity, not simulation: like
+`AiLandmark` it is left out of the replay check and `inspect`, and snapshots and co-op clients keep it. The content check refuses a
+category or a symbol name that is not letters, digits, `_` and `-`, an empty symbol, and a symbol's span font the theme lacks.
+
+**Map** (U3b). `Map(id: "map", label: "Valley", bind: "quests.places", image: "ui/valley.png", area: (min: (-128.0, -128.0), max:
+(128.0, 128.0)), width: 320.0, height: 320.0)` draws the picture `image` (optional) over `width` × `height` logical pixels (256 each by
+default) as the world's `area`: `x` and `z`, `min` the north-west corner (north is `-z`), `max` the south-east one; north is up. The places
+come from the game's source `bind`, which returns `UiValue::Map { points, you: None }`: each `MapPoint` has a label, where it is (world `x`,
+`z`), a `MapState` (`Rumor`, `Discovered`, `Completed`) and a category. Which places a player knows of, and in what state, is the game's,
+kept in its own save section; the engine draws what the source says. A discovered or completed place is a mark where it is (on the
+nearest edge when it lies outside the area); a **rumour** is a mark on the edge, on the line from the viewer (the map's middle without one)
+toward where the place is said to be, so the map gives a direction, not the place. A mark on an edge is drawn whole, just inside it
+(the map clips what lies outside). The widget adds the viewer (the HUD's body: where it
+stands and faces) and draws it last. The theme's `map_colors` colour the marks by state (`rumor`, `discovered`, `completed`, and `you`;
+by default the dim text, the text, `#4fae55` and the accent), and its `symbols` draw a category as on the compass. Marks are drawn again
+in place when the places or the viewer move. Agents (`ui_read`) and screen readers read it in words, a rumour as a compass direction from
+the viewer: `atlas/map  map "Valley" you (0, 0) facing N · Old Shrine (shrine) discovered (12, -40) · Ruins rumor NE · Gate completed (5,
+5)`. The content check refuses an area whose `max` is not east and south of `min`, a size that is not above 0, an empty `bind`, a missing
+picture, and `map_colors` that name something else or are not colours.
+
 **Full-screen flashes** (U2). A colour over the whole picture for a moment: a reality flash, the 2–3 s glitch of a reality crack.
 A flash is content, kind `flash`:
 
@@ -5479,7 +5569,7 @@ without a GPU, a replay with pressed buttons, an edit to a screen in a running g
 the loading image — `main_menu.rs`; `bindings.rs` — rebinding through `ui_set`, a refusal that names the action, waiting for
 a key, a mouse button and a gamepad button, Escape, which does not close the screen, a replay; `flash.rs` — a flash frame by frame,
 `reduced` and `off`, a newer flash and the trigger, the tool, the content check; `fonts.rs` — runs in a named font, drawn again in place,
-a font the theme lacks, the text without markup for agents and screen readers, the content check), `template/tests/game/main_menu.rs` (the path
+a font the theme lacks, the text without markup for agents and screen readers, the content check; `compass.rs` — the nearest landmarks of each category, `you.nearest`, the category outside the replay check, symbols drawn and named to screen readers, the content check; `map.rs` — places and a rumour in words, marks where they are and a rumour on the edge, the theme's colours and symbols, a redraw in place, the content check), `template/tests/game/main_menu.rs` (the path
 through the menu gives the same game and the same replay as without it; "Continue" with a save and without one), scenarios
 `crates/sandbox/scenarios/ui.scenario` and `template/scenarios/menus.scenario`.
 
@@ -5543,8 +5633,8 @@ language=ru` shows all the messages of a language with their text. `text id= arg
 ```text
 $ shards act locale
 playing: en
-en English: 50 messages
-ru Русский → en: 49 messages; lacks 1: settings-fov
+en English: 53 messages
+ru Русский → en: 52 messages; lacks 1: settings-fov
 # switch: settings_set group=locale key=language value=<id>; `locale language=<id>` lists one language's text
 $ shards act text id=defeated 'args={"count": 3}' language=ru
 Повержено 3 врага
@@ -5573,6 +5663,7 @@ Three kinds of content set how the game sounds. The `shards_audio` module decide
     "warden_slam": (files: ["sounds/warden_slam.wav"], priority: 220, spatial: (near: 4.0, far: 55.0)),
     "hit": (files: ["sounds/hit_1.wav", "sounds/hit_2.wav"], priority: 120, spatial: (near: 2.0, far: 30.0), max_instances: 4),
     "ui_press": (files: ["sounds/ui_press.wav"], bus: Ui, volume: 0.5),
+    "warden_gate": (files: ["voice/warden_gate.ogg"], bus: Voice, subtitle: "@warden-gate", speaker: "@warden"),
 }
 // content/audio/arena.music.ron: music (kind `music`)
 {
@@ -5597,6 +5688,8 @@ Three kinds of content set how the game sounds. The `shards_audio` module decide
 **Where the sounds come from.** An attack's telegraph (E3) names its own sound (`telegraph: (…, sound: "warden_slam")`). It plays where the blow lands, from the attacker. An action also names a sound, at its own moment: the effect `Sound("whoosh")` (`effects: [(at: 0.2, effect: Sound("whoosh"))]`) plays from the body that acts, on the tick when the action reaches it. So a hero's swing is heard without a window, in a window, and on a co-op client (the host forwards the `ActionSound` event, as it does for a hit). An animation cue (`AnimationCue`) plays the sound with the same name from the body, if such a sound exists; a cue that names a `bone` plays it from where the bone was when the cue fired (`SoundAt::Point { position, source: Some(body) }`: it stays where it fell, as a footstep does), and the cue's `strength` is a linear gain on the sound's own volume (`shards::audio::play_scaled`; a strength of 0 starts no voice). But clip markers come from the clip, and a clip plays only where the model is drawn (a window or `--offscreen`). Without a window there is no such sound, and `audio` does not show it. Do not put a sound that the game must hear on every machine on a clip marker. The engine's events play the sounds listed in the mixer's `sounds`: `damaged`, `blocked`, `parried`, `evaded`, `guard_broken`, `staggered`, `died`, `healed` (from the body it happened to), and `ui_moved`, `ui_pressed`, `ui_changed`, `ui_opened`, `ui_closed` (the menus, the same everywhere; the HUD makes no sound). The game plays its own: `commands.trigger(PlaySound::new("coin", SoundAt::Entity(hero)))` or `shards::audio::play(world, "coin", SoundAt::Point { position, source: None })`.
 
 **Layered music.** A track's stems are files of one length. They start together and loop, and each layer switches its own stems on. Layers go from calm to tense. Every layer except the first has a `when` condition: the name of a condition, as in `step --until named:…` (`!name` negates it). The condition is either the engine's (`npc_near` and `npc_engaged` from the NPC module) or the game's (`add_ai_condition`). The most tense layer whose condition holds plays; otherwise the first layer does. A more tense layer comes in at once. A calmer one comes in only after it has been wanted for `hold` seconds in a row, so a pause in a fight does not cut the music. Stems fade in over `fade_in` and out over `fade_out`. The journal writes each change as a line: `[local] music: arena explore → tension`. `music_set track=boss` changes the track (the old one fades out), `track=none` is silence, `layer=combat` holds the layer whatever is happening in the game, and `layer=auto` releases it.
+
+**Subtitles** (U4). A sound with a `subtitle` has a line: a voice's words, as text or a message `@id`, with an optional `speaker` before it (`Warden: The gate holds.`). When the mixer starts the sound (heard: not dropped and not out of earshot), the line shows for the sound's length plus 0.75 s, and at least 2 s, on the voice's clock: `step` moves it, and pause holds it (a `Ui` sound's line goes by real time). The game's UI shows the lines through the source `subtitles`: `Hint(id: "subtitles", bind: "subtitles", text: "")` shows the newest two, oldest first, one per line; `subtitles:3` shows three (at most 8 are kept). Messages are resolved when the line is read, so a language switched to in the menu applies to the lines on screen, and a line can carry font spans (`[font=symbols]…[/font]`, see "Font spans (U1)"). The same line said twice while it shows (two guards bark it) shows once, moved up to the newest, while either voice has time left (each by its own length and clock). A voice taken by a stronger sound takes its line, and its time, with it: the line stays only while another voice that says it has time left, and stopping every voice takes them all: a line is what is heard. The player's `accessibility.subtitles` (on by default) turns the source empty. Agents read each line as it starts in the journal, whatever the setting (`[local] subtitle: Warden: The gate holds.`), and the lines on screen in `audio` (`subtitles (shown): "Warden: The gate holds." 1.4s more`). The mixer, its lines and the setting belong to this machine: nothing of them is in a snapshot or the replay hash.
 
 **For agents.** `audio` (query, scope Player) shows what this machine hears: the track, the layer and how long it has lasted, which calmer layer is waiting for its `hold`, the stems with their volume, the buses, the voices (sound, source, distance, volume, priority, length), and the latest sounds that were not heard, with the reason, and where the listener is:
 
@@ -5630,13 +5723,13 @@ tension, combat``.
 **Playback.** The `audio` feature of the `shards` crate (enabled in the sandbox and the template) plays the mixer's decisions through Bevy audio: WAV and Ogg Vorbis. On Linux it needs `libasound2-dev` (it is already in the list of packages). Without an output device nothing sounds, but the mixer decides the same way. Each voice is a sink for its own file, with the volume from the mixer. A spatial voice stands one metre from the ears, on the side the sound comes from.
 
 **Content check.** `--check-content` and `content_check` find: a file that is missing or is not a WAV or Ogg Vorbis; stems of different lengths (``stems loop together, so they need one length: `music/calm.wav` plays 2.00 s, `sounds/beep.wav` 0.50 s``); a layer without stems; a first layer with `when` and the next one without it; a stem's layer that the track does not have (with a hint); a sound on the `Music` bus; `far` closer than `near`; `max_instances: 0`; a mixer event that the engine does not have (``no engine event `damagd` (did you
-mean `damaged`?)``); a second mixer; and an attack whose telegraph names a sound that does not exist (``action `bite` warns with sound `boon`,
+mean `damaged`?)``); a second mixer; an empty `subtitle`, a `speaker` without one, and a `subtitle` or `speaker` message (`@id`) that a language lacks; and an attack whose telegraph names a sound that does not exist (``action `bite` warns with sound `boon`,
 which no `*.sound.ron` defines (did you mean `boom`?)``) or plays it with a `Sound` effect (``action `swing` effects[0] plays sound
 `bom`, which no `*.sound.ron` defines (did you mean `boom`?)``). The journal names a layer condition that the game did not register, once, when the track plays.
 
 **Sandbox and template files** are synthesised; there are no recordings in the repository. `cargo run -p sandbox --example make_sounds` writes them again (16-bit mono WAV, noise with a seed: the same bytes on every run).
 
-Tests: `crates/shards_audio` (unit tests: WAV and Ogg lengths, falloff with distance, buses from the settings, voices and voice stealing; `tests/audio/`: the voice limit and `max_instances`, distance and source, the simulation clock, the player's volume, events, telegraphs, the `Sound` action effect and the menu, tools, music layers and `hold`, `music_set`, `local` lines, the snapshot, the content check), the scenario `crates/sandbox/scenarios/audio.scenario`, and in the template `tests/game/audio.rs` (the music switches to `combat` when the hero approaches the ground; the hero's swing sounds without a model).
+Tests: `crates/shards_audio` (unit tests: WAV and Ogg lengths, falloff with distance, buses from the settings, voices and voice stealing; `tests/audio/`: the voice limit and `max_instances`, distance and source, the simulation clock, the player's volume, events, telegraphs, the `Sound` action effect and the menu, tools, music layers and `hold`, `music_set`, `local` lines, the snapshot, the content check; `tests/audio/subtitles.rs`: a played voice's line and its time, the same line once, a taken voice's line, the setting, the language, the check), the scenario `crates/sandbox/scenarios/audio.scenario`, and in the template `tests/game/audio.rs` (the music switches to `combat` when the hero approaches the ground; the hero's swing sounds without a model).
 
 ## Stylised materials (E10.1)
 
@@ -6831,6 +6924,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 | `combat/body.action.ron`, `combat/body.moveset.ron` | body and motion (B2c): `spar_leap` (a landing search toward the lock-on target, no landing in water over 1 m), `spar_spin` (walks while it spins), `burrow` (intangible, a ghost), `spar_stroke` (`afloat`), the movesets `mover` and `burrower`; net ids 126-129 |
 | `combat/objects.prefab.ron`, `combat/objects.action.ron`, `combat/caster.moveset.ron` | spawned combat objects (B4): the prefabs `bolt`, `bolt_homing` (`Projectile`) and `zone`; the `caster` moveset's volley (three bolts in a fan at the lock-on target, the middle one homing; each bursts where it stops and lays a chilling puddle that hits every 0.8 s), line (six zones ahead, landing one after another) and rings (eight lines of four zones, turned at random, landing from the inside out); net ids 170-185 |
 | `characters/colossus.prefab.ron`, `combat/colossus.parts.ron` | body parts (R1): the prefab `colossus` (6 m tall, 1200 health, no brain, the locomotion `colossus`) and its five parts (two legs that double poise, a hand with 60 health that passes half a hit on, a horn out of reach, a core that starts closed and triples a hit), all five lock points (R3) and the body none; only `parts.scenario` spawns it |
+| `combat/camera.camera.ron` | the camera's numbers (C7): the code defaults, and the fit (R4) that keeps a high lock point on the colossus in frame with the player |
 | `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters; for the action timeline (B2a), `spar_heavy` (charges into `spar_heavy_full` when held 0.25 s; a light or a dodge pressed in its windup waits for its recovery), `spar_lunge` and `spar_lunge_far` (one `lunge` cooldown slot; the lunge turns at 360°/s within 45°, at most 0.4 m closer for the turning and not toward a target behind a wall, recovers 0.6 s longer on a whiff and keeps 40% of its cooldown when cut in its windup), `spar_channel` (`while_held`), `spar_roll_keep` (`face: Keep`), and the moveset `timeline` (a single slot by priority), which `timeline.scenario` lends to the player; for body state (B2b), `spar_ward` (a barrier of half the caster's health for 8 s), `spar_frost` and `spar_zap` (jabs that carry a full bar of chill or jolt), the moveset `bodystate`, and in `combat/sparring.status.ron` the statuses `spar_chill` (a 2 s proc gate, no cooling and a restart while active, a refused proc empties the bar) and `spar_jolt` (an instant status outside the cap), which `body_state.scenario` lends to the player |
 | `combat/skeleton.action.ron`, `combat/fighters.moveset.ron`, `combat/tuning.combat_tuning.ron` | the skeleton's claw, the movesets, the input buffer |
 | `npc/monsters.behavior.ron`, `monsters.perception.ron`, `monsters.director.ron`, `monsters.attack_plan.ron` | how the monsters think: the `skeleton` and `warden` state machines (with a `calm` state that the scenarios do not let the monster leave), sight, the `default` director (two tokens for one player) and the `boss` director (the guard strikes on its own), the guard's attack plans |

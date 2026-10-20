@@ -145,8 +145,13 @@ pub fn facts(world: &World, entity: Entity) -> Option<EntityFacts> {
 /// `Transform` and `Name`.
 pub fn is_gameplay_type(type_path: &str) -> bool {
     const KEEP: [&str; 2] = ["bevy_transform::components::transform::Transform", "bevy_ecs::name::Name"];
-    const HIDE: [&str; 4] =
-        ["ai_core::id::AiId", "ai_core::id::AiVisible", "ai_core::id::AiLandmark", "ai_core::describe::AiKind"];
+    const HIDE: [&str; 5] = [
+        "ai_core::id::AiId",
+        "ai_core::id::AiVisible",
+        "ai_core::id::AiLandmark",
+        "ai_core::id::LandmarkCategory",
+        "ai_core::describe::AiKind",
+    ];
     KEEP.contains(&type_path) || !(type_path.starts_with("bevy_") || HIDE.contains(&type_path))
 }
 

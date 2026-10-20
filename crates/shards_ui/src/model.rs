@@ -65,6 +65,8 @@ pub enum WidgetKind {
     Compass,
     Allies,
     Compare,
+    /// A map ([`map`](crate::map)): the world's `area` on `width` × `height` pixels, `image` under it.
+    Map { area: crate::map::MapArea, image: Option<String>, width: f32, height: f32 },
     Slider { min: f32, max: f32, step: f32 },
     Toggle,
     /// `labels`: what each option says, in the language played (empty: the options themselves).
@@ -91,6 +93,7 @@ impl WidgetKind {
             WidgetKind::Cooldown => "cooldown",
             WidgetKind::Compass => "compass",
             WidgetKind::Allies => "allies",
+            WidgetKind::Map { .. } => "map",
             WidgetKind::Compare => "compare",
             WidgetKind::Slider { .. } => "slider",
             WidgetKind::Toggle => "toggle",
@@ -150,6 +153,8 @@ pub enum UiValue {
     Page(usize),
     /// An action's inputs (source [`BINDINGS_SOURCE`]).
     Bindings(BoundInputs),
+    /// A map's places (a game's source), and the viewer, which the map widget adds.
+    Map { points: Vec<crate::map::MapPoint>, you: Option<crate::map::MapYou> },
 }
 
 /// An action's inputs, as a binding widget shows and changes them.
@@ -192,6 +197,8 @@ pub struct Mark {
     /// Bearing from the viewer, degrees clockwise from north.
     pub bearing: f32,
     pub distance: f32,
+    /// Its `LandmarkCategory` (`shrine`), which the theme's `symbols` draw.
+    pub category: Option<String>,
 }
 
 /// Another player, in an ally frame.
@@ -534,6 +541,14 @@ impl UiWidget {
                 UiWidget { bind: Some(bind.clone()), ..plain(WidgetKind::Compass, "", UiValue::Heading { deg: 0.0, marks: Vec::new() }) }
             }
             WidgetDef::Allies { bind, .. } => UiWidget { bind: Some(bind.clone()), ..plain(WidgetKind::Allies, "", UiValue::Allies(Vec::new())) },
+            WidgetDef::Map { bind, area, image, width, height, label, .. } => UiWidget {
+                bind: Some(bind.clone()),
+                ..plain(
+                    WidgetKind::Map { area: *area, image: image.clone(), width: *width, height: *height },
+                    label,
+                    UiValue::Map { points: Vec::new(), you: None },
+                )
+            },
             WidgetDef::Compare { rows, bind, .. } => {
                 let rows = rows.iter().map(|r| CompareRow { stat: tr(&r.stat), ..r.clone() }).collect();
                 UiWidget { bind: bind.clone(), ..plain(WidgetKind::Compare, title, UiValue::Compare(rows)) }

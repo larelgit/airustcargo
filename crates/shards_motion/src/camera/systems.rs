@@ -14,9 +14,10 @@ use shards_settings::AccessibilitySettings;
 
 use super::lock::{angle, half_width, in_frustum, lock_candidates, pick_lock, sight_clear, switch_target, LockOnDef, Lockable, PickView};
 use super::math::{
-    aim_assist, arm_length, arm_reach, lock_framing, lock_holds, next_lock_target, orbit_angles, orbit_position, pick_lock_target,
-    pitch_limits, resolve_camera_collision, shake_offset_with, wrap_angle, FlickState, LockCandidate, LockView,
+    aim_assist, arm_length, arm_reach, auto_centre, damp, fit_room, fit_tilt, lock_framing, lock_holds, next_lock_target, orbit_angles, orbit_position,
+    pick_lock_target, pitch_limits, resolve_camera_collision, shake_offset_with, wrap_angle, FlickState, LockCandidate, LockView,
 };
+use super::shot::{shot_playing, Shots};
 use super::{CameraOffsets, CameraSettings, CameraShake, CameraSystems, CameraTuning, LockOnTarget, LockPoint, ThirdPersonCamera};
 use crate::input::{ControlState, ControlSystems};
 use crate::interp::{shown_translation, InterpSystems, Interpolated};
@@ -34,9 +35,13 @@ type RulePlayer = (With<LocalPlayer>, With<Intent>, Without<ThirdPersonCamera>);
 pub(super) fn plugin(app: &mut App) {
     // Without a `lock_on` definition the camera picks and lets go as it always did; with one it
     // picks by the definition's rules and leaves the checking of a lock to the simulation.
-    app.add_systems(PreUpdate, (lock_on.run_if(not(lock_rules)), lock_by_rules.run_if(lock_rules)).after(ControlSystems::Read))
-        .add_systems(PostUpdate, orbit_camera.in_set(CameraSystems::Orbit).after(InterpSystems::Blend).before(TransformSystems::Propagate))
-        .add_systems(Update, apply_motion_blur);
+    // While a scene camera shot plays (K3) a lock-on picks and switches nothing.
+    app.add_systems(
+        PreUpdate,
+        (lock_on.run_if(not(lock_rules)), lock_by_rules.run_if(lock_rules)).run_if(not(shot_playing)).after(ControlSystems::Read),
+    )
+    .add_systems(PostUpdate, orbit_camera.in_set(CameraSystems::Orbit).after(InterpSystems::Blend).before(TransformSystems::Propagate))
+    .add_systems(Update, apply_motion_blur);
 }
 
 /// `Update`: the accessibility setting `motion_blur` (0 none, 1 full) on every camera that
@@ -292,6 +297,7 @@ fn orbit_camera(
     tuning: Res<CameraTuning>,
     offsets: Res<CameraOffsets>,
     state: Res<ControlState>,
+    shots: Option<Res<Shots>>,
     physics: Res<PhysicsWorld>,
     index: Res<AiIndex>,
     mut shake: ResMut<CameraShake>,
@@ -312,6 +318,8 @@ fn orbit_camera(
     // What the game adds on top of the base values this frame; the camera keeps none of it.
     let limits = pitch_limits(tuning.pitch, &offsets);
     let player = players.single().ok();
+    // A scene camera shot plays (K3): the orbit stands still, its yaw and pitch kept for the move axes.
+    let in_shot = shots.as_ref().is_some_and(|s| s.playing().is_some());
 
     for (mut camera, mut tf, projection) in &mut cameras {
         let subject = if camera.target == Entity::PLACEHOLDER { player.map(|(e, _)| e) } else { Some(camera.target) };
@@ -335,25 +343,49 @@ fn orbit_camera(
             // A jump (a teleport, a respawn): nothing of the old place to catch up from.
             camera.focus = head;
             camera.arm_reach = 0.0;
+            camera.look_idle_s = 0.0;
         } else {
             camera.focus = camera.focus.lerp(head, rate);
         }
+        // How fast the followed body walks on the ground, where it is drawn (m/s): from the body
+        // itself, since the focus goes on catching up after it stops. A body that moved farther
+        // than `body_snap_distance` since the last frame was placed (a teleport too short to
+        // jump the focus): it did not walk, and the wait starts over.
+        let seen = camera.subject_seen.replace(subject_at);
+        let placed = seen.is_some_and(|was| was.distance(subject_at) > tuning.body_snap_distance);
+        if placed {
+            camera.look_idle_s = 0.0;
+        }
+        let ground = seen.map_or(0.0, |was| Vec2::new(subject_at.x - was.x, subject_at.z - was.z).length());
+        let walk = if dt > 0.0 && !placed { ground / dt } else { 0.0 };
 
         match locked {
+            _ if in_shot => camera.look_idle_s = 0.0,
             // Framing a target: behind the player, looking at it. The look axis flicks targets.
             Some(target) => {
                 (camera.yaw, camera.pitch) = lock_framing(camera.yaw, camera.pitch, camera.focus, target, &tuning.framing, dt);
+                camera.look_idle_s = 0.0;
             }
             // Free look: the player's turn, bent toward a target near the crosshair.
             None => {
                 let up = if settings.invert_y { -1.0 } else { 1.0 };
-                let look = state.axis("look") * settings.sensitivity;
+                // Aiming turns by its own speed (K1): the game says when the player aims.
+                let speed = if offsets.aiming { settings.aim_sensitivity } else { settings.sensitivity };
+                let raw = state.axis("look");
+                let look = raw * speed;
                 let mut turn = Vec2::new(-look.x, -look.y * up);
                 if let Some(error) = crosshair_error(&camera, &lockable).filter(|_| settings.aim_assist > 0.0) {
                     turn = aim_assist(turn, error, settings.aim_assist);
                 }
                 camera.yaw = wrap_angle(camera.yaw + turn.x);
                 camera.pitch += turn.y;
+                // Left alone, the view turns back behind a walking body (K2), when the player wants it.
+                camera.look_idle_s = if raw == Vec2::ZERO { camera.look_idle_s + dt } else { 0.0 };
+                if settings.auto_centre {
+                    let facing = *subject_tf.forward();
+                    (camera.yaw, camera.pitch) =
+                        auto_centre(camera.yaw, camera.pitch, facing, walk, camera.look_idle_s, &tuning.auto_centre, dt);
+                }
             }
         }
         // The stored pitch is held to the limits, so a cap that lifts does not find it far past it.
@@ -373,7 +405,23 @@ fn orbit_camera(
         if reach < free {
             at = focus + (desired - focus).normalize_or_zero() * reach;
         }
-        let looking = Transform::from_translation(at).looking_at(focus, Vec3::Y);
+        // The player's own field of view plus what the game adds this frame (a sprint).
+        let fov = (settings.fov_deg + finite_or_zero(offsets.fov_add_deg)).clamp(30.0, 120.0).to_radians();
+        // Next to a big body the view turns up from the focus to keep a high lock point in
+        // frame with the player (R4); without a fit it looks at the focus, as it always did.
+        camera.tilt = match &tuning.framing.fit {
+            Some(fit) => {
+                let want = locked.map_or(0.0, |target| fit_tilt(at, focus, subject_at, target, fov * 0.5, fit));
+                // Eased toward what the target wants, but held at once to what the feet and
+                // `tilt_max` allow this frame (a wall that shortens the arm, a lower maximum).
+                damp(camera.tilt, want, fit.rate, dt).min(fit_room(at, focus, subject_at, fov * 0.5, fit))
+            }
+            None => 0.0,
+        };
+        let mut looking = Transform::from_translation(at).looking_at(focus, Vec3::Y);
+        if camera.tilt != 0.0 {
+            looking.rotation *= Quat::from_rotation_x(camera.tilt);
+        }
         let shaken = Quat::from_euler(EulerRot::YXZ, wobble.rotation.y, wobble.rotation.x, wobble.rotation.z);
         let next = Transform {
             translation: looking.translation + looking.rotation * wobble.translation,
@@ -386,11 +434,9 @@ fn orbit_camera(
 
         if let Some(mut projection) = projection
             && let Projection::Perspective(perspective) = &mut *projection
+            && (perspective.fov - fov).abs() > 1e-5
         {
-            let fov = (settings.fov_deg + finite_or_zero(offsets.fov_add_deg)).clamp(30.0, 120.0).to_radians();
-            if (perspective.fov - fov).abs() > 1e-5 {
-                perspective.fov = fov;
-            }
+            perspective.fov = fov;
         }
     }
 }

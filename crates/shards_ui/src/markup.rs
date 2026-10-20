@@ -139,6 +139,17 @@ pub fn has_spans(text: &str) -> bool {
     text.contains(OPEN) && spans(text).iter().any(|s| s.font.is_some())
 }
 
+/// The first font tag of `text` that pairs with none, as written (`[font=a]` never closed, a `[/font]`
+/// with nothing open): drawn as text. `None` when every tag pairs up.
+pub fn unpaired(text: &str) -> Option<&str> {
+    let tokens = tokens(text);
+    let paired = paired(&tokens);
+    tokens.into_iter().zip(paired).find_map(|(token, paired)| match token {
+        Token::Open(tag, _) | Token::Close(tag) if !paired => Some(tag),
+        _ => None,
+    })
+}
+
 /// The fonts `text` names in tags that pair up, each once, in order (an empty pair too: it draws
 /// nothing, but a typo in it is still a typo).
 pub fn fonts_named(text: &str) -> Vec<&str> {
@@ -197,6 +208,7 @@ mod tests {
         assert!(matches!(plain("nothing"), Cow::Borrowed("nothing")));
         assert_eq!(fonts_named("[font=a]x[font=b]y[/font][/font] [font=a]z[/font] [font=c]"), ["a", "b"]);
         assert_eq!(fonts_named("[font=a][/font] [font=b]"), ["a"], "an empty pair names its font; an open never closed does not");
+        assert_eq!((unpaired("[font=a]x[/font]"), unpaired("x [font=a]y"), unpaired("[/font] [font=a]z[/font]")), (None, Some("[font=a]"), Some("[/font]")));
         assert!(has_spans("x [font=a]y[/font]") && !has_spans("x [font=a]y") && !has_spans("[x]"));
     }
 }
