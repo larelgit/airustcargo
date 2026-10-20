@@ -57,6 +57,13 @@
         // the body's facing turns the model to the roll's heading over 0.08 s (and back after it), so a
         // roll to the side under lock-on rolls that way while the body still looks at its target.
         actions: {"drink": (clip: "drink", layer: "upper"), "spar_stroke": "light_1", "spar_roll_keep": (clip: "roll", turn: 0.08)},
+        // A hit and a block show on the upper body for a moment, over whatever it plays (a swing, the
+        // drink, the walk): the `hit` clip from its start, in part, gone within a third of a second.
+        // The picture only: the action that runs, and what it does, are the simulation's.
+        overlays: {
+            "damaged": (clip: "flinch", layer: "upper", fade_in: 0.04, fade_out: (0.15, 0.35), strength: 0.6),
+            "blocked": (clip: "flinch", layer: "upper", fade_in: 0.04, fade_out: (0.1, 0.25), strength: 0.35),
+        },
         blend: 0.2,
         action_blend: 0.06,
         // The walk's feet keep pace at 2 m/s, the run's at 4.5 m/s.

@@ -107,6 +107,34 @@ fn the_tool_says_how_to_fix_a_bad_call() {
 }
 
 #[test]
+fn an_event_overlay_is_previewed_and_a_bad_event_is_named() {
+    let mut app = sandbox::test_app(42);
+    let said = text(&ok(&mut app, "animation", json!({"id": PLAYER, "animset": "humanoid", "event": "damaged"}))).to_owned();
+    let lines: Vec<&str> = said.lines().collect();
+    assert_eq!(
+        lines[0],
+        "overlay damaged of humanoid: flinch on upper, in 0.04 s, out 0.15-0.35 s, 60 %; e5 is not drawn (a window or \
+         --offscreen draws it), so nothing plays"
+    );
+    assert!(
+        said.contains(
+            "  overlays: blocked: flinch on upper, in 0.04 s, out 0.10-0.25 s, 35 % · damaged: flinch on upper, in 0.04 s, \
+             out 0.15-0.35 s, 60 %"
+        ),
+        "{said}"
+    );
+    assert_eq!(
+        fails(&mut app, "animation", json!({"id": PLAYER, "animset": "humanoid", "event": "damage"})),
+        "event `damage` is no engine event an overlay answers (did you mean `damaged`?); events: blocked, parried, damaged, \
+         guard_broken, staggered, part_broken, landed"
+    );
+    assert_eq!(
+        fails(&mut app, "animation", json!({"id": PLAYER, "animset": "humanoid", "event": "landed"})),
+        "animset `humanoid` has no overlay for `landed`; its overlays: blocked, damaged"
+    );
+}
+
+#[test]
 fn the_status_counts_what_the_bridge_dresses_and_is_zero_headless() {
     let app = sandbox::test_app(42);
     let anim = shards::ai_core::status::status(app.world())["anim"].clone();
