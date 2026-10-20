@@ -24,6 +24,7 @@ use crate::bind::live_value;
 use crate::def::{Anchor, Layer, Layout, ThemeDef};
 use crate::model::{binding_state, focused, on_shown_page, UiScreen, UiValue, UiWidget, WidgetKind};
 use crate::model::{format_number, widget_children};
+use crate::markup;
 use crate::text::compass_point;
 use crate::{CapturedClicks, UiSystems};
 
@@ -43,6 +44,7 @@ pub(crate) fn install_default_font(app: &mut App) {
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Look>()
+        .init_resource::<UnknownFonts>()
         .configure_sets(PostUpdate, UiSystems::Draw.before(bevy::ui::UiSystems::Prepare))
         .add_systems(PostUpdate, draw.in_set(UiSystems::Draw).run_if(ai_core::display::drawn))
         .add_observer(on_click)
@@ -57,7 +59,17 @@ struct Look {
     scale: f32,
     /// The theme's font; `None`: the engine's own.
     font: Option<Handle<bevy::text::Font>>,
+    /// The theme's named fonts (`fonts`), for spans of a text.
+    fonts: std::collections::BTreeMap<String, Handle<bevy::text::Font>>,
 }
+
+/// Font names a span asked for that the theme does not have: journaled once each.
+#[derive(Resource, Default)]
+struct UnknownFonts(std::collections::BTreeSet<String>);
+
+/// The `TextSpan` children a `Text` or `Hint` value is drawn as, when it has spans.
+#[derive(Component)]
+struct Runs(Vec<Entity>);
 
 /// A full-screen node holding a screen's root, placed by its anchor.
 #[derive(Component)]
@@ -137,7 +149,8 @@ fn update_look(world: &mut World) {
         return;
     }
     let font = theme.font.clone().map(|path| world.resource::<AssetServer>().load(path));
-    world.insert_resource(Look { theme, scale, font });
+    let fonts = theme.fonts.iter().map(|(name, path)| (name.clone(), world.resource::<AssetServer>().load(path.clone()))).collect();
+    world.insert_resource(Look { theme, scale, font, fonts });
     let mut drawn = world.query_filtered::<Entity, With<Drawn>>();
     for e in drawn.iter(world).collect::<Vec<_>>() {
         world.entity_mut(e).remove::<Drawn>();
@@ -218,6 +231,56 @@ fn text_part(world: &mut World, parent: Entity, text: String, size: fn(&ThemeDef
     world.spawn((Part, Text::new(text), font, TextColor(color(rgba)), Pickable::IGNORE, ChildOf(parent))).id()
 }
 
+/// The value of a `Text` or `Hint` widget on its own `Text`: as it is, or with spans
+/// ([`markup`]) as `TextSpan` children in their fonts, the theme's text font and colour otherwise.
+/// A font the theme does not have draws in the theme's font, journaled once.
+fn draw_runs(world: &mut World, e: Entity, text: &str) {
+    if let Some(Runs(old)) = world.entity_mut(e).take::<Runs>() {
+        for run in old {
+            if let Ok(run) = world.get_entity_mut(run) {
+                run.despawn();
+            }
+        }
+    }
+    if !markup::has_spans(text) {
+        let shown = markup::plain(text).into_owned();
+        if let Some(mut t) = world.get_mut::<Text>(e)
+            && t.0 != shown
+        {
+            t.0 = shown;
+        }
+        return;
+    }
+    let base = world.get::<TextFont>(e).cloned().unwrap_or_default();
+    let color = world.get::<TextColor>(e).copied().unwrap_or_default();
+    if let Some(mut t) = world.get_mut::<Text>(e) {
+        t.0.clear();
+    }
+    let mut runs = Vec::new();
+    for span in markup::spans(text) {
+        let mut font = base.clone();
+        if let Some(name) = span.font {
+            match world.resource::<Look>().fonts.get(name) {
+                Some(handle) => font.font = handle.clone().into(),
+                None => unknown_font(world, name),
+            }
+        }
+        runs.push(world.spawn((TextSpan::new(span.text.into_owned()), font, color, Pickable::IGNORE, ChildOf(e))).id());
+    }
+    world.entity_mut(e).insert(Runs(runs));
+}
+
+/// A span named a font the theme does not have: a `Warn` line, once per name.
+fn unknown_font(world: &mut World, name: &str) {
+    if !world.resource_mut::<UnknownFonts>().0.insert(name.to_owned()) {
+        return;
+    }
+    let fonts: Vec<String> = world.resource::<Look>().fonts.keys().cloned().collect();
+    let known = if fonts.is_empty() { "the theme names none (`fonts`)".to_owned() } else { format!("fonts: {}", fonts.join(", ")) };
+    let line = format!("ui: `[font={name}]` names no font of the theme: drawn in the theme's own; {known}");
+    ai_core::journal::emit(world, ai_core::JournalKind::Warn, line);
+}
+
 /// The text a widget's value is drawn as.
 fn value_text(w: &UiWidget) -> String {
     match (&w.kind, &w.value) {
@@ -274,11 +337,15 @@ fn update_value(world: &mut World, e: Entity, w: &UiWidget) {
                 t.0 = text;
             }
         }
-        None => {
-            if let Some(mut t) = world.get_mut::<Text>(e) {
-                t.0 = text;
+        None => match (&w.kind, &w.value) {
+            // Any value, text or not: the spans of an earlier one go.
+            (WidgetKind::Text | WidgetKind::Hint, _) => draw_runs(world, e, &text),
+            _ => {
+                if let Some(mut t) = world.get_mut::<Text>(e) {
+                    t.0 = text;
+                }
             }
-        }
+        },
     }
     if let Some(mut a11y) = world.get_mut::<AccessibilityNode>(e) {
         describe(&mut a11y.0, w);
@@ -302,7 +369,7 @@ fn describe(node: &mut A11yNode, w: &UiWidget) {
             }
         }
         (WidgetKind::Toggle, UiValue::Flag(on)) => node.set_toggled(if *on { Toggled::True } else { Toggled::False }),
-        (WidgetKind::Text | WidgetKind::Hint, UiValue::Text(t)) => node.set_label(t.clone()),
+        (WidgetKind::Text | WidgetKind::Hint, UiValue::Text(t)) => node.set_label(markup::plain(t).into_owned()),
         (WidgetKind::Choice { .. }, UiValue::Choice(v)) => node.set_value(w.kind.option_label(v).to_owned()),
         _ => {
             let text = value_text(w);
@@ -401,6 +468,9 @@ fn redraw(world: &mut World, e: Entity, state: &Drawn) {
             let rgba = if w.kind == WidgetKind::Hint { t.color(&t.dim_text) } else { text_rgba };
             let font = font(world, size);
             world.entity_mut(e).insert((Node { display, ..default() }, Text::new(value_text(w)), font, TextColor(color(rgba))));
+            if matches!(w.kind, WidgetKind::Text | WidgetKind::Hint) {
+                draw_runs(world, e, &value_text(w));
+            }
         }
         WidgetKind::Image { path, width, height } => {
             // One of the sizes alone: the picture's proportions give the other.

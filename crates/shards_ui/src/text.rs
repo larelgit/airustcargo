@@ -28,11 +28,11 @@ pub fn widget_line(world: &World, e: Entity, focus: Option<Entity>) -> String {
     }
     match (&w.kind, &value) {
         (WidgetKind::Text, UiValue::Text(t)) => {
-            let _ = write!(line, " \"{t}\"");
+            let _ = write!(line, " \"{}\"", crate::markup::plain(t));
         }
         (WidgetKind::Hint, UiValue::Text(t)) if t.is_empty() => line.push_str(" (hidden: nothing to say)"),
         (WidgetKind::Hint, UiValue::Text(t)) => {
-            let _ = write!(line, " \"{t}\"");
+            let _ = write!(line, " \"{}\"", crate::markup::plain(t));
         }
         (WidgetKind::Image { path, width, height }, _) => {
             let size = match (width, height) {
