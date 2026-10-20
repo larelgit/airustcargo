@@ -1788,11 +1788,16 @@ fn check_phases_in_file(refs: &mut Refs, name: &str, source: &str, wanted: &str,
 
 impl AnimSet {
     /// Every action the set shows on a clip timed to phases (its clip, and that clip's family in each
-    /// `by_moveset`) has the same phases in the same order, or none of their names (the clip plays
-    /// evenly then). One that shares some of the names has a typo or a phase left out.
+    /// `by_moveset`; for a moveset's stagger and death actions without a clip of their own, the
+    /// `stagger` and `dead` clips) has the same phases in the same order, or none of their names (the
+    /// clip plays evenly then). One that shares some of the names has a typo or a phase left out.
     fn check_timing(&self, refs: &mut Refs) {
         let actions: Vec<(&str, &ActionDef)> = refs.iter::<ActionDef>().collect();
-        for (id, def) in actions {
+        // Each clip an action shows, once: its own mapping and the families of it, then for a
+        // moveset's stagger and death actions that map no clip of their own, the set's `stagger` and
+        // `dead` clips (in that moveset's family), which are seeked by those actions' phases too.
+        let mut shown: Vec<(&str, &str, &ActionDef)> = Vec::new();
+        for &(id, def) in &actions {
             let key = self.action_key(id, def.anim.as_deref(), &def.tags);
             if def.face == Face::Run && self.turn_of(key) > 0.0 {
                 let field = if self.actions.contains_key(key) { "actions" } else { "tags" };
@@ -1802,29 +1807,42 @@ impl AnimSet {
                 ));
             }
             let Some((clip, _)) = self.action_shown(key) else { continue };
-            let mut shown = vec![clip];
+            self.show_timed(&mut shown, clip, id, def);
             for renamed in self.by_moveset.values().filter_map(|table| table.get(clip)) {
-                if let Some(c) = self.known(renamed)
-                    && !shown.contains(&c)
-                {
-                    shown.push(c);
+                self.show_timed(&mut shown, renamed, id, def);
+            }
+        }
+        for (moveset, m) in refs.iter::<MovesetDef>() {
+            for (action, state) in [(&m.stagger, Locomotion::Stagger), (&m.death, Locomotion::Dead)] {
+                let (Some(action), Some(clip)) = (action.as_deref(), self.exact(state)) else { continue };
+                let Some(&(id, def)) = actions.iter().find(|(id, _)| *id == action) else { continue };
+                if self.action_shown(self.action_key(id, def.anim.as_deref(), &def.tags)).is_none() {
+                    self.show_timed(&mut shown, self.family(Some(moveset), clip), id, def);
                 }
             }
-            for clip in shown {
-                let timed = &self.clips[clip].phases;
-                let shared: Vec<&str> =
-                    timed.iter().map(|c| c.0.as_str()).filter(|n| def.phases.iter().any(|a| a.0 == *n)).collect();
-                if shared.is_empty() || timed_alike(&def.phases, timed) {
-                    continue;
-                }
-                refs.error(format!(
-                    "clips.{clip}.phases ({}) and action `{id}`, which plays it ({}), share {} but are not the same phases \
-                     in the same order; give the clip the action's phase names (or none of them, and it plays evenly)",
-                    phases_text(timed),
-                    phases_text(&def.phases),
-                    shared.join(", ")
-                ));
+        }
+        for (clip, id, def) in shown {
+            let timed = &self.clips[clip].phases;
+            let shared: Vec<&str> = timed.iter().map(|c| c.0.as_str()).filter(|n| def.phases.iter().any(|a| a.0 == *n)).collect();
+            if shared.is_empty() || timed_alike(&def.phases, timed) {
+                continue;
             }
+            refs.error(format!(
+                "clips.{clip}.phases ({}) and action `{id}`, which plays it ({}), share {} but are not the same phases \
+                 in the same order; give the clip the action's phase names (or none of them, and it plays evenly)",
+                phases_text(timed),
+                phases_text(&def.phases),
+                shared.join(", ")
+            ));
+        }
+    }
+
+    /// `clip` (when the set has it) shown by action `id`, added to `shown` once.
+    fn show_timed<'s>(&self, shown: &mut Vec<(&'s str, &'s str, &'s ActionDef)>, clip: &'s str, id: &'s str, def: &'s ActionDef) {
+        if let Some(clip) = self.known(clip)
+            && !shown.iter().any(|(c, i, _)| *c == clip && *i == id)
+        {
+            shown.push((clip, id, def));
         }
     }
 }
@@ -2843,6 +2861,62 @@ mod tests {
         let turned = parse(r#"(clip: "roll", turn: 0.08)"#);
         assert_eq!(serde_json::to_value(&turned).unwrap(), serde_json::json!({"clip": "roll", "turn": 0.08f32}));
         assert_eq!(serde_json::to_value(parse(r#"(clip: "roll", turn: 0.0)"#)).unwrap(), serde_json::json!("roll"));
+    }
+
+    #[test]
+    fn the_stagger_and_dead_clips_are_checked_against_the_movesets_stagger_and_death_actions() {
+        // A moveset's stagger or death action that maps no clip of its own is seeked on the set's
+        // `stagger` or `dead` clip (in that moveset's family) by its phases: a typo there is the same error.
+        let set = r#"{ "h": (source: "models/h.glb", clips: {
+                "idle": (),
+                "hit": (phases: [("reel", 0.2), ("recover", 0.4)]),
+                "big_hit": (phases: [("reel", 0.3), ("recover", 0.5)]),
+                "death": (phases: [("fall", 0.5), ("down", 1.0)]),
+                "kneel": (phases: [("fall", 0.5), ("down", 1.0)]),
+            },
+            locomotion: {"idle": "idle", "stagger": "hit", "dead": "death"},
+            actions: {"kneel": "kneel"}, by_moveset: {"brute": {"hit": "big_hit"}}) }"#;
+        let actions = r#"{
+            "reel": (net_id: 1, phases: [("reel", 0.4), ("recoverr", 0.4)]),
+            "die": (net_id: 2, phases: [("fall", 0.6), ("down", 2.0)]),
+            "kneel": (net_id: 3, phases: [("fall", 0.5), ("dwn", 1.0)]),
+        }"#;
+        let movesets = r#"{
+            "hero": (inputs: {}, stagger: "reel", death: "die"),
+            "brute": (inputs: {}, stagger: "reel", death: "kneel"),
+        }"#;
+        let mut kinds = ContentKinds::default();
+        kinds.register::<ActionDef>();
+        kinds.register::<AnimSet>();
+        kinds.register::<crate::def::MovesetDef>();
+        kinds.register::<crate::status::StatusDef>();
+        let sources = [
+            shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
+            shards_content::db::Source { path: "content/h.animset.ron".into(), text: set.into() },
+            shards_content::db::Source { path: "content/m.moveset.ron".into(), text: movesets.into() },
+        ];
+        let errors: Vec<String> = ContentDb::build(&kinds, &sources).errors().map(ToString::to_string).collect();
+        let fix = "but are not the same phases in the same order; give the clip the action's phase names (or none of them, \
+                   and it plays evenly)";
+        let h = "content/h.animset.ron: animset `h`: ";
+        assert_eq!(
+            errors,
+            [
+                format!(
+                    "{h}clips.kneel.phases (fall 0.5, down 1) and action `kneel`, which plays it (fall 0.5, dwn 1), share fall {fix}"
+                ),
+                format!(
+                    "{h}clips.big_hit.phases (reel 0.3, recover 0.5) and action `reel`, which plays it (reel 0.4, recoverr 0.4), \
+                     share reel {fix}"
+                ),
+                format!(
+                    "{h}clips.hit.phases (reel 0.2, recover 0.4) and action `reel`, which plays it (reel 0.4, recoverr 0.4), \
+                     share reel {fix}"
+                ),
+            ],
+            "the brute's stagger shows its family's `big_hit`, the hero's the `hit`; the brute's death has a clip of its \
+             own (checked once, as an action); the hero's `die` matches the `death` clip"
+        );
     }
 
     #[test]
