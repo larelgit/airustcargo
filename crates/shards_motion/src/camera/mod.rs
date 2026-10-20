@@ -76,9 +76,13 @@ pub struct ThirdPersonCamera {
     /// or less where a wall pulled it in, growing back at `CameraTuning::arm.follow_rate`.
     pub arm_reach: f32,
     /// How long the look has been left alone (real seconds): free look with no look input. Any
-    /// look input, a lock and a jump of the focus (a teleport) start it over. The auto-centre
-    /// (K2) waits on it.
+    /// look input, a lock, a jump of the focus and a followed body placed rather than walked (a
+    /// teleport) start it over. The auto-centre (K2) waits on it.
     pub look_idle_s: f32,
+    /// Where the followed body was drawn on the last frame (`None` until the first). The
+    /// auto-centre (K2) measures the body's walk from it, not from the focus, which goes on
+    /// catching up after the body stops.
+    pub subject_seen: Option<Vec3>,
 }
 
 impl Default for ThirdPersonCamera {
@@ -95,6 +99,7 @@ impl Default for ThirdPersonCamera {
             arm_length: 0.0,
             arm_reach: 0.0,
             look_idle_s: 0.0,
+            subject_seen: None,
         }
     }
 }
