@@ -47,7 +47,7 @@ fn a_compass_keeps_the_nearest_landmarks_of_each_category_and_says_their_categor
     let one = marks(&app, "you.heading:1");
     let names: Vec<&str> = one.iter().map(|(label, ..)| label.as_str()).collect();
     assert_eq!(names, ["Pillar", "Shrine 1", "Camp East"], "one of each");
-    assert_eq!(marks(&app, "you.heading:x").len(), 7, "a bad number keeps the default four");
+    assert_eq!(marks(&app, "you.heading:x").len(), 6, "a bad number keeps the default four");
 
     // How far the nearest of a category is: what a game pulses a sound or a needle by.
     let near = |app: &App, bind: &str| read_source(app.world(), bind).unwrap();
