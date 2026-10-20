@@ -1,16 +1,19 @@
 //! Encounters (G9) on the sandbox's yard: what the umbrella adds (cues, `NetAlways`, the join gate,
-//! content checks), snapshots of a real fight, and spawn points on a real navmesh.
+//! content checks), snapshots of a real fight, spawn points on a real navmesh, and a game's reset of
+//! its NPCs' plans when a fight is lost (N8c).
 
 use std::path::Path;
 
 use shards::ai_core::snapshot::{self, differences};
-use shards::ai_core::{replay, sim, AiIndex, AiJournal, JournalKind};
+use shards::ai_core::{replay, sim, AiId, AiIndex, AiJournal, JournalKind};
 use shards::content::db::{read_dir, Source};
 use shards::content::{ContentDb, ContentKinds};
-use shards::encounter::{EncounterRuns, RunState};
+use shards::core::NetRole;
+use shards::encounter::{EncounterReset, EncounterRuns, EncounterWiped, RunState};
 use shards::net::{default_join_policy, JoinDecision, JoinRequest, NetAlways};
+use shards::npc::{reset_plan, BehaviorDef, Npc, NpcBrain, NpcPlan, NpcStateChanged};
 use shards::prelude::*;
-use shards::serde_json::json;
+use shards::serde_json::{json, Value};
 
 use crate::common::*;
 
@@ -247,4 +250,148 @@ fn the_encounter_state_stays_out_of_the_hash_until_a_run_exists() {
     // A game with no anchor has no resource and no replay check: the hashes of every other game are unchanged.
     let app = sandbox::test_app(42);
     assert!(app.world().get_resource::<EncounterRuns>().is_none());
+}
+
+// --- N8c: a game resets its NPCs' plans when a fight is lost --------------------------------------------
+
+/// What a game does to reset its bosses' plans (N8c; the game's `reset_boss` also heals them and sets
+/// their first phase). A member that is home again after its walk (it leaves a state of kind
+/// `return_home`) forgets its plan. On a wipe or a reset, so does a member placed home at once
+/// instead of walking. A walking member is left to the first observer, so each path resets once.
+/// Every observer returns at once on a machine that does not simulate.
+fn reset_plans_like_a_game(app: &mut App) {
+    app.add_observer(
+        |e: On<NpcStateChanged>, npcs: Query<&Npc>, db: Res<ContentDb>, role: Option<Res<NetRole>>, mut commands: Commands| {
+            if !shards::core::simulates(role) {
+                return;
+            }
+            let walked = npcs.get(e.entity).ok().and_then(|n| db.get::<BehaviorDef>(&n.behavior)).is_some_and(|b| b.kind_of(&e.from) == "return_home");
+            if walked {
+                let entity = e.entity;
+                commands.queue(move |w: &mut World| {
+                    reset_plan(w, entity, "home").unwrap();
+                });
+            }
+        },
+    );
+    app.add_observer(|e: On<EncounterWiped>, role: Option<Res<NetRole>>, mut commands: Commands| {
+        if shards::core::simulates(role) {
+            let key = e.key.clone();
+            commands.queue(move |w: &mut World| reset_members(w, &key, "encounter wiped"));
+        }
+    });
+    app.add_observer(|e: On<EncounterReset>, role: Option<Res<NetRole>>, mut commands: Commands| {
+        if shards::core::simulates(role) {
+            let key = e.key.clone();
+            commands.queue(move |w: &mut World| reset_members(w, &key, "encounter reset"));
+        }
+    });
+}
+
+/// Resets the plans of run `key`'s members that are not walking home.
+fn reset_members(world: &mut World, key: &str, why: &str) {
+    let Some(run) = shards::encounter::run(world, key) else { return };
+    let ids: Vec<AiId> = run.members.iter().map(|m| m.id).collect();
+    for id in ids {
+        let Some(e) = world.resource::<AiIndex>().get(id) else { continue };
+        let Some(npc) = world.get::<Npc>(e) else { continue };
+        let state = world.get::<NpcBrain>(e).map(|b| b.state.clone()).unwrap_or_default();
+        let db = world.resource::<ContentDb>();
+        let walking = db.get::<BehaviorDef>(&npc.behavior).is_some_and(|b| b.kind_of(&state) == "return_home");
+        if !walking && npc.plan.is_some() {
+            reset_plan(world, e, why).unwrap();
+        }
+    }
+}
+
+const PACK: &str = "yard/pack";
+
+/// The pack's members by id, with their entities.
+fn pack(app: &App) -> Vec<(AiId, Entity)> {
+    let index = app.world().resource::<AiIndex>();
+    shards::encounter::run(app.world(), PACK).unwrap().members.iter().filter_map(|m| Some((m.id, index.get(m.id)?))).collect()
+}
+
+fn plan_of(app: &App, e: Entity) -> NpcPlan {
+    app.world().get::<NpcPlan>(e).unwrap().clone()
+}
+
+/// The yard with the game's resets, the player beside the pack until a member has attacked, then fallen:
+/// the members that remembered something just before the wipe.
+fn wipe_the_pack(app: &mut App) -> Vec<AiId> {
+    reset_plans_like_a_game(app);
+    let members = pack(app);
+    let at = app.world().get::<Transform>(members[0].1).unwrap().translation;
+    ok(app, "teleport", json!({"id": PLAYER, "x": at.x, "z": at.z + 2.5, "y": at.y}));
+    for _ in 0..60 {
+        step(app, 30);
+        if members.iter().any(|(_, e)| !plan_of(app, *e).history.is_empty()) {
+            break;
+        }
+    }
+    let remembered: Vec<AiId> = members.iter().filter(|(_, e)| !plan_of(app, *e).history.is_empty()).map(|(id, _)| *id).collect();
+    assert!(!remembered.is_empty(), "nobody in the pack attacked");
+    ok(app, "god", json!({"on": false}));
+    ok(app, "set", json!({"id": PLAYER, "component": "Health", "path": "current", "value": 0}));
+    step(app, 10);
+    assert!(matches!(run_state(app, PACK), RunState::Wiped { pulled_back: true, .. }), "{:?}", run_state(app, PACK));
+    remembered
+}
+
+/// The reset lines: who, and why.
+fn resets(app: &App) -> Vec<(String, String)> {
+    lines(app, " plan reset (")
+        .iter()
+        .map(|l| {
+            let (who, rest) = l.split_once(' ').unwrap().1.split_once(" plan reset (").unwrap();
+            (who.to_owned(), rest.split_once(')').unwrap().0.to_owned())
+        })
+        .collect()
+}
+
+/// Every member's plan is empty; every reset line says `why`; nobody is reset twice; and every member
+/// that remembered something before the wipe is among them. (A member whose swing was under way at the
+/// sample remembers it too, so the lines may name more than `remembered`.)
+fn assert_reset_once(app: &App, remembered: &[AiId], why: &str) -> usize {
+    for (id, e) in pack(app) {
+        let plan = plan_of(app, e);
+        assert!(plan.history.is_empty() && plan.cooldowns.is_empty(), "{id}: {plan:?}");
+    }
+    let got = resets(app);
+    assert!(got.iter().all(|(_, w)| w == why), "every reset is `{why}`: {got:?}");
+    let mut who: Vec<&String> = got.iter().map(|(w, _)| w).collect();
+    who.sort();
+    who.dedup();
+    assert_eq!(who.len(), got.len(), "once each: {got:?}");
+    for id in remembered {
+        assert!(got.iter().any(|(w, _)| *w == id.to_string()), "{id} remembered and was not reset: {got:?}");
+    }
+    got.len()
+}
+
+#[test]
+fn a_wiped_pack_walks_home_and_forgets_its_plans_on_arrival_once_each() {
+    let mut app = yard();
+    let remembered = wipe_the_pack(&mut app);
+    step(&mut app, 600);
+    for (id, e) in pack(&app) {
+        assert_eq!(app.world().get::<NpcBrain>(e).unwrap().state, "idle", "{id} is home");
+    }
+    assert_reset_once(&app, &remembered, "home");
+}
+
+#[test]
+fn a_wiped_pack_placed_home_at_once_forgets_its_plans_on_the_wipe() {
+    let mut app = yard();
+    // The same pack without a state to walk home in: the wipe places its survivors home.
+    let before = ok(&mut app, "content_get", json!({"kind": "encounter", "id": "yard_pack"})).result["def"].clone();
+    let mut def = before.clone();
+    def["pull_back"]["state"] = Value::Null;
+    def["pull_back"]["deadline"] = json!(0.0);
+    ok(&mut app, "content_apply", json!({"changes": [{"kind": "encounter", "id": "yard_pack", "before": before, "def": def}]}));
+    let remembered = wipe_the_pack(&mut app);
+    let n = assert_reset_once(&app, &remembered, "encounter wiped");
+    // Home already, they leave nothing to forget when their own walk home ends.
+    step(&mut app, 600);
+    assert_eq!(resets(&app).len(), n, "{:?}", resets(&app));
 }

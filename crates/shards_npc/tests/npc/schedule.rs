@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use shards_action::{Cooldown, Cooldowns, Dead};
 use shards_motion::CharacterParams;
 use shards_npc::prelude::*;
-use shards_npc::{Grant, NpcPlan};
+use shards_npc::{set_plan_cooldown, CooldownSet, Grant, NpcPlan, HOST_OWNS_PLANS};
 
 use crate::common::*;
 
@@ -189,6 +189,117 @@ fn a_choice_the_new_plan_lacks_is_dropped() {
     app.world_mut().get_mut::<Npc>(e).unwrap().plan = Some("sched_near".into());
     step(&mut app, 1);
     assert_eq!(grant_attack(&app, e).as_deref(), Some("near"), "`far` is not in the new plan: the choice is made again");
+}
+
+// --- 12.2 run 7: the reset and cooldown API (N8c) ---------------------------------------------------
+
+/// Until `e`'s first swing has started and is remembered.
+fn first_swing(app: &mut App, e: Entity) {
+    for _ in 0..300 {
+        step(app, 1);
+        if !plan_of(app, e).history.is_empty() {
+            return;
+        }
+    }
+    panic!("no swing in 300 ticks: {:?}", plan_of(app, e));
+}
+
+#[test]
+fn a_reset_forgets_the_history_and_the_cooldowns_and_says_so() {
+    let mut app = app_seeded(5, record_starts);
+    let e = duel(&mut app, "sched_phase_1", "grunt");
+    first_swing(&mut app, e);
+    let was = plan_of(&app, e);
+    assert!(was.history.len() == 1 && was.cooldown("light") > 4.0 && was.attacks == 1, "{was:?}");
+    let who = id(&app, e);
+    let out = ok(&mut app, "npc_plan_reset", json!({"id": who}));
+    assert_eq!(text(&out), format!("{who} plan reset: 1 attack forgotten, 1 cooldown cleared"));
+    let now = plan_of(&app, e);
+    assert!(now.history.is_empty() && now.cooldowns.is_empty(), "{now:?}");
+    assert_eq!((now.attacks, now.rest), (was.attacks, was.rest), "the count and the rest stay");
+    let said = lines(&app, "plan reset");
+    assert!(said.len() == 1 && said[0].ends_with(&format!(" {who} plan reset (npc_plan_reset): 1 attack forgotten, 1 cooldown cleared")), "{said:?}");
+    // A second reset has nothing to forget: harmless, and no journal line.
+    let out = ok(&mut app, "npc_plan_reset", json!({"id": who}));
+    assert_eq!(text(&out), format!("{who} plan reset: nothing to forget"));
+    assert_eq!(lines(&app, "plan reset").len(), 1);
+}
+
+#[test]
+fn a_reset_lets_the_plan_choose_again_what_its_history_refused() {
+    // `light` at most once in a row and nothing else: after one swing the plan has nothing to choose
+    // until it forgets it. The rule `npc.plan_sequence` judges every press throughout.
+    let mut app = app_seeded(9, record_starts);
+    let e = duel(&mut app, "sched_strict", "grunt");
+    step(&mut app, 300);
+    assert_eq!(actions(&app, e), ["jab"], "one swing, then the repeat rule refuses the only option");
+    let who = id(&app, e);
+    ok(&mut app, "npc_plan_reset", json!({"id": who}));
+    step(&mut app, 300);
+    assert_eq!(actions(&app, e), ["jab", "jab"], "forgotten, chosen again, once");
+}
+
+#[test]
+fn a_cooldown_is_set_at_least_or_exactly() {
+    let mut app = app_seeded(5, record_starts);
+    let (hero, e) = arena(&mut app, "sched_all", "grunt", Vec3::new(0.0, 0.0, 1.2), N);
+    let (who, hero) = (id(&app, e), id(&app, hero));
+    let set = |app: &mut App, args: Value| text(&ok(app, "npc_plan_cooldown", args));
+    let left = |app: &App| plan_of(app, e).cooldowns.iter().map(|c| (c.name.clone(), c.left)).collect::<Vec<_>>();
+    assert_eq!(set(&mut app, json!({"id": who, "option": "turn", "seconds": 3.0})), format!("{who} turn: cooldown 3.00 s (was 0.00 s)"));
+    assert_eq!(set(&mut app, json!({"id": who, "option": "heavy", "seconds": 4.0})), format!("{who} heavy: cooldown 4.00 s (was 0.00 s)"));
+    assert_eq!(left(&app), [("heavy".to_owned(), 4.0), ("turn".to_owned(), 3.0)], "sorted by name, as remember keeps them");
+    // At least never shortens; it lengthens.
+    let args = json!({"id": who, "option": "heavy", "seconds": 2.0, "mode": "at_least"});
+    assert_eq!(set(&mut app, args), format!("{who} heavy: cooldown 4.00 s (was 4.00 s)"));
+    let args = json!({"id": who, "option": "heavy", "seconds": 6.0, "mode": "at_least"});
+    assert_eq!(set(&mut app, args), format!("{who} heavy: cooldown 6.00 s (was 4.00 s)"));
+    // Exactly shortens, and 0 takes the entry out.
+    set(&mut app, json!({"id": who, "option": "heavy", "seconds": 1.0, "mode": "exactly"}));
+    assert_eq!(set(&mut app, json!({"id": who, "option": "heavy", "seconds": 0.0})), format!("{who} heavy: cooldown 0.00 s (was 1.00 s)"));
+    assert_eq!(left(&app), [("turn".to_owned(), 3.0)]);
+    // A line per change, none for the call that changed nothing.
+    let changed: Vec<String> = lines(&app, " cooldown ").into_iter().map(|l| l.split_once(' ').unwrap().1.to_owned()).collect();
+    assert_eq!(
+        changed,
+        [
+            format!("{who} turn cooldown 3.00 s (was 0.00 s)"),
+            format!("{who} heavy cooldown 4.00 s (was 0.00 s)"),
+            format!("{who} heavy cooldown 6.00 s (was 4.00 s)"),
+            format!("{who} heavy cooldown 1.00 s (was 6.00 s)"),
+            format!("{who} heavy cooldown 0.00 s (was 1.00 s)"),
+        ]
+    );
+    // The planner reads it: `turn` is refused by its cooldown (a tick of it may have run since).
+    let report = schedule(&mut app, json!({"id": who, "target": hero, "angle": 150}));
+    let refused = option(&report, "turn")["refused"].as_str().unwrap().to_owned();
+    assert!(refused.starts_with("cooldown: 2.9") || refused.starts_with("cooldown: 3.00"), "{report}");
+}
+
+#[test]
+fn the_plan_calls_say_how_to_fix_a_bad_call() {
+    let mut app = app_seeded(5, record_starts);
+    let (hero, e) = arena(&mut app, "sched_all", "grunt", Vec3::new(0.0, 0.0, 1.2), N);
+    let (who, hero) = (id(&app, e), id(&app, hero));
+    let err = fails(&mut app, "npc_plan_cooldown", json!({"id": who, "option": "hevy", "seconds": 1.0}));
+    assert_eq!(err, format!("{who}'s plan `sched_all` has no option `hevy` (did you mean `heavy`?); options: light, heavy, turn, pair"));
+    let err = fails(&mut app, "npc_plan_cooldown", json!({"id": who, "option": "heavy", "seconds": -1.0}));
+    assert_eq!(err, "seconds must be >= 0 and finite (is -1)");
+    let err = fails(&mut app, "npc_plan_cooldown", json!({"id": who, "option": "heavy", "seconds": 1.0, "mode": "most"}));
+    assert_eq!(err, "mode must be `exactly` or `at_least` (is `most`)");
+    let not_npc = format!("{hero} is not an NPC (it has no Npc component)");
+    assert_eq!(fails(&mut app, "npc_plan_reset", json!({"id": hero})), not_npc);
+    assert_eq!(fails(&mut app, "npc_plan_cooldown", json!({"id": hero, "option": "heavy", "seconds": 1.0})), not_npc);
+    app.world_mut().get_mut::<Npc>(e).unwrap().plan = None;
+    let err = fails(&mut app, "npc_plan_reset", json!({"id": who}));
+    assert_eq!(err, format!("{who} has no attack plan; give it one (act set id={who} component=Npc path=plan value=\"...\")"));
+    // On a client the host owns the plans: the tools and the calls refuse.
+    app.world_mut().get_mut::<Npc>(e).unwrap().plan = Some("sched_all".into());
+    app.insert_resource(shards_core::NetRole::Client);
+    assert_eq!(fails(&mut app, "npc_plan_reset", json!({"id": who})), HOST_OWNS_PLANS);
+    assert_eq!(fails(&mut app, "npc_plan_cooldown", json!({"id": who, "option": "heavy", "seconds": 1.0})), HOST_OWNS_PLANS);
+    assert_eq!(set_plan_cooldown(app.world_mut(), e, "heavy", 1.0, CooldownSet::AtLeast), Err(HOST_OWNS_PLANS.to_owned()));
+    assert!(plan_of(&app, e).cooldowns.is_empty());
 }
 
 // --- 12.2 run 9: the invariant -------------------------------------------------------------------
@@ -432,24 +543,32 @@ fn content_read(app: &App) -> Vec<String> {
 
 #[test]
 fn the_queries_read_no_definition_the_simulation_does_not() {
-    let play = |calls: bool| {
+    // 0: no calls; 1: the queries every 30 ticks; 2: the dev tools on the plan's memory too (N8c), one
+    // with a misspelt option. The third session plays differently; only what it read is compared.
+    let play = |calls: u8| {
         let mut app = app_seeded(4, record_starts);
         let (hero, e) = arena(&mut app, "sched_all", "grunt", Vec3::new(0.0, 0.0, 1.2), N);
         step(&mut app, 1);
         let (id, hero) = (id(&app, e), id(&app, hero));
         for _ in 0..20 {
-            if calls {
+            if calls >= 1 {
                 ok(&mut app, "npc_schedule", json!({"id": id, "target": hero}));
                 ok(&mut app, "npc_state", json!({"id": id}));
                 ai_player_report(&mut app, &id);
+            }
+            if calls >= 2 {
+                ok(&mut app, "npc_plan_cooldown", json!({"id": id, "option": "heavy", "seconds": 0.5, "mode": "at_least"}));
+                fails(&mut app, "npc_plan_cooldown", json!({"id": id, "option": "hevy", "seconds": 0.5}));
+                ok(&mut app, "npc_plan_reset", json!({"id": id}));
             }
             step(&mut app, 30);
         }
         content_read(&app)
     };
-    let (quiet, asking) = (play(false), play(true));
+    let (quiet, asking, resetting) = (play(0), play(1), play(2));
     assert!(quiet.iter().any(|p| p.starts_with("attack_plan/")), "{quiet:?}");
     assert_eq!(quiet, asking);
+    assert_eq!(quiet, resetting);
 }
 
 // --- N8b: tokenless grants and a plan's waiting role ----------------------------------------------
