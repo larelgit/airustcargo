@@ -1,0 +1,8 @@
+// Full-screen flashes (U2): `flash_play flash=reality` in the console shows one, as the
+// player's `accessibility.flashes` allows.
+{
+    // A reality flash: white, fast in, a long fade out.
+    "reality": (color: "#fff4e0", alpha: 0.9, fade_in_s: 0.05, hold_s: 0.15, fade_out_s: 0.8),
+    // A glitch: cold blue dips over two seconds.
+    "crack": (color: "#b8e6ff", alpha: 0.5, fade_in_s: 0.1, hold_s: 2.0, fade_out_s: 0.4, pulses: 10, pulse_rate: 5.0),
+}

@@ -16,6 +16,10 @@ use shards_settings::FlashLevel;
 use crate::draw::{self, edge_marker, palette, EdgeMarker};
 use crate::zone::{threat_indicators, Indicator};
 
+/// The markers' layer: over the HUD (1), under a full-screen flash (5), menus (10 and up) and modals
+/// (100 and up).
+const MARKERS_Z: i32 = 2;
+
 /// How the off-screen warnings look.
 #[derive(Resource, Clone, Debug)]
 pub struct ThreatHud {
@@ -201,7 +205,7 @@ fn update_ui(
                         height: Val::Percent(100.0),
                         ..default()
                     },
-                    GlobalZIndex(1000),
+                    GlobalZIndex(MARKERS_Z),
                 ))
                 .id();
             pool.root = Some(root);
