@@ -748,9 +748,11 @@ fn movesets_of_plan(db: &ContentDb, plan: &str) -> Result<Vec<String>, String> {
     }
     let mut used = std::collections::BTreeSet::new();
     for (id, _) in db.peek_iter::<PrefabDef>() {
-        // A child's component replaces its parent's whole: the nearest `Npc` and `Fighter` count.
-        let npc_plan = prefab_component(db, id, "Npc").and_then(|npc| match field(&npc, "plan") {
-            Some(ron::Value::Option(Some(p))) => match *p {
+        // A child's component replaces its parent's whole: the nearest `Npc` and `Fighter` count. The
+        // plan is written `Some("warden")`, or `"warden"` (content reads RON with implicit `Some`).
+        let npc_plan = prefab_component(db, id, "Npc").and_then(|npc| match field(&npc, "plan")? {
+            ron::Value::String(p) => Some(p),
+            ron::Value::Option(Some(p)) => match *p {
                 ron::Value::String(p) => Some(p),
                 _ => None,
             },

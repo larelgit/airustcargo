@@ -46,4 +46,18 @@
     // 1.0 s, no hits: at 0.2 a pool that stays (a summon: not counted).
     "au_call": (net_id: 81, phases: [("windup", 0.2), ("recovery", 0.8)],
         effects: [(at: 0.2, effect: Spawn((prefab: ["au_pool"], action: ["au_burning"], stay: true)))]),
+
+    // The cutting plan's.
+    // 2.0 s, hits 0.2-0.6; a pool at 0.2 and another at 1.0 (each burns 2.0 s); from its recovery (0.6)
+    // `light` goes on into `au_lob_2`.
+    "au_lob": (net_id: 82, phases: [("windup", 0.2), ("active", 0.4), ("recovery", 1.4)],
+        hits: [(span: Phase("active"), shape: Cone(range: 2.0, angle: 90), damage: 2)],
+        effects: [
+            (at: 0.2, effect: Spawn((prefab: ["au_pool"], action: ["au_burning"]))),
+            (at: 1.0, effect: Spawn((prefab: ["au_pool"], action: ["au_burning"]))),
+        ],
+        cancels: [(span: Phase("recovery"), into: [Combo("light", "au_lob_2")])]),
+    // 0.5 s, hits 0.2-0.3.
+    "au_lob_2": (net_id: 83, phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.2)],
+        hits: [(span: Phase("active"), shape: Cone(range: 1.8, angle: 90), damage: 1)]),
 }

@@ -1,5 +1,8 @@
-// What the spawning plan of the audit tests lays down (N8e, `audit.rs`): a bolt that flies 1.5 s, a pool.
+// What the spawning plan of the audit tests lays down (N8e, `audit.rs`): a bolt that flies 1.5 s, a pool;
+// and an NPC of the cutting plan.
 {
     "au_bolt": (components: {"AiKind": ("projectile"), "Projectile": (speed: 10.0, lifetime: 1.5)}),
     "au_pool": (components: {"AiKind": ("zone")}),
+    // An NPC of `au_cut_plan` whose plan is written without `Some`.
+    "au_cutter": (components: {"Npc": (behavior: "grunt", perception: "grunt", plan: "au_cut_plan", director: ""), "Fighter": (moveset: "au_cut")}),
 }
