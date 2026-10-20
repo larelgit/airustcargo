@@ -27,7 +27,7 @@ fn the_hud_opens_at_the_start_shows_live_values_and_stays_out_of_observe() {
     assert!(!observe(&mut app).contains("\nUI  "), "{}", observe(&mut app));
     assert!(journal(&app, "ui: ").is_empty(), "{:?}", journal(&app, "ui: "));
     let status = shards::ai_core::status::status(app.world());
-    assert_eq!(status["ui"], json!({"screens": ["hud"], "input": null, "focus": null}));
+    assert_eq!(status["ui"], json!({"screens": ["hud"], "input": null, "focus": null, "flash": null}));
 }
 
 #[test]

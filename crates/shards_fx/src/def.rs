@@ -312,7 +312,8 @@ pub const EVENTS: [(&str, &str); 9] = [
 pub struct FxDef {
     /// An engine event ([`EVENTS`]: `damaged`, `died`, …) → the effect it plays.
     pub effects: BTreeMap<String, String>,
-    /// A clip's cue (`AnimationCue`: `footstep`, `swoosh`) → the effect it plays from the body.
+    /// A clip's cue (`AnimationCue`: `footstep`, `swoosh`) → the effect it plays: from the body's feet, or
+    /// from the cue's bone when it names one (`CueDef::bone`), at the cue's `strength` (fewer, smaller particles).
     pub cues: BTreeMap<String, String>,
 }
 

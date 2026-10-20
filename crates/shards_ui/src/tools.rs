@@ -4,7 +4,8 @@
 //! `ui_click` the mouse on one widget, `ui_set` typing a value into it; `ui_open` and `ui_close`
 //! are the keys that open and close screens (the pause key opens `pause`). All are player tools
 //! and run on this machine: a client's menus are its own. The ones that change something are
-//! actions, so replays record them and press the same buttons again.
+//! actions, so replays record them and press the same buttons again. `flash_play` (dev) covers
+//! the screen with a flash: a control tool, never recorded, since it changes only the picture.
 
 use ai_core::tools::{register_tool, ToolKind};
 use ai_core::{Call, Scope, ToolResult};
@@ -23,6 +24,40 @@ pub(crate) fn register(world: &mut World) {
     register_tool(world, "ui_navigate", Scope::Player, ToolKind::Action, ui_navigate);
     register_tool(world, "ui_click", Scope::Player, ToolKind::Action, ui_click);
     register_tool(world, "ui_set", Scope::Player, ToolKind::Action, ui_set);
+    register_tool(world, "flash_play", Scope::Dev, ToolKind::Control, flash_play);
+}
+
+/// Cover the screen with a flash now (`*.flash.ron`), as the game would: it replaces any flash
+/// playing. The player's `accessibility.flashes` shapes it (`reduced` softer and slower, `off`
+/// nothing drawn). Answers its colour, strength and length as played. Headless it is timed and
+/// journaled, and nothing is drawn.
+#[derive(Deserialize, JsonSchema)]
+pub struct FlashPlayArgs {
+    /// The flash (`*.flash.ron` id): `reality`.
+    pub flash: String,
+}
+
+fn flash_play(In(call): In<Call<FlashPlayArgs>>, world: &mut World) -> ToolResult {
+    let line = crate::flash::flash(world, &call.args.flash)?;
+    if drawn(world) {
+        Ok(format!("playing {line}"))
+    } else {
+        Ok(format!("playing {line} · nothing is drawn headless: flashes show in a window or with --offscreen"))
+    }
+}
+
+/// Whether this game draws a picture (a window or offscreen).
+fn drawn(world: &World) -> bool {
+    #[cfg(feature = "render")]
+    {
+        world.contains_resource::<ai_core::display::Offscreen>()
+            || world.try_query_filtered::<(), With<bevy::window::Window>>().is_some_and(|mut q| q.iter(world).next().is_some())
+    }
+    #[cfg(not(feature = "render"))]
+    {
+        let _ = world;
+        false
+    }
 }
 
 /// The open screens as a tree: every widget's id (`screen/widget`), kind, label and value, the

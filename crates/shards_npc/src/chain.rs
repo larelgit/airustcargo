@@ -21,6 +21,7 @@ use bevy::prelude::*;
 use shards_action::def::CancelTo;
 use shards_action::{can_start, ActionDef, MovesetDef};
 use shards_content::ContentDb;
+use shards_rules::ActiveRules;
 
 use crate::brain::{salt, Npc};
 use crate::def::{AttackPlanDef, ChainDef, DirectorDef};
@@ -114,14 +115,16 @@ pub(crate) fn chain_press(
     time: Res<Time>,
     tick: Res<SimTick>,
     db: Res<ContentDb>,
+    rules: Option<Res<ActiveRules>>,
     mut npcs: Query<Fighting>,
 ) {
     let dt = time.delta_secs();
+    let rules = rules.as_deref();
     let mut notes = note_list(npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref(), chain_note(f.chain, Some(f.buffer), tick.0))));
     // Presses already made this tick (a hook's, a continuation's) are starts of this tick.
     notes.extend(
         npcs.iter()
-            .filter(|f| strike_pressed(&db, f, dt))
+            .filter(|f| strike_pressed(&db, rules, f, dt))
             .map(|f| (*f.id, pool(&f.npc.director), tick.0)),
     );
     for (_, entity) in order(&npcs) {
@@ -134,7 +137,7 @@ pub(crate) fn chain_press(
         };
         if chain.pressed.is_some() {
             if chain.at_start && chain.strike {
-                gate_buffered(&mut f, &chain, &mut notes, &mut commands, &db, tick.0, dt);
+                gate_buffered(&mut f, &chain, &mut notes, &mut commands, (&db, rules), tick.0, dt);
             }
             continue;
         }
@@ -157,7 +160,7 @@ pub(crate) fn chain_press(
         let pool = pool(&f.npc.director);
         // A continuation gated at its start is asked only if the machine takes it this very tick
         // (the combo window is already open); else it is asked when it would start.
-        let takes_now = chain.at_start && takes_input(&f, &db, &chain.input, dt);
+        let takes_now = chain.at_start && takes_input(&f, (&db, rules), &chain.input, dt);
         let asked = strike && (!chain.at_start || takes_now);
         let waits = !ignores_spacing(&db, f.npc);
         if asked && waits && let Some((by, ticks_left)) = waiting(&notes, *f.id, &pool, tick.0, spacing) {
@@ -178,10 +181,12 @@ pub(crate) fn chain_press(
     }
 }
 
-/// Whether the action machine would take `input` this tick.
-fn takes_input(f: &crate::director::FightingItem, db: &ContentDb, input: &str, dt: f32) -> bool {
+/// Whether the action machine would take `input` this tick, under the rules in play.
+fn takes_input(f: &crate::director::FightingItem, (db, rules): (&ContentDb, Option<&ActiveRules>), input: &str, dt: f32) -> bool {
+    let rules = crate::director::npc_rules(db, rules, f.class);
     // No leap site: a chain link that leaps is not judged for its landing here (the machine rejects it, unpaid).
-    let view = crate::director::npc_view(db, f.fighter, f.state, &f.drive.held, f.dead, (f.stamina, f.cooldowns, f.charges), f.motion, None);
+    let view =
+        crate::director::npc_view(db, f.fighter, f.state, &f.drive.held, f.dead, (f.stamina, f.cooldowns, f.charges), f.motion, None, rules);
     can_start(&view, input, dt).is_ok()
 }
 
@@ -194,11 +199,11 @@ fn gate_buffered(
     chain: &NpcChain,
     notes: &mut Vec<crate::strike::Note>,
     commands: &mut Commands,
-    db: &ContentDb,
+    (db, rules): (&ContentDb, Option<&ActiveRules>),
     now: u64,
     dt: f32,
 ) {
-    if !f.buffer.queued.iter().any(|q| q.input == chain.input) || !takes_input(f, db, &chain.input, dt) {
+    if !f.buffer.queued.iter().any(|q| q.input == chain.input) || !takes_input(f, (db, rules), &chain.input, dt) {
         return;
     }
     let director = DirectorDef::of(db, &f.npc.director);

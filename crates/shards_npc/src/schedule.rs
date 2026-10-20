@@ -40,10 +40,11 @@ use shards_action::{FighterView, Standing};
 use shards_content::ContentDb;
 use shards_core::{flat, PlayerId};
 use shards_motion::PhysicsWorld;
+use shards_rules::ActiveRules;
 
 use crate::brain::{salt, Npc};
 use crate::def::{AttackPlanDef, DirectorDef};
-use crate::director::{npc_site, npc_view, target_of, FightingReadOnly, FightingReadOnlyItem, Grant, Targets};
+use crate::director::{npc_rules, npc_site, npc_view, target_of, FightingReadOnly, FightingReadOnlyItem, Grant, Targets};
 use crate::planner::{choice_pool, in_window, pick_weighted, refusal, resolve, InFlight, NpcOptions, NpcPlan, Resolved};
 use crate::strike::{chain_note, note_list, pool, spacing_ticks, strike_pressed, waiting, Note};
 
@@ -92,6 +93,8 @@ pub(crate) struct FightCx<'a> {
     pub dt: f32,
     /// The living players ([`living_players`]).
     pub players: u32,
+    /// The rules in play: what they make an NPC's attack cost ([`npc_rules`]).
+    pub rules: Option<&'a ActiveRules>,
 }
 
 /// What the rules read of the moment besides the NPC's plan: where the target stands off the
@@ -154,7 +157,8 @@ pub(crate) fn inputs<'a>(
     let director = DirectorDef::of(cx.db, &f.npc.director);
     let (id, there, radius) = target;
     let site = npc_site(cx.physics, cx.db, f.entity, f.transform, f.intent, f.body, Some((there, radius)));
-    let view = npc_view(cx.db, f.fighter, f.state, &f.drive.held, f.dead, (f.stamina, f.cooldowns, f.charges), f.motion, site);
+    let rules = npc_rules(cx.db, cx.rules, f.class);
+    let view = npc_view(cx.db, f.fighter, f.state, &f.drive.held, f.dead, (f.stamina, f.cooldowns, f.charges), f.motion, site, rules);
     let (budget, overlapping) = inflight.on(id, *f.id, &director);
     // Another NPC of its director began a strike less than `min_spacing` ago: its strikes wait.
     let spacing = if plan_def.ignores_spacing {
@@ -171,6 +175,7 @@ pub(crate) fn inputs<'a>(
 /// (a state hook's, a combo continuation's), as starts of this tick.
 pub(crate) fn plan_notes<'w, 's>(
     db: &ContentDb,
+    rules: Option<&ActiveRules>,
     npcs: impl IntoIterator<Item = FightingReadOnlyItem<'w, 's>>,
     tick: u64,
     dt: f32,
@@ -180,7 +185,7 @@ pub(crate) fn plan_notes<'w, 's>(
         npcs.iter().map(|f| (*f.id, f.npc.director.as_str(), f.strike, f.token.held.as_ref(), chain_note(f.chain, Some(f.buffer), tick))),
     );
     // Presses already made this tick (a hook's, a continuation's) are starts of this tick.
-    notes.extend(npcs.iter().filter(|f| strike_pressed(db, f, dt)).map(|f| (*f.id, pool(&f.npc.director), tick)));
+    notes.extend(npcs.iter().filter(|f| strike_pressed(db, rules, f, dt)).map(|f| (*f.id, pool(&f.npc.director), tick)));
     notes
 }
 
@@ -212,6 +217,7 @@ pub struct ScheduleParams<'w, 's> {
     tick: Res<'w, SimTick>,
     fixed: Res<'w, Time<Fixed>>,
     players: Players<'w, 's>,
+    rules: Option<Res<'w, ActiveRules>>,
 }
 
 impl ScheduleParams<'_, '_> {
@@ -377,11 +383,12 @@ pub fn schedule_report(p: &ScheduleParams, entity: Entity, what_if: &WhatIf, dev
     let tick = p.tick.0 + 1;
     let counted = living_players(&p.players);
     let players = what_if.players.unwrap_or(counted);
-    let cx = FightCx { db: &p.db, physics: &p.physics, tick, dt, players: counted };
+    let rules = p.rules.as_deref();
+    let cx = FightCx { db: &p.db, physics: &p.physics, tick, dt, players: counted, rules };
     let inflight = InFlight::collect(p.npcs.iter().map(|f| (*f.id, f.token.held.as_ref())));
     // As the caller that would judge the NPC next builds them: the planner's notes for one that
     // holds a grant, the director's for one that asks for it.
-    let notes = if holds.is_some() { plan_notes(&p.db, p.npcs.iter(), tick, dt) } else { grant_notes(p.npcs.iter(), tick) };
+    let notes = if holds.is_some() { plan_notes(&p.db, rules, p.npcs.iter(), tick, dt) } else { grant_notes(p.npcs.iter(), tick) };
     let mut next = f.plan.clone();
     next.tick(dt, f.state.current.is_none());
     let Some(mut inputs) = inputs(&f, &cx, (target_id, there, radius), &notes, &inflight) else {
@@ -543,9 +550,9 @@ mod tests {
 
     fn built(w: &mut World) -> Built {
         w.run_system_once(|db: Res<ContentDb>, physics: Res<PhysicsWorld>, npcs: Query<FightingReadOnly>| -> Built {
-            let cx = FightCx { db: &db, physics: &physics, tick: TICK, dt: DT, players: 1 };
+            let cx = FightCx { db: &db, physics: &physics, tick: TICK, dt: DT, players: 1, rules: None };
             let inflight = InFlight::collect(npcs.iter().map(|f| (*f.id, f.token.held.as_ref())));
-            let notes = plan_notes(&db, npcs.iter(), TICK, DT);
+            let notes = plan_notes(&db, None, npcs.iter(), TICK, DT);
             let mut out: Built = npcs
                 .iter()
                 .map(|f| {
