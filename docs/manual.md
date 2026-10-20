@@ -791,6 +791,34 @@ steps up to `step_height`, sticking down on stairs), air (gravity, control in th
 up to `mantle_height` along a path checked in advance. Characters do not block each other as they pass: after everyone has moved, in id order, the capsules are pushed apart. A fall from height is the event `Landed {
 fall_height }`, plus `Jumped`, `Mantled`, `ModeChanged`. The `Transform` position is the feet; writing to it from outside (`teleport`, respawn) places the character again, with no speed and no fall.
 
+**Ground laid in the middle of play (R2).** The controller stands on, and is stopped by, every `WORLD` collider that is not a
+volume, `Body::Static` and `Body::Kinematic` alike. A kinematic collider does not carry what stands on it: there is no platform
+motion, and a body on one that moves is left behind. So a game makes temporary ground (a toppled giant to walk along to its core)
+with no engine code. While the body lies still, the game spawns static colliders shaped to the lying pose; when it rises, the
+game despawns them. The rules:
+
+- *From the simulation.* Lay and lift them in `FixedUpdate` in a `SimSet`, on every machine that simulates. `sync_physics` keeps
+  `PhysicsWorld` in step with the ECS: a collider spawned during a tick is ground from the next tick, and a despawn takes it out at
+  once. A replay runs the same code, so the ground comes and goes on the same ticks.
+- *With an `AiId`.* Give each collider `AiKind`, so it gets an `AiId`. Then a snapshot saves it and brings it back (`Collider`,
+  `Body`, `ColliderId` and `Transform` are reflected), and co-op sends it to the clients, whose prediction stands on it too.
+  Without an `AiId` it counts as level geometry, which a snapshot does not hold: the `static_colliders` check compares the
+  colliders without an `AiId` and refuses a load into a game where they differ (one that has not laid the same collider, with
+  the same id and pose, before loading), and a client never gets it.
+- *Navigation.* The navmesh cuts out a laid collider but bakes no walkable surface on top of it (see "Navigation and NPCs (E6)").
+  So a route (`move_to path=true`, an NPC's path) never leads onto laid ground. A plain move walks onto it, and a ledge up to
+  `mantle_height` is climbed.
+- *Foliage.* The scatter does not clear the grass under a collider laid after the layout (see "What counts as ground and what
+  as solid" in "Foliage and small objects (E10.2)"). That rule belongs to the scatter, not to the controller.
+
+Tests:
+
+- `shards_motion` `tests/motion/ground.rs`: a slab laid from a system, static or kinematic, is landed on and walked along, and
+  is climbed like any ledge; when it goes, the body falls back to the floor. A kinematic slab that slides away
+  leaves the body where it stood.
+- The sandbox's `snapshots.rs` and `net.rs`: the same slab with `AiKind` survives a load and reaches a client, and its removal
+  reaches both.
+
 **Parameters are content.** Content kind `locomotion`, a map from id to numbers; missing fields take default values, a typo is an error with its line.
 They are read every tick, so an edit to the file changes the next step.
 
@@ -1896,7 +1924,9 @@ spawns the colossus as part of the yard region, so the `regen` that ends it take
 
 **Limits, on purpose.** Parts follow the body's transform, not its animation: a part placed on a swinging arm stays where `at`
 puts it (per-action part poses would be a later slice). The body's guard arc and its hurtbox-based checks are the body's, not
-the part's. A part as ground to stand on and a camera for a body this big are R2 and R4.
+the part's. A part is no ground to stand on: it lies on `HURTBOX`, not `WORLD`. A body lying still is made ground by
+colliders the game lays and lifts ("Ground laid in the middle of play (R2)" in "Movement (E2)"). A camera for a body this big
+is R4.
 
 ### Lock points (R3)
 
@@ -5660,7 +5690,7 @@ Each one stands on its own origin, with +Y up.
 
 **Layout.** For each tile and definition, `DetRng` keyed by "the region seed, the region id, the tile cell, the definition id" throws points into the tile's square: `density × area` points, with at most four times as many throws, and no closer than `spacing` to one another. Each point has its own rotation, tilt, size and look. Then each one falls to the ground on a ray. The ones that fail are dropped: those with no ground within the `height` band (or whose ray starts inside a solid), those on ground steeper than `max_slope`, and those closer than `clearance` to a solid. A tile holds at most 10 000 mesh entities of the definition: the layout keeps the first `10 000 / levels` instances of the same list and writes to the journal `` scatter `x`: N tiles would get … each keeps its first M `` (content that asks for more is already an error). The `graphics.foliage` setting (from 0 to 1) keeps the start of the same list: at 0.5, half of the same instances remain, and none are new. Tiles are scattered in cell order as soon as the region is built. A tile that goes away (a region change, `regen`) takes its instances and its count of those that found no place with it. Editing `*.scatter.ron`, the tags of a tile or room (`tags` in `*.tile.ron`, `*.room.ron`), or the setting scatters everything again in the same frame. Editing a look only recolours.
 
-**What counts as ground and what as solid.** Only the world's static colliders count: `Body::Static`, layer `WORLD`, not volumes. What moves (`Body::Kinematic`: platforms, lifts) is neither ground nor an obstacle: an instance would stay where the ground is no longer. The rays and the `clearance` spheres do not ask about the whole world, only about the part around the tile (`place::solids`, `PhysicsWorld::subset`: colliders whose bounds reach into the tile's column). So rays and spheres do not walk through every collider in the region. In the wilds, 8×8 with seed 42 (debug build), the throws, rays and spheres for all 64 tiles take 4.2–4.8 ms, against 6.6–7.0 ms over the whole world. The rest of the layout time (20–35 ms) goes to creating and removing entities. The region's geometry (tiles, their levels and prefabs) is built before the layout, and the layout always counts it. A static collider that the game places itself is counted when the tile is scattered. A tile is scattered once, so a box placed later does not clear the grass under it until the next layout (a setting change, `scatter_set`, or a content edit). The layout is a function of the seed, the content and the static world at the moment of layout.
+**What counts as ground and what as solid** (for the scatter; the character controller stands on kinematic colliders too, see "Ground laid in the middle of play (R2)"). Only the world's static colliders count: `Body::Static`, layer `WORLD`, not volumes. To the scatter, what moves (`Body::Kinematic`: platforms, lifts) is neither ground nor an obstacle: an instance would stay where the ground is no longer. The rays and the `clearance` spheres do not ask about the whole world, only about the part around the tile (`place::solids`, `PhysicsWorld::subset`: colliders whose bounds reach into the tile's column). So rays and spheres do not walk through every collider in the region. In the wilds, 8×8 with seed 42 (debug build), the throws, rays and spheres for all 64 tiles take 4.2–4.8 ms, against 6.6–7.0 ms over the whole world. The rest of the layout time (20–35 ms) goes to creating and removing entities. The region's geometry (tiles, their levels and prefabs) is built before the layout, and the layout always counts it. A static collider that the game places itself is counted when the tile is scattered. A tile is scattered once, so a box placed later does not clear the grass under it until the next layout (a setting change, `scatter_set`, or a content edit). The layout is a function of the seed, the content and the static world at the moment of layout.
 
 **How it is drawn.** Under the tile's root (it gets `Visibility`) there is one entity for each pair of definition and look, with a `Look`. Under it there is one entity per instance and level of detail: the level's shared mesh, a shared white material (the look makes its own from it), and the level's `VisibilityRange`. Bevy draws identical meshes with the same material as one batch. In the reference scene, 1382 meshes are drawn (with the effect particles and decals), and 50 of them are distinct (the field `mesh_assets` in `counts`). Past the `until` of the last level, an instance is not drawn, and Bevy culls what the camera cannot see. Banded light (`Toon`) fades the levels with the same smoothing as the Bevy material.
 
