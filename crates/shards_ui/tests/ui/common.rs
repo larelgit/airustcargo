@@ -32,7 +32,8 @@ pub fn game_with(setup: impl FnOnce(&mut App)) -> App {
     app
 }
 
-fn spawn_hero(mut commands: Commands) {
+/// The hero the tests play: the HUD's viewer.
+pub fn spawn_hero(mut commands: Commands) {
     commands.spawn((Name::new("Hero"), AiKind::new("Hero"), AiPlayer, Health::new(100.0), Stamina::default(), Transform::default()));
 }
 

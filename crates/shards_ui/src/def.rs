@@ -227,7 +227,7 @@ pub enum WidgetDef {
         #[serde(default = "allies")]
         bind: String,
     },
-    /// Stats before and after a change (`damage 12 â 15 (+3)`): fixed rows or source `bind`.
+    /// Stats before and after a change (`damage 12 → 15 (+3)`): fixed rows or source `bind`.
     Compare {
         #[serde(default)]
         id: Option<String>,
@@ -261,7 +261,7 @@ pub enum WidgetDef {
         #[serde(default)]
         setting: Option<String>,
     },
-    /// The input of an action of the controls (`jump`: `Space Â· Pad South`), which the player
+    /// The input of an action of the controls (`jump`: `Space · Pad South`), which the player
     /// changes: confirming it waits for the next key, mouse button or gamepad button (Escape
     /// cancels), and that input becomes the binding, saved in the `controls` settings. An input
     /// another action of the context reads is refused, and the widget says which action holds it.
@@ -279,7 +279,7 @@ pub enum WidgetDef {
         /// device (keyboard and mouse, or gamepad), or is added when the action has none.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         slot: Option<usize>,
-        /// What it says while it waits (`@controls-press`). Default: `Press a key or buttonâ¦
+        /// What it says while it waits (`@controls-press`). Default: `Press a key or button…
         /// (Esc cancels)`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prompt: Option<String>,
@@ -293,7 +293,7 @@ pub enum WidgetDef {
         id: String,
         label: String,
         options: Vec<String>,
-        /// What each option says, in the order of `options` (`"@difficulty-hard"`, `"Ð ÑÑÑÐºÐ¸Ð¹"`).
+        /// What each option says, in the order of `options` (`"@difficulty-hard"`, `"Русский"`).
         /// Empty: the options themselves.
         #[serde(default)]
         labels: Vec<String>,
