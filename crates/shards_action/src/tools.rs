@@ -55,7 +55,16 @@ pub(crate) fn register(app: &mut App) {
         .add_ai_tool("remember", Scope::Dev, remember_tool)
         .add_ai_condition("reacting", reacting)
         .add_dev_entry("combat", "god", "Immortality on / off", DevCommand::Live(god_line))
-        .add_dev_entry("combat", "heal", "Heal / revive", DevCommand::Run("heal".into()));
+        .add_dev_entry("combat", "heal", "Heal / revive", DevCommand::Run("heal".into()))
+        .add_dev_entry("combat", "down_me", "Go down (until revived)", DevCommand::Live(down_me_line))
+        .add_dev_entry("combat", "down", "Down a body (bleeds out)...", DevCommand::Fill("down id= bleed=30".into()));
+}
+
+/// The menu's "go down": the caller's own body, down until a partner's revive (or `heal`).
+fn down_me_line(world: &World, caller: &Caller) -> Result<String, String> {
+    let me = caller.require_subject()?;
+    let id = world.get::<AiId>(me).ok_or_else(|| "your body has no AiId yet: try again on the next tick".to_owned())?;
+    Ok(format!("down id={id}"))
 }
 
 /// The menu's immortality switch: off when the caller's body has it.

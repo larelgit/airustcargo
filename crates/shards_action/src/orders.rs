@@ -8,8 +8,9 @@
 use ai_core::{AiId, AiIndex};
 use bevy::prelude::*;
 use shards_content::ContentDb;
-use shards_core::{flat, Intent, Order, Predicted};
+use shards_core::{flat, Intent, Order, PlayerId, Predicted};
 use shards_motion::{CharacterController, CharacterParams, Collider, MotionState, PhysicsWorld};
+use shards_rules::{ActiveRules, RuleClass, RulesView};
 
 use crate::def::{ActionDef, MovesetDef};
 use crate::combat::Downed;
@@ -42,6 +43,8 @@ type Attackers<'w, 's> = Query<
         Has<Dead>,
         Has<Downed>,
         Option<&'static ContextInputs>,
+        // The body's rule class, and whether it is a player's: what the rules make an action cost.
+        (Option<&'static RuleClass>, Has<PlayerId>),
     ),
 >;
 
@@ -53,6 +56,7 @@ type Walker = (&'static Fighter, &'static mut Intent, &'static Transform, Has<De
 
 /// `SimSet::Input`, after core's `follow_orders`: carries out the front
 /// `Order::Attack` of every fighter. Each fighter only writes its own `Intent`.
+#[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
 pub(crate) fn follow_attack_orders(
     mut commands: Commands,
     time: Res<Time>,
@@ -60,10 +64,13 @@ pub(crate) fn follow_attack_orders(
     index: Res<AiIndex>,
     physics: Res<PhysicsWorld>,
     targets: Query<Target>,
+    rules: Option<Res<ActiveRules>>,
     mut fighters: Attackers,
 ) {
     let dt = time.delta_secs();
-    for (entity, fighter, mut intent, state, tf, stamina, cooldowns, charges, motion, controller, params, dead, downed, context) in &mut fighters {
+    for (entity, fighter, mut intent, state, tf, stamina, cooldowns, charges, motion, controller, params, dead, downed, context, (class, player)) in
+        &mut fighters
+    {
         let Some(order) = intent.orders.front().cloned() else { continue };
         let Order::Attack { target, ref input, repeat } = order else { continue };
         if dead || downed {
@@ -94,7 +101,8 @@ pub(crate) fn follow_attack_orders(
             off_ground: crate::machine::off_ground(motion),
             leap: site,
             context,
-            ..FighterView::new(&db, &fighter.moveset, state, &intent.held, dead)
+            // The rules as the machine reads them, so an order presses only what the machine will start.
+            ..FighterView::new(&db, &fighter.moveset, state, &intent.held, dead, RulesView::of(&db, rules.as_deref(), class, player))
         };
         match can_start(&view, input, dt) {
             Ok(_) => {

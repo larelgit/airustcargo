@@ -1,0 +1,10 @@
+// The actions of the rules test (C3.4a, `rules.rs`).
+{
+    // A jab that costs stamina: what the rules make an NPC's attack cost.
+    "dear_jab": (
+        net_id: 62,
+        phases: [("windup", 0.3), ("active", 0.1), ("recovery", 0.3)],
+        cost: (stamina: 10),
+        hits: [(span: Phase("active"), shape: Cone(range: 1.8, angle: 100), damage: 1)],
+    ),
+}

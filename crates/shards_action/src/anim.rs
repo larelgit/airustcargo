@@ -49,8 +49,9 @@
 //! }
 //! ```
 //!
-//! A character is [`Animated`] with the set's id and has the glTF scene as a child
-//! (`WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("models/hero.glb")))`).
+//! A character is [`Animated`] with the set's id and has the glTF scene as a child:
+//! `render::GltfModel::load(&asset_server, "models/hero.glb")` loads the file whole, so the bridge,
+//! which loads it for its clips too, shares its one read.
 //!
 //! ## Layers
 //!
@@ -133,6 +134,12 @@
 //! event fires for the entity. Cues are for effects and sound (a footstep, a whoosh, a
 //! spark), never for gameplay: hits, i-frames and cancels come from the action's own
 //! timeline.
+//!
+//! A cue may name a `bone` of the model (`(at: 0.0, cue: "footstep", bone: "foot.L")`): the event
+//! then carries the bone's world position at the moment it fires, and the effect and the sound
+//! play there instead of at the body's feet. `strength` (default 1, left out of the file at its
+//! default) scales the effect's particles, in number and in size, and the sound's volume; a cue
+//! of strength 0 plays nothing. Both are picture and sound only, like the cue itself.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -176,6 +183,22 @@ pub struct AnimationCue {
     pub cue: String,
     /// The clip (our name for it) that fired it.
     pub clip: String,
+    /// The bone the cue names ([`CueDef::bone`]), if any.
+    pub bone: Option<String>,
+    /// Where that bone was in the world when the cue fired (its `GlobalTransform`, as of the last
+    /// frame that was drawn): `None` for a cue without a bone, or when the model has no bone of
+    /// that name. Effects and sound play here instead of at the body's feet.
+    pub at: Option<Vec3>,
+    /// How strong the cue is ([`CueDef::strength`]): 1 plays as authored, less is a smaller burst
+    /// and a quieter sound, 0 plays nothing.
+    pub strength: f32,
+}
+
+impl AnimationCue {
+    /// A cue of `clip` for `entity`, at the body, at full strength.
+    pub fn new(entity: Entity, cue: impl Into<String>, clip: impl Into<String>) -> Self {
+        Self { entity, cue: cue.into(), clip: clip.into(), bone: None, at: None, strength: 1.0 }
+    }
 }
 
 /// A moment of a clip for effects or sound.
@@ -185,6 +208,37 @@ pub struct CueDef {
     /// Seconds into the clip, on the clip's own timeline.
     pub at: f32,
     pub cue: String,
+    /// A bone of the model (a node name: `foot.L`): the cue then plays where that bone is when it
+    /// fires ([`AnimationCue::at`]), not at the body's feet. Left out, the cue is the body's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bone: Option<String>,
+    /// How strong the cue is, 0 or more: it scales the effect's particles (their number and size)
+    /// and the sound's volume. 1 plays as authored, 0 plays nothing.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub strength: f32,
+}
+
+impl CueDef {
+    /// A cue `cue` at `at` seconds, at the body, at full strength.
+    pub fn new(at: f32, cue: impl Into<String>) -> Self {
+        Self { at, cue: cue.into(), bone: None, strength: 1.0 }
+    }
+
+    /// The same cue at the bone `bone`.
+    pub fn at_bone(mut self, bone: impl Into<String>) -> Self {
+        self.bone = Some(bone.into());
+        self
+    }
+
+    /// The same cue at `strength`.
+    pub fn with_strength(mut self, strength: f32) -> Self {
+        self.strength = strength;
+        self
+    }
+}
+
+fn one() -> f32 {
+    1.0
 }
 
 /// One clip of an animset's library.
@@ -1252,7 +1306,8 @@ fn is_gltf(path: &str) -> bool {
 
 impl AnimSet {
     /// With an asset folder: every file the set names can be read, has the animations its
-    /// clips name and, with `root_motion`, that bone, unturned by its parents.
+    /// clips name, the bones their cues name and, with `root_motion`, that bone, unturned by its
+    /// parents.
     fn check_files(&self, refs: &mut Refs) {
         let Some(root) = refs.asset_root() else { return };
         for source in self.sources() {
@@ -1277,6 +1332,18 @@ impl AnimSet {
             }
             if source != self.source {
                 continue;
+            }
+            // A cue's bone is found under the model, whichever file its clip comes from.
+            for (name, clip) in &self.clips {
+                for (i, cue) in clip.cues.iter().enumerate() {
+                    if let Some(bone) = cue.bone.as_deref().filter(|b| !b.is_empty())
+                        && !file.has_node(bone)
+                    {
+                        refs.error(format!(
+                            "clips.{name}.cues[{i}].bone -> `{source}` has no node `{bone}`; name a bone of the model"
+                        ));
+                    }
+                }
             }
             if let Some(bone) = self.root_motion.as_deref().filter(|b| !b.is_empty()) {
                 if !file.has_node(bone) {
@@ -1405,6 +1472,14 @@ impl ContentDef for AnimSet {
                 }
                 if cue.cue.is_empty() {
                     refs.error(format!("clips.{name}.cues[{i}].cue has no name"));
+                }
+                if cue.bone.as_deref().is_some_and(str::is_empty) {
+                    refs.error(format!(
+                        "clips.{name}.cues[{i}].bone is empty; name a bone of the model (`bone: \"foot.L\"`) or leave it out"
+                    ));
+                }
+                if !(cue.strength >= 0.0 && cue.strength.is_finite()) {
+                    refs.error(format!("clips.{name}.cues[{i}].strength must be a number, 0 or more (is {})", cue.strength));
                 }
             }
         }
@@ -1965,7 +2040,7 @@ mod tests {
 
     #[test]
     fn a_wrapped_loop_fires_the_rest_of_the_last_pass_before_the_new_one() {
-        let cues = [CueDef { at: 0.1, cue: "head".into() }, CueDef { at: 0.95, cue: "tail".into() }];
+        let cues = [CueDef::new(0.1, "head"), CueDef::new(0.95, "tail")];
         let at = |prev, now, wrap_at| -> Vec<f32> { crossed_cues(&cues, prev, now, wrap_at).iter().map(|c| c.at).collect() };
         assert_eq!(at(Some(0.9), 0.2, Some(1.0)), [0.95, 0.1], "the order they were passed in");
         // Everything else stays in time order.
@@ -2047,6 +2122,74 @@ mod tests {
                 locomotion: {"idle": "idle"}, actions: {"light_1": "slash"}, tags: {"fire": "slash"}) }"#,
         );
         assert!(errors.is_empty(), "{errors:#?}");
+    }
+
+    #[test]
+    fn a_cue_without_a_bone_or_strength_keeps_its_json() {
+        // The content hash feeds the co-op handshake: a cue that uses neither new field is the
+        // JSON it was before D1.7.
+        let plain = CueDef::new(0.5, "swoosh");
+        assert_eq!(serde_json::to_value(&plain).unwrap(), serde_json::json!({"at": 0.5, "cue": "swoosh"}));
+        // The old form parses to the defaults: at the body, at full strength.
+        let read = read_set(r#"(source: "models/h.glb", clips: {"walk": (cues: [(at: 0.5, cue: "footstep")])})"#);
+        assert_eq!(read.clips["walk"].cues, [CueDef { at: 0.5, cue: "footstep".into(), bone: None, strength: 1.0 }]);
+        assert_eq!(serde_json::to_value(&read.clips["walk"]).unwrap()["cues"], serde_json::json!([{"at": 0.5, "cue": "footstep"}]));
+        // A strength of exactly 1 written out is left out again; a bone and any other strength stay.
+        let read = read_set(
+            r#"(source: "models/h.glb", clips: {"walk": (cues: [
+                (at: 0.0, cue: "footstep", bone: "foot.L", strength: 1.0),
+                (at: 0.5, cue: "footstep", bone: "foot.R", strength: 0.5),
+                (at: 0.75, cue: "thud", strength: 0),
+            ])})"#,
+        );
+        let cues = &read.clips["walk"].cues;
+        assert_eq!(cues[0], CueDef::new(0.0, "footstep").at_bone("foot.L"));
+        assert_eq!(cues[1], CueDef::new(0.5, "footstep").at_bone("foot.R").with_strength(0.5));
+        assert_eq!(cues[2], CueDef::new(0.75, "thud").with_strength(0.0), "a strength of 0 is written, not left out");
+        assert_eq!(
+            serde_json::to_value(cues).unwrap(),
+            serde_json::json!([
+                {"at": 0.0, "cue": "footstep", "bone": "foot.L"},
+                {"at": 0.5, "cue": "footstep", "bone": "foot.R", "strength": 0.5},
+                {"at": 0.75, "cue": "thud", "strength": 0.0},
+            ])
+        );
+        // A set written out and read again is the same.
+        assert_eq!(read_set(&ron::to_string(&read).unwrap()), read);
+        // A misspelt field is a parse error, like any other field of an animset.
+        let errors = build(r#"{ "h": (source: "models/h.glb", clips: {"walk": (cues: [(at: 0.5, cue: "x", bones: "foot.L")])}) }"#);
+        assert!(errors.len() == 1 && errors[0].contains("bones") && errors[0].contains("`bone`"), "{errors:#?}");
+    }
+
+    #[test]
+    fn a_cues_bone_and_strength_are_checked() {
+        let errors = build(
+            r#"{
+            "h": (source: "models/h.glb", clips: {
+                "idle": (),
+                "walk": (cues: [
+                    (at: 0.0, cue: "footstep", bone: "foot.L", strength: 0.5),
+                    (at: 0.4, cue: "footstep", bone: ""),
+                    (at: 0.5, cue: "footstep", strength: -1),
+                    (at: 0.6, cue: "footstep", strength: inf),
+                    (at: 0.7, cue: "footstep", bone: "", strength: -0.25),
+                    (at: 0.8, cue: "silent", strength: 0),
+                ]),
+            }),
+        }"#,
+        );
+        assert_eq!(
+            errors,
+            [
+                "content/h.animset.ron: animset `h`: clips.walk.cues[1].bone is empty; name a bone of the model \
+                 (`bone: \"foot.L\"`) or leave it out",
+                "content/h.animset.ron: animset `h`: clips.walk.cues[2].strength must be a number, 0 or more (is -1)",
+                "content/h.animset.ron: animset `h`: clips.walk.cues[3].strength must be a number, 0 or more (is inf)",
+                "content/h.animset.ron: animset `h`: clips.walk.cues[4].bone is empty; name a bone of the model \
+                 (`bone: \"foot.L\"`) or leave it out",
+                "content/h.animset.ron: animset `h`: clips.walk.cues[4].strength must be a number, 0 or more (is -0.25)",
+            ]
+        );
     }
 
     #[test]

@@ -23,6 +23,7 @@ use shards_action::{can_start, ActionDef, MovesetDef};
 use shards_motion::PhysicsWorld;
 use shards_content::ContentDb;
 use shards_core::flat;
+use shards_rules::ActiveRules;
 
 use crate::brain::{clamp_to_leash, salt};
 use crate::def::{AttackPlanDef, DirectorDef, SequenceBan};
@@ -82,7 +83,7 @@ impl NpcPlan {
             for c in &mut self.cooldowns {
                 c.left -= dt;
             }
-            self.cooldowns.retain(|c| c.left > 1e-4);
+            self.cooldowns.retain(|c| c.left > COOLDOWN_GONE);
         }
     }
 
@@ -126,6 +127,10 @@ pub struct Resolved {
     pub max_repeats: Option<u32>,
     pub forbid_after: Vec<String>,
 }
+
+/// A cooldown at or below this (s) is none: [`NpcPlan::tick`] lets it go, and
+/// [`set_plan_cooldown`](crate::set_plan_cooldown) sets none.
+pub(crate) const COOLDOWN_GONE: f32 = 1e-4;
 
 /// The options of `plan` for a fighter with moveset `moveset`, against a target of body
 /// radius `target_radius`. Options whose input or action the moveset lacks are left out.
@@ -255,6 +260,16 @@ pub(crate) fn choice_pool(
     } else {
         eligible
     }
+}
+
+/// How near its `goal` an NPC walks to come `within` meters of `target`. A goal the leash pulled
+/// short of the target ([`clamp_to_leash`]) leaves that much less room: walking to `within` of such
+/// a goal could stop `within` plus the pull away from the target, out of the window it walks to.
+/// At least 0.3 m (as a chase to a pulled goal): a target too far beyond the leash is faced from its
+/// edge. Never more than `within`; an unpulled goal keeps it.
+pub(crate) fn reach(within: f32, goal: Vec3, target: Vec3) -> f32 {
+    let pulled = flat(target - goal).length();
+    if pulled > 0.0 { (within - pulled).max(0.3).min(within) } else { within }
 }
 
 /// How near an NPC with nothing chosen closes in: the shortest `max` among the options
@@ -414,13 +429,14 @@ pub(crate) fn plan_attacks(
     physics: Res<PhysicsWorld>,
     players: Players,
     targets: Targets,
+    rules: Option<Res<ActiveRules>>,
     mut npcs: Query<Fighting>,
 ) {
     let dt = time.delta_secs();
     let players = living_players(&players);
-    let cx = FightCx { db: &db, physics: &physics, tick: tick.0, dt, players };
+    let cx = FightCx { db: &db, physics: &physics, tick: tick.0, dt, players, rules: rules.as_deref() };
     let mut inflight = InFlight::collect(npcs.iter().map(|f| (*f.id, f.token.held.as_ref())));
-    let mut notes = plan_notes(&db, npcs.iter(), tick.0, dt);
+    let mut notes = plan_notes(&db, rules.as_deref(), npcs.iter(), tick.0, dt);
     for (id, entity) in order(&npcs) {
         let (mut grant, target, radius, distance) = {
             let Ok(mut f) = npcs.get_mut(entity) else { continue };
@@ -481,8 +497,9 @@ pub(crate) fn plan_attacks(
                 let home = f.home.map(|h| (h.pos.unwrap_or(here), h.leash));
                 wait_in_role(&mut f, role, target, home, dt);
             } else if nearest.is_finite() && distance > nearest {
-                f.drive.goal = Some(leash(target));
-                f.drive.within = (nearest * 0.85).max(0.3);
+                let goal = leash(target);
+                f.drive.goal = Some(goal);
+                f.drive.within = reach((nearest * 0.85).max(0.3), goal, target);
             } else {
                 f.drive.goal = None;
             }
@@ -496,8 +513,9 @@ pub(crate) fn plan_attacks(
         grant.tags = o.tags.clone();
         grant.cooldown = o.cooldown;
         if distance > o.max {
-            f.drive.goal = Some(leash(target));
-            f.drive.within = (o.max * 0.85).max(o.min + 0.2).min(o.max);
+            let goal = leash(target);
+            f.drive.goal = Some(goal);
+            f.drive.within = reach((o.max * 0.85).max(o.min + 0.2).min(o.max), goal, target);
         } else if distance < o.min {
             let away = flat(here - target).try_normalize().unwrap_or(-*f.transform.forward());
             f.drive.goal = Some(leash(target + away * (o.min + 0.3)));
@@ -847,7 +865,7 @@ mod tests {
         fn judge(&self, db: &ContentDb, scope: &ai_core::SimScope) -> Judged {
             let view = shards_action::FighterView {
                 cooldowns: self.cooldowns.as_ref(),
-                ..shards_action::FighterView::new(db, "m", &self.state, &self.held, self.dead)
+                ..shards_action::FighterView::new(db, "m", &self.state, &self.held, self.dead, None)
             };
             let inputs = Inputs {
                 plan_def: &self.plan_def,
@@ -1296,5 +1314,21 @@ mod tests {
         let (left, tags) = flight.on(AiId(1), AiId(5), &director);
         assert_eq!((left, tags.len()), (Some(1.5), 1), "its own attack is not in its way");
         assert_eq!(flight.on(AiId(2), AiId(5), &DirectorDef::default()), (None, Vec::new()));
+    }
+
+    #[test]
+    fn a_goal_the_leash_pulls_short_leaves_less_room() {
+        let target = Vec3::new(0.0, 0.0, -6.0);
+        // Not pulled: as asked, below the floor too.
+        assert_eq!(reach(1.564, target, target), 1.564);
+        assert_eq!(reach(0.2, target, target), 0.2);
+        // Pulled 0.5 m short (a window of 1.84 m: 0.85 of it is 1.564): the stop is 1.564 m from the
+        // target, not 2.064. The height does not count.
+        let goal = Vec3::new(0.0, 1.0, -5.5);
+        assert!((reach(1.564, goal, target) - 1.064).abs() < 1e-5);
+        // Pulled further than the room: at the leash's edge, 0.3 m from the goal.
+        assert_eq!(reach(1.564, Vec3::new(0.0, 0.0, -3.0), target), 0.3);
+        // Never more than asked.
+        assert_eq!(reach(0.2, goal, target), 0.2);
     }
 }
