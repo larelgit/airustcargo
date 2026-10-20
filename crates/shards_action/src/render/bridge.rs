@@ -213,6 +213,9 @@ pub struct AnimationBound {
     gait: bool,
     /// Seconds on that clip's timeline at the last frame, for cues.
     last_time: Option<f32>,
+    /// That clip was set to play backward at the last frame. Bevy moves a clip after [`drive`], so
+    /// the time it went since then went the way set then, whatever this frame sets.
+    backward: bool,
     /// Which way the body moved from where it faced at the last frame (kept for the slack at the
     /// quarters' edges; forward while it faces no target).
     heading: Heading,
@@ -244,6 +247,7 @@ impl AnimationBound {
             clip: None,
             gait: false,
             last_time: None,
+            backward: false,
             heading: Heading::Forward,
             root: None,
             ready: BTreeSet::new(),
@@ -934,11 +938,15 @@ fn drive_body(
         }
     };
 
+    // A gait's clip played backward (a body backing away from its target) passes its cues going down.
+    let backward = choice.seek_to.is_none() && choice.speed < 0.0;
     let cues = set.clip(clip).map_or(&[][..], |c| c.cues.as_slice());
     if !cues.is_empty() {
         let wrap = (choice.looping && duration > 0.0).then_some(duration);
-        // A gait's clip played backward (a body backing away from its target) passes its cues going down.
-        let crossed = if choice.seek_to.is_none() && choice.speed < 0.0 {
+        // Since the last frame the clip went the way set then (a walk that turns round now, as a
+        // lock-on ends, went back until now): a seek or a new clip has gone nowhere yet.
+        let went_back = if switched || choice.seek_to.is_some() { backward } else { bound.backward };
+        let crossed = if went_back {
             crossed_cues_back(cues, bound.last_time, now, wrap)
         } else {
             crossed_cues(cues, bound.last_time, now, wrap)
@@ -948,6 +956,7 @@ fn drive_body(
         }
     }
     bound.last_time = Some(now);
+    bound.backward = backward;
     switched
 }
 
@@ -1672,6 +1681,36 @@ mod tests {
         let (_, speed) = rig.clip_at("walk");
         assert!((speed - 1.0).abs() < 1e-4, "{speed}");
         assert_eq!(rig.bound().heading(), Heading::Forward);
+    }
+
+    #[test]
+    fn a_walk_that_turns_round_fires_only_the_cues_it_passed() {
+        #[derive(Resource, Default)]
+        struct Heard(Vec<AnimationCue>);
+        let mut rig = rig();
+        let stepped = ANIMSETS.replace(r#""walk": (),"#, r#""walk": (cues: [(at: 0.25, cue: "left"), (at: 0.75, cue: "right")]),"#);
+        assert_ne!(stepped, ANIMSETS);
+        rig.app.insert_resource(db_from(&stepped));
+        rig.app.init_resource::<Heard>();
+        rig.app.add_observer(|cue: On<AnimationCue>, mut heard: ResMut<Heard>| heard.0.push(cue.event().clone()));
+        // Frames of 0.1 s on the 1 s walk: a step every 0.5 s, so a frame passes one step at most.
+        rig.app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(100)));
+        rig.app.world_mut().entity_mut(rig.character).insert((Transform::default(), LocomotionInput::default()));
+        rig.velocity(-2.0);
+        let mut steps = Vec::new();
+        // Backing away from a target, then walking on facing where it goes (the lock-on let go),
+        // then facing the target again: the walk turns round twice on the same clip.
+        for face in [Some(Vec3::NEG_Z), None, Some(Vec3::NEG_Z)] {
+            rig.app.world_mut().get_mut::<LocomotionInput>(rig.character).unwrap().face = face;
+            for _ in 0..8 {
+                let before = rig.app.world().resource::<Heard>().0.len();
+                rig.app.update();
+                assert_eq!(rig.main_clip().as_deref(), Some("walk"));
+                steps.push(rig.app.world().resource::<Heard>().0.len() - before);
+            }
+        }
+        assert!(steps.iter().all(|n| *n <= 1), "no burst of steps as the walk turns round: {steps:?}");
+        assert!(steps.iter().sum::<usize>() >= 3, "every 0.8 s of walk passes a step: {steps:?}");
     }
 
     #[test]
