@@ -2,6 +2,7 @@
 //! the bridge would choose for a set it is told to preview. (The drawn bodies are tested in
 //! `crates/shards/tests/action_render`.)
 
+use shards::prelude::*;
 use shards::serde_json::json;
 
 use crate::common::*;
@@ -143,6 +144,24 @@ fn an_event_overlay_is_previewed_and_a_bad_event_is_named() {
     let said = text(&ok(&mut app, "animation", json!({"id": BOSS, "animset": "humanoid", "event": "damaged"}))).to_owned();
     assert!(said.starts_with("overlay damaged of humanoid: flinch on upper, in 0.04 s, out 0.15-0.35 s, 60 %; e"), "{said}");
     assert!(said.lines().next().unwrap().ends_with(" is dead, so nothing plays"), "{said}");
+}
+
+#[test]
+fn an_attack_is_seeked_ahead_by_the_overstep_as_the_bridge_seeks_it() {
+    let mut app = sandbox::test_app(42);
+    assert_eq!(text(&ok(&mut app, "light_attack", json!({}))), "ok: light_1");
+    step(&mut app, 6);
+    let seeked = |app: &mut App| {
+        let said = text(&ok(app, "animation", json!({"id": PLAYER, "animset": "humanoid"}))).to_owned();
+        let body = said.lines().nth(1).unwrap_or_default().to_owned();
+        let at = body.split_once(" seeked to ").and_then(|(_, r)| r.split_once(" %")).map(|(p, _)| p.trim().parse::<f32>());
+        (at.and_then(Result::ok).unwrap_or_else(|| panic!("{said}")), said)
+    };
+    let (on_tick, _) = seeked(&mut app);
+    let half = app.world().resource::<Time<Fixed>>().timestep() / 2;
+    app.world_mut().resource_mut::<Time<Fixed>>().accumulate_overstep(half);
+    let (ahead, said) = seeked(&mut app);
+    assert!(ahead > on_tick, "half a tick of overstep seeks the clip ahead, as the bridge does: {on_tick} % then {said}");
 }
 
 #[test]
