@@ -2368,7 +2368,7 @@ mod tests {
         assert_eq!(phase_place(&action, &clip, &[], 2.5, 5.5).unwrap().1, None, "no `loops`, no stretch");
 
         // On a 3 s clip: a thud as it falls, a breath in the down stretch (0.5 s to 2 s).
-        let cues = [CueDef { at: 0.3, cue: "thud".into() }, CueDef { at: 1.2, cue: "breath".into() }];
+        let cues = [CueDef::new(0.3, "thud"), CueDef::new(1.2, "breath")];
         let fired = |prev, now, wraps| -> Vec<&str> { crossed_cues_in(&cues, prev, now, wraps).iter().map(|c| c.cue.as_str()).collect() };
         let down = Some((0.5, 2.0));
         assert!(fired(Some(1.9), 0.7, down).is_empty(), "the stretch starts over: no thud again");
