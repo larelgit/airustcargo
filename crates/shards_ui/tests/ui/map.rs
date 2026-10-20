@@ -110,17 +110,17 @@ fn marks(app: &mut App) -> Vec<(Vec2, Result<Srgba, String>)> {
             let node = app.world().get::<Node>(c).unwrap();
             let centre = Vec2::new(px(node.left) + px(node.width) * 0.5, px(node.top) + px(node.height) * 0.5);
             let inside = app.world().get::<Children>(c).unwrap()[0];
-            let look = match app.world().get::<BackgroundColor>(inside) {
-                Some(bg) => Ok(bg.0.to_srgba()),
-                None => {
-                    let own = app.world().get::<Text>(inside).unwrap().0.clone();
+            // A symbol is a text (every UI node has a background, a text's is clear); a dot is not.
+            let look = match app.world().get::<Text>(inside) {
+                Some(own) => {
                     let runs: String = app
                         .world()
                         .get::<Children>(inside)
                         .map(|r| r.iter().filter_map(|s| app.world().get::<TextSpan>(s).map(|s| s.0.clone())).collect())
                         .unwrap_or_default();
-                    Err(own + &runs)
+                    Err(own.0.clone() + &runs)
                 }
+                None => Ok(app.world().get::<BackgroundColor>(inside).unwrap().0.to_srgba()),
             };
             (centre, look)
         })
