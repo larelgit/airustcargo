@@ -49,8 +49,9 @@
 //! }
 //! ```
 //!
-//! A character is [`Animated`] with the set's id and has the glTF scene as a child
-//! (`WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("models/hero.glb")))`).
+//! A character is [`Animated`] with the set's id and has the glTF scene as a child:
+//! `render::GltfModel::load(&asset_server, "models/hero.glb")` loads the file whole, so the bridge,
+//! which loads it for its clips too, shares its one read.
 //!
 //! ## Layers
 //!
