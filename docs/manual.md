@@ -5416,7 +5416,7 @@ the game brings its own.
 `AiLandmark` with it): a point of interest's `category` (`*.poi.ron`), a level node's `LandmarkCategory = "shrine"` property, a prefab's
 component or the game's code gives it. The compass (`you.heading`) keeps the 4 nearest landmarks of each category, and the 4 nearest of
 those without one, nearest first, so a far shrine is not pushed off by near pillars; `you.heading:2` keeps two of each. The theme draws a
-category as a symbol before the name: `symbols: {"shrine": "⛩", "camp": "[font=symbols]ᚲ[/font]"}` (a symbol may name a theme font; a
+category as a symbol before the name: `symbols: {"shrine": "⛩", "camp": "[font=symbols]ᚲ[/font]"}` (a symbol may name a theme font, and its tags must pair up: the content check refuses one that would be drawn as text; a
 category without one is drawn as before). Screen readers and `ui_read` get the category's name in words (`Shrine (shrine) N
 5m`). The source `you.nearest:<category>` gives how far the nearest landmark of that category is on the ground (m, a `Number`; no value
 without one), and `shards::nearest_landmark(world, category)` gives it to code with its entity: a game pulses a sound or a needle by it

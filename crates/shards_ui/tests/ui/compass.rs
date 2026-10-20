@@ -56,6 +56,7 @@ fn a_compass_keeps_the_nearest_landmarks_of_each_category_and_says_their_categor
     assert_eq!(near(&app, "you.nearest:tower"), Some(UiValue::None), "no tower: no value");
     let (camp, distance) = shards::nearest_landmark(app.world(), "camp").unwrap();
     assert_eq!((app.world().get::<Name>(camp).unwrap().as_str(), distance), ("Camp East", 8.0));
+    assert_eq!(shards::nearest_landmark(app.world(), " camp "), Some((camp, 8.0)), "matched trimmed, as the source matches it");
 
     // The category is the landmark's identity, as `AiLandmark` is: not in the replay check.
     let before = shards::ai_core::replay::state_hash(app.world());
@@ -123,7 +124,7 @@ fn the_content_check_names_bad_categories_and_symbols() {
     let mut kinds = ContentKinds::default();
     kinds.register::<ThemeDef>();
     kinds.register::<PoiDef>();
-    let theme = r#"{ "default": (symbols: {"shrine": "⛩", "big camp": "C", "ruin": " ", "rune": "[font=runes]ᚱ[/font]"}) }"#;
+    let theme = r#"{ "default": (symbols: {"shrine": "⛩", "big camp": "C", "ruin": " ", "rune": "[font=runes]ᚱ[/font]", "camp": "[font=runes]C"}) }"#;
     let pois = r#"{ "shrine": (category: "shrine"), "camp": (category: "camp site") }"#;
     let sources = [
         Source { path: "content/t.theme.ron".into(), text: theme.into() },
@@ -136,5 +137,6 @@ fn the_content_check_names_bad_categories_and_symbols() {
     has("symbols.ruin: empty; leave the category out to draw none");
     has("symbols.rune: `[font=runes]` names no font of the theme (`fonts`)");
     has("category `camp site`: letters, digits, `_` and `-` (the UI theme's `symbols` name it)");
-    assert_eq!(errors.len(), 4, "{errors:#?}");
+    has("symbols.camp: `[font=runes]` pairs with no tag and would be drawn as text; close each `[font=name]` with `[/font]`");
+    assert_eq!(errors.len(), 5, "{errors:#?}");
 }
