@@ -101,8 +101,8 @@ fn ended(s: &Scene) -> Vec<(String, bool)> {
     s.app.world().resource::<Ended>().0.iter().map(|e| (e.id.clone(), e.skipped)).collect()
 }
 
-fn journal(s: &Scene, needle: &str) -> Vec<String> {
-    s.app.world().resource::<AiJournal>().after(0).0.map(|e| e.text.clone()).filter(|t| t.contains(needle)).collect()
+fn journal(s: &Scene, prefix: &str) -> Vec<String> {
+    s.app.world().resource::<AiJournal>().after(0).0.map(|e| e.text.clone()).filter(|t| t.starts_with(prefix)).collect()
 }
 
 fn playing(s: &Scene) -> Option<String> {
@@ -186,7 +186,7 @@ fn a_skip_blends_back_from_where_the_shot_was_and_a_body_that_goes_holds_its_pla
     frames(&mut s, 4);
     assert_eq!(ended(&s), [("follow".to_owned(), true)]);
     assert!(near(pose(&s).0, orbit_at));
-    assert_eq!(journal(&s, "ends"), ["shot follow ends (skipped)"]);
+    assert_eq!(journal(&s, "shot follow"), ["shot follow starts: 10.0s, boss=".to_owned() + &boss, "shot follow ends (skipped)".to_owned()]);
     assert_eq!(fails(&mut s, "stop_shot", json!({})), "no shot is playing");
 }
 
