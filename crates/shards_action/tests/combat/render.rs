@@ -160,6 +160,11 @@ fn an_attack_behind_the_camera_gets_a_marker_on_the_bottom_edge_until_it_is_in_v
     // Centered on the bottom edge, inset by the margin: the node is `size` wide.
     let size = 52.0 * (0.85 + 0.35 * shards_action::draw::intensity(0.7, 3.0).max(0.0)) ;
     assert!((left + size * 0.5 - 640.0).abs() < 8.0 && (top + size * 0.5 - (720.0 - 56.0)).abs() < 8.0, "{left} {top}");
+    // Over the HUD (1), under a full-screen flash (5) and the menus (10 and up).
+    let world = app.world_mut();
+    let mut roots = world.query::<(&Name, &GlobalZIndex)>();
+    let z: Vec<i32> = roots.iter(world).filter(|(n, _)| n.as_str() == "threat markers").map(|(_, z)| z.0).collect();
+    assert_eq!(z, [2]);
 
     // The player turns to face it: the zone is in view, so no marker.
     let transform = Transform::from_xyz(0.0, 3.0, 4.0).looking_at(Vec3::new(0.0, 0.0, -2.0), Vec3::Y);
