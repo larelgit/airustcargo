@@ -222,3 +222,24 @@ fn the_dead_leave_or_lie_and_a_dev_heal_brings_them_back() {
 fn lookup(app: &App, id: &str) -> Entity {
     app.world().resource::<shards::ai_core::AiIndex>().get(AiId::parse(id).unwrap()).unwrap()
 }
+
+/// The dev menu's downed entries (B5): `down_me` brings the caller's own body down until it is
+/// revived, `heal` revives it, and `down` puts its line (with a bleed-out) in the console for an id.
+#[test]
+fn the_dev_menu_brings_the_player_down_and_heal_stands_it_up() {
+    let mut app = sandbox::test_app(42);
+    step(&mut app, 2);
+    let list = text(&ok(&mut app, "dev_menu", json!({}))).to_owned();
+    let line = |id: &str| list.lines().find(|l| l.trim_start().starts_with(&format!("{id} "))).unwrap_or_else(|| panic!("no `{id}`:\n{list}"));
+    assert!(line("down_me").ends_with(&format!("down id={PLAYER}")), "{list}");
+    assert!(line("down").ends_with("down id= bleed=30 (finished in the console)"), "{list}");
+    // An action answers its first line, then the journal lines it caused.
+    let down = text(&ok(&mut app, "dev_menu", json!({"run": "down_me"}))).to_owned();
+    assert_eq!(down.lines().next(), Some(format!("{PLAYER} is down").as_str()), "{down}");
+    step(&mut app, 1);
+    assert!(text(&ok(&mut app, "inspect", json!({"id": PLAYER}))).contains("Downed"));
+    let healed = text(&ok(&mut app, "dev_menu", json!({"run": "heal"}))).to_owned();
+    assert!(healed.lines().next().is_some_and(|l| l.ends_with(", revived")), "{healed}");
+    let fill = fails(&mut app, "dev_menu", json!({"run": "down"}));
+    assert!(fill.starts_with("`down` needs values: run `down id= bleed=30`"), "{fill}");
+}
