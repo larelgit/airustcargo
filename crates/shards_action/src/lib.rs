@@ -179,7 +179,7 @@ pub use machine::{
     action_progress, apply_effect, can_start, extend_recovery, force_action, press_life, ActionEffect, ActionEffects, ActionEnd, ActionEnded,
     ActionMissed, ActionRejected,
     ActionStarted,
-    intangible, off_ground, state_intangible, ActionState, Blocker, FighterView, Healed, InputBuffer, LeapRun, Queued, RunExtras, Running, Start, Telegraph,
+    intangible, off_ground, stamina_cost, state_intangible, ActionState, Blocker, FighterView, Healed, InputBuffer, LeapRun, Queued, RunExtras, Running, Start, Telegraph,
 };
 pub use lock::{LockLoss, LockLost, LockReleased, LockSight, LockSwitched, LockSystems};
 pub use predict::{shown_queue, shown_state, ActionPredictor, PredictedAction, CONFIRM_SLACK};

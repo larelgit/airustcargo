@@ -24,6 +24,7 @@ use bevy::prelude::*;
 use shards_action::{can_start, ActionDef, ActionStarted, ActionState, Fighter, InputBuffer};
 use shards_content::ContentDb;
 use shards_core::NetRole;
+use shards_rules::ActiveRules;
 
 use crate::brain::{Npc, NpcCtx};
 use crate::chain::NpcChain;
@@ -173,7 +174,7 @@ pub(crate) fn tags_for(db: &ContentDb, npc: &Npc, moveset: &str, action: &str) -
 /// them as starts of this tick, so it yields to them instead of starting a second strike on the
 /// same tick. (The reverse cannot be: a hook decides before the planner, so a hook never sees
 /// the planner's press of the tick.)
-pub(crate) fn strike_pressed(db: &ContentDb, f: &crate::director::FightingReadOnlyItem, dt: f32) -> bool {
+pub(crate) fn strike_pressed(db: &ContentDb, rules: Option<&ActiveRules>, f: &crate::director::FightingReadOnlyItem, dt: f32) -> bool {
     if f.drive.press.is_empty() || f.intent.is_some_and(|i| !i.orders.is_empty()) {
         return false;
     }
@@ -182,7 +183,8 @@ pub(crate) fn strike_pressed(db: &ContentDb, f: &crate::director::FightingReadOn
         return false;
     }
     // No leap site: a leap is not judged for its landing here (the planner and the director did when they granted the strike).
-    let view = crate::director::npc_view(db, f.fighter, f.state, &f.drive.held, f.dead, (f.stamina, f.cooldowns, f.charges), f.motion, None);
+    let rules = crate::director::npc_rules(db, rules, f.class);
+    let view = crate::director::npc_view(db, f.fighter, f.state, &f.drive.held, f.dead, (f.stamina, f.cooldowns, f.charges), f.motion, None, rules);
     f.drive.press.iter().any(|input| match can_start(&view, input, dt) {
         Ok(start) => director.is_strike(&tags_for(db, f.npc, &f.fighter.moveset, &start.action)),
         Err(_) => false,

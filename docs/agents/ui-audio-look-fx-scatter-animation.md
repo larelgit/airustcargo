@@ -49,7 +49,7 @@ Read this when you touch screens and menus, sound and music, mesh looks, particl
 ## Animation
 
 - **Animation is content** (`*.animset.ron`): an animset sets which clip from which glTF file shows a state or an action, the blending and the markers
-  (`cues` → sound and effect); a Blender script builds the models and clips (`tools/blender/humanoid.py`, only `-b
+  (`cues` → sound and effect; a cue may name a `bone` and a `strength`: it plays at the bone's world place, scaled, and is presentation only, D1.7); a Blender script builds the models and clips (`tools/blender/humanoid.py`, only `-b
   --factory-startup`, without a window), and its output is committed. `Animated` and the model are only a picture: the game puts them on the body when
   `config.draws()`; the replay does not check `Animated`, and the gameplay does not depend on the clip. An action's offset (`displacement`) with `bake:
   (animset, clip)` is baked from the clip's root bone: **if you change the clip, bake it again** (`cargo sandbox --bake-motion`, tool

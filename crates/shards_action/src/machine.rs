@@ -19,11 +19,12 @@ use bevy::ecs::query::QueryData;
 use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::input_names::{ASSIST_OFF, SPRINT};
-use shards_core::{flat, Intent, NetRole};
+use shards_core::{flat, Intent, NetRole, PlayerId};
 use shards_motion::{
     CharacterController, CharacterParams, Collider, Ghost, LayerMask, Launch, LocomotionInput, MotionMode, MotionState, MoveModifiers,
     PhysicsWorld, QueryFilter,
 };
+use shards_rules::{ActiveRules, RuleClass, RulesView};
 
 use std::ops::DerefMut;
 
@@ -377,13 +378,39 @@ pub struct FighterView<'a> {
     pub off_ground: Option<MotionMode>,
     /// Where the body stands, for the landing a leap needs. `None`: a leap's landing is not judged.
     pub leap: Option<LeapSite<'a>>,
+    /// The rules in play as this fighter sees them (`shards_rules`): they scale what an action costs
+    /// ([`stamina_cost`]). `None`: no rules, or a body without a class.
+    pub rules: Option<RulesView<'a>>,
 }
 
 impl<'a> FighterView<'a> {
-    /// A view of a fighter with the moveset `moveset`, in `state`, holding `held`; every resource
-    /// absent, the mode and the leap site not judged. Set the fields the caller has.
-    pub fn new(db: &'a ContentDb, moveset: &'a str, state: &'a ActionState, held: &'a [String], dead: bool) -> Self {
-        Self { db, moveset, state, stamina: None, cooldowns: None, charges: None, held, dead, downed: false, context: None, mode: None, off_ground: None, leap: None }
+    /// A view of a fighter with the moveset `moveset`, in `state`, holding `held`, under `rules` (an argument,
+    /// so no site that judges a start forgets what the rules make an action cost); every resource absent,
+    /// the mode and the leap site not judged. Set the fields the caller has.
+    pub fn new(
+        db: &'a ContentDb,
+        moveset: &'a str,
+        state: &'a ActionState,
+        held: &'a [String],
+        dead: bool,
+        rules: Option<RulesView<'a>>,
+    ) -> Self {
+        Self {
+            db,
+            moveset,
+            state,
+            stamina: None,
+            cooldowns: None,
+            charges: None,
+            held,
+            dead,
+            downed: false,
+            context: None,
+            mode: None,
+            off_ground: None,
+            leap: None,
+            rules,
+        }
     }
 
     /// The fighter `entity` as the world has it now; `None` if it is no fighter.
@@ -403,6 +430,7 @@ impl<'a> FighterView<'a> {
             mode: e.get::<MotionState>().map(|m| m.mode),
             off_ground: off_ground(e.get::<MotionState>()),
             leap: LeapSite::of(world, entity),
+            rules: RulesView::of_entity(world, entity),
         })
     }
 
@@ -726,7 +754,7 @@ pub(crate) fn can_start_toward(v: &FighterView, input: &str, dt: f32, dir: Optio
             blockers.push(Blocker::NoCharges { charge: charge.clone(), have, max });
         }
     }
-    let need = def.cost.stamina;
+    let need = stamina_cost(def, &action, v.rules);
     if let Some(s) = v.stamina {
         match def.cost.stamina_mode {
             StaminaMode::Full => {
@@ -752,6 +780,17 @@ pub(crate) fn can_start_toward(v: &FighterView, input: &str, dt: f32, dir: Optio
     match worst {
         Some(blocker) => Err(blocker),
         None => Ok(Start { action, cancel }),
+    }
+}
+
+/// What starting `def` (the action `id`) costs a fighter under `rules`: `cost.stamina` times the rules'
+/// `stamina_cost` for its class (`shards_rules`, C3.4a). Without rules, or for an action that costs
+/// nothing, it is `cost.stamina` exactly.
+pub fn stamina_cost(def: &ActionDef, id: &str, rules: Option<RulesView>) -> f32 {
+    let base = def.cost.stamina;
+    match rules {
+        Some(rules) if base > 0.0 => base * rules.stamina_factor(&def.tags, id),
+        _ => base,
     }
 }
 
@@ -900,6 +939,9 @@ pub(crate) struct FighterData {
     arm: Option<&'static mut GuardArm>,
     halted: Option<&'static RunHalted>,
     pairing: Option<&'static Pairing>,
+    /// The body's rule class, and whether it is a player's (`shards_rules::RulesView::of`).
+    class: Option<&'static RuleClass>,
+    player: Has<PlayerId>,
 }
 
 /// What the machine decided for one fighter this tick.
@@ -941,12 +983,14 @@ pub(crate) fn run_machines(
     positions: Query<(&Transform, Option<&CharacterParams>, Option<&Collider>)>,
     parts: Query<&crate::parts::Part>,
     fallen: Query<(Has<Dead>, Has<Downed>)>,
+    rules: Option<Res<ActiveRules>>,
     mut fighters: Query<FighterData>,
 ) {
     let dt = time.delta_secs();
     if dt <= 0.0 {
         return;
     }
+    let rules = rules.as_deref();
     let now = tick.0;
     let tuning = CombatTuning::of(&db);
     let (ttl, sight) = (tuning.input_buffer, tuning.sight_height);
@@ -954,6 +998,8 @@ pub(crate) fn run_machines(
     order.sort();
     for (_, entity) in order {
         let Ok(mut f) = fighters.get_mut(entity) else { continue };
+        // The rules in play as this fighter sees them: what its starts and branches cost (C3.4a).
+        let ruled = RulesView::of(&db, rules, f.class, f.player);
         let moveset = db.get::<MovesetDef>(&f.fighter.moveset);
         // The mode gate: a run whose action lacks the tag the body's motion mode now asks for is cut
         // (a dodge or a guard when swimming begins), with no cooldown share. Forced runs (a stagger,
@@ -985,7 +1031,7 @@ pub(crate) fn run_machines(
         // body: a leap at a hand or a horn lands by the body, not under the point).
         let target_body = leap_target(f.intent.target, &index, &parts, &positions);
         // A start judges a leap's landing from where the body stands, on the host as on a client.
-        let choice = choose(&f, &db, leap_site(&f, &physics, &db, (here, forward), target_body), dt);
+        let choice = choose(&f, &db, ruled, leap_site(&f, &physics, &db, (here, forward), target_body), dt);
         // A paired action aims at its victim, lock-on or not: the one it starts on, the one it holds while it runs.
         let victim = match &choice {
             Some(c) => db
@@ -1032,7 +1078,7 @@ pub(crate) fn run_machines(
                 if let Some((key, secs)) = cut {
                     f.cooldowns.cut_to(&key, secs);
                 }
-                pay(&mut f, &choice.start.action, def);
+                pay(&mut f, &choice.start.action, def, stamina_cost(def, &choice.start.action, ruled));
                 let facing = plan_dir.unwrap_or_else(|| start_facing(def, choice.dir, &f.intent, here, forward, target));
                 let instance = f.state.started;
                 f.state.started += 1;
@@ -1122,7 +1168,9 @@ pub(crate) fn run_machines(
                     if let Some(into) = charge_due(run, def, extras.as_ref()) {
                         match db.get::<ActionDef>(into) {
                             Some(into_def) => {
-                                let (from, into) = ((run.action.as_str(), def), (into, into_def));
+                                let from_cost = stamina_cost(def, &run.action, ruled);
+                                let into_cost = stamina_cost(into_def, into, ruled);
+                                let (from, into) = ((run.action.as_str(), def, from_cost), (into, into_def, into_cost));
                                 if pay_branch(f.stamina.as_deref_mut(), &mut f.cooldowns, f.charges.as_deref_mut(), from, into) {
                                     let into = into.0;
                                     let ended = ActionEnded::of(entity, run, ActionEnd::Branched);
@@ -1226,7 +1274,7 @@ pub(crate) fn run_machines(
             if !expired.is_empty() {
                 f.buffer.queued.retain(|q| q.left >= -EPS);
                 for input in expired {
-                    let view = view(&f, &db, leap_site(&f, &physics, &db, (here, forward), target_body));
+                    let view = view(&f, &db, ruled, leap_site(&f, &physics, &db, (here, forward), target_body));
                     let reason = match can_start(&view, &input, dt) {
                         Err(blocker) => blocker.reason(),
                         Ok(_) => "another action started first".to_owned(),
@@ -1251,7 +1299,7 @@ fn leap_site<'a>(
     Some(LeapSite::body(physics, f.entity, at, controller.resolve(own, Some(db)), &f.intent, target))
 }
 
-fn view<'a>(f: &'a FighterDataItem, db: &'a ContentDb, leap: Option<LeapSite<'a>>) -> FighterView<'a> {
+fn view<'a>(f: &'a FighterDataItem, db: &'a ContentDb, rules: Option<RulesView<'a>>, leap: Option<LeapSite<'a>>) -> FighterView<'a> {
     FighterView {
         leap,
         stamina: f.stamina.as_deref(),
@@ -1261,7 +1309,7 @@ fn view<'a>(f: &'a FighterDataItem, db: &'a ContentDb, leap: Option<LeapSite<'a>
         off_ground: off_ground(f.motion),
         context: f.context,
         downed: f.downed,
-        ..FighterView::new(db, &f.fighter.moveset, &f.state, &f.intent.held, f.dead)
+        ..FighterView::new(db, &f.fighter.moveset, &f.state, &f.intent.held, f.dead, rules)
     }
 }
 
@@ -1302,11 +1350,17 @@ pub(crate) fn launch_due(at: f32, lo: f32, hi: f32) -> bool {
 }
 
 /// The first buffered press that can start, else a held input that can.
-fn choose<'a>(f: &'a FighterDataItem, db: &'a ContentDb, leap: Option<LeapSite<'a>>, dt: f32) -> Option<Choice> {
+fn choose<'a>(
+    f: &'a FighterDataItem,
+    db: &'a ContentDb,
+    rules: Option<RulesView<'a>>,
+    leap: Option<LeapSite<'a>>,
+    dt: f32,
+) -> Option<Choice> {
     if f.dead || f.downed {
         return None;
     }
-    choose_in(&view(f, db, leap), &f.buffer.queued, dt)
+    choose_in(&view(f, db, rules, leap), &f.buffer.queued, dt)
 }
 
 /// [`choose`] over a view: the first of `queued` that can start, else a held input (the
@@ -1520,16 +1574,17 @@ pub(crate) fn charge_due<'d>(run: &Running, def: &'d ActionDef, extras: Option<&
 }
 
 /// What turning the run of `from` into `into` costs, paid only if all of it is there: the stamina
-/// difference (checked under `into`'s stamina mode), one of `into`'s charges when it uses another
-/// charge than `from` (the start paid `from`'s), and `into`'s cooldown, whose slot must be ready
-/// unless it is `from`'s own (this run started it). `false`, and nothing is paid, when something
-/// is missing: the machine tries again on the next tick, while the charge may still turn.
+/// difference (each side's cost as the fighter's rules make it, [`stamina_cost`]; checked under `into`'s
+/// stamina mode), one of `into`'s charges when it uses another charge than `from` (the start paid
+/// `from`'s), and `into`'s cooldown, whose slot must be ready unless it is `from`'s own (this run started
+/// it). `false`, and nothing is paid, when something is missing: the machine tries again on the next
+/// tick, while the charge may still turn.
 fn pay_branch(
     stamina: Option<&mut Stamina>,
     cooldowns: &mut Cooldowns,
     charges: Option<&mut Charges>,
-    (from_id, from): (&str, &ActionDef),
-    (into_id, into): (&str, &ActionDef),
+    (from_id, from, from_cost): (&str, &ActionDef, f32),
+    (into_id, into, into_cost): (&str, &ActionDef, f32),
 ) -> bool {
     let key = into.cooldown_key(into_id);
     if key != from.cooldown_key(from_id) && cooldowns.left(key) > EPS {
@@ -1541,7 +1596,7 @@ fn pay_branch(
     {
         return false;
     }
-    let extra = into.cost.stamina - from.cost.stamina;
+    let extra = into_cost - from_cost;
     if extra > 0.0
         && let Some(s) = stamina.as_deref()
     {
@@ -1592,12 +1647,13 @@ pub(crate) fn gate_perfect(run: &mut Running, def: &ActionDef, arm: Option<&Guar
     }
 }
 
-/// Takes what starting `action` costs.
-fn pay(f: &mut FighterDataItem, action: &str, def: &ActionDef) {
-    if def.cost.stamina > 0.0
+/// Takes what starting `action` costs: `stamina`, its stamina cost as the fighter's rules make it
+/// ([`stamina_cost`]), its cooldown and its charge.
+fn pay(f: &mut FighterDataItem, action: &str, def: &ActionDef, stamina: f32) {
+    if stamina > 0.0
         && let Some(s) = f.stamina.as_mut()
     {
-        s.spend(def.cost.stamina);
+        s.spend(stamina);
     }
     f.cooldowns.start(def.cooldown_key(action), def.cost.cooldown);
     if let Some(charge) = &def.cost.charge
@@ -2286,7 +2342,7 @@ mod tests {
         stamina: Option<&'a Stamina>,
         held: &'a [String],
     ) -> FighterView<'a> {
-        FighterView { stamina, ..FighterView::new(db, "hero", state, held, false) }
+        FighterView { stamina, ..FighterView::new(db, "hero", state, held, false, None) }
     }
 
     #[test]
