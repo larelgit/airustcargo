@@ -4,7 +4,8 @@
 //! 1.0 s (hits 0.3-0.5), `au_slow` 1.2 s (0.6-0.8), `au_combo_1` 0.9 s (0.2-0.3) going on from its
 //! recovery (0.3) into `au_combo_2` 0.5 s (0.2-0.3), `au_zone` 1.3 s (0.2-1.2, a pulse every 0.25 s)
 //! then `au_zone_tail` 0.3 s (all of it), which names the zone again; the plan rests at least 0.5 s.
-//! `au_spawn_plan` times what its attacks spawn (its tests say how).
+//! `au_spawn_plan` times what its attacks spawn and `au_cut_plan` cuts one by a chain (their tests say
+//! how).
 
 use serde_json::json;
 use shards_content::ContentDb;
@@ -167,4 +168,33 @@ fn the_hits_of_what_an_attack_spawns_are_counted_by_object() {
             ("quick", "au_quick", via(""), 1),
         ]
     );
+}
+
+/// `au_cut_plan` (moveset `au_cut`): `au_lob` 2.0 s hits 0.2-0.6, lays a pool at 0.2 and another at 1.0
+/// (each burns 2.0 s), and goes on from its recovery (0.6) into `au_lob_2` 0.5 s (0.2-0.3); `jab` is
+/// `au_quick` (0.3-0.5); `idle` has weight 0.
+#[test]
+fn a_chain_cuts_its_attack_but_not_what_the_attack_laid_down() {
+    let pairs = follow_pairs(&db(), "au_cut_plan", "au_cut", 1.0).unwrap();
+    // Without the chain: the second pool burns until 3.0; jab hits from 2.0 + 0.5 + 0.3 (gap -0.2).
+    // Through it: the cut at 0.6 ends the lob's own window and the second pool is never laid, but the
+    // first burns on until 2.2; the chain ends at 1.1, so jab hits from 1.9 (gap -0.3).
+    let p = pair(&pairs, "lob", "jab").unwrap();
+    assert!(p.chained && close(p.a_end, 2.2) && close(p.b_first, 1.9) && close(p.gap, -0.3), "{p:?}");
+    let p = pair(&pairs, "jab", "lob").unwrap();
+    assert!(close(p.a_end, 0.5) && close(p.b_first, 1.7) && close(p.gap, 1.2), "{p:?}");
+    // `idle` is never chosen: no pair and no hit of it.
+    assert!(pairs.iter().all(|p| p.a != "idle" && p.b != "idle"), "{pairs:#?}");
+    assert_eq!(pairs.len(), 2 * 2);
+    let hits = plan_hits(&db(), "au_cut_plan", "au_cut").unwrap();
+    let mut options: Vec<&str> = hits.iter().map(|h| h.option.as_str()).collect();
+    options.dedup();
+    assert_eq!(options, ["lob", "jab"], "{hits:#?}");
+}
+
+#[test]
+fn plan_audit_finds_a_plan_written_without_some() {
+    let mut app = app();
+    let err = fails(&mut app, "plan_audit", json!({"plan": "au_cut_plan"}));
+    assert!(err.contains("plan_audit needs moveset=<id>; the plan's NPCs use: au_cut"), "{err}");
 }

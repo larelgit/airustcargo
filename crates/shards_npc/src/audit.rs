@@ -8,7 +8,8 @@
 //! engine has no threshold of its own: `plan_audit min_gap=` lists the pairs below the caller's.
 //!
 //! The times are the worst case: the earliest danger, no reaction time, the gates of the moment
-//! (angle, players, `when`, cooldowns) taken as open. An attack runs through its `then` actions, each
+//! (angle, players, `when`, cooldowns) taken as open; an option of weight 0, which the scheduler never
+//! chooses, is left out. An attack runs through its `then` actions, each
 //! once (a loop is counted one pass); the shortest rest after a finished attack is `rest.0` times the
 //! caller's `rest_scale` (a difficulty's pause factor, which the engine does not know). What its
 //! `Spawn` effects lay down is part of its danger, each object from its own start (`delay` times its
@@ -146,6 +147,43 @@ fn object_timing(db: &ContentDb, spawn: &SpawnDef, j: usize, depth: u32) -> Opti
     Some(t)
 }
 
+/// The end of `action`'s danger when a chain's cancel cuts it at `at` seconds: its own hit windows end
+/// at the cut (one that would open later never does), its `then` actions never run, and every object
+/// of a `Spawn` effect that fired by then keeps its whole danger: a bolt in flight flies on, and one
+/// with a `delay` still starts when it is over (an effect spawns all its objects at once, and only
+/// the owner's death takes them away). An effect after the cut never fires. `None` when nothing of
+/// it is dangerous.
+fn last_when_cut(db: &ContentDb, action: &str, at: f32) -> Option<f32> {
+    let def = db.get::<ActionDef>(action)?;
+    let mut t = Timing::default();
+    for hit in &def.hits {
+        if let Some((from, to)) = def.span(&hit.span)
+            && from <= at
+        {
+            t.widen(from, to.min(at));
+        }
+    }
+    for e in &def.effects {
+        let Effect::Spawn(spawn) = &e.effect else { continue };
+        if spawn.stay || e.at > at + 1e-4 {
+            continue;
+        }
+        for j in 0..spawn.count as usize {
+            let start = e.at + spawn.delay * j as f32;
+            if let Some(Timing { first: Some(first), last: Some(last), .. }) = object_timing(db, spawn, j, 1) {
+                t.widen(start + first, start + last);
+            }
+        }
+    }
+    t.last
+}
+
+/// The options of `plan` an NPC with moveset `moveset` can be given: those the moveset can press, with
+/// a weight above 0 (the scheduler never chooses one of weight 0).
+fn chosen(plan: &AttackPlanDef, db: &ContentDb, moveset: &str) -> Vec<Resolved> {
+    resolve(plan, db, moveset, 0.0).into_iter().filter(|o| o.weight > 0.0).collect()
+}
+
 /// The entry of `list` for index `i`; the last one repeats (as a spawn reads it).
 fn by_index(list: &[String], i: usize) -> Option<&str> {
     list.get(i).or(list.last()).map(String::as_str)
@@ -231,11 +269,12 @@ fn load<'a>(db: &'a ContentDb, plan: &str, moveset: &str) -> Result<(&'a AttackP
 /// Every ordered pair of options of plan `plan` with moveset `moveset` that the plan lets follow and
 /// that both hit, with the shortest time between the end of `a`'s danger and the start of `b`'s first
 /// hit: `b` starts at `a`'s end plus `rest.0 * rest_scale`. When `a` has a chain the pair is judged
-/// without it and through it (`b` after the whole chain), and the smaller gap is kept. Sorted by gap,
+/// without it and through it (`b` after the whole chain; the cancel ends `a`'s own windows, while what
+/// it spawned before flies or burns on), and the smaller gap is kept. Sorted by gap,
 /// shortest first, then by name.
 pub fn follow_pairs(db: &ContentDb, plan: &str, moveset: &str, rest_scale: f32) -> Result<Vec<FollowPair>, String> {
     let (plan_def, moveset_def) = load(db, plan, moveset)?;
-    let options = resolve(plan_def, db, moveset, 0.0);
+    let options = chosen(plan_def, db, moveset);
     let rest = plan_def.rest.0 * rest_scale;
     let mut pairs = Vec::new();
     for a in &options {
@@ -245,7 +284,7 @@ pub fn follow_pairs(db: &ContentDb, plan: &str, moveset: &str, rest_scale: f32) 
         if let Some((at, link)) = chain_link(db, plan_def, moveset_def, a)
             && let Some(tc) = timing(db, &link)
         {
-            let last = match (ta.last.map(|l| l.min(at)), tc.last.map(|l| at + l)) {
+            let last = match (last_when_cut(db, &a.action, at), tc.last.map(|l| at + l)) {
                 (Some(x), Some(y)) => Some(x.max(y)),
                 (x, y) => x.or(y),
             };
@@ -298,7 +337,7 @@ pub struct PlanHit {
 pub fn plan_hits(db: &ContentDb, plan: &str, moveset: &str) -> Result<Vec<PlanHit>, String> {
     let (plan_def, moveset_def) = load(db, plan, moveset)?;
     let mut hits = Vec::new();
-    for a in resolve(plan_def, db, moveset, 0.0) {
+    for a in chosen(plan_def, db, moveset) {
         collect_hits(db, &a.name, a.action.clone(), Vec::new(), 1, 0, &mut hits);
         if let Some((_, link)) = chain_link(db, plan_def, moveset_def, &a) {
             collect_hits(db, &a.name, link, vec![a.action.clone()], 1, 0, &mut hits);
