@@ -24,6 +24,7 @@
 
 pub mod lock;
 pub mod math;
+pub mod shot;
 #[cfg(feature = "render")]
 mod systems;
 pub mod tuning;
@@ -43,6 +44,7 @@ pub use lock::{
     LockOnDef, LockWeights, Lockable, PickView,
 };
 pub use tuning::{ArmTuning, AutoCentreTuning, CameraOffsets, CameraTuning, FitTuning, FlickTuning, FramingTuning, TraumaTuning};
+pub use shot::{ShotDef, ShotEnded, ShotKey, ShotPoint, ShotStarted, Shots};
 
 /// A camera that orbits a character. Put it on the camera entity; `yaw` and `pitch` are
 /// where the player looks (`input` turns the move axes by `yaw`).
@@ -219,6 +221,7 @@ pub(crate) fn plugin(app: &mut App) {
             }
         })
         .add_systems(PreUpdate, (apply_player_settings, resolve_tuning));
+    shot::plugin(app);
     #[cfg(feature = "render")]
     systems::plugin(app);
 }

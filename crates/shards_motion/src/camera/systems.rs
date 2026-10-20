@@ -17,6 +17,7 @@ use super::math::{
     aim_assist, arm_length, arm_reach, auto_centre, damp, fit_room, fit_tilt, lock_framing, lock_holds, next_lock_target, orbit_angles, orbit_position,
     pick_lock_target, pitch_limits, resolve_camera_collision, shake_offset_with, wrap_angle, FlickState, LockCandidate, LockView,
 };
+use super::shot::{shot_playing, Shots};
 use super::{CameraOffsets, CameraSettings, CameraShake, CameraSystems, CameraTuning, LockOnTarget, LockPoint, ThirdPersonCamera};
 use crate::input::{ControlState, ControlSystems};
 use crate::interp::{shown_translation, InterpSystems, Interpolated};
@@ -34,9 +35,13 @@ type RulePlayer = (With<LocalPlayer>, With<Intent>, Without<ThirdPersonCamera>);
 pub(super) fn plugin(app: &mut App) {
     // Without a `lock_on` definition the camera picks and lets go as it always did; with one it
     // picks by the definition's rules and leaves the checking of a lock to the simulation.
-    app.add_systems(PreUpdate, (lock_on.run_if(not(lock_rules)), lock_by_rules.run_if(lock_rules)).after(ControlSystems::Read))
-        .add_systems(PostUpdate, orbit_camera.in_set(CameraSystems::Orbit).after(InterpSystems::Blend).before(TransformSystems::Propagate))
-        .add_systems(Update, apply_motion_blur);
+    // While a scene camera shot plays (K3) a lock-on picks and switches nothing.
+    app.add_systems(
+        PreUpdate,
+        (lock_on.run_if(not(lock_rules)), lock_by_rules.run_if(lock_rules)).run_if(not(shot_playing)).after(ControlSystems::Read),
+    )
+    .add_systems(PostUpdate, orbit_camera.in_set(CameraSystems::Orbit).after(InterpSystems::Blend).before(TransformSystems::Propagate))
+    .add_systems(Update, apply_motion_blur);
 }
 
 /// `Update`: the accessibility setting `motion_blur` (0 none, 1 full) on every camera that
@@ -292,6 +297,7 @@ fn orbit_camera(
     tuning: Res<CameraTuning>,
     offsets: Res<CameraOffsets>,
     state: Res<ControlState>,
+    shots: Option<Res<Shots>>,
     physics: Res<PhysicsWorld>,
     index: Res<AiIndex>,
     mut shake: ResMut<CameraShake>,
@@ -312,6 +318,8 @@ fn orbit_camera(
     // What the game adds on top of the base values this frame; the camera keeps none of it.
     let limits = pitch_limits(tuning.pitch, &offsets);
     let player = players.single().ok();
+    // A scene camera shot plays (K3): the orbit stands still, its yaw and pitch kept for the move axes.
+    let in_shot = shots.as_ref().is_some_and(|s| s.playing().is_some());
 
     for (mut camera, mut tf, projection) in &mut cameras {
         let subject = if camera.target == Entity::PLACEHOLDER { player.map(|(e, _)| e) } else { Some(camera.target) };
@@ -352,6 +360,7 @@ fn orbit_camera(
         let walk = if dt > 0.0 && !placed { ground / dt } else { 0.0 };
 
         match locked {
+            _ if in_shot => camera.look_idle_s = 0.0,
             // Framing a target: behind the player, looking at it. The look axis flicks targets.
             Some(target) => {
                 (camera.yaw, camera.pitch) = lock_framing(camera.yaw, camera.pitch, camera.focus, target, &tuning.framing, dt);
