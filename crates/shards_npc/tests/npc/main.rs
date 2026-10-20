@@ -2,6 +2,7 @@
 //! driven by their behaviours, players placed (or played through tools) by the tests.
 
 mod common;
+mod audit;
 mod avoid;
 mod bodies;
 mod director;
