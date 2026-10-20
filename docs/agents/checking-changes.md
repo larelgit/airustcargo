@@ -2,6 +2,7 @@
 
 Read this when you choose how to verify a change: tests, CI and nextest, scenarios, content checks, replays, heavy mode, performance, nightly jobs. The gate commands are in [AGENTS.md](../../AGENTS.md). Part of the AGENTS.md index.
 
+- When CI runs: on every pull request (one run per push to its branch), every push to `main`, release tags `v*`, and by hand (`gh workflow run CI --ref BRANCH`). A branch pushed with no pull request gets no run; open the pull request or start one by hand.
 - What CI runs, with `cargo-nextest` (`.config/nextest.toml`, `template/.config/nextest.toml`; profile `ci`: two retries, and a test that
   passes only on a retry **fails** the run, so a flaky test is a bug to fix, not to rerun):
   `cargo nextest run --workspace --locked --profile ci -E 'not binary_id(sandbox::perf)'`, then the tick-time tests alone,

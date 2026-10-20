@@ -1,4 +1,4 @@
-# Engine CI: every push and every pull request.
+# Engine CI: every pull request, every push to main, release tags (`v*`), and by hand.
 #
 #   test           cargo nextest run --workspace (profile ci): unit tests, sandbox scenarios, checked-in
 #                  replays; the sandbox's tick-time tests alone; doctests
@@ -19,8 +19,14 @@
 name: CI
 
 on:
+  # A push to a branch with a pull request is checked once, by the pull request's run (which tests the
+  # merge with the base): a run on the push as well ran the whole of CI twice for every push. A branch with
+  # no pull request: `gh workflow run CI --ref BRANCH`.
   push:
+    branches: [main]
+    tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 # A newer push to the same branch makes the older run pointless.
 concurrency:
