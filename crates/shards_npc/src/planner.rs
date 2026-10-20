@@ -262,6 +262,16 @@ pub(crate) fn choice_pool(
     }
 }
 
+/// How near its `goal` an NPC walks to come `within` meters of `target`. A goal the leash pulled
+/// short of the target ([`clamp_to_leash`]) leaves that much less room: walking to `within` of such
+/// a goal could stop `within` plus the pull away from the target, out of the window it walks to.
+/// At least 0.3 m (as a chase to a pulled goal): a target too far beyond the leash is faced from its
+/// edge. Never more than `within`; an unpulled goal keeps it.
+pub(crate) fn reach(within: f32, goal: Vec3, target: Vec3) -> f32 {
+    let pulled = flat(target - goal).length();
+    if pulled > 0.0 { (within - pulled).max(0.3).min(within) } else { within }
+}
+
 /// How near an NPC with nothing chosen closes in: the shortest `max` among the options
 /// `allowed` now, else among those it may ever choose (weight above 0); infinite with none.
 /// A window that cannot be chosen would draw it inside the ones that can.
@@ -487,8 +497,9 @@ pub(crate) fn plan_attacks(
                 let home = f.home.map(|h| (h.pos.unwrap_or(here), h.leash));
                 wait_in_role(&mut f, role, target, home, dt);
             } else if nearest.is_finite() && distance > nearest {
-                f.drive.goal = Some(leash(target));
-                f.drive.within = (nearest * 0.85).max(0.3);
+                let goal = leash(target);
+                f.drive.goal = Some(goal);
+                f.drive.within = reach((nearest * 0.85).max(0.3), goal, target);
             } else {
                 f.drive.goal = None;
             }
@@ -502,8 +513,9 @@ pub(crate) fn plan_attacks(
         grant.tags = o.tags.clone();
         grant.cooldown = o.cooldown;
         if distance > o.max {
-            f.drive.goal = Some(leash(target));
-            f.drive.within = (o.max * 0.85).max(o.min + 0.2).min(o.max);
+            let goal = leash(target);
+            f.drive.goal = Some(goal);
+            f.drive.within = reach((o.max * 0.85).max(o.min + 0.2).min(o.max), goal, target);
         } else if distance < o.min {
             let away = flat(here - target).try_normalize().unwrap_or(-*f.transform.forward());
             f.drive.goal = Some(leash(target + away * (o.min + 0.3)));
@@ -1302,5 +1314,21 @@ mod tests {
         let (left, tags) = flight.on(AiId(1), AiId(5), &director);
         assert_eq!((left, tags.len()), (Some(1.5), 1), "its own attack is not in its way");
         assert_eq!(flight.on(AiId(2), AiId(5), &DirectorDef::default()), (None, Vec::new()));
+    }
+
+    #[test]
+    fn a_goal_the_leash_pulls_short_leaves_less_room() {
+        let target = Vec3::new(0.0, 0.0, -6.0);
+        // Not pulled: as asked, below the floor too.
+        assert_eq!(reach(1.564, target, target), 1.564);
+        assert_eq!(reach(0.2, target, target), 0.2);
+        // Pulled 0.5 m short (a window of 1.84 m: 0.85 of it is 1.564): the stop is 1.564 m from the
+        // target, not 2.064. The height does not count.
+        let goal = Vec3::new(0.0, 1.0, -5.5);
+        assert!((reach(1.564, goal, target) - 1.064).abs() < 1e-5);
+        // Pulled further than the room: at the leash's edge, 0.3 m from the goal.
+        assert_eq!(reach(1.564, Vec3::new(0.0, 0.0, -3.0), target), 0.3);
+        // Never more than asked.
+        assert_eq!(reach(0.2, goal, target), 0.2);
     }
 }

@@ -14,8 +14,10 @@
 //! - **Following.** [`drive`] switches clips with a blend (`AnimationTransitions`), seeks an
 //!   action's clip to the action's progress each frame (the player's own clock stopped:
 //!   speed 0), lets locomotion clips loop at the speed the velocity asks for, and fires
-//!   [`AnimationCue`]s as clips pass their cue times. Between two ticks it looks one step
-//!   ahead (`Time<Fixed>` overstep) so the pose moves smoothly at any frame rate.
+//!   [`AnimationCue`]s as clips pass their cue times (a cue that names a bone carries the bone's
+//!   world position as of the last frame, found by node name under the player, never below a
+//!   prop). Between two ticks it looks one step ahead (`Time<Fixed>` overstep) so the pose moves
+//!   smoothly at any frame rate.
 //! - **Root motion in place.** [`hold_root_motion`] puts the set's `root_motion` bone back
 //!   where it rests along the ground after the clips are applied: the body already moves by
 //!   the action's `displacement`, baked from that bone.
@@ -55,6 +57,7 @@ use bevy::animation::transition::AnimationTransitions;
 use bevy::animation::{AnimatedBy, AnimationClip, AnimationPlayer, AnimationTargetId, RepeatAnimation};
 use bevy::asset::LoadState;
 use bevy::ecs::query::QueryData;
+use bevy::ecs::system::SystemParam;
 use bevy::gltf::{Gltf, GltfNode};
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
@@ -65,7 +68,7 @@ use shards_motion::{MotionState, MoveModifiers};
 
 use crate::anim::{
     crossed_cues_in, mode_name, select_clip_timed, select_layer_timed, ActionTime, AnimSet, Animated, AnimationCue, BodyStatus, ClipChoice,
-    LayerChoice, ModeLeft, PropSwaps, MAX_LAYERS,
+    CueDef, LayerChoice, ModeLeft, PropSwaps, MAX_LAYERS,
 };
 use crate::def::{ActionDef, MovesetDef};
 use crate::fighter::{Dead, Fighter};
@@ -658,6 +661,56 @@ fn mask_layer(
     true
 }
 
+/// Where the bones the cues name are: a bone of a body's skeleton found by its node name (the
+/// walk the props' sockets make, below the model and never below a prop), and its place in the
+/// world as of the last frame. Presentation only; nothing here writes to a body.
+#[derive(SystemParam)]
+#[doc(hidden)]
+pub struct CueBones<'w, 's> {
+    children: Query<'w, 's, &'static Children>,
+    names: Query<'w, 's, &'static Name>,
+    props: Query<'w, 's, (), With<PropOf>>,
+    places: Query<'w, 's, &'static GlobalTransform>,
+    /// Cues whose bone the model lacks, said once each.
+    warned: Local<'s, BTreeSet<String>>,
+}
+
+impl CueBones<'_, '_> {
+    /// Where the bone `bone` of the skeleton under `player` is in the world (its `GlobalTransform`).
+    fn place(&self, player: Entity, bone: &str) -> Option<Vec3> {
+        let found = skeleton(player, &self.children, &self.props)
+            .into_iter()
+            .find(|e| self.names.get(*e).is_ok_and(|n| n.as_str() == bone))?;
+        self.places.get(found).ok().map(GlobalTransform::translation)
+    }
+
+    /// Fires an [`AnimationCue`] of `clip` for the body `entity` (its model's player is `player`)
+    /// for each cue the clip passed: a cue that names a bone carries where the bone is now, and
+    /// is the body's own, at its feet, when the model has no such bone.
+    fn fire(&mut self, commands: &mut Commands, entity: Entity, player: Entity, clip: &str, passed: Vec<&CueDef>) {
+        for cue in passed {
+            let at = cue.bone.as_deref().and_then(|bone| {
+                let at = self.place(player, bone);
+                if at.is_none() && self.warned.insert(format!("{clip} {} {bone}", cue.cue)) {
+                    warn!(
+                        "clip `{clip}`: cue `{}` names bone `{bone}`, which the model does not have; it plays at the body's feet",
+                        cue.cue
+                    );
+                }
+                at
+            });
+            commands.trigger(AnimationCue {
+                entity,
+                cue: cue.cue.clone(),
+                clip: clip.to_owned(),
+                bone: cue.bone.clone(),
+                at,
+                strength: cue.strength,
+            });
+        }
+    }
+}
+
 /// What [`drive`] reads of a character.
 #[derive(QueryData)]
 #[query_data(mutable)]
@@ -692,6 +745,7 @@ pub fn drive(
     mut animated: Query<Driven>,
     mut players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
     mut mounting: MountEnv,
+    mut bones: CueBones,
     all: Query<(), With<Animated>>,
     stats: Option<ResMut<AnimStats>>,
 ) {
@@ -756,7 +810,8 @@ pub fn drive(
         let status = BodyStatus { dead, staggered: staggers, pace: modifiers.map_or(1.0, MoveModifiers::pace) };
         let moveset = fighter.map(|f| f.moveset.as_str());
         let choice = select_clip_timed(action, motion.unwrap_or(&standing), status, set, moveset);
-        let switched = drive_body(&mut commands, entity, set, built, &clips, &mut bound, &mut player, &mut transitions, &choice, frozen);
+        let switched =
+            drive_body(&mut commands, &mut bones, entity, set, built, &clips, &mut bound, &mut player, &mut transitions, &choice, frozen);
         if switched {
             // The fade out of the mode's clip (its nominal blend, a paused clock snaps it but does not
             // age the wait): a `@left` wait ends with it.
@@ -767,7 +822,7 @@ pub fn drive(
             // A layer that is off in this mode plays nothing: what played fades out.
             let wanted = select_layer_timed(action, status, set, moveset).filter(|l| !set.layer_off(l.layer, mode));
             let frame = LayerFrame { wanted, back_blend: choice.blend, dt: time.delta_secs(), frozen };
-            drive_layers(&mut commands, entity, set, built, &clips, &mut bound, &mut player, &frame);
+            drive_layers(&mut commands, &mut bones, entity, set, built, &clips, &mut bound, &mut player, &frame);
         }
 
         // The motion mode: the mounts' rules for it and for after leaving it, the drop.
@@ -812,6 +867,7 @@ pub fn drive(
 #[allow(clippy::too_many_arguments, reason = "what one character's step reads and writes")]
 fn drive_body(
     commands: &mut Commands,
+    bones: &mut CueBones,
     entity: Entity,
     set: &AnimSet,
     built: &Built,
@@ -864,9 +920,7 @@ fn drive_body(
     let cues = set.clip(clip).map_or(&[][..], |c| c.cues.as_slice());
     if !cues.is_empty() {
         // A looping clip wraps round, and so does the stretch a looping phase repeats.
-        for cue in crossed_cues_in(cues, bound.last_time, now, choice.wraps(duration)) {
-            commands.trigger(AnimationCue { entity, cue: cue.cue.clone(), clip: clip.to_owned() });
-        }
+        bones.fire(commands, entity, bound.player, clip, crossed_cues_in(cues, bound.last_time, now, choice.wraps(duration)));
     }
     bound.last_time = Some(now);
     switched
@@ -890,6 +944,7 @@ struct LayerFrame<'a> {
 #[allow(clippy::too_many_arguments, reason = "what one character's step reads and writes")]
 fn drive_layers(
     commands: &mut Commands,
+    bones: &mut CueBones,
     entity: Entity,
     set: &AnimSet,
     built: &Built,
@@ -903,6 +958,7 @@ fn drive_layers(
     if let Some(layer) = wanted {
         bound.overlays.entry(layer.layer.to_owned()).or_default();
     }
+    let model = bound.player;
     for (name, overlay) in &mut bound.overlays {
         let want = wanted.filter(|l| l.layer == name).and_then(|l| {
             let clip = l.choice.clip?;
@@ -923,9 +979,7 @@ fn drive_layers(
             player.play(node).set_repeat(RepeatAnimation::Never).set_speed(0.0).set_seek_time(at);
             let cues = set.clip(clip).map_or(&[][..], |c| c.cues.as_slice());
             if !cues.is_empty() {
-                for cue in crossed_cues_in(cues, overlay.last_time, at, choice.wraps(duration)) {
-                    commands.trigger(AnimationCue { entity, cue: cue.cue.clone(), clip: clip.to_owned() });
-                }
+                bones.fire(commands, entity, model, clip, crossed_cues_in(cues, overlay.last_time, at, choice.wraps(duration)));
             }
             overlay.last_time = Some(at);
         }
@@ -1434,9 +1488,60 @@ mod tests {
         let heard = &rig.app.world().resource::<Heard>().0;
         assert_eq!(heard.len(), 1, "{heard:?}");
         assert_eq!((heard[0].entity, heard[0].cue.as_str(), heard[0].clip.as_str()), (rig.character, "swoosh", "swing_1"));
+        assert_eq!(
+            (heard[0].bone.as_deref(), heard[0].at, heard[0].strength),
+            (None, None, 1.0),
+            "a cue without a bone is the body's, at full strength"
+        );
         rig.run_action("light_1", 0.5, Some("swing_1"));
         rig.app.update();
         assert_eq!(rig.app.world().resource::<Heard>().0.len(), 1, "once");
+    }
+
+    #[test]
+    fn a_cue_with_a_bone_carries_the_bones_world_place_and_its_strength() {
+        #[derive(Resource, Default)]
+        struct Heard(Vec<AnimationCue>);
+        let mut rig = rig();
+        let edited = ANIMSETS.replace(
+            r#"cues: [(at: 0.5, cue: "swoosh")]"#,
+            r#"cues: [(at: 0.5, cue: "swoosh", bone: "hand.R", strength: 0.5), (at: 0.5, cue: "far", bone: "tail")]"#,
+        );
+        assert_ne!(edited, ANIMSETS);
+        rig.app.insert_resource(db_from(&edited));
+        rig.app.init_resource::<Heard>();
+        rig.app.add_observer(|cue: On<AnimationCue>, mut heard: ResMut<Heard>| heard.0.push(cue.event().clone()));
+        // The body stands at (4, 0, -2); the model's player and its bones need a `Transform` each for
+        // the world place to be worked out. A prop's glTF has a `hand.R` node too, in front of the
+        // real one: it must not stand in for the bone.
+        let world = rig.app.world_mut();
+        world.entity_mut(rig.character).insert(Transform::from_xyz(4.0, 0.0, -2.0));
+        world.entity_mut(rig.player).insert(Transform::default());
+        let prop = world.spawn((PropOf { body: rig.character, prop: "sword".into() }, Transform::from_xyz(1.0, 1.0, 1.0))).id();
+        let impostor = world.spawn((Name::new("hand.R"), Transform::from_xyz(9.0, 9.0, 9.0))).id();
+        world.entity_mut(prop).add_child(impostor);
+        let hand = world.spawn((Name::new("hand.R"), Transform::from_xyz(0.25, 1.0, 0.5))).id();
+        world.entity_mut(rig.player).add_child(prop).add_child(hand);
+        rig.app.update();
+        let world = rig.app.world();
+        assert_eq!(world.get::<GlobalTransform>(hand).unwrap().translation(), Vec3::new(4.25, 1.0, -1.5), "propagated");
+
+        rig.run_action("light_1", 0.1, Some("swing_1")); // 1/6 in: the cues are at 0.5 s of the 1 s clip
+        rig.app.update();
+        assert!(rig.app.world().resource::<Heard>().0.is_empty());
+        rig.run_action("light_1", 0.35, Some("swing_1"));
+        rig.app.update();
+        let heard = &rig.app.world().resource::<Heard>().0;
+        assert_eq!(heard.len(), 2, "{heard:?}");
+        let swoosh = heard.iter().find(|c| c.cue == "swoosh").unwrap();
+        assert_eq!(
+            (swoosh.entity, swoosh.clip.as_str(), swoosh.bone.as_deref(), swoosh.at, swoosh.strength),
+            (rig.character, "swing_1", Some("hand.R"), Some(Vec3::new(4.25, 1.0, -1.5)), 0.5),
+            "where the bone is, not the body's feet and not the prop's node"
+        );
+        // A bone the model lacks: the cue still fires, with its bone named and no place (the body's).
+        let far = heard.iter().find(|c| c.cue == "far").unwrap();
+        assert_eq!((far.bone.as_deref(), far.at, far.strength), (Some("tail"), None, 1.0));
     }
 
     #[test]
@@ -1902,6 +2007,30 @@ mod tests {
             assert_eq!(rig.bound().layer_clip("upper"), Some("drink"));
             assert_eq!((count(&rig, "lift"), count(&rig, "gulp")), (lifts, gulps), "{t} s in");
         }
+    }
+
+    #[test]
+    fn a_layered_clips_cue_carries_its_bone_and_strength_too() {
+        #[derive(Resource, Default)]
+        struct Heard(Vec<AnimationCue>);
+        let mut rig = skeleton(&LAYERED.replace(r#"cues: [(at: 0.5, cue: "gulp")]"#, r#"cues: [(at: 0.5, cue: "gulp", bone: "head", strength: 0.25)]"#));
+        rig.rig.app.init_resource::<Heard>();
+        rig.rig.app.add_observer(|cue: On<AnimationCue>, mut heard: ResMut<Heard>| heard.0.push(cue.event().clone()));
+        // The body stands off the origin, so a world place is not the bone's local one.
+        rig.rig.app.world_mut().entity_mut(rig.rig.character).insert(Transform::from_xyz(4.0, 0.0, -2.0));
+        rig.rig.app.update();
+        rig.rig.run_action("drink", 0.2, None);
+        rig.rig.app.update();
+        assert!(rig.rig.app.world().resource::<Heard>().0.is_empty());
+        // The place the head has when the cue fires: where the last frame left it.
+        let head = rig.rig.app.world().get::<GlobalTransform>(rig.bones["head"]).unwrap().translation();
+        assert!(head.x > 3.9 && head.z < -1.9, "the head rides the body at (4, 0, -2): {head}");
+        rig.rig.run_action("drink", 0.7, None);
+        rig.rig.app.update();
+        let heard = &rig.rig.app.world().resource::<Heard>().0;
+        assert_eq!(heard.len(), 1, "{heard:?}");
+        assert_eq!((heard[0].cue.as_str(), heard[0].clip.as_str(), heard[0].bone.as_deref()), ("gulp", "drink", Some("head")));
+        assert_eq!((heard[0].at, heard[0].strength), (Some(head), 0.25));
     }
 
     #[test]

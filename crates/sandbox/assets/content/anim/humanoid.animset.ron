@@ -15,9 +15,10 @@
         source: "models/humanoid.glb",
         clips: {
             "idle": (),
-            // The left heel strikes at 0, the right half a stride later.
-            "walk": (cues: [(at: 0.0, cue: "footstep"), (at: 0.4, cue: "footstep")]),
-            "run": (cues: [(at: 0.0, cue: "footstep"), (at: 0.3, cue: "footstep")]),
+            // The left heel strikes at 0, the right half a stride later: each footstep plays where its
+            // foot is (`bone`), not at the body's feet.
+            "walk": (cues: [(at: 0.0, cue: "footstep", bone: "foot.L"), (at: 0.4, cue: "footstep", bone: "foot.R")]),
+            "run": (cues: [(at: 0.0, cue: "footstep", bone: "foot.L"), (at: 0.3, cue: "footstep", bone: "foot.R")]),
             // The swings' whoosh is not a cue: a cue sounds only where a model is drawn, and the
             // `Sound("whoosh")` effect of the actions (combat/player.action.ron) is decided on the
             // simulation's clock. Cues here are for the picture (the footsteps' dust).

@@ -21,7 +21,8 @@
 //!   the action machine's own rule ([`shards_action::can_start`]) before it presses. Why an
 //!   option may not be chosen now is one judge ([`schedule`], [`Refusal`]) that the director's
 //!   grant and the planner share. A game controls what a plan remembers ([`memory`]:
-//!   [`reset_plan`], [`set_plan_cooldown`]).
+//!   [`reset_plan`], [`set_plan_cooldown`]) and audits a plan from its content ([`audit`]:
+//!   [`may_follow`], [`follow_pairs`], [`plan_hits`]; the `plan_audit` query).
 //! - **Duel rules** (all optional, neutral unless a definition asks): strike spacing between the
 //!   NPCs of one director ([`strike`]: [`DirectorDef::min_spacing`], `spacing_exempt_tags`, the
 //!   rule `npc.strike_spacing`), conditional plan options (`AttackOption::when`) and a state's
@@ -95,6 +96,7 @@
 //! 6/15m`.
 
 pub mod ai;
+pub mod audit;
 pub mod brain;
 pub mod chain;
 mod coverage;
@@ -130,6 +132,7 @@ pub use def::{
 };
 pub use chain::{ChainPressed, ChainRefused, NpcChain};
 pub use director::{AttackToken, Grant, TokenGranted, TokenReturned};
+pub use audit::{follow_pairs, may_follow, plan_hits, FollowPair, PlanHit};
 pub use memory::{reset_plan, set_plan_cooldown, CooldownSet, PlanCooldownSet, PlanReset, HOST_OWNS_PLANS};
 pub use nav::{
     bake_files, bake_region, find_path, local_grid_path, local_grid_route, navmesh_path, navmesh_route, plain_sight, region_nav, route_on,
