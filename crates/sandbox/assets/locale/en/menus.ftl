@@ -23,6 +23,7 @@ settings-ui = Interface
 
 settings-controls = Controls
 settings-look-speed = Look speed
+settings-aim-speed = Aim speed
 settings-invert-y = Invert look
 settings-hold = Hold to toggle
 

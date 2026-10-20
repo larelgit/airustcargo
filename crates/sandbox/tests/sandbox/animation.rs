@@ -108,6 +108,45 @@ fn the_tool_says_how_to_fix_a_bad_call() {
 }
 
 #[test]
+fn an_event_overlay_is_previewed_and_a_bad_event_is_named() {
+    let mut app = sandbox::test_app(42);
+    let said = text(&ok(&mut app, "animation", json!({"id": PLAYER, "animset": "humanoid", "event": "damaged"}))).to_owned();
+    let lines: Vec<&str> = said.lines().collect();
+    assert_eq!(
+        lines[0],
+        "overlay damaged of humanoid: flinch on upper, in 0.04 s, out 0.15-0.35 s, 60 %; e5 is not drawn (a window or \
+         --offscreen draws it), so nothing plays"
+    );
+    assert!(
+        said.contains(
+            "  overlays: blocked: flinch on upper, in 0.04 s, out 0.10-0.25 s, 35 % · damaged: flinch on upper, in 0.04 s, \
+             out 0.15-0.35 s, 60 %"
+        ),
+        "{said}"
+    );
+    assert_eq!(
+        fails(&mut app, "animation", json!({"id": PLAYER, "animset": "humanoid", "event": "damage"})),
+        "event `damage` is no engine event an overlay answers (did you mean `damaged`?); events: blocked, parried, damaged, \
+         guard_broken, staggered, part_broken, landed"
+    );
+    assert_eq!(
+        fails(&mut app, "animation", json!({"id": PLAYER, "animset": "humanoid", "event": "landed"})),
+        "animset `humanoid` has no overlay for `landed`; its overlays: blocked, damaged"
+    );
+    // An overlay plays on one body, named, even with no body drawn; a dead body starts none.
+    assert_eq!(
+        fails(&mut app, "animation", json!({"event": "damaged"})),
+        "event=<name> plays an overlay on one body: name it with id=<body>"
+    );
+    let boss = app.world().resource::<shards::ai_core::AiIndex>().get(shards::ai_core::AiId::parse(BOSS).unwrap()).unwrap();
+    shards::action::kill(app.world_mut(), boss, None, None);
+    step(&mut app, 2);
+    let said = text(&ok(&mut app, "animation", json!({"id": BOSS, "animset": "humanoid", "event": "damaged"}))).to_owned();
+    assert!(said.starts_with("overlay damaged of humanoid: flinch on upper, in 0.04 s, out 0.15-0.35 s, 60 %; e"), "{said}");
+    assert!(said.lines().next().unwrap().ends_with(" is dead, so nothing plays"), "{said}");
+}
+
+#[test]
 fn an_attack_is_seeked_ahead_by_the_overstep_as_the_bridge_seeks_it() {
     let mut app = sandbox::test_app(42);
     assert_eq!(text(&ok(&mut app, "light_attack", json!({}))), "ok: light_1");

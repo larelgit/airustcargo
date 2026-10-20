@@ -216,6 +216,28 @@ fn the_camera_follows_looks_and_stays_out_of_walls() {
 }
 
 #[test]
+fn aiming_turns_the_view_by_the_aim_sensitivity() {
+    let mut s = scene();
+    {
+        let mut settings = s.app.world_mut().resource_mut::<CameraSettings>();
+        (settings.sensitivity, settings.aim_sensitivity, settings.aim_assist) = (2.0, 0.5, 0.0);
+    }
+    let turn = |s: &mut Scene| {
+        let yaw = cam(s).yaw;
+        s.app.insert_resource(AccumulatedMouseMotion { delta: Vec2::new(100.0, 0.0) });
+        s.app.update();
+        s.app.insert_resource(AccumulatedMouseMotion::default());
+        cam(s).yaw - yaw
+    };
+    assert!((turn(&mut s) + 0.5).abs() < 1e-4, "free look: 100 px at 0.0025, times 2");
+    // The game says the player aims: the same mouse turns the view by the aiming speed.
+    s.app.insert_resource(CameraOffsets { aiming: true, ..default() });
+    assert!((turn(&mut s) + 0.125).abs() < 1e-4, "aiming: times 0.5");
+    s.app.insert_resource(CameraOffsets::default());
+    assert!((turn(&mut s) + 0.5).abs() < 1e-4, "done aiming: the free speed again");
+}
+
+#[test]
 fn field_of_view_and_shake_follow_the_settings() {
     let mut s = scene();
     s.app.world_mut().resource_mut::<CameraSettings>().fov_deg = 90.0;

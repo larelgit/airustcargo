@@ -30,7 +30,7 @@ use bevy::prelude::*;
 use shards_core::LocalPlayer;
 use shards_settings::AccessibilitySettings;
 
-pub use bridge::{AnimGraphs, AnimStats, AnimationBound};
+pub use bridge::{AnimGraphs, AnimStats, AnimationBound, OverlayPlay};
 pub use hud::ThreatHud;
 pub use model::GltfModel;
 pub use modes::AnimSystems;

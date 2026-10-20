@@ -150,7 +150,7 @@ pub use anim::{
     facing_key, ActionClip, ActionTime, AnimSet, Animated, AnimationCue, BodyStatus, Heading, FACING_KEYS, HEADING_SLACK,
     Carry, ClipChoice, ClipDef, CueDef, GroundSpeeds, LayerChoice, LayerDef, Locomotion, MountMove, MountRules, MountView, Place,
     PropDef, PropSwaps, SocketDef, EQUIP_EVENTS, EQUIP_KEY, MAX_LAYERS,
-    mode_name, parse_mode, DropDef, ModeLeft, LEFT_KEY, MODES, MODE_KEY,
+    mode_name, parse_mode, DropDef, ModeLeft, OverlayDef, LEFT_KEY, MODES, MODE_KEY, OVERLAY_EVENTS,
 };
 pub use combat::{
     bleed_out, deal_damage, deal_ruled_damage, end_break, go_down, grant_grace, kill, kill_with, lethal, poise_damage, react, reset_poise, revive, revive_downed, stagger,

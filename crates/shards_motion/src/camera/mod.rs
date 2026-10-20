@@ -34,15 +34,15 @@ use shards_content::{ContentAppExt, ContentDb};
 use shards_settings::{AccessibilitySettings, ControlSettings};
 
 pub use math::{
-    aim_assist, arm_length, arm_reach, critically_damped_step, damp, lock_framing, lock_holds, next_lock_target, orbit_angles,
-    orbit_offset, orbit_position, pick_lock_target, pitch_limits, resolve_camera_collision, shake_offset, shake_offset_with,
-    wrap_angle, FlickState, LockCandidate, LockView, ShakeOffset, Side,
+    aim_assist, arm_length, arm_reach, critically_damped_step, damp, fit_room, fit_tilt, lock_framing, lock_holds, next_lock_target,
+    orbit_angles, orbit_offset, orbit_position, pick_lock_target, pitch_limits, resolve_camera_collision, shake_offset,
+    shake_offset_with, wrap_angle, FlickState, LockCandidate, LockView, ShakeOffset, Side,
 };
 pub use lock::{
     body_point, in_frustum, lock_candidates, lock_score, pick_lock, signed_bearing, sight_clear, switch_lock, switch_target, LockHooks,
     LockOnDef, LockWeights, Lockable, PickView,
 };
-pub use tuning::{ArmTuning, CameraOffsets, CameraTuning, FlickTuning, FramingTuning, TraumaTuning};
+pub use tuning::{ArmTuning, CameraOffsets, CameraTuning, FitTuning, FlickTuning, FramingTuning, TraumaTuning};
 
 /// A camera that orbits a character. Put it on the camera entity; `yaw` and `pitch` are
 /// where the player looks (`input` turns the move axes by `yaw`).
@@ -56,6 +56,10 @@ pub struct ThirdPersonCamera {
     pub yaw: f32,
     /// Tilt, radians; positive looks down from above.
     pub pitch: f32,
+    /// How far the view is turned up from the focus (radians) to keep a locked target in frame
+    /// with the player (`FramingTuning::fit`, R4); 0 without a fit. The camera stands where `yaw`
+    /// and `pitch` put it either way.
+    pub tilt: f32,
     /// Distance from the focus point (m) when nothing is in the way.
     pub distance: f32,
     /// Height of the focus point above the character's feet (m).
@@ -79,6 +83,7 @@ impl Default for ThirdPersonCamera {
             target: Entity::PLACEHOLDER,
             yaw: 0.0,
             pitch: 0.35,
+            tilt: 0.0,
             distance: 5.5,
             height: 1.5,
             focus: Vec3::ZERO,
@@ -96,8 +101,8 @@ impl ThirdPersonCamera {
     }
 }
 
-/// How the camera feels. `fov_deg`, `shake`, `shake_intensity`, `sensitivity` and `invert_y`
-/// are the player's choices: they follow the accessibility and control settings (E8.6, saved
+/// How the camera feels. `fov_deg`, `shake`, `shake_intensity`, `sensitivity`, `aim_sensitivity`
+/// and `invert_y` are the player's choices: they follow the accessibility and control settings (E8.6, saved
 /// in `settings.toml`) whenever those change. The rest is the game's.
 #[derive(Resource, Reflect, Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[reflect(Resource, Default)]
@@ -107,6 +112,8 @@ pub struct CameraSettings {
     pub fov_deg: f32,
     /// Look speed multiplier.
     pub sensitivity: f32,
+    /// Look speed multiplier while the game says the player aims ([`CameraOffsets::aiming`]).
+    pub aim_sensitivity: f32,
     /// Looking up moves the camera up instead of down.
     pub invert_y: bool,
     /// Whether hits shake the camera.
@@ -128,6 +135,7 @@ impl Default for CameraSettings {
         Self {
             fov_deg: 70.0,
             sensitivity: 1.0,
+            aim_sensitivity: 1.0,
             invert_y: false,
             shake: true,
             shake_intensity: 1.0,
@@ -203,8 +211,9 @@ pub(crate) fn plugin(app: &mut App) {
 
 /// `PreUpdate`: what the player set (E8.6) becomes how the camera feels. The field of view and
 /// the shake come from the accessibility settings (`camera_shake` 0 is no shake at all, anything
-/// above it is how hard), the look speed and its inversion from the controls. A game that wants
-/// other defaults inserts its own settings resources before the settings store starts.
+/// above it is how hard), the look speeds (free and aiming) and the inversion from the controls.
+/// A game that wants other defaults inserts its own settings resources before the settings store
+/// starts.
 /// Presentation only: nothing the simulation reads.
 fn apply_player_settings(
     accessibility: Option<Res<AccessibilitySettings>>,
@@ -221,6 +230,7 @@ fn apply_player_settings(
         shake: shake > 0.0,
         shake_intensity: shake,
         sensitivity: controls.sensitivity(),
+        aim_sensitivity: controls.aim_sensitivity(),
         invert_y: controls.invert_y,
         ..camera.clone()
     };
