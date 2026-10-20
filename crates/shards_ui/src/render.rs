@@ -409,7 +409,8 @@ fn update_value(world: &mut World, e: Entity, w: &UiWidget) {
             }
         }
         None => match (&w.kind, &w.value) {
-            (WidgetKind::Text | WidgetKind::Hint, UiValue::Text(marked)) => draw_runs(world, e, marked),
+            // Any value, text or not: the spans of an earlier one go.
+            (WidgetKind::Text | WidgetKind::Hint, _) => draw_runs(world, e, &text),
             (WidgetKind::Compass, UiValue::Heading { deg, marks }) => {
                 let drawn = compass_drawn(&world.resource::<Look>().theme, *deg, marks);
                 draw_runs(world, e, &drawn);
@@ -544,8 +545,8 @@ fn redraw(world: &mut World, e: Entity, state: &Drawn) {
             let rgba = if w.kind == WidgetKind::Hint { t.color(&t.dim_text) } else { text_rgba };
             let font = font(world, size);
             world.entity_mut(e).insert((Node { display, ..default() }, Text::new(value_text(w)), font, TextColor(color(rgba))));
-            if let (WidgetKind::Text | WidgetKind::Hint, UiValue::Text(text)) = (&w.kind, &w.value) {
-                draw_runs(world, e, text);
+            if matches!(w.kind, WidgetKind::Text | WidgetKind::Hint) {
+                draw_runs(world, e, &value_text(w));
             }
             if let (WidgetKind::Compass, UiValue::Heading { deg, marks }) = (&w.kind, &w.value) {
                 let drawn = compass_drawn(&world.resource::<Look>().theme, *deg, marks);

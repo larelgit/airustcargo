@@ -139,6 +139,11 @@ impl Mixer {
         if bus == Bus::Ui { self.real_seconds } else { self.sim_seconds }
     }
 
+    /// The simulation's clock and real time, now.
+    pub(crate) fn clocks(&self) -> (f64, f64) {
+        (self.sim_seconds, self.real_seconds)
+    }
+
     fn drop_sound(&mut self, sound: &str, reason: String) -> Played {
         self.dropped += 1;
         if self.drops.len() == DROPS_KEPT {

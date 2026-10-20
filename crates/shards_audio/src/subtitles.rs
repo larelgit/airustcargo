@@ -9,7 +9,8 @@
 //!   `subtitles:3` shows three ([`SHOWN`] without a number). Messages are resolved when the line is
 //!   read, so a language changed in the menu applies to the lines showing. With
 //!   `accessibility.subtitles` off the source is empty.
-//! - **The same line twice** (two guards bark it) shows once, for the longer of the two.
+//! - **The same line twice** (two guards bark it) shows once, while either voice has time left (each
+//!   by its own length and clock).
 //! - **A voice taken** by a stronger sound takes its line with it, unless another voice says it too,
 //!   and stopping every voice takes them all: a line is what is heard.
 //! - **Agents** read each line as it starts in the journal (`[local] subtitle: Warden: The gate
@@ -38,15 +39,35 @@ pub const KEPT: usize = 8;
 pub struct SubtitleLine {
     /// The sound it belongs to.
     pub sound: String,
-    /// The voices that say it (two guards barking it are one line).
-    pub voices: Vec<u64>,
+    /// The voices that say it (two guards barking it are one line), each with its own time: the
+    /// line shows while one of them has some left.
+    pub voices: Vec<LineVoice>,
     /// As content writes them: text, or a message `@id`.
     pub speaker: Option<String>,
     pub text: String,
+}
+
+/// A voice saying a line, and when its part of the line is over.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LineVoice {
+    /// The mixer's voice.
+    pub voice: u64,
     /// Whose clock it goes by.
     pub bus: Bus,
-    /// When it goes, on that clock.
+    /// When it is over, on that clock.
     pub until: f64,
+}
+
+impl SubtitleLine {
+    /// Seconds it shows on: the most a voice saying it has left (`sim` and `real`: the clocks now).
+    pub fn left(&self, sim: f64, real: f64) -> f64 {
+        self.voices.iter().map(|v| v.until - clock(v.bus, sim, real)).fold(f64::NEG_INFINITY, f64::max)
+    }
+}
+
+/// `bus`'s clock: the simulation's, real time on the `Ui` bus.
+fn clock(bus: Bus, sim: f64, real: f64) -> f64 {
+    if bus == Bus::Ui { real } else { sim }
 }
 
 /// The lines showing, oldest first.
@@ -96,14 +117,12 @@ pub(crate) fn source(world: &World, arg: &str) -> Option<UiValue> {
 pub(crate) fn start(world: &mut World, sound: &str, def: &SoundDef, voice: u64, length: f64) {
     let Some(text) = def.subtitle.clone() else { return };
     let until = world.resource::<Mixer>().now(def.bus) + (length + LINGER_S).max(MIN_SHOWN_S);
-    let line = SubtitleLine { sound: sound.to_owned(), voices: vec![voice], speaker: def.speaker.clone(), text, bus: def.bus, until };
+    let says = LineVoice { voice, bus: def.bus, until };
+    let line = SubtitleLine { sound: sound.to_owned(), voices: vec![says], speaker: def.speaker.clone(), text };
     let said = line_text(world, &line);
     let mut subtitles = world.get_resource_or_init::<Subtitles>();
     match subtitles.lines.iter_mut().find(|l| l.speaker == line.speaker && l.text == line.text) {
-        Some(same) => {
-            same.until = same.until.max(line.until);
-            same.voices.push(voice);
-        }
+        Some(same) => same.voices.push(says),
         None => {
             if subtitles.lines.len() == KEPT {
                 subtitles.lines.remove(0);
@@ -114,19 +133,24 @@ pub(crate) fn start(world: &mut World, sound: &str, def: &SoundDef, voice: u64, 
     journal::emit(world, JournalKind::Local, format!("subtitle: {said}"));
 }
 
-/// Voice `voice` was taken by another sound: its line goes, unless another voice says it too.
+/// Voice `voice` was taken by another sound: its line goes, unless another voice says it too (and
+/// then it shows for that voice's time, not the taken one's).
 pub(crate) fn cut(world: &mut World, voice: u64) {
     if let Some(mut subtitles) = world.get_resource_mut::<Subtitles>() {
         for line in &mut subtitles.lines {
-            line.voices.retain(|v| *v != voice);
+            line.voices.retain(|v| v.voice != voice);
         }
         subtitles.lines.retain(|l| !l.voices.is_empty());
     }
 }
 
-/// Lines whose time is up go (each by its bus's clock).
+/// Voices whose time is up stop saying their lines (each by its bus's clock), and a line no voice
+/// says goes.
 pub(crate) fn expire(subtitles: &mut Subtitles, sim: f64, real: f64) {
-    subtitles.lines.retain(|l| (if l.bus == Bus::Ui { real } else { sim }) < l.until);
+    for line in &mut subtitles.lines {
+        line.voices.retain(|v| clock(v.bus, sim, real) < v.until);
+    }
+    subtitles.lines.retain(|l| !l.voices.is_empty());
 }
 
 /// Every line goes (every voice stopped).
@@ -141,7 +165,35 @@ mod tests {
     use super::*;
 
     fn line(text: &str, bus: Bus, until: f64) -> SubtitleLine {
-        SubtitleLine { sound: "s".into(), voices: vec![1], speaker: None, text: text.into(), bus, until }
+        SubtitleLine { sound: "s".into(), voices: vec![LineVoice { voice: 1, bus, until }], speaker: None, text: text.into() }
+    }
+
+    fn texts(world: &World) -> Vec<String> {
+        world.resource::<Subtitles>().lines().iter().map(|l| l.text.clone()).collect()
+    }
+
+    #[test]
+    fn a_line_two_voices_say_goes_by_each_voices_own_time_and_clock() {
+        // A long voice and a short one say the same line; the long one is taken.
+        let mut world = World::new();
+        let said = |voice, bus, until| LineVoice { voice, bus, until };
+        let both = SubtitleLine { voices: vec![said(1, Bus::Voice, 10.0), said(2, Bus::Voice, 3.0)], ..line("Halt!", Bus::Voice, 0.0) };
+        world.insert_resource(Subtitles { lines: vec![both] });
+        assert_eq!(world.resource::<Subtitles>().lines()[0].left(1.0, 0.0), 9.0, "the longest voice's time");
+        cut(&mut world, 1);
+        assert_eq!(world.resource::<Subtitles>().lines()[0].left(1.0, 0.0), 2.0, "the taken voice's time went with it");
+        expire(&mut world.resource_mut::<Subtitles>(), 3.0, 0.0);
+        assert!(texts(&world).is_empty(), "gone with the voice left, not at the taken one's 10 s");
+
+        // A menu voice (real time) and a world voice (the simulation's) say it: a pause holds the
+        // world's, the menu's runs on.
+        let mixed = SubtitleLine { voices: vec![said(3, Bus::Voice, 2.0), said(4, Bus::Ui, 5.0)], ..line("Halt!", Bus::Voice, 0.0) };
+        world.insert_resource(Subtitles { lines: vec![mixed] });
+        expire(&mut world.resource_mut::<Subtitles>(), 1.0, 6.0);
+        assert_eq!(texts(&world), ["Halt!"], "the paused world's voice still has time");
+        assert_eq!(world.resource::<Subtitles>().lines()[0].voices.len(), 1, "the menu's voice is done");
+        expire(&mut world.resource_mut::<Subtitles>(), 2.0, 6.0);
+        assert!(texts(&world).is_empty());
     }
 
     #[test]
