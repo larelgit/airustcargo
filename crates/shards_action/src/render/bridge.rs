@@ -45,9 +45,8 @@
 //! The character is `Animated` plus a child with the model:
 //!
 //! ```ignore
-//! commands.spawn((hero_bundle, Animated::new("humanoid"))).with_child(WorldAssetRoot(
-//!     asset_server.load(GltfAssetLabel::Scene(0).from_asset("models/hero.glb")),
-//! ));
+//! commands.spawn((hero_bundle, Animated::new("humanoid")))
+//!     .with_child(GltfModel::load(&asset_server, "models/hero.glb"));
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
