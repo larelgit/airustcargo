@@ -81,6 +81,19 @@ impl Subtitles {
     pub fn lines(&self) -> &[SubtitleLine] {
         &self.lines
     }
+
+    /// `line` starts: it is the newest. The same line still showing (two guards bark it) takes the
+    /// new voice and moves up with its voices and their times, so it is not left out of the newest few.
+    fn say(&mut self, mut line: SubtitleLine) {
+        if let Some(at) = self.lines.iter().position(|l| l.speaker == line.speaker && l.text == line.text) {
+            let mut same = self.lines.remove(at);
+            same.voices.append(&mut line.voices);
+            line = same;
+        } else if self.lines.len() == KEPT {
+            self.lines.remove(0);
+        }
+        self.lines.push(line);
+    }
 }
 
 /// Whether the player wants subtitles (`accessibility.subtitles`; on without the settings module).
@@ -120,16 +133,7 @@ pub(crate) fn start(world: &mut World, sound: &str, def: &SoundDef, voice: u64, 
     let says = LineVoice { voice, bus: def.bus, until };
     let line = SubtitleLine { sound: sound.to_owned(), voices: vec![says], speaker: def.speaker.clone(), text };
     let said = line_text(world, &line);
-    let mut subtitles = world.get_resource_or_init::<Subtitles>();
-    match subtitles.lines.iter_mut().find(|l| l.speaker == line.speaker && l.text == line.text) {
-        Some(same) => same.voices.push(says),
-        None => {
-            if subtitles.lines.len() == KEPT {
-                subtitles.lines.remove(0);
-            }
-            subtitles.lines.push(line);
-        }
-    }
+    world.get_resource_or_init::<Subtitles>().say(line);
     journal::emit(world, JournalKind::Local, format!("subtitle: {said}"));
 }
 
@@ -194,6 +198,31 @@ mod tests {
         assert_eq!(world.resource::<Subtitles>().lines()[0].voices.len(), 1, "the menu's voice is done");
         expire(&mut world.resource_mut::<Subtitles>(), 2.0, 6.0);
         assert!(texts(&world).is_empty());
+    }
+
+    #[test]
+    fn a_line_said_again_is_the_newest_and_keeps_its_first_voice() {
+        let said = |text: &str, voice, until| SubtitleLine { voices: vec![LineVoice { voice, bus: Bus::Voice, until }], ..line(text, Bus::Voice, 0.0) };
+        let mut subtitles = Subtitles::default();
+        for (i, text) in ["Halt!", "Who goes there?", "Stand fast."].into_iter().enumerate() {
+            subtitles.say(said(text, i as u64 + 1, 5.0));
+        }
+        subtitles.say(said("Halt!", 9, 3.0));
+        let order: Vec<_> = subtitles.lines().iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(order, ["Who goes there?", "Stand fast.", "Halt!"], "the newest two show `Halt!`");
+        let voices: Vec<_> = subtitles.lines()[2].voices.iter().map(|v| (v.voice, v.until)).collect();
+        assert_eq!(voices, [(1, 5.0), (9, 3.0)], "both voices, each with its own time");
+
+        // Eight lines are kept: a ninth pushes out the oldest, a line said again pushes out none.
+        for i in 0..5 {
+            subtitles.say(said(&format!("line {i}"), 20 + i, 5.0));
+        }
+        assert_eq!(subtitles.lines().len(), KEPT);
+        subtitles.say(said("Stand fast.", 30, 5.0));
+        assert_eq!(subtitles.lines().len(), KEPT);
+        assert_eq!(subtitles.lines()[0].text, "Who goes there?");
+        subtitles.say(said("new", 31, 5.0));
+        assert_eq!(subtitles.lines()[0].text, "Halt!", "the oldest went");
     }
 
     #[test]
