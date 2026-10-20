@@ -2,13 +2,13 @@
 
 use std::time::{Duration, Instant};
 
-use shards::action::render::{AnimGraphs, AnimationBound};
+use shards::action::render::{AnimGraphs, AnimationBound, GltfModel};
 use shards::action::{ActionState, Animated, AnimationCue};
 use shards::bevy::animation::graph::AnimationGraphHandle;
 use shards::bevy::animation::graph::AnimationNodeIndex;
 use shards::bevy::animation::{AnimationClip, AnimationPlayer, AnimationTargetId};
 use shards::bevy::gltf::Gltf;
-use shards::bevy::world_serialization::WorldAssetRoot;
+use shards::bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 use shards::motion::{character, Collider, Shape};
 use shards::prelude::*;
 use shards::serde_json::json;
@@ -329,4 +329,48 @@ fn the_blender_humanoid_drinks_with_its_arm_while_its_legs_keep_walking() {
         let off = off_by(&mut app, hero, bone, &walk, at);
         assert!(off < 0.1, "{bone} walks again: {off:.3} degrees off");
     }
+}
+
+/// The models `WorldInstanceReady` was triggered on, in order.
+#[derive(Resource, Default)]
+struct Spawned(Vec<Entity>);
+
+/// The engine's `GltfModel` (the sandbox's and the template's way): the model's file is loaded whole,
+/// the same handle the bridge loads for its clips (the humanoid's clips are in its own file), and the
+/// model is spawned once when the file is in. A `file#Scene0` model could be spawned twice: its
+/// labeled load reads the file again (bevy#10549) and may end after the bridge's.
+#[test]
+fn a_gltf_model_shares_the_bridges_load_and_is_spawned_once() {
+    let dir = humanoid_assets("action_render_gltf_model");
+    let mut app = shards::testing::test_app(
+        |config| config.asset_dir = dir.to_string_lossy().into_owned(),
+        |app| {
+            app.init_resource::<Spawned>();
+            app.add_observer(|ready: On<WorldInstanceReady>, mut spawned: ResMut<Spawned>| spawned.0.push(ready.entity));
+        },
+    );
+    let model = GltfModel::load(app.world().resource::<AssetServer>(), "models/humanoid.glb");
+    let file = model.file.id();
+    let (controller, intent, transform) = character("", Vec3::ZERO);
+    let world = app.world_mut();
+    let hero = world
+        .spawn((Name::new("hero"), Fighter::new("hero"), Health::new(100.0), controller, intent, transform, Animated::new("humanoid")))
+        .id();
+    let shown = world.spawn((model, ChildOf(hero))).id();
+    update_until(&mut app, "the hero bound", |app| app.world().get::<AnimationBound>(hero).is_some());
+    // Time for a second read to land, had there been one.
+    for _ in 0..40 {
+        app.update();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(app.world().get::<WorldAssetRoot>(shown).is_some(), "the scene went on the model's entity");
+    let spawned = &app.world().resource::<Spawned>().0;
+    assert_eq!(spawned.iter().filter(|e| **e == shown).count(), 1, "spawned once: {spawned:?}");
+    let bridge = app.world().resource::<AssetServer>().get_handle::<Gltf>("models/humanoid.glb").expect("loaded");
+    assert_eq!(bridge.id(), file, "one handle for the model and the bridge's clips");
+    // A scene the file does not have spawns nothing.
+    let other = GltfModel::load(app.world().resource::<AssetServer>(), "models/humanoid.glb").scene(9);
+    let none = app.world_mut().spawn(other).id();
+    app.update();
+    assert!(app.world().get::<WorldAssetRoot>(none).is_none());
 }
