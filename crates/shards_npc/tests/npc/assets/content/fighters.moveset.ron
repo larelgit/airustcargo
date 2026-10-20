@@ -3,5 +3,4 @@
     "grunt": (inputs: {"light": "jab", "heavy": "smash"}, stagger: "grunt_stagger"),
     "caster": (inputs: {"light": "cast"}, stagger: "grunt_stagger"),
     "warden": (inputs: {"light": "slash", "heavy": "slam", "technique.1": "sweep", "technique.2": "shockwave"}),
-    "spender": (inputs: {"light": "dear_jab"}, stagger: "grunt_stagger"),
 }
