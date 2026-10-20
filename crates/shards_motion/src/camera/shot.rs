@@ -414,8 +414,8 @@ pub fn play(world: &mut World, id: &str, roles: &BTreeMap<String, Entity>) -> Re
     }
     let mut seen = BTreeMap::new();
     for (role, &body) in roles {
-        let tf = world.get::<Transform>(body).ok_or_else(|| format!("role `{role}`: that body does not exist (or has no place)"))?;
-        seen.insert(role.clone(), *tf);
+        let tf = drawn(world, body).ok_or_else(|| format!("role `{role}`: that body does not exist (or has no place)"))?;
+        seen.insert(role.clone(), tf);
     }
     let from = cameras_now(world);
     if from.is_empty() {
@@ -491,6 +491,19 @@ fn end(world: &mut World, skipped: bool) {
     world.trigger(ShotEnded { id: playing.id, skipped });
 }
 
+/// Where a role's body is drawn this frame, as the orbit camera follows it (`shown_translation`):
+/// the blended pose of its first interpolated child, or its own `Transform` when nothing is
+/// blended. A body is a top-level entity, so its `Transform` is its place in the world.
+fn drawn(world: &World, body: Entity) -> Option<Transform> {
+    let tf = world.get::<Transform>(body)?;
+    let shown = world
+        .get::<Children>(body)
+        .into_iter()
+        .flatten()
+        .find_map(|child| world.get::<crate::interp::Interpolated>(*child).and_then(|v| v.shown()));
+    Some(shown.map_or(*tf, |pose| Transform { translation: pose.translation, rotation: pose.rotation, scale: tf.scale }))
+}
+
 /// What a playing shot shows on camera `e` at `t` s in, where the shot itself is at `shot`: for
 /// its first `blend_in_s`, the blend in from what the camera showed when the shot started.
 #[cfg(feature = "render")]
@@ -518,10 +531,8 @@ fn show_shot(world: &mut World) {
         let playing = world.resource::<Shots>().playing.as_ref().unwrap();
         playing.roles.iter().map(|(r, e)| (r.clone(), *e)).collect()
     };
-    let places: Vec<(String, Transform)> = bodies
-        .into_iter()
-        .filter_map(|(role, e)| world.get::<Transform>(e).map(|tf| (role, *tf)))
-        .collect();
+    let places: Vec<(String, Transform)> =
+        bodies.into_iter().filter_map(|(role, e)| drawn(world, e).map(|tf| (role, tf))).collect();
     let mut finished = false;
     let mut poses = BTreeMap::new();
     {

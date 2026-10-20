@@ -11,7 +11,7 @@ use shards_motion::camera::shot::Ease;
 use shards_motion::camera::{ShotDef, ShotEnded, Shots};
 use shards_motion::*;
 
-use super::{cam, id, tap_lock, target, timed_scene, Scene};
+use super::{cam, halfway_scene, id, tap_lock, target, timed_scene, Scene};
 
 /// - `intro`: from 10 m south of the origin and 5 m up to 10 m east of there over 2 s, looking at
 ///   the boss, narrowing to 40°; back to the orbit camera over 1 s.
@@ -55,9 +55,16 @@ struct Ended(Vec<ShotEnded>);
 /// The camera scene with [`SHOTS`], the game clock running at 0.1 s a frame (a shot's time), the
 /// orbit camera settled.
 fn shots() -> Scene {
+    let mut s = with_shots(timed_scene(false));
+    ai_core::sim::resume(s.app.world_mut());
+    frames(&mut s, 10);
+    s
+}
+
+/// `s` with [`SHOTS`] loaded and the shots that end recorded.
+fn with_shots(mut s: Scene) -> Scene {
     use shards_content::db::Source;
     use shards_content::{ContentDb, ContentKinds};
-    let mut s = timed_scene(false);
     let mut kinds = ContentKinds::default();
     kinds.register::<ShotDef>();
     let db = ContentDb::build(&kinds, &[Source { path: "content/scenes.shot.ron".into(), text: SHOTS.into() }]);
@@ -65,8 +72,6 @@ fn shots() -> Scene {
     assert!(errors.is_empty(), "{errors:?}");
     s.app.insert_resource(db).init_resource::<Ended>();
     s.app.add_observer(|e: On<ShotEnded>, mut ended: ResMut<Ended>| ended.0.push(e.event().clone()));
-    ai_core::sim::resume(s.app.world_mut());
-    frames(&mut s, 10);
     s
 }
 
@@ -255,4 +260,16 @@ fn a_shot_shorter_than_its_blend_in_goes_back_from_where_the_blend_got_to() {
     assert!(closest > way * 0.5, "{closest} of {way}");
     assert_eq!(ended(&s), [("brief".to_owned(), false)]);
     assert!(near(pose(&s).0, orbit_at));
+}
+
+#[test]
+fn a_shot_follows_a_role_where_its_body_is_drawn_between_ticks() {
+    // The body moved from x = 0 to x = 1 over the last tick and is drawn half way, as the orbit
+    // camera follows it: so does the shot, not the tick's place.
+    let mut s = with_shots(halfway_scene(true));
+    let body = id(&s.app, s.player).to_string();
+    let drawn = s.app.world().get::<Transform>(s.player).unwrap().translation.with_x(0.5);
+    ok(&mut s, "play_shot", json!({"id": "follow", "role.boss": body}));
+    s.app.update();
+    assert!(near(pose(&s).0, drawn + Vec3::new(0.0, 2.0, 4.0)), "{:?}", pose(&s));
 }
