@@ -5436,8 +5436,8 @@ A flash is content, kind `flash`:
 ```
 
 It fades in to `alpha` (0 to 1), holds and fades out; `pulses` dips that many times from its start, `pulse_rate` a second,
-`pulse_depth` deep (1, the default: to nothing). `color` is `#rrggbb`: the content check refuses `#rrggbbaa` (the strength is `alpha`),
-a flash of 0 s or longer than 30 s, a rate of 0 and a depth or alpha outside 0..1. Code starts one with `shards::ui::flash(world, "reality")`
+`pulse_depth` deep (1, the default: to nothing). `color` is `#rrggbb` or `#rgb`: the content check refuses `#rrggbbaa` (the strength is `alpha`),
+a flash of 0 s or longer than 30 s, a `pulse_rate` of 0 or less when `pulses` is above 0, and a depth or alpha outside 0..1. Code starts one with `shards::ui::flash(world, "reality")`
 or `commands.trigger(PlayFlash("reality".into()))` (an unknown id is a `Warn` line), and the console with `flash_play flash=reality`
 (dev; a control tool, never in a replay). One flash plays at a time: a newer one replaces the one playing. It is drawn as one full-screen
 node above the HUD and the off-screen threat markers (`GlobalZIndex` 2) and under menus and modals (`GlobalZIndex` 5), which takes no clicks, and it runs on real time (`Time<Real>`), so a hit
