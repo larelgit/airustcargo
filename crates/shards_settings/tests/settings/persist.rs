@@ -23,6 +23,7 @@ fn change_everything(app: &mut shards::bevy::prelude::App) {
         ("audio", "sfx", "0.75"),
         ("audio", "voice", "0.1"),
         ("controls", "mouse_sensitivity", "2.5"),
+        ("controls", "aim_sensitivity", "0.5"),
         ("controls", "invert_y", "true"),
         ("controls", "bindings.gameplay.jump", "[\"Key(KeyJ)\", \"GamepadButton(South)\"]"),
         ("controls", "hold_or_toggle.gameplay.block", "toggle"),

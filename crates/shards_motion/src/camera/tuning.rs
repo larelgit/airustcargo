@@ -412,16 +412,16 @@ impl CameraTuning {
 /// them, every frame.
 ///
 /// **Who owns a value.** The system that writes a field owns it: it sets the value on every
-/// frame it wants an effect, and puts it back to the neutral one (`0.0`, `None`) itself when it
-/// is done. The camera only reads: it never decays, sums or resets an offset, so a value
-/// stays as its writer left it (a writer that stops without resetting leaves its effect on),
+/// frame it wants an effect, and puts it back to the neutral one (`0.0`, `None`, `false`)
+/// itself when it is done. The camera only reads: it never decays, sums or resets an offset, so
+/// a value stays as its writer left it (a writer that stops without resetting leaves its effect on),
 /// and two systems that both want the same field must be combined by the game into one
 /// writer (add their parts, then write once).
 /// Write before `CameraSystems::Orbit` (`PostUpdate`) to be seen the same frame.
 ///
 /// Offsets are presentation: they change the picture only, never the stored `yaw`/`pitch`
-/// (apart from the pitch limits, which clamp the stored pitch as a swimming camera needs) and
-/// never `ThirdPersonCamera::focus`.
+/// (apart from the pitch limits, which clamp the stored pitch as a swimming camera needs, and
+/// `aiming`, which sets how fast the look turns them) and never `ThirdPersonCamera::focus`.
 #[derive(Resource, Reflect, Clone, Copy, Debug, PartialEq, Default)]
 #[reflect(Resource, Default)]
 pub struct CameraOffsets {
@@ -437,6 +437,9 @@ pub struct CameraOffsets {
     /// A lower highest tilt (radians) than the tuning's: a swimming camera that must stay above
     /// the water. The stored pitch is clamped to it.
     pub pitch_max: Option<f32>,
+    /// The player aims (a ranged attack, a zoom: what aiming is, is the game's): free look turns
+    /// by the player's `aim_sensitivity` instead of `sensitivity` (K1). A lock frames as it does.
+    pub aiming: bool,
 }
 
 impl CameraOffsets {

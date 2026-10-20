@@ -18,6 +18,7 @@ fn settings_lists_every_group_as_lines() {
         "audio.master = 1",
         "controls.bindings = {}",
         "controls.mouse_sensitivity = 1",
+        "controls.aim_sensitivity = 1",
         "accessibility.camera_shake = 1",
         "accessibility.flashes = \"full\"",
         "accessibility.fov_deg = 70",
@@ -91,6 +92,7 @@ fn a_value_that_does_not_fit_is_refused_and_says_what_does() {
     expect(&mut app, "graphics", "shadows", "ultra", &["off, low, medium, high"]);
     expect(&mut app, "audio", "master", "1.5", &["audio.master 1.5", "0 to 1"]);
     expect(&mut app, "controls", "mouse_sensitivity", "0", &["0.05 to 5"]);
+    expect(&mut app, "controls", "aim_sensitivity", "9", &["controls.aim_sensitivity 9", "0.05 to 5"]);
     expect(&mut app, "controls", "hold_or_toggle.gameplay.sprint", "tap", &["press, hold, toggle"]);
     expect(&mut app, "controls", "bindings", "x", &["not JSON"]);
     // Names are named.

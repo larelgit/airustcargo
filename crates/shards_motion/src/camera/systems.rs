@@ -347,7 +347,9 @@ fn orbit_camera(
             // Free look: the player's turn, bent toward a target near the crosshair.
             None => {
                 let up = if settings.invert_y { -1.0 } else { 1.0 };
-                let look = state.axis("look") * settings.sensitivity;
+                // Aiming turns by its own speed (K1): the game says when the player aims.
+                let speed = if offsets.aiming { settings.aim_sensitivity } else { settings.sensitivity };
+                let look = state.axis("look") * speed;
                 let mut turn = Vec2::new(-look.x, -look.y * up);
                 if let Some(error) = crosshair_error(&camera, &lockable).filter(|_| settings.aim_assist > 0.0) {
                     turn = aim_assist(turn, error, settings.aim_assist);
