@@ -1,4 +1,4 @@
-# The boss scheduler (N8a2, N8b): an option of an attack plan carries an angle window, a player-count
+# The boss scheduler (N8a2, N8b, N8c): an option of an attack plan carries an angle window, a player-count
 # window, a repeat limit and a `forbid_after` tag, one judge asks them for the director's grant and the
 # planner alike, and `npc_schedule` says why an option is refused. The warden fights on two plans (one
 # per phase, the way the sandbox's phase system swaps them) that are tokenless (it shares the skeletons'
@@ -7,7 +7,8 @@
 # taken away again at the end, so the sandbox's own content (and the other reference replays' content) is
 # what it was. The engine rules `npc.tokens_within_limit`, `npc.strike_spacing` and `npc.plan_sequence`
 # judge every tick: a violation stops the step and fails the run. (The warden's behaviour has no `think`
-# cadence, so `press_on_decision` there decides every tick.)
+# cadence, so `press_on_decision` there decides every tick.) What the plan remembers is the game's to
+# control: `npc_plan_cooldown` and `npc_plan_reset` call the API a game calls (N8c).
 
 seed 42
 
@@ -94,7 +95,8 @@ expect result contains "\"counted\": false"
 
 # --- 4. the phase change swaps the plan and keeps what the plan remembers: the cooldown of `heavy`
 # is the same option in both
-act set id=e6 component=NpcPlan path=cooldowns value='[{"name": "heavy", "left": 10.0}]'
+act npc_plan_cooldown id=e6 option=heavy seconds=10
+expect result contains "e6 heavy: cooldown 10.00 s"
 act set id=e6 component=Health path=current value=290
 step 2
 act npc_state id=e6
@@ -102,7 +104,22 @@ expect result contains "\"id\": \"sched_boss_enraged\""
 expect result contains "\"heavy\": 9.9"
 act npc_schedule id=e6 target=e5 distance=1.5
 expect result contains "cooldown: 9.9"
+
+# --- 5. what the plan remembers is the game's to control (N8c): a phase that really resets an option sets its
+# cooldown to nothing, and a boss home again forgets its history and its cooldowns
+act npc_plan_cooldown id=e6 option=heavy seconds=0
+expect result contains "e6 heavy: cooldown 0.00 s (was 9.9"
+expect journal "e6 heavy cooldown 0.00 s (was 9.9"
+act? npc_plan_cooldown id=e6 option=hevy seconds=0
+expect result contains "has no option `hevy` (did you mean `heavy`?)"
 step 600
+expect result !contains "stopped: invariant"
+act npc_plan_reset id=e6
+expect result contains "e6 plan reset: "
+expect journal "e6 plan reset (npc_plan_reset): "
+act npc_state id=e6
+expect result contains "\"history\": []"
+step 300
 expect result !contains "stopped: invariant"
 
 # --- back as it was
@@ -118,6 +135,8 @@ act set id=e8 component=Npc path=director value=""
 act set id=e8 component=Npc path=plan value=skeleton
 act heal id=e6
 act heal id=e5
+act npc_plan_reset id=e7
+act npc_plan_reset id=e8
 act set id=e6 component=NpcPlan value='{"history": [], "cooldowns": [], "rest": 0.5, "attacks": 0}'
 act npc_set_state id=e6 state=calm
 act npc_set_state id=e7 state=calm
