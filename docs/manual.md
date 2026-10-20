@@ -85,7 +85,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 213 definitions in 63 files
+cargo shards content check                 # ok: 215 definitions in 64 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -108,7 +108,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 213 definitions in 63 files
+# ok: 215 definitions in 64 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -598,7 +598,7 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 213 definitions in 63 files
+content: 215 definitions in 64 files
   action  70
   animset  1
   attack_plan  3
@@ -649,7 +649,7 @@ content: 213 definitions in 63 files
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 213 definitions in 63
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 215 definitions in 64
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -5088,7 +5088,7 @@ attack_assist = true         # false: attacks do not correct their direction tow
 | `graphics` | `shards_settings::apply_graphics`: the main window (fullscreen, vsync, size). The window changes when the settings change, not every frame, so the size the player dragged with the mouse is not taken back. Without a window the values are only stored. `render_scale` is applied by `shards::render_scale`: the resolution of the 3D picture, not the window scale (see "3D picture resolution" below). `shadows` is read by the game: `GraphicsSettings::shadow_quality()`; `foliage` is read by `shards_scatter` (`GraphicsSettings::foliage_density()`): at 0.5 half of the same instances stays, with no new ones (see "Foliage and small objects (E10.2)"); `interpolation` is read by `shards_motion` (render interpolation, see "Render interpolation (C8)") |
 | `audio` | `shards_audio`: the volume of the buses `music`, `sfx`, `voice`, `ui` with `master` taken into account (`AudioSettings::volume("music")`), applied to what is already playing (see "Audio") |
 | `controls` | `shards_motion`: `ControlSettings` ⇄ `InputMap` (see "Input" in "Movement (E2)"); sensitivity and the Y-axis inversion go to `CameraSettings`; `attack_assist = false` makes the controls hold `assist_off` for the player's body (see "Action timeline (B2a)") |
-| `accessibility` | `shards_motion`: the field of view and the strength of the camera shake, `MotionBlur` on the cameras that have it (the game adds the component, the setting sets the strength, 0 turns it off), `hold_to_toggle` in the input map; `shards_action`: `flashes` for the blinking of telegraphs and of off-screen markers (`reduced` — half as big and no more than 2 times a second, `off` — a steady light, `draw::pulse_at`) |
+| `accessibility` | `shards_motion`: the field of view and the strength of the camera shake, `MotionBlur` on the cameras that have it (the game adds the component, the setting sets the strength, 0 turns it off), `hold_to_toggle` in the input map; `shards_action`: `flashes` for the blinking of telegraphs and of off-screen markers (`reduced` — half as big and no more than 2 times a second, `off` — a steady light, `draw::pulse_at`) and `shards_ui`: `flashes` for full-screen flashes (`reduced` — at most 0.35 strong, pulses no more than 2 times a second and half as deep, eased fades, `off` — none; see "UI (E9)") |
 
 **3D picture resolution: `graphics.render_scale` (E8.6, E10).** The 3D world is drawn into a picture of `render_scale` x the window's pixels (with `--offscreen`, the base is the size of the `--offscreen` picture, 1280×720 by default), and the picture is stretched over the whole window with a linear filter;
 the UI, HUD, menus and the developer console stay at the window's native resolution. At 0.5 it is a quarter of the pixels (cheaper and softer), at 2 it is supersampling (four pixels for one). The module `shards::render_scale` (feature `render`, window and `--offscreen`):
@@ -5408,10 +5408,35 @@ an AccessKit node: a role (`Dialog`, `Button`, `Slider`, `ProgressIndicator`, �
 menu. Text is drawn in the theme's font (`font: "fonts/MyFont.ttf"`, a file in the assets folder; the content check looks for it); without one,
 the engine's default font is used (`shards::ui::DEFAULT_FONT`, Fira Sans: Latin, Greek, Cyrillic).
 
+**Full-screen flashes** (U2). A colour over the whole picture for a moment: a reality flash, the 2–3 s glitch of a reality crack.
+A flash is content, kind `flash`:
+
+```ron
+// assets/content/ui/flashes.flash.ron
+{
+    "reality": (color: "#fff4e0", alpha: 0.9, fade_in_s: 0.05, hold_s: 0.15, fade_out_s: 0.8),
+    "crack": (color: "#b8e6ff", alpha: 0.5, fade_in_s: 0.1, hold_s: 2.0, fade_out_s: 0.4, pulses: 10, pulse_rate: 5.0),
+}
+```
+
+It fades in to `alpha` (0 to 1), holds and fades out; `pulses` dips that many times from its start, `pulse_rate` a second,
+`pulse_depth` deep (1, the default: to nothing). `color` is `#rrggbb` or `#rgb`: the content check refuses `#rrggbbaa` (the strength is `alpha`),
+a flash of 0 s or longer than 30 s, a `pulse_rate` of 0 or less when `pulses` is above 0, and a depth or alpha outside 0..1. Code starts one with `shards::ui::flash(world, "reality")`
+or `commands.trigger(PlayFlash("reality".into()))` (an unknown id is a `Warn` line), and the console with `flash_play flash=reality`
+(dev; a control tool, never in a replay). One flash plays at a time: a newer one replaces the one playing. It is drawn as one full-screen
+node above the HUD and the off-screen threat markers (`GlobalZIndex` 2) and under menus and modals (`GlobalZIndex` 5), which takes no clicks, and it runs on real time (`Time<Real>`), so a hit
+stop that holds the clock on a boss's last blow does not hold the flash, and the pause menu opens over it. The player's
+`accessibility.flashes` shapes it on every frame: `full` as written; `reduced` at most 0.35 strong, pulses at most 2 a second and half as deep,
+fades eased and at least 0.15 s; `off` draws nothing. At every level the flash is started and journaled
+(`[local] flash: reality: #fff4e0 at 0.9 for 1 s (in 0.05, hold 0.15, out 0.8) · flashes reduced: at 0.35 for 1 s`), so a game can still play
+its sound; the sound and any shader are the game's. `ai/status` names the flash playing (`ui.flash`). Headless a flash is timed and
+journaled, and nothing is drawn. Like the screens, it is this machine's: no `AiId`, not in a snapshot or the replay hash.
+
 Tests: `crates/shards_ui` (unit tests for parsing and navigation; `tests/ui/`: screens, menus, keyboard, drawing and accessibility labels
 without a GPU, a replay with pressed buttons, an edit to a screen in a running game and the refusal of a broken one, the main menu, the image and
 the loading image — `main_menu.rs`; `bindings.rs` — rebinding through `ui_set`, a refusal that names the action, waiting for
-a key, a mouse button and a gamepad button, Escape, which does not close the screen, a replay), `template/tests/game/main_menu.rs` (the path
+a key, a mouse button and a gamepad button, Escape, which does not close the screen, a replay; `flash.rs` — a flash frame by frame,
+`reduced` and `off`, a newer flash and the trigger, the tool, the content check), `template/tests/game/main_menu.rs` (the path
 through the menu gives the same game and the same replay as without it; "Continue" with a save and without one), scenarios
 `crates/sandbox/scenarios/ui.scenario` and `template/scenarios/menus.scenario`.
 
