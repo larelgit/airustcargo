@@ -392,4 +392,16 @@ fn a_gltf_model_shares_the_bridges_load_and_is_spawned_once() {
     assert!(before.iter().all(|e| app.world().get_entity(*e).is_err()), "the humanoid's scene is gone");
     let spawned = &app.world().resource::<Spawned>().0;
     assert_eq!(spawned.iter().filter(|e| **e == shown).count(), 2, "spawned once more, for the new file: {spawned:?}");
+
+    // Changed to a scene the file does not have: the scene shown so far goes, and nothing takes its place.
+    let before: Vec<Entity> = app.world().get::<Children>(shown).map(|c| c.iter().collect()).unwrap_or_default();
+    assert!(!before.is_empty(), "the gestures' scene is under the model");
+    let missing = GltfModel::new(file).scene(9);
+    app.world_mut().entity_mut(shown).insert(missing);
+    for _ in 0..5 {
+        app.update();
+    }
+    assert!(app.world().get::<WorldAssetRoot>(shown).is_none(), "no root for a scene that is not there");
+    assert!(before.iter().all(|e| app.world().get_entity(*e).is_err()), "the gestures' scene is gone");
+    assert!(app.world().get_entity(shown).is_ok(), "the model's own entity stays");
 }

@@ -10,7 +10,7 @@
 use bevy::asset::AssetPath;
 use bevy::gltf::Gltf;
 use bevy::prelude::*;
-use bevy::world_serialization::WorldAssetRoot;
+use bevy::world_serialization::{InstanceId, WorldAssetRoot, WorldInstance, WorldInstanceSpawner};
 
 /// A model from glTF file `file`, loaded whole: when the file is in, its scene `scene` is spawned on
 /// this entity (a [`WorldAssetRoot`] is inserted beside this component). It requires what a
@@ -22,7 +22,8 @@ use bevy::world_serialization::WorldAssetRoot;
 ///     .with_child((GltfModel::load(&asset_server, "models/humanoid.glb"), Transform::default()));
 /// ```
 ///
-/// A file that does not load, or has no such scene, spawns nothing (the latter is warned once).
+/// A file that does not load, or has no such scene, spawns nothing (the latter is warned once, and a
+/// model changed to such a scene takes its old one away).
 /// Changing the component to another file or scene replaces the scene once the new file is in.
 #[derive(Component, Clone, Debug)]
 #[require(Transform, Visibility)]
@@ -56,26 +57,46 @@ pub(crate) fn plugin(app: &mut App) {
 
 /// `Update`: the models whose file is in get their scene, and a model changed to another file or
 /// scene gets that one (Bevy takes the old scene's entities away when the root changes; until the
-/// new file is in, the old scene stays).
+/// new file is in, the old scene stays). A model changed to a scene its file does not have shows
+/// nothing: its old scene goes.
 fn spawn_models(
     mut commands: Commands,
-    models: Query<(Entity, &GltfModel, Option<&WorldAssetRoot>)>,
+    models: Query<(Entity, &GltfModel, Option<&WorldAssetRoot>, Option<&WorldInstance>)>,
     gltfs: Option<Res<Assets<Gltf>>>,
     mut warned: Local<Vec<(AssetId<Gltf>, usize)>>,
 ) {
     let Some(gltfs) = gltfs else { return };
-    for (entity, model, shown) in &models {
+    for (entity, model, shown, instance) in &models {
         let Some(gltf) = gltfs.get(&model.file) else { continue };
         match gltf.scenes.get(model.scene) {
             Some(scene) if shown.is_none_or(|root| root.0 != *scene) => {
                 commands.entity(entity).insert(WorldAssetRoot(scene.clone()));
             }
             Some(_) => {}
-            None if !warned.contains(&(model.file.id(), model.scene)) => {
-                warned.push((model.file.id(), model.scene));
-                warn!("{:?} has {} scenes: no scene {} to spawn", model.file.path(), gltf.scenes.len(), model.scene);
+            None => {
+                if !warned.contains(&(model.file.id(), model.scene)) {
+                    warned.push((model.file.id(), model.scene));
+                    warn!("{:?} has {} scenes: no scene {} to spawn", model.file.path(), gltf.scenes.len(), model.scene);
+                }
+                if shown.is_some() {
+                    clear_scene(&mut commands, entity, instance.map(|i| **i));
+                }
             }
-            None => {}
         }
     }
+}
+
+/// Takes the scene off `entity`: its instance's entities first, at once (removing the root only
+/// forgets the instance, and a despawn queued before that removal would find nothing), then the root.
+fn clear_scene(commands: &mut Commands, entity: Entity, instance: Option<InstanceId>) {
+    commands.queue(move |world: &mut World| {
+        if let Some(instance) = instance
+            && world.contains_resource::<WorldInstanceSpawner>()
+        {
+            world.resource_scope(|world, mut spawner: Mut<WorldInstanceSpawner>| spawner.despawn_instance_sync(world, &instance));
+        }
+        if let Ok(mut model) = world.get_entity_mut(entity) {
+            model.remove::<(WorldAssetRoot, WorldInstance)>();
+        }
+    });
 }
