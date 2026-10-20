@@ -241,21 +241,6 @@ pub(crate) fn observe_section(world: &World) -> Vec<String> {
     lines
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bearings_have_points() {
-        assert_eq!(compass_point(0.0), "N");
-        assert_eq!(compass_point(44.0), "NE");
-        assert_eq!(compass_point(90.0), "E");
-        assert_eq!(compass_point(200.0), "S");
-        assert_eq!(compass_point(-90.0), "W");
-        assert_eq!(compass_point(359.0), "N");
-    }
-}
-
 /// A map in words, as agents and screen readers get it: the viewer, then each place, a rumour as
 /// the compass direction toward it from the viewer (from the map's middle without one).
 pub(crate) fn map_words(area: &MapArea, points: &[MapPoint], you: Option<&MapYou>) -> String {
@@ -279,4 +264,19 @@ pub(crate) fn map_words(area: &MapArea, points: &[MapPoint], you: Option<&MapYou
         parts.push("no places".to_owned());
     }
     parts.join(" · ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bearings_have_points() {
+        assert_eq!(compass_point(0.0), "N");
+        assert_eq!(compass_point(44.0), "NE");
+        assert_eq!(compass_point(90.0), "E");
+        assert_eq!(compass_point(200.0), "S");
+        assert_eq!(compass_point(-90.0), "W");
+        assert_eq!(compass_point(359.0), "N");
+    }
 }
