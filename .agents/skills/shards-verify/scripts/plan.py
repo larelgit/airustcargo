@@ -61,6 +61,8 @@ WORLDGEN_SOURCES = ["*.region.ron", "*.tile.ron", "*.socket_rules.ron", "*.poi.r
 NET_SOURCES = ["crates/shards_net/*", "crates/shards_steam/*", "crates/shards/src/net_wiring.rs", "crates/shards/src/coop.rs",
                "crates/shards/src/stand_udp.rs", "*.net.ron", "*/scenarios/stand/*"]
 AGENT_DOCS = ["AGENTS.md", "CLAUDE.md", "docs/agents/*", ".agents/skills/*", ".claude/skills/*"]
+# The template is a workspace of its own: from the root it shares the engine's target folder, as CI does.
+SHARED = "CARGO_TARGET_DIR=$PWD/target"
 
 
 def any_match(path, patterns):
@@ -140,7 +142,7 @@ def main():
     if any(any_match(f, AGENT_DOCS) for f in files):
         fast.append(agents_index)
     if template:
-        fast.append("cargo test --manifest-path template/Cargo.toml")
+        fast.append(f"{SHARED} cargo test --manifest-path template/Cargo.toml")
 
     # --- regenerate
     if any(any_match(f, NAV_SOURCES) for f in files):
@@ -148,20 +150,20 @@ def main():
         if any(f.startswith(("crates/shards_npc/src/nav/", "crates/shards_motion/src/controller/")) for f in files):
             notes.append("the bake code changed: if what a tile bakes to changed, raise BAKE_VERSION and bake everything (docs/agents/world-regions-nav.md)")
         if any(f.startswith("template/") and any_match(f, NAV_SOURCES) for f in files):
-            regen.append("(cd template && cargo run -- --bake-nav)")
+            regen.append("(cd template && CARGO_TARGET_DIR=../target cargo run -- --bake-nav)")
     if any(any_match(f, MOTION_SOURCES) for f in files):
-        regen.append("cargo sandbox --bake-motion   # an animset or a clip changed: re-bake the displacement curves (template: (cd template && cargo run -- --bake-motion))")
+        regen.append("cargo sandbox --bake-motion   # an animset or a clip changed: re-bake the displacement curves (template: (cd template && CARGO_TARGET_DIR=../target cargo run -- --bake-motion))")
 
     # --- content and world
     if any(f.startswith("crates/sandbox/assets/") or f.startswith("crates/shards_content/") for f in files) or gameplay_code:
         world.append("cargo sandbox --check-content")
     if any(f.startswith("template/assets/") for f in files) or (template and any(f.endswith(".rs") for f in template)):
-        world.append("(cd template && cargo run -- --check-content)")
+        world.append("(cd template && CARGO_TARGET_DIR=../target cargo run -- --check-content)")
     if any(any_match(f, WORLDGEN_SOURCES) for f in files):
         world.append("cargo sandbox --worldgen-report wilds --seeds 1..1000")
         world.append("cargo sandbox --worldgen-report voxel_arena --seeds 1..1000")
         if template or any(f.startswith("crates/shards_world/src/") for f in files):
-            world.append("(cd template && cargo run -- --worldgen-report valley --seeds 1..1000)")
+            world.append("(cd template && CARGO_TARGET_DIR=../target cargo run -- --worldgen-report valley --seeds 1..1000)")
         notes.append("the generator's output changed? raise the region's `version` and update the manifest hash its scenario expects")
     if any(any_match(f, NET_SOURCES) for f in files):
         world.append("stand: cargo sandbox --stand 2 --headless --paused --port 0 --port-file F --net-sim latency=150,loss=0.02 &, "
@@ -177,7 +179,7 @@ def main():
     if content or gameplay_code or scenarios:
         replays.append("check: cargo test -p sandbox --test sandbox reference_replays")
     if template:
-        replays.append("template: cargo test --manifest-path template/Cargo.toml --test game replays")
+        replays.append(f"template: {SHARED} cargo test --manifest-path template/Cargo.toml --test game replays")
 
     # --- the gate
     engine = bool(crates) or any(f in ("Cargo.toml", "Cargo.lock") or f.startswith((".cargo/", ".config/", "clippy.toml")) for f in files)
@@ -185,9 +187,9 @@ def main():
         gate += ["cargo test --workspace     # CI: cargo nextest run --workspace --profile ci -E 'not binary_id(sandbox::perf)'",
                  "cargo clippy --workspace --all-targets -- -D warnings"]
     if template or [c for c in crates if c not in ("sandbox", "shards_cli")]:
-        gate += ["cargo test --manifest-path template/Cargo.toml",
-                 "cargo clippy --manifest-path template/Cargo.toml --all-targets -- -D warnings",
-                 "(cd template && cargo run -- --check-content && cargo run -- --worldgen-report valley --seeds 1..1000 "
+        gate += [f"{SHARED} cargo test --manifest-path template/Cargo.toml",
+                 f"{SHARED} cargo clippy --manifest-path template/Cargo.toml --all-targets -- -D warnings",
+                 "(cd template && export CARGO_TARGET_DIR=../target && cargo run -- --check-content && cargo run -- --worldgen-report valley --seeds 1..1000 "
                  "&& for r in tests/replays/*.json; do cargo run -- --replay \"$r\" --verify || exit 1; done)"]
     if any(f.startswith(("crates/shards_cli/", "crates/shards_script/")) for f in files) or scenarios:
         gate.append("live, as CI's headless-cli: every crates/sandbox/scenarios/*.scenario against one live game, then again in reverse order")

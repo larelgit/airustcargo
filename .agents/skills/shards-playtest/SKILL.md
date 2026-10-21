@@ -20,8 +20,10 @@ python3 .agents/skills/shards-playtest/scripts/live.py start --name b -- --seed 
 
 It builds first, starts the game in the background (`--port 0 --port-file target/live/<name>.port`, its output
 in `target/live/<name>.log`), waits until it has loaded and prints the line to drive it with. A cold build
-takes 8-16 minutes: on a fresh machine build first in the background (`cargo build -p sandbox -p shards_cli`)
-and start when it is done. The same by hand is in `docs/agents/watching-and-driving.md`, "Commands".
+takes 10-30 minutes: on a fresh machine, build first in the background the way `cargo sandbox` and `cargo shards`
+build, `cargo build -p sandbox && cargo build -p shards_cli` (one command naming both packages unifies their
+features differently and compiles some crates twice), and start when it is done. The template game builds into
+the engine's `target/` too, as CI does. The same by hand is in `docs/agents/watching-and-driving.md`, "Commands".
 
 Every command names the game: `cargo shards --port-file target/live/sandbox.port <command>` from the
 repository root (the shell does not keep `export`s between your commands, so pass the flag each time). The

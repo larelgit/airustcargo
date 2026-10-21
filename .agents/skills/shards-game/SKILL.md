@@ -16,7 +16,7 @@ repository root; in `template/` the game's commands run from that folder.
 |---|---|---|
 | Engine | `path = "../crates/shards"` | a git `tag` or `rev` in `Cargo.toml` |
 | Workspace | its own (`template/Cargo.lock`, `template/.config/nextest.toml`) | its own |
-| Run | `(cd template && cargo run -- …)` (`cargo game` is the alias there) | `cargo run -- …` |
+| Run | `(cd template && CARGO_TARGET_DIR=../target cargo run -- …)`, sharing the engine's build (section 6) | `cargo run -- …` (`cargo game` is the alias) |
 | The CLI | the engine's: `cargo shards --port-file … --token …` from the root (`live.py start --game template` prints the line) | `shards`, installed at the engine's version (`cargo install shards_cli --git … --tag vX.Y.Z`) |
 | Docs | `docs/manual.md`, `docs/agents/*.md` here | the same files at the engine's tag |
 
@@ -38,7 +38,7 @@ and checks: `.agents/skills/shards-game/references/recipes.md`.
 - Content applies while the game runs (hot reload): save the file and the journal says `content reloaded: …`; a
   broken edit names the file, the line and the closest id, and the old version stays in force. Prefabs and the
   arena apply to new entities (`spawn_prefab`) or after a restart.
-- Validate without the game: `(cd template && cargo run -- --check-content)` (exit 0 or 1). It also reads level
+- Validate without the game: `cargo run -- --check-content` in the game's folder (exit 0 or 1). It also reads level
   files, the baked navmesh and the baked motion, and names the bake command when one is stale.
 - Text the player reads is Fluent (`assets/locale/<language>/*.ftl`), named from content as `@id`, in every
   language the game has.
@@ -76,18 +76,23 @@ once when `!shards::core::simulates(role)`; your own input components through `r
 ## 6. The game's gate
 
 ```bash
-cargo test --manifest-path template/Cargo.toml          # tests, scenarios, determinism, replays (seconds once built)
-cargo clippy --manifest-path template/Cargo.toml --all-targets -- -D warnings
-(cd template && cargo run -- --check-content && cargo run -- --worldgen-report valley --seeds 1..1000 \
+CARGO_TARGET_DIR=$PWD/target cargo test --manifest-path template/Cargo.toml   # tests, scenarios, determinism, replays
+CARGO_TARGET_DIR=$PWD/target cargo clippy --manifest-path template/Cargo.toml --all-targets -- -D warnings
+(cd template && export CARGO_TARGET_DIR=../target && cargo run -- --check-content \
+  && cargo run -- --worldgen-report valley --seeds 1..1000 \
   && for r in tests/replays/*.json; do cargo run -- --replay "$r" --verify || exit 1; done)
 ```
 
+`CARGO_TARGET_DIR` makes the template share the engine's build folder, as CI does; without it, the template
+builds Bevy a second time into a `target/` of its own (another 20 minutes and gigabytes). A game in its own
+repository runs the same commands from its folder, without it.
+
 - Reference replays (`tests/replays/smoke.json`, `valley.json`) move when gameplay or content they read changes:
   predict with `python3 .agents/skills/shards-verify/scripts/which_replays.py`; if the change is meant, record
-  them again (`(cd template && cargo test --test game record_reference_replays -- --ignored)`) and check that only
-  the expected files changed.
-- Bakes: an edited tile or level file needs `cargo run -- --bake-nav`; an edited clip `cargo run -- --bake-motion`;
-  commit what they write.
+  them again (`(cd template && CARGO_TARGET_DIR=../target cargo test --test game record_reference_replays -- --ignored)`)
+  and check that only the expected files changed.
+- Bakes: an edited tile or level file needs `cargo run -- --bake-nav`; an edited clip `cargo run -- --bake-motion`
+  (in the game's folder); commit what they write.
 - In this repository, a change to the template also updates `template/README.md` (its file table, the section,
   the test count), and `template/Cargo.lock` must agree with the root `Cargo.lock` (CI checks it).
 

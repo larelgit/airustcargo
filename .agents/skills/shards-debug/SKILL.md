@@ -119,7 +119,7 @@ Run it the CI way to reproduce: `cargo nextest run -p <crate> --profile ci -E 't
 
 ## Content errors
 
-`cargo sandbox --check-content` (template: `(cd template && cargo run -- --check-content)`) names the file, the line
+`cargo sandbox --check-content` (template: `(cd template && CARGO_TARGET_DIR=../target cargo run -- --check-content)`) names the file, the line
 and column, the definition and usually the fix (`did you mean grunt?`). Bakes it reports as stale:
 `cargo sandbox --bake-nav` (tiles, level files, nav settings), `cargo sandbox --bake-motion` (clips of an animset);
 commit what they write. A missing `@id` text is a message to add in every `assets/locale/<language>/*.ftl`.

@@ -89,6 +89,8 @@ fails, `.agents/skills/shards-debug/SKILL.md`.
   crate's count in "Tests";
 - `CHANGELOG.md`: one entry under `## [Unreleased]` in Added, Fixed or Changed, naming the tests and any
   re-recorded replays;
+- `docs/agents/watching-and-driving.md` for a new tool or `named:` condition: the catalogue of engine tools and
+  the list of conditions are there, and agents choose from them;
 - `docs/agents/<topic>.md` when agents must follow a new rule (`AGENTS.md` stays under 9 KiB:
   `cargo test -p sandbox --test agents_index`); `README.md` only when features or the quick start change;
   `template/README.md` when the template changes.

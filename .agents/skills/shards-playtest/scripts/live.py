@@ -107,8 +107,11 @@ def start(root, args):
     game_cwd = (root / workdir).resolve()
     release = ["--release"] if args.release else []
 
+    # The template is a workspace of its own: it shares the engine's target folder (as CI does) rather than
+    # building Bevy a second time into template/target/. The CLI and every cargo call below see the same.
+    os.environ.setdefault("CARGO_TARGET_DIR", str(root / "target"))
     if not args.no_build:
-        print(f"building {args.game} and the shards CLI (a cold build takes 8-16 minutes) ...", flush=True)
+        print(f"building {args.game} and the shards CLI (a cold build takes 10-30 minutes) ...", flush=True)
         for cmd, cwd in [(build + release, game_cwd), (["cargo", "build", "-p", "shards_cli"], root)]:
             if subprocess.run(cmd, cwd=cwd).returncode != 0:
                 sys.exit(f"build failed: {' '.join(cmd)} (in {cwd})")

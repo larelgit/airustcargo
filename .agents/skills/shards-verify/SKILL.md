@@ -28,16 +28,19 @@ intent: add what it cannot see (a behaviour change in `shards_core` reaches ever
   `cargo test -p sandbox --test sandbox`; a part of it: `cargo test -p sandbox --test sandbox scenario_files::`.
 - Clippy on what you touched: `cargo clippy -p <crate> --all-targets -- -D warnings`. It fails on `x.sin()` and
   the other `f32` maths methods by design: use `ops::sin(x)` (`docs/agents/determinism.md`).
-- Content only: nothing to rebuild. `cargo sandbox --check-content` (template: `(cd template && cargo run -- --check-content)`),
+- Content only: nothing to rebuild. `cargo sandbox --check-content` (template: `(cd template && CARGO_TARGET_DIR=../target cargo run -- --check-content)`),
   and in a live game the edit applies on save (`.agents/skills/shards-playtest/SKILL.md`).
 - One scenario: against a live game started with `live.py start` (`.agents/skills/shards-playtest/SKILL.md`),
   `cargo shards --port-file target/live/sandbox.port scenario crates/sandbox/scenarios/<topic>.scenario`; the
   in-process run comes with the sandbox tests.
 
 Builds are the slow part. `.cargo/config.toml` runs 4 jobs; with RAM to spare (2-4 GB a job, nothing else
-building) `CARGO_BUILD_JOBS=8` is about a third faster. A cold build is 8-16 minutes, so start it in the
-background early. The whole workspace's test build needs about 22 GB in `target/`: check `df -h .` first, and on
-a small machine run the per-crate and sandbox tests and say that the full run is left to CI.
+building) `CARGO_BUILD_JOBS=8` is about a third faster. A cold build takes 10-30 minutes (about 25 on four
+cores), so start it in the background early. The whole workspace's test build needs about 22 GB in `target/`:
+check `df -h .` first, and on a small machine run the per-crate and sandbox tests and say that the full run is
+left to CI. The template is a workspace of its own and builds Bevy again into a `target/` of its own unless it
+shares the engine's target folder, as CI does: put `CARGO_TARGET_DIR=$PWD/target` before a template command run
+from the root, and `CARGO_TARGET_DIR=../target` before one run inside `template/`.
 
 ## 3. The gate, before you push
 
@@ -48,14 +51,15 @@ cargo test --workspace                                    # CI: cargo nextest ru
 cargo clippy --workspace --all-targets -- -D warnings
 cargo sandbox --check-content
 cargo sandbox --worldgen-report wilds --seeds 1..1000     # and voxel_arena; both must exit 0
-cargo test --manifest-path template/Cargo.toml            # the template uses every engine crate
-cargo clippy --manifest-path template/Cargo.toml --all-targets -- -D warnings
+CARGO_TARGET_DIR=$PWD/target cargo test --manifest-path template/Cargo.toml     # the template uses every engine crate
+CARGO_TARGET_DIR=$PWD/target cargo clippy --manifest-path template/Cargo.toml --all-targets -- -D warnings
 ```
 
 The template's own binary checks run from its folder, as CI's `template` job does:
 
 ```bash
-(cd template && cargo run -- --check-content && cargo run -- --worldgen-report valley --seeds 1..1000 \
+(cd template && export CARGO_TARGET_DIR=../target && cargo run -- --check-content \
+  && cargo run -- --worldgen-report valley --seeds 1..1000 \
   && for r in tests/replays/*.json; do cargo run -- --replay "$r" --verify || exit 1; done)
 ```
 
@@ -95,14 +99,14 @@ checked tick by tick. They move only when gameplay changes or when content the s
    names the replays that read the definitions you changed (from their `check_parts.content`). A definition
    added to a kind they read by id moves none. Code that changes gameplay moves those that reach it.
 2. Run them: `cargo test -p sandbox --test sandbox reference_replays` (template:
-   `cargo test --manifest-path template/Cargo.toml --test game replays`).
+   `CARGO_TARGET_DIR=$PWD/target cargo test --manifest-path template/Cargo.toml --test game replays`).
 3. A divergence you did not predict is a bug in the change: read `.agents/skills/shards-debug/SKILL.md`.
    Never re-record to make it go away.
 4. A divergence you meant: record again, then confirm that only the expected files changed.
 
 ```bash
 cargo test -p sandbox --test sandbox -- --ignored record_reference_replays
-(cd template && cargo test --test game record_reference_replays -- --ignored)  # the template's
+(cd template && CARGO_TARGET_DIR=../target cargo test --test game record_reference_replays -- --ignored)  # the template's
 git diff --stat tests/replays/ template/tests/replays/                          # only the ones you predicted
 ```
 

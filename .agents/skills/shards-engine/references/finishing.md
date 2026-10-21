@@ -34,6 +34,11 @@ to content formats goes in Changed and says what a game must do). The house styl
 
 ## `docs/agents/<topic>.md` and `AGENTS.md`
 
+A new tool, query or `named:` condition joins the catalogue in `docs/agents/watching-and-driving.md` (the engine
+tools by area, and the conditions for `step --until named:…`), with the one-line description an agent needs to pick
+it; combat tools are explained in `docs/agents/combat.md`, engine rules in `docs/agents/tools-and-invariants.md`
+where their module has an entry.
+
 Add a bullet to the topic file when your change creates a rule that the next agent must follow to avoid a bug
 (an invariant to keep, a function every caller must go through, a field that must stay out of the hash), in the
 form of the existing bullets: a bold name, the rule, why. `AGENTS.md` changes only for a rule every change
