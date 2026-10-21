@@ -30,6 +30,9 @@
             "block": (phases: [("raise", 0.15), ("hold", 0.3), ("lower", 0.1)]),
             "stagger": (name: "hit", blend: 0.04),
             "death": (),
+            // The downed pose (`spar_down`, 20 s) falls as the death does, at the clip's own speed, and
+            // then lies still until a revive or the bleed-out (`holds`), rather than falling for 20 s.
+            "downed": (name: "death", phases: [("down", 1.2)], holds: ["down"]),
             // The monsters' moves: the same swings on their own timelines, phase by phase (their
             // telegraphs have sounds of their own).
             "claw": (name: "light_2", phases: [("windup", 0.2), ("active", 0.1), ("recovery", 0.3)]),
@@ -56,8 +59,14 @@
         // while the legs go on walking or running (the drink asks for no `anim`: the action's state
         // is the simulation's, and the picture decides how to show it). The spar's roll that keeps
         // the body's facing turns the model to the roll's heading over 0.08 s (and back after it), so a
-        // roll to the side under lock-on rolls that way while the body still looks at its target.
-        actions: {"drink": (clip: "drink", layer: "upper"), "spar_stroke": "light_1", "spar_roll_keep": (clip: "roll", turn: 0.08)},
+        // roll to the side under lock-on rolls that way while the body still looks at its target. The
+        // downed pose shows the `downed` clip, which holds the fall's last pose.
+        actions: {
+            "drink": (clip: "drink", layer: "upper"),
+            "spar_stroke": "light_1",
+            "spar_roll_keep": (clip: "roll", turn: 0.08),
+            "spar_down": "downed",
+        },
         // A hit and a block show on the upper body for a moment, over whatever it plays (a swing, the
         // drink, the walk): the `hit` clip from its start, in part, gone within a third of a second.
         // The picture only: the action that runs, and what it does, are the simulation's.

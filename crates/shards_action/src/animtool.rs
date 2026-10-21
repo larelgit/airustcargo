@@ -148,15 +148,22 @@ fn label(world: &World, e: Entity) -> String {
 }
 
 /// How a seeked clip follows the action: ` by phase` for a clip timed to the action's phases (and the
-/// phases it loops), ` evenly (the clip is timed to windup, active, recovery; the action is not)` for
+/// phases it loops or holds), ` evenly (the clip is timed to windup, active, recovery; the action is not)` for
 /// one timed to others, nothing for a clip without phases.
 fn seek_how(set: &AnimSet, clip: &str, action: Option<&ActionTime>) -> String {
     let (Some(def), Some(a)) = (set.clip(clip), action) else { return String::new() };
     if def.phases.is_empty() {
         return String::new();
     }
-    if phase_seek(a.phases, &def.phases, &def.loops, a.t, a.length).is_some() {
-        return if def.loops.is_empty() { " by phase".to_owned() } else { format!(" by phase, looping {}", def.loops.join(", ")) };
+    if phase_seek(a.phases, &def.phases, &def.loops, &def.holds, a.t, a.length).is_some() {
+        let mut how = " by phase".to_owned();
+        if !def.loops.is_empty() {
+            how.push_str(&format!(", looping {}", def.loops.join(", ")));
+        }
+        if !def.holds.is_empty() {
+            how.push_str(&format!(", holding {}", def.holds.join(", ")));
+        }
+        return how;
     }
     let names: Vec<&str> = def.phases.iter().map(|p| p.0.as_str()).collect();
     format!(" evenly (the clip is timed to {}; the action is not)", names.join(", "))

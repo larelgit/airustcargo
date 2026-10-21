@@ -126,6 +126,12 @@
 //! the clip repeats at the authored speed for as long as the action's phase lasts (a toppled body
 //! breathing for 4 s on a 1.5 s breath); the next phase starts at its own start.
 //!
+//! A phase that outlasts its motion is no stretch either: name it in `holds` (`holds: ["dead"]`) and
+//! its stretch of the clip plays at the authored speed, then holds its last pose for as long as the
+//! action's phase lasts (a body that falls in 1.3 s and lies for the rest of a 3.5 s death, rather
+//! than falling in slow motion for 3.5 s). An action's phase shorter than the clip's ends where it
+//! ends, as a looped one does. A phase is in `loops` or in `holds`, not both.
+//!
 //! Time a run gains past its phases (a miss's longer recovery) stretches its last phase. An
 //! action whose phases are not the clip's plays it evenly, as one without `phases` does;
 //! the content check refuses one that shares some of the clip's phase names but not all, in
@@ -327,11 +333,25 @@ pub struct ClipDef {
     /// phase lasts (a breath while a body lies toppled), instead of being stretched over it.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub loops: Vec<String>,
+    /// Phases of `phases` whose stretch of the clip plays at the authored speed and then holds its
+    /// last pose while the action's phase lasts on (a fall, then the body lying for the rest of a long
+    /// death), instead of being stretched over it. Not also in `loops`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub holds: Vec<String>,
 }
 
 impl Default for ClipDef {
     fn default() -> Self {
-        Self { name: None, source: None, speed: 1.0, blend: None, cues: Vec::new(), phases: Vec::new(), loops: Vec::new() }
+        Self {
+            name: None,
+            source: None,
+            speed: 1.0,
+            blend: None,
+            cues: Vec::new(),
+            phases: Vec::new(),
+            loops: Vec::new(),
+            holds: Vec::new(),
+        }
     }
 }
 
@@ -1505,17 +1525,26 @@ fn phases_text(phases: &[Phase]) -> String {
 /// `length` seconds, as a fraction of the clip (0 to 1): the action's phase that `t` falls in is
 /// found, and the same fraction of the clip's phase of that name is the place. A phase named in
 /// `loops` repeats its stretch of the clip at the authored speed instead (`t - start` modulo its clip
-/// seconds). Time the run has past the action's phases (a miss's longer recovery) stretches the last
-/// phase. `None` when the two are not timed alike (other names, another order, a clip of no length):
-/// the clip plays evenly then. See "Phases on the clip" in the [module](self).
-pub fn phase_seek(action: &[Phase], clip: &[Phase], loops: &[String], t: f32, length: f32) -> Option<f32> {
-    phase_place(action, clip, loops, t, length).map(|(at, _)| at)
+/// seconds); one named in `holds` plays its stretch at the authored speed and then holds its last
+/// pose (`t - start`, at most its clip seconds). Time the run has past the action's phases (a miss's
+/// longer recovery) stretches the last phase, or holds it. `None` when the two are not timed alike
+/// (other names, another order, a clip of no length): the clip plays evenly then. See "Phases on the
+/// clip" in the [module](self).
+pub fn phase_seek(action: &[Phase], clip: &[Phase], loops: &[String], holds: &[String], t: f32, length: f32) -> Option<f32> {
+    phase_place(action, clip, loops, holds, t, length).map(|(at, _)| at)
 }
 
 /// [`phase_seek`] with the stretch of the clip that repeats: `Some((start, end))`, fractions of the
 /// clip, while `t` is in a phase named in `loops`. Going back inside it is the stretch starting
 /// over, not the clip ([`crossed_cues_in`]).
-pub fn phase_place(action: &[Phase], clip: &[Phase], loops: &[String], t: f32, length: f32) -> Option<(f32, Option<(f32, f32)>)> {
+pub fn phase_place(
+    action: &[Phase],
+    clip: &[Phase],
+    loops: &[String],
+    holds: &[String],
+    t: f32,
+    length: f32,
+) -> Option<(f32, Option<(f32, f32)>)> {
     if !timed_alike(action, clip) {
         return None;
     }
@@ -1536,6 +1565,8 @@ pub fn phase_place(action: &[Phase], clip: &[Phase], loops: &[String], t: f32, l
             let looped = c.1 > EPS && loops.contains(&c.0);
             let on_clip = if looped {
                 into % c.1
+            } else if holds.contains(&c.0) {
+                into.min(c.1)
             } else if lasts > EPS {
                 (into / lasts).min(1.0) * c.1
             } else {
@@ -1562,7 +1593,7 @@ impl AnimSet {
     pub fn place(&self, clip: &str, action: &ActionTime) -> (f32, Option<(f32, f32)>) {
         let even = || (even_progress(action.t, action.length), None);
         let Some(def) = self.clips.get(clip) else { return even() };
-        phase_place(action.phases, &def.phases, &def.loops, action.t, action.length).unwrap_or_else(even)
+        phase_place(action.phases, &def.phases, &def.loops, &def.holds, action.t, action.length).unwrap_or_else(even)
     }
 }
 
@@ -1959,25 +1990,33 @@ impl AnimSet {
     }
 }
 
-/// `clips.NAME.phases`: each named, once, lasting >= 0 s, and some length in all; `loops` names
-/// some of them.
+/// `clips.NAME.phases`: each named, once, lasting >= 0 s, and some length in all; `loops` and
+/// `holds` name some of them, never the same one.
 fn check_clip_phases(refs: &mut Refs, name: &str, clip: &ClipDef) {
     let phases = &clip.phases;
     let names: Vec<&str> = phases.iter().map(|p| p.0.as_str()).collect();
-    for looped in &clip.loops {
-        if names.is_empty() {
-            refs.error(format!(
-                "clips.{name}.loops names `{looped}`, but the clip has no `phases`; give the phases it was timed to, \
-                 e.g. `phases: [(\"{looped}\", 1.0)]`"
-            ));
-            break;
+    for (field, open) in [("loops", &clip.loops), ("holds", &clip.holds)] {
+        for phase in open {
+            if names.is_empty() {
+                refs.error(format!(
+                    "clips.{name}.{field} names `{phase}`, but the clip has no `phases`; give the phases it was timed to, \
+                     e.g. `phases: [(\"{phase}\", 1.0)]`"
+                ));
+                break;
+            }
+            if !names.contains(&phase.as_str()) {
+                let hint = shards_content::db::closest(phase, names.iter().copied())
+                    .map(|c| format!(" (did you mean `{c}`?)"))
+                    .unwrap_or_default();
+                refs.error(format!("clips.{name}.{field} names an unknown phase `{phase}`{hint}; phases: {}", names.join(", ")));
+            }
         }
-        if !names.contains(&looped.as_str()) {
-            let hint = shards_content::db::closest(looped, names.iter().copied())
-                .map(|c| format!(" (did you mean `{c}`?)"))
-                .unwrap_or_default();
-            refs.error(format!("clips.{name}.loops names an unknown phase `{looped}`{hint}; phases: {}", names.join(", ")));
-        }
+    }
+    for both in clip.holds.iter().filter(|h| clip.loops.contains(h)) {
+        refs.error(format!(
+            "clips.{name}: phase `{both}` is in both `loops` and `holds`; a phase repeats its stretch or holds its last pose, \
+             not both"
+        ));
     }
     if phases.is_empty() {
         return;
@@ -2709,7 +2748,7 @@ mod tests {
     fn a_clip_timed_to_the_actions_phases_is_seeked_phase_by_phase() {
         let quick = phases(&[("windup", 0.2), ("active", 0.1), ("recovery", 0.3)]);
         let slow = phases(&[("windup", 0.6), ("active", 0.15), ("recovery", 0.8)]);
-        let at = |t, length| phase_seek(&slow, &quick, &[], t, length).unwrap();
+        let at = |t, length| phase_seek(&slow, &quick, &[], &[], t, length).unwrap();
         // The slow windup shows the quick one's 0.2 s, and the strike comes as its active phase starts.
         assert!(close(at(0.3, 1.55), 0.1 / 0.6), "{}", at(0.3, 1.55));
         assert!(close(at(0.6, 1.55), 0.2 / 0.6), "{}", at(0.6, 1.55));
@@ -2720,14 +2759,14 @@ mod tests {
         // A run longer than the phases (a miss's longer recovery) stretches the last phase.
         assert!(close(at(0.75 + 0.65, 2.05), (0.3 + 0.15) / 0.6), "{}", at(1.4, 2.05));
         // The same timings seek as evenly.
-        assert!(close(phase_seek(&quick, &quick, &[], 0.15, 0.6).unwrap(), even_progress(0.15, 0.6)));
+        assert!(close(phase_seek(&quick, &quick, &[], &[], 0.15, 0.6).unwrap(), even_progress(0.15, 0.6)));
         // Not timed alike: other names, another order, fewer phases, none, a clip of no length.
-        assert_eq!(phase_seek(&phases(&[("stroke", 0.5)]), &quick, &[], 0.1, 0.5), None);
+        assert_eq!(phase_seek(&phases(&[("stroke", 0.5)]), &quick, &[], &[], 0.1, 0.5), None);
         let swapped = phases(&[("active", 0.1), ("windup", 0.2), ("recovery", 0.3)]);
-        assert_eq!(phase_seek(&swapped, &quick, &[], 0.1, 0.6), None);
-        assert_eq!(phase_seek(&quick[..2], &quick, &[], 0.1, 0.3), None);
-        assert_eq!(phase_seek(&[], &quick, &[], 0.1, 0.6), None);
-        assert_eq!(phase_seek(&quick, &phases(&[("windup", 0.0), ("active", 0.0), ("recovery", 0.0)]), &[], 0.1, 0.6), None);
+        assert_eq!(phase_seek(&swapped, &quick, &[], &[], 0.1, 0.6), None);
+        assert_eq!(phase_seek(&quick[..2], &quick, &[], &[], 0.1, 0.3), None);
+        assert_eq!(phase_seek(&[], &quick, &[], &[], 0.1, 0.6), None);
+        assert_eq!(phase_seek(&quick, &phases(&[("windup", 0.0), ("active", 0.0), ("recovery", 0.0)]), &[], &[], 0.1, 0.6), None);
     }
 
     #[test]
@@ -2735,14 +2774,64 @@ mod tests {
         let clip = phases(&[("fall", 0.5), ("down", 1.5), ("rise", 1.0)]);
         let action = phases(&[("fall", 0.5), ("down", 4.0), ("rise", 1.0)]);
         let loops = ["down".to_owned()];
-        let at = |t| phase_seek(&action, &clip, &loops, t, 5.5).unwrap();
+        let at = |t| phase_seek(&action, &clip, &loops, &[], t, 5.5).unwrap();
         // The breath repeats at its own speed: 2 s into the phase is 0.5 s into its second pass.
         assert!(close(at(2.5), (0.5 + 0.5) / 3.0), "{}", at(2.5));
         assert!(close(at(0.5 + 1.5 * 2.0 + 0.25), (0.5 + 0.25) / 3.0));
         // The rise starts at its own start and is stretched as usual.
         assert!(close(at(4.75), 2.25 / 3.0) && close(at(5.5), 1.0));
         // Without `loops` the breath is stretched over the 4 s.
-        assert!(close(phase_seek(&action, &clip, &[], 2.5, 5.5).unwrap(), (0.5 + 0.75) / 3.0));
+        assert!(close(phase_seek(&action, &clip, &[], &[], 2.5, 5.5).unwrap(), (0.5 + 0.75) / 3.0));
+    }
+
+    #[test]
+    fn a_held_phase_plays_at_its_speed_then_holds_its_last_pose() {
+        // A 1.3 s fall on a death that lasts 3.5 s: the fall at its own speed, then the body lies.
+        let clip = phases(&[("dead", 1.3)]);
+        let action = phases(&[("dead", 3.5)]);
+        let holds = ["dead".to_owned()];
+        let at = |t| phase_seek(&action, &clip, &[], &holds, t, 3.5).unwrap();
+        assert!(close(at(0.0), 0.0) && close(at(0.65), 0.5), "{}", at(0.65));
+        assert!(close(at(1.3), 1.0) && close(at(2.0), 1.0) && close(at(3.5), 1.0), "{}", at(2.0));
+        // Without `holds` the fall is stretched over the 3.5 s.
+        assert!(close(phase_seek(&action, &clip, &[], &[], 0.65, 3.5).unwrap(), 0.65 / 3.5));
+        // A held phase in the middle: the next phase starts at its own start, and is stretched as usual.
+        let clip = phases(&[("fall", 0.5), ("down", 1.0), ("rise", 0.5)]);
+        let action = phases(&[("fall", 0.5), ("down", 3.0), ("rise", 1.0)]);
+        let holds = ["down".to_owned()];
+        let place = |t| phase_place(&action, &clip, &[], &holds, t, 4.5).unwrap();
+        assert!(close(place(1.0).0, 1.0 / 2.0) && close(place(3.0).0, 1.5 / 2.0), "{:?}", place(1.0));
+        assert_eq!(place(3.0).1, None, "a held phase repeats nothing");
+        assert!(close(place(4.0).0, 1.75 / 2.0), "{:?}", place(4.0));
+        // An action's held phase shorter than the clip's ends where it ends.
+        let short = phases(&[("fall", 0.5), ("down", 0.4), ("rise", 1.0)]);
+        assert!(close(phase_seek(&short, &clip, &[], &holds, 0.9, 1.9).unwrap(), 0.9 / 2.0));
+        assert!(close(phase_seek(&short, &clip, &[], &holds, 0.95, 1.9).unwrap(), (1.5 + 0.025) / 2.0));
+        // Time past the action's phases holds a held last phase too.
+        let clip = phases(&[("dead", 1.3)]);
+        let action = phases(&[("dead", 1.0)]);
+        let holds = ["dead".to_owned()];
+        assert!(close(phase_seek(&action, &clip, &[], &holds, 0.65, 2.0).unwrap(), 0.5));
+        assert!(close(phase_seek(&action, &clip, &[], &holds, 2.0, 2.0).unwrap(), 1.0));
+    }
+
+    #[test]
+    fn a_dead_clip_that_holds_its_phase_falls_at_its_speed_and_lies_still() {
+        let mut set = set();
+        let dead = BodyStatus { dead: true, ..default() };
+        let death = phases(&[("dead", 3.5)]);
+        let idle = moving(0.0);
+        // Untimed, the dead clip is stretched over the whole death.
+        let c = select_clip_timed(Some(ActionTime::new("death", 0.65, 3.5, &death)), &idle, dead, &set, None);
+        assert!(close(c.seek_to.unwrap(), 0.65 / 3.5), "{c:?}");
+        let die = set.clips.get_mut("die").unwrap();
+        die.phases = phases(&[("dead", 1.3)]);
+        die.holds = vec!["dead".into()];
+        let c = select_clip_timed(Some(ActionTime::new("death", 0.65, 3.5, &death)), &idle, dead, &set, None);
+        assert_eq!(c.clip, Some("die"));
+        assert!(close(c.seek_to.unwrap(), 0.5) && c.speed == 0.0, "gameplay still leads: {c:?}");
+        let c = select_clip_timed(Some(ActionTime::new("death", 2.4, 3.5, &death)), &idle, dead, &set, None);
+        assert!(close(c.seek_to.unwrap(), 1.0), "the last pose, held: {c:?}");
     }
 
     #[test]
@@ -2750,13 +2839,13 @@ mod tests {
         let clip = phases(&[("fall", 0.5), ("down", 1.5), ("rise", 1.0)]);
         let action = phases(&[("fall", 0.5), ("down", 4.0), ("rise", 1.0)]);
         let loops = ["down".to_owned()];
-        let place = |t| phase_place(&action, &clip, &loops, t, 5.5).unwrap();
+        let place = |t| phase_place(&action, &clip, &loops, &[], t, 5.5).unwrap();
         // The stretch is said while the action is in the looped phase, and only then.
         assert_eq!(place(0.25).1, None);
         let (start, end) = place(2.5).1.unwrap();
         assert!(close(start, 0.5 / 3.0) && close(end, 2.0 / 3.0), "{start} {end}");
         assert_eq!(place(4.75).1, None);
-        assert_eq!(phase_place(&action, &clip, &[], 2.5, 5.5).unwrap().1, None, "no `loops`, no stretch");
+        assert_eq!(phase_place(&action, &clip, &[], &[], 2.5, 5.5).unwrap().1, None, "no `loops`, no stretch");
 
         // On a 3 s clip: a thud as it falls, a breath in the down stretch (0.5 s to 2 s).
         let cues = [CueDef::new(0.3, "thud"), CueDef::new(1.2, "breath")];
@@ -2940,6 +3029,8 @@ mod tests {
                 "bad": (phases: [("", 0.1), ("a", -1.0), ("a", 0.0)]),
                 "bare": (loops: ["x"]),
                 "breath": (phases: [("in", 1.0)], loops: ["inn"]),
+                "held": (holds: ["x"]),
+                "lying": (phases: [("down", 1.0)], loops: ["down"], holds: ["down", "dwn"]),
                 "still": (phases: [("still", 0.0)]),
             },
             actions: {"spar": "swing"}, by_moveset: {"brute": {"swing": "heavy"}}) }"#;
@@ -2971,6 +3062,15 @@ mod tests {
                      e.g. `phases: [(\"x\", 1.0)]`"
                 ),
                 format!("{h}clips.breath.loops names an unknown phase `inn` (did you mean `in`?); phases: in"),
+                format!(
+                    "{h}clips.held.holds names `x`, but the clip has no `phases`; give the phases it was timed to, \
+                     e.g. `phases: [(\"x\", 1.0)]`"
+                ),
+                format!("{h}clips.lying.holds names an unknown phase `dwn` (did you mean `down`?); phases: down"),
+                format!(
+                    "{h}clips.lying: phase `down` is in both `loops` and `holds`; a phase repeats its stretch or holds its \
+                     last pose, not both"
+                ),
                 format!("{h}clips.still.phases last 0 s in all; give the seconds the clip was timed to"),
                 format!(
                     "{h}clips.heavy.phases (windup 0.5, strike 0.1, recovery 0.3) and action `light`, which plays it (windup 0.6, \
