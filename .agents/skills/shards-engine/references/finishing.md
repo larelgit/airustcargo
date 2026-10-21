@@ -9,7 +9,10 @@ at how the last change of the same kind did it (`git show <commit> -- docs CHANG
 The module's section (find it with `grep -n '^## \|^### ' docs/manual.md`). Add or correct, in the section's own
 order: what the feature does and when; the content fields with their defaults and limits; the tools and their
 replies; journal lines; conditions; what it does not do yet. Prefer real output (copied from a run) to
-paraphrase. A behaviour that changed is rewritten where it is described, not appended as a note.
+paraphrase. A behaviour that changed is rewritten where it is described, not appended as a note. A tool is
+also listed in the AI layer's table of tools by scope (`grep -n '^### Tools' docs/manual.md`), a new sandbox
+scenario in "The sandbox", and both in the crate's own docs that list them (the crate doc in `src/lib.rs`, the
+header of `src/tools.rs`).
 
 ## `docs/engine-progress.md`
 
@@ -18,13 +21,16 @@ that checks it), 🟡 partly (say what is missing), ⏳ ahead.
 
 - The row of the module's item, or of the work item (`N8`, `R1`, `G10 / C3.2`, …) in the tables near the end:
   what is built, where (files, functions), the tests that prove it, whether the reference replays changed.
-- The crate's row in "Tests": the new count, with what the change added (`N8d +5 in live.rs`). Count with
-  `cargo test -p <crate> -- --list 2>/dev/null | grep -c ': test$'` before and after.
+- The crate's row in "Tests": the new count, with what the change added (`N8d +5 in live.rs`). Count before and
+  after with `cargo test -p <crate> -- --list 2>/dev/null | grep -c ': test$'`, less the ignored ones the table
+  names apart (`-- --list --ignored`) and doctests, with the features the row counts (some give the default and
+  the `render` count) and on your OS (some rows give Linux and Windows apart); change only the numbers you measured.
 
 ## `CHANGELOG.md`
 
 One entry under `## [Unreleased]`, in `### Added`, `### Fixed` or `### Changed` (a breaking change to the API or
-to content formats goes in Changed and says what a game must do). The house style, one paragraph:
+to content formats goes in Changed and says what a game must do), as the first bullet of its list: the newest
+come first. The house style, one paragraph:
 
 ```text
 - <What it is> (<work item>; the manual's "<section>"): <the API and content fields, in backticks, with their
@@ -60,6 +66,7 @@ follows or a new topic file (one index row); it must stay under 9 KiB, and
   so: `K3 review: a misspelt field of a shot point is an error (CodeRabbit)`.
 - Body: why, what changed in behaviour, how it is tested, and whether replays were re-recorded. Wrap it near 100
   columns.
-- No model names in commits, code, comments or docs.
+- Code, comments and docs never name the agent or model that wrote them; commit trailers follow your
+  environment's attribution rules.
 - Before you push, the gate of `.agents/skills/shards-verify/SKILL.md` (section 3) has passed, and your report
   lists what ran.

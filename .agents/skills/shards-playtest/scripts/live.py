@@ -56,14 +56,14 @@ def shards(root, game_cwd, port_file, *args, timeout=None):
     """Runs the CLI from the game's folder, where its token is (`.shards/<port>.token`)."""
     cmd = [str(cli_binary(root)), "--port-file", str(port_file), *args]
     try:
-        return subprocess.run(cmd, cwd=game_cwd, capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(cmd, cwd=game_cwd, capture_output=True, encoding="utf-8", errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(cmd, 124, "", f"timed out after {timeout}s")
 
 
 def read_state(folder, name):
     path = folder / f"{name}.json"
-    return json.loads(path.read_text()) if path.is_file() else None
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
 
 
 def pid_alive(pid):
@@ -79,37 +79,54 @@ def pid_alive(pid):
         return True
 
 
+def ours(state):
+    """Whether the state's pid is still its game: alive, and (where `ps` can tell) started with its port file, so
+    a pid the system gave to another process since is never signalled. None: alive, but it cannot be told."""
+    pid = state["pid"]
+    if not pid_alive(pid):
+        return False
+    if WINDOWS:
+        return None
+    out = subprocess.run(["ps", "-p", str(pid), "-o", "args="], capture_output=True, encoding="utf-8", errors="replace")
+    if out.returncode != 0:
+        return None
+    return state["port_file"] in out.stdout
+
+
 def tail(path, lines=25):
     try:
-        return "\n".join(Path(path).read_text(errors="replace").splitlines()[-lines:])
+        return "\n".join(Path(path).read_text(encoding="utf-8", errors="replace").splitlines()[-lines:])
     except OSError:
         return "(no log)"
 
 
-def drive_hint(root, state):
-    """The command an agent types, from the repository root."""
-    port_file = Path(state["port_file"]).relative_to(root).as_posix()
-    prefix = f"cargo shards --port-file {port_file}"
-    if state["game"] != "sandbox":
-        port = Path(state["port_file"]).read_text().strip() if Path(state["port_file"]).is_file() else "PORT"
-        token = (Path(state["cwd"]) / ".shards" / f"{port}.token").relative_to(root).as_posix()
-        prefix += f' --token "$(cat {token})"'
-    return prefix
+def drive_hint(root, state, command):
+    """The line an agent types, from the repository root, to run `command` against this game. The CLI finds a
+    game's tokens (its own and its clients', `.shards/<port>.token`) from the folder it runs in, so a game that
+    runs in another folder (the template) is driven from there, with the CLI binary."""
+    if state["game"] == "sandbox":
+        return f"cargo shards --port-file {Path(state['port_file']).relative_to(root).as_posix()} {command}"
+    cwd = Path(state["cwd"])
+    cli = Path(os.path.relpath(cli_binary(root), cwd)).as_posix()
+    port_file = Path(os.path.relpath(state["port_file"], cwd)).as_posix()
+    return f"(cd {cwd.relative_to(root).as_posix()} && {cli} --port-file {port_file} {command})"
 
 
 def start(root, args):
     folder = state_dir(root)
     name = args.name or args.game
     old = read_state(folder, name)
-    if old and pid_alive(old["pid"]):
+    if old and ours(old) is not False:
         sys.exit(f"a game named {name} is running (pid {old['pid']}): stop it first (live.py stop {name}) or pick another --name")
     workdir, build, run = GAMES[args.game]
     game_cwd = (root / workdir).resolve()
     release = ["--release"] if args.release else []
 
     # The template is a workspace of its own: it shares the engine's target folder (as CI does) rather than
-    # building Bevy a second time into template/target/. The CLI and every cargo call below see the same.
-    os.environ.setdefault("CARGO_TARGET_DIR", str(root / "target"))
+    # building Bevy a second time into its own. Not on Windows, where the engine and the template pick other
+    # linkers, and one folder would rebuild everything at each switch. The CLI and every cargo call see it.
+    if not WINDOWS:
+        os.environ.setdefault("CARGO_TARGET_DIR", str(root / "target"))
     if not args.no_build:
         print(f"building {args.game} and the shards CLI (a cold build takes 10-30 minutes) ...", flush=True)
         for cmd, cwd in [(build + release, game_cwd), (["cargo", "build", "-p", "shards_cli"], root)]:
@@ -129,7 +146,7 @@ def start(root, args):
         process = subprocess.Popen(cmd, cwd=game_cwd, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, **detach)
     state = {"name": name, "game": args.game, "pid": process.pid, "port_file": str(port_file), "log": str(log),
              "cwd": str(game_cwd), "command": cmd, "started": time.strftime("%Y-%m-%d %H:%M:%S")}
-    (folder / f"{name}.json").write_text(json.dumps(state, indent=2))
+    (folder / f"{name}.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
 
     stand = "--stand" in args.game_args
     waited = shards(root, game_cwd, port_file, *(["--peer", "all"] if stand else []), "wait", "--timeout", str(args.timeout),
@@ -139,11 +156,10 @@ def start(root, args):
             (folder / f"{name}.json").unlink(missing_ok=True)
         sys.exit(f"the game did not come up (exit {process.poll()}):\n{waited.stdout}{waited.stderr}\n--- {log}:\n{tail(log)}")
     print(waited.stdout.strip())
-    prefix = drive_hint(root, state)
     print(f"\n{name}: {args.game}, pid {process.pid}, log {log.relative_to(root).as_posix()}")
-    print(f"drive:  {prefix} observe        (then: tools, act TOOL k=v, step N --until COND, inspect eN)")
+    print(f"drive:  {drive_hint(root, state, 'observe')}      (then: tools, act TOOL k=v, step N --until COND, inspect eN)")
     if stand:
-        print(f"        {prefix} --peer c1 observe     (a client's eyes; `stand` lists the members)")
+        print(f"        {drive_hint(root, state, '--peer c1 observe')}      (a client's eyes; `stand` lists the members)")
     print(f"stop:   python3 .agents/skills/shards-playtest/scripts/live.py stop {name}")
 
 
@@ -153,12 +169,14 @@ def stop_one(root, folder, name):
         print(f"{name}: no such live game")
         return False
     pid, cwd, port_file = state["pid"], state["cwd"], state["port_file"]
-    if pid_alive(pid):
+    mine = ours(state)
+    if mine is not False:
         quit_ = shards(root, cwd, port_file, "--timeout", "15", "quit", timeout=30)
         if quit_.returncode == 0:
             print(f"{name}: {quit_.stdout.strip() or 'ended'}")
-        elif not WINDOWS:
-            # The game did not answer: SIGTERM runs the same exit hooks (never SIGKILL).
+        elif mine:
+            # The game did not answer: SIGTERM runs the same exit hooks (never SIGKILL). Only to a pid that is
+            # still this game (`ours`): a pid can be given to another process after the game is gone.
             os.kill(pid, signal.SIGTERM)
             for _ in range(100):
                 if not pid_alive(pid):
@@ -166,9 +184,9 @@ def stop_one(root, folder, name):
                 time.sleep(0.1)
             print(f"{name}: {'ended by SIGTERM' if not pid_alive(pid) else f'still running (pid {pid}); look at its log: ' + state['log']}")
         else:
-            print(f"{name}: `quit` failed ({quit_.stderr.strip()}); end pid {pid} by hand if it still runs")
+            print(f"{name}: `quit` failed ({quit_.stderr.strip()}); if pid {pid} is still the game, end it by hand (not with SIGKILL)")
     else:
-        print(f"{name}: not running (pid {pid} is gone)")
+        print(f"{name}: not running (pid {pid} is gone or is another process now)")
     (folder / f"{name}.json").unlink(missing_ok=True)
     return True
 
@@ -184,16 +202,16 @@ def stop(root, args):
 
 def status(root, _args):
     folder = state_dir(root)
-    states = [json.loads(p.read_text()) for p in sorted(folder.glob("*.json"))]
+    states = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(folder.glob("*.json"))]
     if not states:
         print("no live games")
         return
     for state in states:
-        alive = pid_alive(state["pid"])
+        alive = ours(state) is not False
         line = "not running" if not alive else (shards(root, state["cwd"], state["port_file"], "status", timeout=10).stdout.strip().splitlines() or ["?"])[0]
         print(f"{state['name']}: {state['game']}, pid {state['pid']}, started {state['started']}: {line}")
         if alive:
-            print(f"  drive: {drive_hint(root, state)} observe")
+            print(f"  drive: {drive_hint(root, state, 'observe')}")
         print(f"  log:   {Path(state['log']).relative_to(root).as_posix()}")
 
 

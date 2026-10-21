@@ -61,6 +61,8 @@ every 60 ticks unless the recording says otherwise).
    keep going.
 2. **What it names:**
    - `replay check content differs: action/light_1 differs`: a definition the session read changed.
+   - `replay check level differs`: a level file the session placed (a tile's glTF) changed, in content or in
+     bytes (line endings: `.gitattributes` keeps `*.gltf` LF).
    - `e15 missing (Skeleton despawned at tick 40)` / `e27 extra (Skeleton)`: entities appear in another order or
      not at all; the spawn order changed, or something spawns in `Startup` or orders by `Entity`.
    - A component of one entity: find the systems that write it (`rg 'mut .*<Component>' crates`), and compare
@@ -119,7 +121,7 @@ Run it the CI way to reproduce: `cargo nextest run -p <crate> --profile ci -E 't
 
 ## Content errors
 
-`cargo sandbox --check-content` (template: `(cd template && CARGO_TARGET_DIR=../target cargo run -- --check-content)`) names the file, the line
+`cargo sandbox --check-content` (template: `(cd template && cargo run -- --check-content)`) names the file, the line
 and column, the definition and usually the fix (`did you mean grunt?`). Bakes it reports as stale:
 `cargo sandbox --bake-nav` (tiles, level files, nav settings), `cargo sandbox --bake-motion` (clips of an animset);
 commit what they write. A missing `@id` text is a message to add in every `assets/locale/<language>/*.ftl`.
@@ -128,8 +130,8 @@ commit what they write. A missing `@id` text is a message to add in every `asset
 
 - Exit 3 at start: the port is busy; use `--port 0 --port-file F` (what `live.py` does).
 - `shards wait` timed out: the game was still compiling; build first, or read `target/live/<name>.log`.
-- `unauthorized`: `shards` runs outside the game's folder; run it from the repository root for the sandbox, or
-  pass the template's token (`live.py start` prints it).
+- `unauthorized`: `shards` runs outside the game's folder, where it looks for `.shards/<port>.token`; run it from
+  the repository root for the sandbox, and from `template/` for the template (`live.py start` prints the line).
 - An empty world: a built binary run without `cargo` finds no `assets/` (`BEVY_ASSET_ROOT=crates/sandbox`), or the
   world spawns in `Startup` instead of `OnEnter(EngineState::InGame)`.
 - `built without the render feature`: `--offscreen` or a window needs the `render` feature (on by default).

@@ -22,13 +22,15 @@ It builds first, starts the game in the background (`--port 0 --port-file target
 in `target/live/<name>.log`), waits until it has loaded and prints the line to drive it with. A cold build
 takes 10-30 minutes: on a fresh machine, build first in the background the way `cargo sandbox` and `cargo shards`
 build, `cargo build -p sandbox && cargo build -p shards_cli` (one command naming both packages unifies their
-features differently and compiles some crates twice), and start when it is done. The template game builds into
-the engine's `target/` too, as CI does. The same by hand is in `docs/agents/watching-and-driving.md`, "Commands".
+features differently and compiles some crates twice), and start when it is done. On Linux and macOS the
+template game builds into the engine's `target/` too, as CI does. The same by hand is in
+`docs/agents/watching-and-driving.md`, "Commands". Commands here are bash (Git Bash on Windows).
 
-Every command names the game: `cargo shards --port-file target/live/sandbox.port <command>` from the
-repository root (the shell does not keep `export`s between your commands, so pass the flag each time). The
-template game writes its token into its own folder (`.shards/` under `template/`), so `live.py start` prints the
-`--token` to add.
+Every command names the game: `cargo shards --port-file target/live/<name>.port <command>` from the repository
+root (`sandbox` unless you gave `--name`; the shell does not keep `export`s between your commands, so pass the
+flag each time). The template game runs in `template/` and keeps its tokens there, so its line runs the CLI from
+that folder: `(cd template && ../target/debug/shards --port-file ../target/live/template.port <command>)`.
+`live.py start` prints the exact line for the game it started.
 
 ## 2. The loop
 
@@ -43,14 +45,16 @@ cargo shards --port-file target/live/sandbox.port inspect e6         # every com
 - Read the reply: an `act` answers with `CHANGES` and `JOURNAL`, a `step` with what stopped it and the tick
   time. Take numbers and positions from `observe` and `inspect`, never from a picture.
 - **A tool error says how to fix the call.** Read it and change the call; do not repeat it. A combat tool that
-  says `ready in 0.2s` wants a `step` of that long first.
+  says `ready in 0.2s` wants about that long first; the time is rounded to 0.1 s, and a press made just before it
+  is ready waits in the input buffer (`ok: queued, … starts in 0.03s`). To act the moment it is ready, step until
+  the value instead: `step 60 --until field:e5:Stamina.current>19.9` (`<` and `>` are strict; there is no `>=`).
 - **Step until something, not by guesswork:** `--until journal:died`, `near:A:B:M`, `gone:ID`, `shows:ID:TEXT`,
   `field:eN:Health.current<50`, `named:NAME`, `warning`, `error`; several `--until` stop at the first.
   `step` with no `--until` runs 1 tick; with one, up to 600.
 - **Exit codes:** 0 done, 1 the tool refused (the reply says why), 2 `shards` itself failed (no game, no
   token, a typo), 3 the game halted: a gameplay system panicked, an invariant broke or a heavy check failed. On
   3, stop and read `.agents/skills/shards-debug/SKILL.md`: the replay of the failure is already saved.
-- Play fair when the question is "can a player do this": `cargo shards --port-file F session --scope player`
+- Play fair when the question is "can a player do this": `cargo shards --port-file target/live/sandbox.port session --scope player`
   leaves you only a player's tools, which act through `Intent` like the keyboard. `--scope dev` gives the
   cheats back (`heal`, `teleport`, `set`, `god`, `spawn_prefab`, `npc_set_state`).
 
@@ -62,8 +66,9 @@ cargo shards --port-file target/live/sandbox.port inspect e6         # every com
 - **A number to try before it goes in a file:** `act set id=e6 component=Health path=current value=400`.
 - **A rule to catch a bug:** `assert add low_hp 'field:e5:Health.current<30'` makes `step` stop the moment it
   breaks (exit 3) and saves the replay; `assert list`, `assert reset`.
-- **Code** needs a rebuild: `live.py stop`, rebuild, `live.py start`. `load-snapshot` brings back the state you
-  saved with `save-snapshot` in the new build (same content and seed).
+- **Code** needs a rebuild: `live.py stop`, rebuild, `live.py start`. A snapshot you saved before
+  (`save-snapshot`) can take the new build back to that moment with `load-snapshot`; it refuses, saying what
+  differs, when the seed, the engine version or the content is not the same.
 
 ## 4. Keep what you found
 
@@ -81,8 +86,8 @@ cargo shards --port-file target/live/sandbox.port inspect e6         # every com
 | A screenshot (a visual bug) | `live.py start --offscreen` (a GPU, no window; or a window under `xvfb-run -a`) | `shot -o shots/x.png`: a PNG with `eN` labels and a legend |
 | Co-op (host and clients) | `live.py start --name coop -- --stand 2 --net-sim latency=150,loss=0.02` | `--peer c1 observe`, `stand`, `soak --minutes 3`; `docs/agents/net-coop-steam.md` |
 | Tick time | `live.py start --release -- --tick-budget-ms 5` | `step 600`, the `ticks:` line; `status` field `perf` |
-| Random play until a rule breaks | `live.py start -- --coverage` | `fuzz --seed 7 --steps 300 --chaos 0.02 --steer --minimize` |
-| The main menu without a window | `live.py start -- --menu` | `act ui_read`, `ui_navigate`, `ui_click` |
+| Random play until a rule breaks | `live.py start -- --coverage` (a fresh game: the session must start at tick 0) | `fuzz --seed 7 --steps 300 --chaos 0.02 --steer --minimize`; the shrunk scenario lands in `scenarios/regress/` of the folder `shards` runs in: move it to `crates/sandbox/scenarios/regress/` |
+| The main menu without a window | `live.py start --game template -- --menu` (the sandbox has no main menu) | `act ui_read`, `ui_navigate`, `ui_click` |
 | A replay to step through | `live.py start -- --replay replays/x.json` | `step N`, `inspect` |
 
 ## 6. Stop what you started
@@ -95,3 +100,7 @@ python3 .agents/skills/shards-playtest/scripts/live.py stop NAME   # or --all
 Never `kill -9` a game: it leaves its token and port file behind. `shards quit` (what `stop` uses) ends it the
 way Ctrl+C does, on every OS. Files the game wrote (`replays/`, `snapshots/`, `shots/`, `crashes/`, `saves/`)
 are git-ignored; copy what is worth keeping where it belongs (`tests/replays/` only by recording it on purpose).
+Games started from one checkout share those folders, and some scenarios write fixed names there
+(`snapshots/boss_phase2.json`, `saves/character/qa.save`): two agents running the scenario suite at once
+collide, so give each its own worktree. Saves outlive the game: a co-op guest arrives with the character it saved
+in the last game, so a scenario sets what it counts (`set … Trophies path=defeated value=0`) instead of assuming it.

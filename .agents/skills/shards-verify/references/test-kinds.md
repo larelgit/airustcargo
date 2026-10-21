@@ -12,9 +12,11 @@ it one and test it here.
 
 ## A crate's integration tests
 
-- One test binary per crate, found by Cargo: `crates/<crate>/tests/<short>/main.rs` (`shards_npc` → `npc`,
-  `shards_action` → `combat`). Add `<topic>.rs` beside it and `mod <topic>;` to `main.rs`. Do not add a binary:
-  each one links Bevy (time and gigabytes), and the docs count them.
+- Most crates have one test binary, found by Cargo: `crates/<crate>/tests/<short>/main.rs` (`shards_npc` → `npc`,
+  `shards_action` → `combat`). Add `<topic>.rs` beside it and `mod <topic>;` to `main.rs`. A few are one file
+  (`shards_core`'s `tests/core.rs`), `shards`, `sandbox` and `shards_motion` have several, and `ai_core`,
+  `shards_cli`, `shards_net` and `shards_script` test only in `src/`. Do not add a binary: each one links Bevy
+  (time and gigabytes), and the docs count them.
 - Test content lives in `crates/<crate>/tests/<short>/assets/content/` (`live.action.ron`, `live.attack_plan.ron`);
   the binary's `common.rs` builds a headless app over that folder and has helpers to spawn bodies.
 - A crate that needs the whole engine uses the umbrella as a dev-dependency and `shards::testing::test_app`, like
@@ -51,14 +53,20 @@ An invariant is `fn(&World) -> Option<String>`: it only reads, and names the off
 - Engine rules: `crates/sandbox/tests/sandbox/engine_rules.rs`. `plant(app, tick, corrupt)` adds a system in
   `SimSet::Cleanup` that corrupts the world at that tick; `stops_on(app, "<module>.<rule>", tick)` expects
   `stopped: invariant <name> violated at tick N` and returns the journal line, which the test checks names the entity.
+  A module may keep its rules' control tests in its own crate (`crates/shards_encounter/tests/encounter/invariants.rs`).
+- A new engine rule also goes into `ENGINE_RULES` in `crates/sandbox/tests/sandbox/invariants.rs`, and the rule
+  count its test expects (`"33 rules, checked after every tick"`) goes up by one; the sandbox tests fail until then.
 - A game's rule: `a_grunt_chance_outside_zero_to_one_stops_the_game` in `template/tests/game/content.rs` (`set` a bad
   value with the dev tool, `step`, compare the exact reply).
 
 ## Tools
 
 Test the reply on success and every refusal; a refusal must say how to fix the call (`taunt_errors_say_what_to_do`
-in `template/tests/game/content.rs`; `crates/sandbox/tests/sandbox/tool_contracts.rs` for the engine's). An action
-tool is journaled and recorded in replays, a query is neither: a test that replays a session covers the first.
+in `template/tests/game/content.rs`). An action tool is journaled and recorded in replays, a query is neither, a
+control tool (time, the session) is not recorded either. Every tool the sandbox registers is also called by
+`crates/sandbox/tests/sandbox/tool_contracts.rs` on its own: 20 argument sets valid by its schema and 10 broken on
+purpose; it must not panic, an error must name the signature or the bad argument, and a session of its action calls
+must replay identically. A tool that cannot run in a test app goes into its `SKIP` list, with the reason.
 
 ## Content kinds
 

@@ -4,7 +4,7 @@ Read this when you need to know which crate owns what. Part of the [AGENTS.md](.
 
 - Crates: `shards` (the umbrella, the game's only dependency), `shards_core`, `shards_content`, `shards_motion`,
   `shards_action`, `shards_level` (levels from Blender), `shards_world` (regions, generation), `shards_npc` (enemies, navmesh),
-  `shards_encounter` (waves of enemies at a place: anchors, runs, wipes and resets), `shards_save` (saves: sections, slots, migrations, copies), `shards_ui` (screens and menus from content), `shards_locale`
+  `shards_encounter` (waves of enemies at a place: anchors, runs, wipes and resets), `shards_net` (co-op: transports, the session, the stand), `shards_save` (saves: sections, slots, migrations, copies), `shards_settings` (player settings: graphics, audio, controls, accessibility), `shards_ui` (screens and menus from content), `shards_locale`
   (languages: texts in Fluent, switching on the fly), `shards_audio` (sound: buses, voices, music in layers), `shards_look` (look: light
   in bands, flat faces, outlines from content), `shards_scatter` (foliage and small objects by tile), `shards_voxel` (voxel terrain: chunked block volume,
   palette, generation steps, hash, the `voxel_region` region kind), `shards_fx`

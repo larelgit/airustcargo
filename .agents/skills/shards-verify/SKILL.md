@@ -23,12 +23,14 @@ intent: add what it cannot see (a behaviour change in `shards_core` reaches ever
 ## 2. Fast loop, while you work
 
 - One crate: `cargo test -p shards_npc`; one module of its test binary: `cargo test -p shards_npc --test npc live::`.
-  Each crate has one integration binary, `crates/<crate>/tests/<short>/main.rs`; `ls crates/<crate>/tests/` names it.
+  Most crates have one integration binary, `crates/<crate>/tests/<short>/main.rs` (`shards_action`'s is `combat`);
+  `shards`, `sandbox` and `shards_motion` have several, a few are one file (`tests/core.rs`), and `ai_core`,
+  `shards_cli`, `shards_net` and `shards_script` test only in `src/`. `ls crates/<crate>/tests/` tells.
 - The sandbox end to end (scenarios in-process, reference replays, state audit, engine rules):
   `cargo test -p sandbox --test sandbox`; a part of it: `cargo test -p sandbox --test sandbox scenario_files::`.
 - Clippy on what you touched: `cargo clippy -p <crate> --all-targets -- -D warnings`. It fails on `x.sin()` and
   the other `f32` maths methods by design: use `ops::sin(x)` (`docs/agents/determinism.md`).
-- Content only: nothing to rebuild. `cargo sandbox --check-content` (template: `(cd template && CARGO_TARGET_DIR=../target cargo run -- --check-content)`),
+- Content only: nothing to rebuild. `cargo sandbox --check-content` (template: `(cd template && cargo run -- --check-content)`),
   and in a live game the edit applies on save (`.agents/skills/shards-playtest/SKILL.md`).
 - One scenario: against a live game started with `live.py start` (`.agents/skills/shards-playtest/SKILL.md`),
   `cargo shards --port-file target/live/sandbox.port scenario crates/sandbox/scenarios/<topic>.scenario`; the
@@ -38,28 +40,31 @@ Builds are the slow part. `.cargo/config.toml` runs 4 jobs; with RAM to spare (2
 building) `CARGO_BUILD_JOBS=8` is about a third faster. A cold build takes 10-30 minutes (about 25 on four
 cores), so start it in the background early. The whole workspace's test build needs about 22 GB in `target/`:
 check `df -h .` first, and on a small machine run the per-crate and sandbox tests and say that the full run is
-left to CI. The template is a workspace of its own and builds Bevy again into a `target/` of its own unless it
-shares the engine's target folder, as CI does: put `CARGO_TARGET_DIR=$PWD/target` before a template command run
-from the root, and `CARGO_TARGET_DIR=../target` before one run inside `template/`.
+left to CI. The template is a workspace of its own and builds Bevy again into a `target/` of its own. On Linux
+and macOS it can share the engine's, as CI does: `CARGO_TARGET_DIR=$PWD/target` before a template command run
+from the root, `CARGO_TARGET_DIR=../target` before one run inside `template/`. Not on Windows: the root and
+`template/` choose different linkers there, and one shared folder rebuilds everything at every switch.
+Commands here are bash (Git Bash on Windows).
 
 ## 3. The gate, before you push
 
-Run what the plan lists; for a change to engine code that is all of this:
+For a change to engine code the gate is all of this, as CI runs every line on every pull request; the plan adds
+what is particular to your diff (bakes, stands, replays), and for a smaller diff (docs, the template alone) says
+which part applies:
 
 ```bash
 cargo test --workspace                                    # CI: cargo nextest run --workspace --profile ci -E 'not binary_id(sandbox::perf)'
 cargo clippy --workspace --all-targets -- -D warnings
 cargo sandbox --check-content
 cargo sandbox --worldgen-report wilds --seeds 1..1000     # and voxel_arena; both must exit 0
-CARGO_TARGET_DIR=$PWD/target cargo test --manifest-path template/Cargo.toml     # the template uses every engine crate
-CARGO_TARGET_DIR=$PWD/target cargo clippy --manifest-path template/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path template/Cargo.toml            # the template uses every engine crate
+cargo clippy --manifest-path template/Cargo.toml --all-targets -- -D warnings
 ```
 
 The template's own binary checks run from its folder, as CI's `template` job does:
 
 ```bash
-(cd template && export CARGO_TARGET_DIR=../target && cargo run -- --check-content \
-  && cargo run -- --worldgen-report valley --seeds 1..1000 \
+(cd template && cargo run -- --check-content && cargo run -- --worldgen-report valley --seeds 1..1000 \
   && for r in tests/replays/*.json; do cargo run -- --replay "$r" --verify || exit 1; done)
 ```
 
@@ -80,8 +85,8 @@ The template's own binary checks run from its folder, as CI's `template` job doe
 | A pure function (maths, parsing, a rule over plain data) | unit test | `#[cfg(test)] mod tests` beside it |
 | Behaviour of a crate's systems on a headless app | integration test with its own test content | `crates/<crate>/tests/<short>/<topic>.rs`, `mod <topic>;` in its `main.rs`, content in `tests/<short>/assets/content/` |
 | Something an agent can see or do (a tool, a journal line, an NPC's choice, a fight) | scenario file | `crates/sandbox/scenarios/<topic>.scenario` (a stand's in `scenarios/stand/`) |
-| An invariant (`add_engine_invariant`, `add_ai_invariant`) | control test that breaks the state on purpose and expects the stop | `crates/sandbox/tests/sandbox/engine_rules.rs` (`plant`, `stops_on`) |
-| A tool | the reply on success and the error that says how to fix a bad call | the crate's tests, or `tool_contracts.rs` |
+| An invariant (`add_engine_invariant`, `add_ai_invariant`) | control test that breaks the state on purpose and expects the stop; an engine rule also joins `ENGINE_RULES` in `crates/sandbox/tests/sandbox/invariants.rs` (with its rule count) | `crates/sandbox/tests/sandbox/engine_rules.rs` (`plant`, `stops_on`), or the module's own tests |
+| A tool | the reply on success and the error that says how to fix a bad call; `tool_contracts.rs` also calls every tool with 30 argument sets on its own | the crate's tests |
 | A content kind or field | a good file loads; a typo is an error naming the file, the field and the fix | the crate's tests (`content_check.rs` in the sandbox) |
 | New simulation state (component, resource, cache) | snapshot round trip, and heavy mode | modelled on `crates/sandbox/tests/sandbox/snapshots.rs`; `shards::testing::heavy_app` |
 | A deliberate gameplay change | the reference replays move, and only those you expect | `tests/replays/` (section 5) |
@@ -92,21 +97,24 @@ Scenario files (format, setup lines, expectations, stands): `.agents/skills/shar
 
 ## 5. Reference replays
 
-The 19 files in `tests/replays/` (the template's in `template/tests/replays/`) are played by their scenarios and
-checked tick by tick. They move only when gameplay changes or when content the simulation read changes.
+The 19 files in `tests/replays/` (the template's in `template/tests/replays/`) were recorded from their scenarios;
+`--verify` plays the recorded inputs back and compares the state at every check (every 60 ticks). They move only
+when gameplay changes, when content the simulation read changes, or when a level file they place changes (their
+`level` check hashes its bytes).
 
-1. Predict before you look. For content edits: `python3 .agents/skills/shards-verify/scripts/which_replays.py`
-   names the replays that read the definitions you changed (from their `check_parts.content`). A definition
-   added to a kind they read by id moves none. Code that changes gameplay moves those that reach it.
+1. Predict before you look. For content and level edits: `python3 .agents/skills/shards-verify/scripts/which_replays.py`
+   names the replays that read the definitions you changed (from their `check_parts.content`) or check the level
+   files you changed. A definition added to a kind they read by id moves none. Code that changes gameplay moves
+   those that reach it.
 2. Run them: `cargo test -p sandbox --test sandbox reference_replays` (template:
-   `CARGO_TARGET_DIR=$PWD/target cargo test --manifest-path template/Cargo.toml --test game replays`).
+   `cargo test --manifest-path template/Cargo.toml --test game replays`).
 3. A divergence you did not predict is a bug in the change: read `.agents/skills/shards-debug/SKILL.md`.
    Never re-record to make it go away.
 4. A divergence you meant: record again, then confirm that only the expected files changed.
 
 ```bash
 cargo test -p sandbox --test sandbox -- --ignored record_reference_replays
-(cd template && CARGO_TARGET_DIR=../target cargo test --test game record_reference_replays -- --ignored)  # the template's
+(cd template && cargo test --test game record_reference_replays -- --ignored)  # the template's
 git diff --stat tests/replays/ template/tests/replays/                          # only the ones you predicted
 ```
 
@@ -120,6 +128,7 @@ byte-identical"). A new reference replay is a scenario plus a row in `RECORDED`
   say why in the change that alters it.
 - A flaky test is a bug in the test or the game; find what it shares (a fixed file name, a process-wide
   resource, wall time, the order of scenarios) and fix that.
-- Scenarios start by putting the world in order (`heal`, `teleport`, `set`, `npc_set_state … calm`, `regen`): CI runs
-  them on a fresh game and after each other, forward and backward.
+- Scenarios start by putting the world in order (the sandbox's reset block is in
+  `.agents/skills/shards-verify/references/scenarios.md`): CI runs them on a fresh game and after each other,
+  forward and backward.
 - Report what you ran and what it said, what you did not run, and why. "Tests pass" without the commands is not a report.

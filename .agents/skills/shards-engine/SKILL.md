@@ -17,8 +17,9 @@ and the manual, `docs/engine-progress.md` and `CHANGELOG.md` saying what is now 
    touches before you touch it (`docs/agents/determinism.md` for anything in the simulation).
 2. Find the owner: `docs/agents/crates.md`, then the module's section in `docs/manual.md` (`grep -n '^## '
    docs/manual.md`). The manual says what the module promises; your change keeps or extends that promise.
-3. Copy the newest change of the same kind: `git log --oneline -- crates/<crate> | head`, then
-   `git show --stat <commit>`. `crates/shards_rules/src/lib.rs` is a compact whole module: content kinds, a
+3. Copy the newest change of the same kind: `git log --oneline -- crates/<crate> | head`, or by what it added,
+   `git log --oneline -S 'add_ai_query(' -- crates | head` (a tool), `-S 'add_engine_invariant('` (a rule),
+   `-S 'impl ContentDef for'` (a content kind); then `git show --stat <commit>`. `crates/shards_rules/src/lib.rs` is a compact whole module: content kinds, a
    snapshot resource, a replay check, systems in ordered sets, an engine rule, a condition, a status field, a
    dev entry, a journal line and tools.
 4. **The boundary.** A mechanism a second game with another story would use goes in the engine; a particular
@@ -59,7 +60,9 @@ dev menu entry, a new module). The rules that bite most often:
   then `cp Cargo.lock template/Cargo.lock` and `cargo metadata --manifest-path template/Cargo.toml
   --format-version 1 >/dev/null` so the two lockfiles agree. Bevy stays at 0.20.0.
 - A new crate: `docs/agents/new-module.md` (one line in `EnginePlugins`, `add_engine_module`, its tools, content,
-  invariants, a scenario, a replay, a manual section).
+  invariants, a scenario, a replay, a manual section), plus its place in the workspace `members`, its re-export in
+  `crates/shards`, a line in `docs/agents/crates.md`, and its line in `CRATES` of
+  `.agents/skills/shards-verify/scripts/plan.py`.
 
 ## 4. Test it where this repository tests it
 
@@ -99,5 +102,5 @@ fails, `.agents/skills/shards-debug/SKILL.md`.
 
 One logical change per commit, on the branch you were given. The subject is a sentence about the behaviour,
 led by the work item when there is one: `N8d: live tags on attack options …`; a review fix says so:
-`K3 review: … (CodeRabbit)`. The body says why and how it is tested. Do not put model names in commits, code or
-docs.
+`K3 review: … (CodeRabbit)`. The body says why and how it is tested. Code, comments and docs never name the
+agent or model that wrote them; a commit's trailers follow your environment's attribution rules.

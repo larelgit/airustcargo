@@ -4,12 +4,15 @@ Each step ends with the check that proves it. The same steps, with background, a
 ("Start your own game, step by step") and `docs/manual.md` ("Make a game on Shards, step by step"). The
 example name is `pit`; the new game lives outside the engine repository.
 
-1. **Copy the template, without build output.**
+1. **Copy the template, without build output, and the engine's line-ending rules.**
    ```bash
-   mkdir -p ~/games && cp -r template ~/games/pit && cd ~/games/pit
+   git rev-parse HEAD                     # in the engine repository: the commit you copy from (step 3)
+   mkdir -p ~/games && cp -r template ~/games/pit && cp .gitattributes ~/games/pit/ && cd ~/games/pit
    rm -rf target dist .shards replays snapshots saves shots crashes && git init
    ```
-   Check: `ls` shows `Cargo.toml src assets scenarios tests README.md clippy.toml rust-toolchain.toml`.
+   `.gitattributes` keeps `*.ron`, `*.json`, `*.gltf`, `*.scenario` and `*.ftl` at LF on every OS: their bytes are
+   hashed, and a Windows checkout with CRLF makes replays diverge. Check: `ls -a` shows `.gitattributes Cargo.toml
+   src assets scenarios tests README.md clippy.toml rust-toolchain.toml`.
 
 2. **Rename the package everywhere** (the crate, the binary, `SettingsAppId`, the tests, the docs):
    ```bash
@@ -19,16 +22,18 @@ example name is `pit`; the new game lives outside the engine repository.
    player's settings folder: two games with one name would overwrite each other's settings. Check:
    `grep -rn my_game .` finds nothing outside `Cargo.lock`.
 
-3. **Pin the engine** instead of the path, at the tag the game is written for (or a `rev`):
+3. **Pin the engine** instead of the path, at the commit you copied the template from:
    ```toml
-   shards = { git = "https://github.com/larelgit/shards-engine", tag = "v0.4.0", default-features = false }
+   shards = { git = "https://github.com/larelgit/shards-engine", rev = "<that commit>", default-features = false }
    ```
-   then `cargo update`. Keep `default-features = false` (the game's `[features]` choose the engine's) and the
-   `[workspace]` table. Check: `cargo tree -p shards --depth 0` shows the git source.
+   then `cargo update`. The template on the main branch can use what no tag has yet (its `src/visuals.rs` uses
+   `GltfModel`, which `CHANGELOG.md` lists under Unreleased), so a tag older than the copy does not build; a tag
+   works once one includes everything the template uses. Keep `default-features = false` (the game's `[features]`
+   choose the engine's) and the `[workspace]` table. Check: `cargo tree -p shards --depth 0` shows the git source.
 
 4. **Install the CLI at the same version**: `cargo install shards_cli --git
-   https://github.com/larelgit/shards-engine --tag v0.4.0`. The `ai/*` protocol may change between minor
-   versions, so the CLI and the game always share one engine version.
+   https://github.com/larelgit/shards-engine --rev <that commit>` (`--tag` for a tag). The `ai/*` protocol may
+   change between minor versions, so the CLI and the game always share one engine version.
 
 5. **Build and test.** `cargo test` (the first Bevy build takes many minutes), then
    `cargo run -- --check-content`, then a live game:
@@ -44,9 +49,11 @@ example name is `pit`; the new game lives outside the engine repository.
    for the game"); how to start and drive it (step 5); the gate (step 9); content before code.
 
 7. **Make it yours, content first.** Replace the yard, the hero, the grunt and the valley in `assets/content/`
-   (`.agents/skills/shards-game/references/recipes.md`); then the code in `src/` that is the game's own.
-   Rename or remove the template's scenarios with what they test, and update the list of recorded scenarios in
-   `tests/game/replays.rs` (`record_reference_replays`) and the test that names `smoke.scenario`.
+   (`.agents/skills/shards-game/references/recipes.md`); then the code in `src/` that is the game's own. The
+   template's tests and scenarios name its things (`e1` the hero, `e2` the grunt, `e7` the guest, `yard`, `valley`,
+   `Trophies`, `taunt`): rework `tests/game/` and `scenarios/` with them, keeping the kinds of test (determinism,
+   replays, content, manifest, co-op). The list of recorded scenarios is in `tests/game/replays.rs`
+   (`record_reference_replays`), and two tests in `tests/game/scenarios.rs` name `smoke.scenario`.
 
 8. **Record the reference replays** once the game plays as it should:
    `cargo test --test game record_reference_replays -- --ignored`, then `cargo test`. Check:
@@ -56,6 +63,7 @@ example name is `pit`; the new game lives outside the engine repository.
    `--check-content`, `--worldgen-report <region> --seeds 1..1000` for each region, and `--verify` of every file in
    `tests/replays/`. Keep `clippy.toml`: it is what forbids platform maths.
 
-10. **Moving to a new engine version later:** change `tag`, `cargo update -p shards`, read the "Changed" section of
-    the engine's `CHANGELOG.md`, reinstall the CLI at the new tag, run the tests and `--verify` the replays.
+10. **Moving to a new engine version later:** change `rev` (or `tag`), `cargo update -p shards`, read the engine's
+    `CHANGELOG.md` since your version (the "Changed" sections), reinstall the CLI at the same `rev`, run the tests and
+    `--verify` the replays.
     Replays may diverge after the engine's gameplay changes: record them again once you have checked why.

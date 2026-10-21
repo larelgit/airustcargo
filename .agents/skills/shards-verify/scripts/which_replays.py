@@ -4,16 +4,18 @@
 A reference replay records the content definitions its simulation read (`check_parts.content`: keys
 `kind/id`, or `kind (all)` when the session read a whole kind). Changing or removing a definition it
 read makes it diverge at its next check; adding a definition moves only the replays that read that kind
-whole; content it never read moves nothing (docs/agents/checking-changes.md).
+whole; content it never read moves nothing (docs/agents/checking-changes.md). A replay that places a
+level also checks the level file's bytes (its `level` check), so an edited glTF level moves it.
 
-    python3 .agents/skills/shards-verify/scripts/which_replays.py                 # *.ron changed against origin/main
+    python3 .agents/skills/shards-verify/scripts/which_replays.py                 # what changed against origin/main
     python3 .agents/skills/shards-verify/scripts/which_replays.py --base HEAD     # only uncommitted edits
     python3 .agents/skills/shards-verify/scripts/which_replays.py crates/sandbox/assets/content/combat/downed.action.ron
     python3 .agents/skills/shards-verify/scripts/which_replays.py action/light_1 prefab/grunt
 
-It compares each definition's text (comments and spacing ignored) with the base commit, so only the
-definitions you touched count. It cannot see code: a change to gameplay code moves the replays that reach
-it whatever this says. Run the replays to confirm (`cargo test -p sandbox --test sandbox reference_replays`).
+It compares each definition's text (comments and spacing ignored) with the base commit, over all the
+changed files of a kind together, so only the definitions you touched count, even when they moved to
+another file. It cannot see code: a change to gameplay code moves the replays that reach it whatever this
+says. Run the replays to confirm (`cargo test -p sandbox --test sandbox reference_replays`).
 """
 
 import argparse
@@ -22,15 +24,20 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Where each game's content lives, and where its reference replays are.
+# Where each game's content lives, where its reference replays are, and how to check them.
 GAMES = [
-    ("sandbox", "crates/sandbox/", "tests/replays"),
-    ("template", "template/", "template/tests/replays"),
+    ("sandbox", "crates/sandbox/", "tests/replays", "cargo test -p sandbox --test sandbox reference_replays"),
+    ("template", "template/", "template/tests/replays", "cargo test --manifest-path template/Cargo.toml --test game replays"),
 ]
+RECORD = {
+    "sandbox": "cargo test -p sandbox --test sandbox -- --ignored record_reference_replays",
+    "template": "(cd template && cargo test --test game record_reference_replays -- --ignored)",
+}
 
 
 def git(root, *args, check=True):
-    out = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
+    # UTF-8 whatever the platform's code page: content files and the CLI's replies are UTF-8.
+    out = subprocess.run(["git", *args], cwd=root, capture_output=True, encoding="utf-8", errors="replace")
     if check and out.returncode != 0:
         sys.exit(f"git {' '.join(args)} failed: {out.stderr.strip()}")
     return out.stdout if out.returncode == 0 else None
@@ -46,7 +53,8 @@ def default_base(root):
 
 
 def changed_files(root, base):
-    tracked = git(root, "diff", "--name-only", base).splitlines()
+    """Files changed against `base`, committed or not, and new files. A rename counts as its two paths."""
+    tracked = git(root, "diff", "--name-only", "--no-renames", base).splitlines()
     untracked = git(root, "ls-files", "--others", "--exclude-standard").splitlines()
     return sorted(set(tracked) | set(untracked))
 
@@ -191,26 +199,28 @@ def kind_of(path):
 
 
 def game_of(path):
-    for name, prefix, replays in GAMES:
+    for name, prefix, _, _ in GAMES:
         if path.startswith(prefix + "assets/"):
-            return name, replays
-    return None, None
+            return name
+    return None
 
 
-def file_changes(root, base, path):
-    """`(changed, added, removed)` definition ids of one content file against `base`."""
+def is_level_file(path):
+    """A glTF a level or a tile is built from: the replays' `level` check hashes its bytes."""
+    return path.endswith((".gltf", ".glb")) and "/assets/" in path and "/models/" not in path
+
+
+def content_at(root, base, path):
+    """`(definitions now, definitions at base)` of one content file; `{}` where it does not exist, None where it does not parse."""
     now_path = root / path
     now = definitions(now_path.read_text(encoding="utf-8")) if now_path.is_file() else {}
     before_text = git(root, "show", f"{base}:{path}", check=False)
     before = definitions(before_text) if before_text is not None else {}
-    if now is None or before is None:
-        return None
-    changed = sorted(k for k in now.keys() & before.keys() if now[k] != before[k])
-    return changed, sorted(now.keys() - before.keys()), sorted(before.keys() - now.keys())
+    return now, before
 
 
 def replay_reads(root, folder):
-    """`{replay file name: set of check_parts.content keys}` for every replay in `folder`."""
+    """`{replay file name: (check_parts.content keys, whether it has a level check)}` for every replay in `folder`."""
     reads = {}
     for file in sorted((root / folder).glob("*.json")):
         try:
@@ -221,89 +231,96 @@ def replay_reads(root, folder):
         keys = set()
         for part in (data.get("check_parts") or {}).get("content") or []:
             keys.update((part.get("set") or {}).keys())
-        reads[file.name] = keys
+        level = any("level" in ((c.get("parts") or {}).get("game") or {}) for c in data.get("checks") or [])
+        reads[file.name] = (keys, level)
     return reads
-
-
-def touched_by(keys, kind, ids, added):
-    """The keys of one replay that a change to `kind` reaches: the ids it read, or the whole kind."""
-    hits = [f"{kind}/{i}" for i in ids if f"{kind}/{i}" in keys]
-    if f"{kind} (all)" in keys and (ids or added):
-        hits.append(f"{kind} (all)")
-    return hits
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("items", nargs="*", help="content files, or definitions as kind/id; default: the *.ron files changed against --base")
+    parser.add_argument("items", nargs="*", help="content files, or definitions as kind/id; default: the files changed against --base")
     parser.add_argument("--base", help="the commit to compare with (default: the merge base with origin/main)")
     args = parser.parse_args()
     root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").strip())
     base = args.base or default_base(root)
 
-    # (game, kind) -> {"ids": changed or removed ids, "added": added ids, "whole": whether the file did not parse}
-    wanted = {}
-    files = [repo_path(root, i) for i in args.items if i.endswith(".ron")] if args.items else None
-    names = [i for i in args.items if not i.endswith(".ron")]
-    if files is None:
-        files = [f for f in changed_files(root, base) if f.endswith(".ron")]
-        print(f"content files changed against {base[:12]}: {len(files)}")
-    elsewhere = []
+    if args.items:
+        files = [repo_path(root, i) for i in args.items if i.endswith((".ron", ".gltf", ".glb"))]
+        names = [i for i in args.items if not i.endswith((".ron", ".gltf", ".glb"))]
+    else:
+        files = [f for f in changed_files(root, base) if f.endswith((".ron", ".gltf", ".glb"))]
+        names = []
+        print(f"content and level files changed against {base[:12]}: {len(files)}")
+
+    # (game, kind) -> definitions of all its changed files, now and at base; None: a file did not parse.
+    now, before, unparsed = {}, {}, set()
+    levels = {}  # game -> changed level files
     for path in files:
-        game, _ = game_of(path)
-        kind = kind_of(path)
-        if game is None or kind is None:
-            elsewhere.append(path)
-            continue
-        if "/assets/nav/" in f"/{path}":
-            elsewhere.append(path)
-            continue
-        found = file_changes(root, base, path)
-        if found is None:
-            print(f"  {path}: not a map of definitions (cannot tell what changed); treat every replay that reads `{kind}` as moved")
-            wanted.setdefault((game, kind), {"ids": set(), "added": set(), "whole": True})
-            continue
-        changed, added, removed = found
-        print(f"  {path} ({kind}): changed {changed or '-'}, added {added or '-'}, removed {removed or '-'}")
-        entry = wanted.setdefault((game, kind), {"ids": set(), "added": set(), "whole": False})
-        entry["ids"].update(changed + removed)
-        entry["added"].update(added)
+        game, kind = game_of(path), kind_of(path)
+        if game and is_level_file(path):
+            levels.setdefault(game, []).append(path)
+            print(f"  {path}: a level file, whose bytes the replays that place it check")
+        elif "/assets/nav/" in f"/{path}":
+            print(f"  {path}: a baked navmesh, outside the content check: replays whose NPCs walk it may move")
+        elif game is None or kind is None:
+            if kind:
+                print(f"  {path}: test content of its crate: no reference replay reads it")
+        else:
+            defs_now, defs_before = content_at(root, base, path)
+            if defs_now is None or defs_before is None:
+                print(f"  {path}: not a map of definitions (cannot tell what changed): every replay that reads `{kind}` may move")
+                unparsed.add((game, kind))
+                continue
+            now.setdefault((game, kind), {}).update(defs_now)
+            before.setdefault((game, kind), {}).update(defs_before)
+
+    # (game, kind) -> (changed or removed ids, added ids)
+    changes = {}
+    for key in sorted(set(now) | set(before)):
+        a, b = now.get(key, {}), before.get(key, {})
+        changed = sorted(i for i in a.keys() & b.keys() if a[i] != b[i])
+        removed, added = sorted(b.keys() - a.keys()), sorted(a.keys() - b.keys())
+        if changed or removed or added:
+            print(f"  {key[0]} {key[1]}: changed {changed or '-'}, removed {removed or '-'}, added {added or '-'}")
+            changes[key] = (changed + removed, added)
     for name in names:
         kind, _, ident = name.partition("/")
-        for game, _, _ in GAMES:
-            wanted.setdefault((game, kind), {"ids": set(), "added": set(), "whole": False})["ids"].add(ident)
-    for path in elsewhere:
-        if "/assets/nav/" in f"/{path}":
-            print(f"  {path}: a baked navmesh, outside the content check: replays whose NPCs walk it may move")
-        elif kind_of(path):
-            print(f"  {path}: test content of its crate: no reference replay reads it")
+        for game, _, _, _ in GAMES:
+            changes.setdefault((game, kind), ([], []))[0].append(ident)
 
-    if not wanted:
-        print("no content definition changed: no reference replay moves because of content")
+    if not changes and not unparsed and not levels:
+        print("no content definition or level file changed: no reference replay moves because of content")
         return
-    for game, _, folder in GAMES:
-        kinds = {k: v for (g, k), v in wanted.items() if g == game}
-        if not kinds:
+    moved_any = False
+    for game, _, folder, check in GAMES:
+        kinds = {k: v for (g, k), v in changes.items() if g == game}
+        whole = {k for (g, k) in unparsed if g == game}
+        if not kinds and not whole and not levels.get(game):
             continue
         reads = replay_reads(root, folder)
         moved = {}
-        for replay, keys in reads.items():
+        for replay, (keys, level) in reads.items():
             hits = []
-            for kind, entry in sorted(kinds.items()):
-                if entry["whole"] and any(k == f"{kind} (all)" or k.startswith(f"{kind}/") for k in keys):
+            for kind, (ids, added) in sorted(kinds.items()):
+                hits += [f"{kind}/{i}" for i in ids if f"{kind}/{i}" in keys]
+                if f"{kind} (all)" in keys and (ids or added):
+                    hits.append(f"{kind} (all)")
+            for kind in sorted(whole):
+                if any(k == f"{kind} (all)" or k.startswith(f"{kind}/") for k in keys):
                     hits.append(f"{kind} (some)")
-                else:
-                    hits += touched_by(keys, kind, sorted(entry["ids"]), entry["added"])
+            if level and levels.get(game):
+                hits.append("level")
             if hits:
                 moved[replay] = hits
         print(f"\n{game}: {len(moved)} of {len(reads)} reference replays in {folder}/ read what changed")
         for replay, hits in moved.items():
             print(f"  {replay:<24} {', '.join(hits)}")
-    print(
-        "\nThese diverge at their first check after the read. Confirm: cargo test -p sandbox --test sandbox reference_replays"
-        "\n(template: cargo test --manifest-path template/Cargo.toml --test game replays). If the change is deliberate,"
-        "\nrecord them again and check that only these changed: .agents/skills/shards-verify/SKILL.md, section 5."
-    )
+        if moved:
+            moved_any = True
+            print(f"  confirm: {check}\n  if the change is meant, record them again: {RECORD[game]}")
+    if moved_any:
+        print("\nThey diverge at their first check after the read. After recording, `git diff --stat` must show only them"
+              "\n(.agents/skills/shards-verify/SKILL.md, section 5).")
 
 
 if __name__ == "__main__":

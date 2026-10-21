@@ -12,8 +12,10 @@ Damage, timing and stamina cost: `hero.action.ron`, `grunt.action.ron` (`phases`
 `cost`, `cancels`). Speed and jumping: `characters.locomotion.ron`. Health, stamina, poise: `characters.prefab.ron`.
 The input buffer and limits: `tuning.combat_tuning.ron`. ["Actions and combat (E3)", "Movement (E2)"]
 
-- Try it live before you write it: `act set id=e2 component=Health path=current value=120`, then save the file;
-  the next tick uses it (`content reloaded: …` in the journal).
+- An edit to an action, a moveset, locomotion or tuning applies from the next tick (`content reloaded: …` in the
+  journal): the next hit uses the new damage. A prefab's numbers (health, poise) apply to bodies spawned after the
+  edit (`spawn_prefab`) or after a restart; to try one on a living body now, `act set id=e2 component=Health
+  path=current value=120`.
 - A number the simulation reads moves the reference replays that read it (`which_replays.py` names them):
   record them again once the change is what you want.
 
@@ -24,9 +26,11 @@ The input buffer and limits: `tuning.combat_tuning.ron`. ["Actions and combat (E
 2. Its moves: a moveset in `movesets.moveset.ron` (`inputs`, `stagger`, `death`) and actions in a `*.action.ron`;
    every action's `net_id` is unique across all actions.
 3. Its look: a line in `looks.look.ron` (`extends: "low_poly"`, `color`), named by `"Look": ("brute")` in the prefab.
-4. Place it: a spawn in `arena.arena.ron` with a new, unique `key`. Spawns get ids in order (`e1` the hero, `e2`
-   the grunt, then the next): **appending keeps every existing id**; inserting before others renumbers them and
-   breaks scenarios and replays that name them. Or spawn it on the fly: `act spawn_prefab id=grunt_brute x=3 z=-4`.
+4. Place it: a spawn in `arena.arena.ron` with a new, unique `key`. Ids follow the order things spawn in: the
+   spawns (`e1` the hero, `e2` the grunt), then the walls (`e3`-`e6`), then a co-op guest (`e7`). A new spawn
+   shifts every id after it: update the scenarios and tests that name them (`scenarios/stand/coop.scenario` and
+   `tests/game/coop.rs` use `e7`, `tests/game/content.rs` taunts the wall `e3`) and record the replays again. To
+   leave every id as it is, spawn it on the fly instead: `act spawn_prefab id=grunt_brute x=3 z=-4`.
 5. Check: `observe` shows it; a scenario fights it; `check-content` catches a misspelt prefab, moveset or look
    with `did you mean …`.
 
@@ -124,5 +128,7 @@ output changed, raise the region's `version` and update the manifest hash its sc
 `session.net.ron` (`max_players`, `player_prefab`) is all the content co-op needs. In code, an observer of a
 combat event that changes gameplay starts with `if !shards::core::simulates(role) { return; }`, or the client
 counts it twice. Check on a stand: `template/scenarios/stand/coop.scenario` with `invariant !journal "desync"`;
-live, `live.py start --game template --name coop -- --stand 1 --net-sim latency=150,loss=0.02`.
+live, `live.py start --game template --name coop -- --stand 1 --net-sim latency=150,loss=0.02`, then the line it
+prints, which runs the CLI from `template/` where every member's token is (`--peer c1 observe`, `scenario
+scenarios/stand/coop.scenario`).
 [`docs/agents/net-coop-steam.md`]

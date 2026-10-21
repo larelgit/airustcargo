@@ -28,7 +28,7 @@ check that fails when you forget, so you know what will tell you, and what to ru
 | A reference to an entity without an `AiId` | `add_snapshot_entity_key` | snapshot round trip |
 | An input component (something a player or agent sets between ticks) | `app.replay_input::<C>()`, or write `Intent` instead | replays diverge on playback |
 | An observer of an event that changes gameplay | first line: `if !shards::core::simulates(role) { return; }` (`role: Option<Res<NetRole>>`) | co-op desync (`net: desync … here …, host …`) |
-| A tool that changes the world in co-op | the right `NetRoute` (host only where the host decides: `app.net_route("tool", NetRoute::HostOnly(why))`) | stand scenarios |
+| A tool, seen from co-op | the route `NetRoute::default_for` gives it, or `app.net_route(name, …)`: a query answers on the machine asked (a client from what it holds; its own body as predicted, `shown_state`), `HostOnly(why)` when only the host can answer; a dev action is forwarded to the host; an action only the host may make is `HostOnly(why)` | stand scenarios; tests on a stand (`crates/sandbox/tests/sandbox/net_predict.rs`) |
 
 ## Content
 
@@ -37,7 +37,7 @@ check that fails when you forget, so you know what will tell you, and what to ru
 | A content kind | a struct with `Serialize`, `Deserialize`, `#[serde(deny_unknown_fields)]`, `impl ContentDef` (`KIND`, `validate` with `refs.require::<Other>(id, field)` for every reference), `app.add_content::<T>()`; `require_content` for ids the code needs | `--check-content` and a typo test |
 | A kind only the picture, the sound or the menus read | `const SIMULATION: bool = false;` | reference replays move when a look is edited |
 | A field on an existing definition | `#[serde(default, skip_serializing_if = "…")]` at a neutral default, so content that does not use it serializes and hashes as before | reference replays; the co-op content hash; a JSON-pinning test where one exists (`existing_animsets_keep_their_json`) |
-| A read of content by the simulation | inside a tick, an action or a builder, by id (`get`); `iter`/`ids` only when the whole kind matters (it makes the whole kind count for replays); a describer or picture reads with `peek` | the replay `content` check; `content_reads_are_the_same_headless_and_drawn` (GPU, nightly) |
+| A read of content by the simulation | inside a tick, an action or a builder, by id (`get`); `iter`/`ids` only when the whole kind matters (it makes the whole kind count for replays); a describer, a picture or a query reads with `peek` | the replay `content` check; `content_reads_are_the_same_headless_and_drawn` (GPU, nightly) |
 | A tunable number | content, not a `const` (see "Numbers still in Rust code" in `docs/manual.md`) | review |
 
 ## World, navigation, generation
@@ -54,8 +54,8 @@ check that fails when you forget, so you know what will tell you, and what to ru
 
 | You add | You must | Caught by |
 |---|---|---|
-| A tool | an args struct with doc comments (they become the schema), a system `In<Call<Args>> -> ToolResult`; `add_ai_tool` (changes the world: journaled, recorded) or `add_ai_query` (reads); `Scope::Player` works through `Intent`, `Scope::Dev` for cheats; every error says how to fix the call | tool tests; `shards fuzz --invalid` (a refusal must teach) |
-| An invariant | `add_engine_invariant("<module>.<rule>", fn(&World) -> Option<String>)` (a game: `add_ai_invariant`); a doc comment saying what it checks and why any carve-out exists; it only reads; names offenders lowest id first (`Offenders`); a control test | the control test; it is on in tests, `--verify`, fuzz and soak |
+| A tool | an args struct with doc comments (they become the schema), a system `In<Call<Args>> -> ToolResult`; in an engine crate `register_tool(world, name, scope, ToolKind::Action / Query, f)` (a game: `add_ai_tool` / `add_ai_query`): an action changes the world and is journaled and recorded, a query only reads, a control moves time or the session and is never recorded; `Scope::Player` works through `Intent`, `Scope::Dev` for cheats; every error says how to fix the call | `tool_contracts.rs` (calls every tool with 20 valid and 10 broken argument sets: no panic, errors that name the signature or the bad argument, action calls that replay); your tool's own tests |
+| An invariant | `add_engine_invariant("<module>.<rule>", fn(&World) -> Option<String>)` (a game: `add_ai_invariant`); a doc comment saying what it checks and why any carve-out exists; it only reads, through `with_query`; names offenders lowest id first (`Offenders`); a control test; its name in `ENGINE_RULES` (`crates/sandbox/tests/sandbox/invariants.rs`) and the rule count there | the control test; the sandbox's rule list; it is on in tests, `--verify`, fuzz and soak |
 | Something agents must see on an entity | `register_ai_component::<C>(describe)`, `register_ai_describer(key, fn(EntityRef) -> Option<String>)`, or `register_ai_world_describer` | tests on `observe`/`inspect` text |
 | An event agents must hear about | `app.journal_event::<E>(format)`; machine-local lines (music, picture) are `JournalKind::Local` | scenario `expect journal` |
 | A condition to wait on | `add_ai_condition(name, fn(&World) -> bool)` | scenario `step --until named:…` |

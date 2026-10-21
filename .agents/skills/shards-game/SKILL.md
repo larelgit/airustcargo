@@ -16,9 +16,9 @@ repository root; in `template/` the game's commands run from that folder.
 |---|---|---|
 | Engine | `path = "../crates/shards"` | a git `tag` or `rev` in `Cargo.toml` |
 | Workspace | its own (`template/Cargo.lock`, `template/.config/nextest.toml`) | its own |
-| Run | `(cd template && CARGO_TARGET_DIR=../target cargo run -- …)`, sharing the engine's build (section 6) | `cargo run -- …` (`cargo game` is the alias) |
-| The CLI | the engine's: `cargo shards --port-file … --token …` from the root (`live.py start --game template` prints the line) | `shards`, installed at the engine's version (`cargo install shards_cli --git … --tag vX.Y.Z`) |
-| Docs | `docs/manual.md`, `docs/agents/*.md` here | the same files at the engine's tag |
+| Run | `(cd template && cargo run -- …)` | `cargo run -- …` (`cargo game` is the alias) |
+| The CLI | the engine's, run from `template/`, where the game keeps its tokens: `(cd template && ../target/debug/shards --port-file … observe)` (`live.py start --game template` prints the line) | `shards`, installed at the engine's version (`cargo install shards_cli --git … --rev <commit>`) |
+| Docs | `docs/manual.md`, `docs/agents/*.md` here | the same files at the engine's pinned commit |
 
 ## 2. The boundary, before anything
 
@@ -76,21 +76,23 @@ once when `!shards::core::simulates(role)`; your own input components through `r
 ## 6. The game's gate
 
 ```bash
-CARGO_TARGET_DIR=$PWD/target cargo test --manifest-path template/Cargo.toml   # tests, scenarios, determinism, replays
-CARGO_TARGET_DIR=$PWD/target cargo clippy --manifest-path template/Cargo.toml --all-targets -- -D warnings
-(cd template && export CARGO_TARGET_DIR=../target && cargo run -- --check-content \
-  && cargo run -- --worldgen-report valley --seeds 1..1000 \
+cargo test --manifest-path template/Cargo.toml          # tests, scenarios, determinism, replays
+cargo clippy --manifest-path template/Cargo.toml --all-targets -- -D warnings
+(cd template && cargo run -- --check-content && cargo run -- --worldgen-report valley --seeds 1..1000 \
   && for r in tests/replays/*.json; do cargo run -- --replay "$r" --verify || exit 1; done)
 ```
 
-`CARGO_TARGET_DIR` makes the template share the engine's build folder, as CI does; without it, the template
-builds Bevy a second time into a `target/` of its own (another 20 minutes and gigabytes). A game in its own
-repository runs the same commands from its folder, without it.
+The template builds Bevy a second time into a `target/` of its own (another 20 minutes and gigabytes). On Linux
+and macOS it can share the engine's, as CI does: `CARGO_TARGET_DIR=$PWD/target` before a command run from the
+root, `CARGO_TARGET_DIR=../target` before one inside `template/`. Not on Windows, where the root and `template/`
+choose different linkers and one shared folder rebuilds everything at every switch. A game in its own repository
+runs the same commands from its folder.
 
-- Reference replays (`tests/replays/smoke.json`, `valley.json`) move when gameplay or content they read changes:
+- Reference replays (`tests/replays/smoke.json`, `valley.json`) move when gameplay, content they read or a level
+  file they place changes:
   predict with `python3 .agents/skills/shards-verify/scripts/which_replays.py`; if the change is meant, record
-  them again (`(cd template && CARGO_TARGET_DIR=../target cargo test --test game record_reference_replays -- --ignored)`)
-  and check that only the expected files changed.
+  them again (`(cd template && cargo test --test game record_reference_replays -- --ignored)`) and check that only
+  the expected files changed.
 - Bakes: an edited tile or level file needs `cargo run -- --bake-nav`; an edited clip `cargo run -- --bake-motion`
   (in the game's folder); commit what they write.
 - In this repository, a change to the template also updates `template/README.md` (its file table, the section,
