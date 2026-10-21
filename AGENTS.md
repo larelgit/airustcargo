@@ -11,6 +11,8 @@ is driven from outside: by you, through the `shards` CLI. Anything an agent need
 
 How this file works: it is the short core that every agent loads. Detail lives in `docs/agents/*.md`; the **Index** at the end says which file to read for which change. Read the topic file before you touch its area.
 
+Procedures are skills in `.agents/skills/` (Claude Code: `.claude/skills/`): `shards-engine` (change the engine), `shards-game` (make or change a game), `shards-verify` (plan and run the checks), `shards-playtest` (drive a live game), `shards-debug` (a panic, a broken rule, a divergence). Use the one that fits the task.
+
 ## Building
 
 - System packages: `pkg-config libasound2-dev libudev-dev` (for a window under Xvfb, also `xvfb mesa-vulkan-drivers
