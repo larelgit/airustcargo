@@ -1,13 +1,15 @@
 // The sandbox's effects (the engine's effects, E10.3; content kind `effect`): particles from a
 // pool of `max_live` meshes made once, a soft spot (`Quad`), a `Cube`, a `Shard` or a level `Disc`. The table
-// (sandbox.fx.ron) says which engine event plays which; `shards act effect_play effect=hit_spark
-// at=e1` plays one by hand (in a window or with --offscreen), `shards act effects` lists them and
-// their pools. Edit a number here and the next play takes it.
+// (sandbox.fx.ron) says which engine event plays which, and an effect's `intensity` how far past white its colour
+// goes (for a camera with a bloom). `shards act effect_play effect=hit_spark at=e1` plays one by hand (in a
+// window or with --offscreen), `shards act effects` lists them and their pools. Edit a number here and the next
+// play takes it.
 {
-    // A hit: hot sparks that burst out of the struck side, back at the attacker, glowing, fading to red.
+    // A hit: hot sparks that burst out of the struck side, back at the attacker, glowing, fading to red; three times
+    // as bright as their colour, so the camera's bloom (camera.camera.ron) spreads a glow round them.
     "hit_spark": (count: 18, lifetime: (0.2, 0.4), speed: (3.0, 8.0), spread: 120.0, aim: Hit, lift: 35.0,
         gravity: -9.0, drag: 2.0, size: (0.2, 0.34), size_end: 0.3, color: "#fff2b3", color_end: "#ff6a1a00", glow: true,
-        offset: (0.0, 1.1, 0.0), radius: 0.15, max_live: 128),
+        intensity: 3.0, offset: (0.0, 1.1, 0.0), radius: 0.15, max_live: 128),
     // A blow on a guard: cold shards of the guard that tumble off and fall.
     "block_spark": (count: 10, lifetime: (0.3, 0.5), speed: (2.5, 5.0), spread: 80.0, aim: Hit, lift: 35.0,
         gravity: -12.0, drag: 1.0, size: (0.2, 0.34), size_end: 0.4, color: "#bfe6ff", color_end: "#4d9fff00",

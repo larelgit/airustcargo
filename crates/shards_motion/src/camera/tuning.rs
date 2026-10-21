@@ -9,6 +9,8 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_content::{ContentDef, Refs};
 
+use super::picture::PictureTuning;
+
 /// Names a `skip_serializing_if` predicate for a field whose default is `$value`: a field that
 /// has its default is left out of the serialized form (so adding a field never changes the
 /// content hash of a definition that does not set it).
@@ -296,6 +298,9 @@ pub struct CameraTuning {
     /// Turning back behind the body when the player leaves the look alone (K2).
     #[serde(skip_serializing_if = "AutoCentreTuning::is_default")]
     pub auto_centre: AutoCentreTuning,
+    /// The picture the camera draws: its tone mapping and its bloom ([`PictureTuning`]); left out, the camera's own.
+    #[serde(skip_serializing_if = "PictureTuning::is_default")]
+    pub picture: PictureTuning,
 }
 
 impl Default for CameraTuning {
@@ -311,6 +316,7 @@ impl Default for CameraTuning {
             flick: FlickTuning::default(),
             trauma: TraumaTuning::default(),
             auto_centre: AutoCentreTuning::default(),
+            picture: PictureTuning::default(),
         }
     }
 }
@@ -458,6 +464,7 @@ impl CameraTuning {
         {
             out.push(format!("auto_centre.pitch {pitch} is outside the pitch limits ({lo}, {hi})"));
         }
+        out.extend(self.picture.problems());
         out
     }
 }

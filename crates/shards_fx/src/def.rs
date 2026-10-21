@@ -222,6 +222,11 @@ pub struct EffectDef {
     /// chips that keep their colour on a pale ground, a shockwave. Quads are unshaded anyway; with `glow` it changes nothing.
     #[serde(skip_serializing_if = "is_false")]
     pub unlit: bool,
+    /// How bright its colour is, a factor on the colour's light (linear, after sRGB): 1 the colour as written; above 1
+    /// brighter than white can say, for a camera that draws in HDR (its bloom takes what passes its threshold, its tone
+    /// mapping softens the rest); without HDR a channel stops at full. 0 black.
+    #[serde(skip_serializing_if = "is_one")]
+    pub intensity: f32,
     /// Where it starts, from the entity's feet or the point (metres, world axes): `(0, 1, 0)` is
     /// a metre up, the chest of a body.
     pub offset: (f32, f32, f32),
@@ -263,6 +268,7 @@ impl Default for EffectDef {
             shape: ParticleShape::Quad,
             glow: false,
             unlit: false,
+            intensity: 1.0,
             offset: (0.0, 0.0, 0.0),
             radius: 0.0,
             spin: 360.0,
@@ -314,6 +320,9 @@ impl EffectDef {
             what.push_str(" glow");
         } else if self.unlit {
             what.push_str(" unlit");
+        }
+        if self.intensity != 1.0 {
+            what.push_str(&format!(" x{}", self.intensity));
         }
         let end = self.color_end.clone().unwrap_or_else(|| "transparent".into());
         parts.push(format!("{what} {} → {end}", self.color));
@@ -399,7 +408,7 @@ impl ContentDef for EffectDef {
                 refs.error(format!("{field}: a number, not {value}"));
             }
         }
-        for (field, value) in [("drag", self.drag), ("size_end", self.size_end), ("radius", self.radius), ("swell", self.swell)] {
+        for (field, value) in [("drag", self.drag), ("size_end", self.size_end), ("radius", self.radius), ("swell", self.swell), ("intensity", self.intensity)] {
             if !(value >= 0.0 && value.is_finite()) {
                 refs.error(format!("{field}: 0 or more, not {value}"));
             }
@@ -550,9 +559,12 @@ mod tests {
     #[test]
     fn an_effect_without_the_new_fields_reads_and_writes_as_it_always_did() {
         let old = read(r##"(count: 6, shape: Cube, size_end: 0.5, color: "#ffffff")"##);
-        assert_eq!((old.size_ease, old.swell, old.unlit, old.push, old.strength), (1.0, 0.0, false, (1.0, 1.0), StrengthResponse::default()));
+        assert_eq!(
+            (old.size_ease, old.swell, old.unlit, old.intensity, old.push, old.strength),
+            (1.0, 0.0, false, 1.0, (1.0, 1.0), StrengthResponse::default())
+        );
         let written = ron::to_string(&old).unwrap();
-        for field in ["size_ease", "swell", "unlit", "push", "strength"] {
+        for field in ["size_ease", "swell", "unlit", "intensity", "push", "strength"] {
             assert!(!written.contains(field), "{field} written: {written}");
         }
         assert_eq!(old.describe(), "6 cube #ffffff → transparent · 0.4-0.8 s");
@@ -565,5 +577,9 @@ mod tests {
         assert_eq!(read(&ron::to_string(&ring).unwrap()), ring, "what it writes reads back the same");
         let dust = read("(count: 8, shape: Cube, glow: true, unlit: true, swell: 1.0, push: (0.6, 1.0))");
         assert_eq!(dust.describe(), "8 cube glow #ffffff → transparent · 0.4-0.8 s · swell 1 · push 0.6-1", "glow says it all");
+        // A chip brighter than white: its intensity is said after its look.
+        let hot = read(r##"(count: 12, shape: Cube, unlit: true, intensity: 2.95, color: "#ffd9cc")"##);
+        assert_eq!(hot.describe(), "12 cube unlit x2.95 #ffd9cc → transparent · 0.4-0.8 s");
+        assert_eq!(read(&ron::to_string(&hot).unwrap()), hot);
     }
 }

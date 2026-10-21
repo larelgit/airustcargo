@@ -42,6 +42,9 @@ pub struct ParticleMaterial {
     /// by itself (`glow` or `unlit`).
     #[uniform(0)]
     pub kind: u32,
+    /// The factor on the colour's light (`EffectDef::intensity`): above 1 brighter than white, for an HDR camera.
+    #[uniform(0)]
+    pub intensity: f32,
     /// Added to what is behind (`AlphaMode::Add`), else blended over it.
     pub glow: bool,
 }
@@ -53,7 +56,7 @@ impl ParticleMaterial {
             (_, false) => 1,
             (_, true) => 2,
         };
-        Self { kind, glow: def.glow }
+        Self { kind, intensity: def.intensity, glow: def.glow }
     }
 }
 
@@ -510,6 +513,9 @@ mod tests {
         let unlit = |shape| ParticleMaterial::of(&EffectDef { shape, unlit: true, ..EffectDef::default() });
         assert_eq!((unlit(ParticleShape::Cube).kind, unlit(ParticleShape::Cube).alpha_mode()), (2, AlphaMode::Blend));
         assert_eq!((unlit(ParticleShape::Disc).kind, unlit(ParticleShape::Quad).kind), (2, 0));
+        // The intensity rides along to the shader: 1 unless the effect says.
+        assert_eq!(material(ParticleShape::Cube, true).intensity, 1.0);
+        assert_eq!(ParticleMaterial::of(&EffectDef { intensity: 2.2, ..EffectDef::default() }).intensity, 2.2);
     }
 
     #[test]

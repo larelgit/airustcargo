@@ -1,6 +1,6 @@
 //! Effects on a GPU (`--offscreen`): a grey floor seen from above, the decal of a slam's
 //! telegraph colouring it inside the zone and nowhere else, and glowing particles where an effect
-//! plays, a level disc of its own colour on the floor as wide as its size; drawn into the offscreen image and read back pixel by
+//! plays, a level disc of its own colour on the floor as wide as its size, and the glow an HDR camera's bloom spills round an effect brighter than white; drawn into the offscreen image and read back pixel by
 //! pixel.
 
 use std::sync::{Arc, Mutex};
@@ -10,6 +10,7 @@ use serde_json::json;
 use shards::ai_core::display::Offscreen;
 use shards::ai_core::AiJournal;
 use shards::bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
+use shards::bevy::post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter};
 use shards::bevy::render::view::{DebandDither, Msaa, Tonemapping};
 
 use crate::*;
@@ -205,4 +206,57 @@ fn offscreen_a_telegraph_colours_the_floor_inside_its_zone_and_particles_glow() 
     assert!(mean(&pad_px).distance(middle) < 6.0, "{} vs {middle}", mean(&pad_px));
     assert!((span.0 - left.x).abs() < 4.0 && (span.1 - right.x).abs() < 4.0, "2 m across: {span:?} vs {}..{}", left.x, right.x);
     assert!(padded.find(green).len() > 50, "the beacon still glows beside it");
+}
+
+/// Two green cubes that stay put: one as its colour says, one six times as bright (`intensity`).
+const BRIGHT: &str = r##"{"plain": (count: 1, speed: (0.0, 0.0), lifetime: (30.0, 30.0), size: (0.6, 0.6), size_end: 1.0, shape: Cube,
+    color: "#00ff00", color_end: "#00ff00", unlit: true, spin: 0.0, max_live: 1),
+    "bright": (count: 1, speed: (0.0, 0.0), lifetime: (30.0, 30.0), size: (0.6, 0.6), size_end: 1.0, shape: Cube,
+    color: "#00ff00", color_end: "#00ff00", unlit: true, intensity: 6.0, spin: 0.0, max_live: 1)}"##;
+
+/// The mean green of the pixels between `inner` and `outer` pixels from `at` that are not the cube itself.
+fn halo(picture: &Picture, at: Vec2, inner: f32, outer: f32) -> f32 {
+    let ring: Vec<f32> = (0..picture.height)
+        .flat_map(|y| (0..picture.width).map(move |x| (x, y)))
+        .filter(|(x, y)| (inner..outer).contains(&Vec2::new(*x as f32, *y as f32).distance(at)))
+        .map(|(x, y)| picture.pixels[(y * picture.width + x) as usize])
+        .filter(|px| !green(*px) || px[1] < 250)
+        .map(|px| px[1] as f32)
+        .collect();
+    ring.iter().sum::<f32>() / ring.len().max(1) as f32
+}
+
+#[test]
+#[ignore = "needs a GPU, or a software one (WGPU_FORCE_FALLBACK_ADAPTER=1): cargo test -p shards_fx --test fx -- --ignored offscreen"]
+fn offscreen_an_effect_brighter_than_white_blooms_under_an_hdr_camera_and_a_plain_one_does_not() {
+    let assets = Folder::new("offscreen_bloom");
+    assets.put("content/fx/bright.effect.ron", BRIGHT);
+    let dir = assets.path().to_string_lossy().into_owned();
+    let mut app = testing::test_app(
+        move |config| {
+            (config.headless, config.offscreen, config.window) = (false, true, SIZE);
+            config.asset_dir = dir;
+        },
+        |app| {
+            app.insert_resource(ClearColor(Color::BLACK));
+        },
+    );
+    // HDR with an additive bloom of what passes 1 and no tone curve: what glows is the bloom alone.
+    let bloom = Bloom { intensity: 0.6, prefilter: BloomPrefilter { threshold: 1.0, threshold_softness: 0.0 }, composite_mode: BloomCompositeMode::Additive, ..Bloom::NATURAL };
+    let camera = (Camera3d::default(), AiCamera, Msaa::Off, Tonemapping::None, DebandDither::Disabled, bloom);
+    let camera = app.world_mut().spawn((camera, Transform::from_xyz(0.0, 10.0, 0.01).looking_at(Vec3::ZERO, Vec3::Y))).id();
+    // The plain cube alone first: the bright one's glow reaches far across the picture.
+    ok(&mut app, "effect_play", json!({"effect": "plain", "point": [-3.0, 0.0, 0.0]}));
+    capture_until(&mut app, "the plain cube", |p| p.find(green).len() > 50);
+    let (plain_at, bright_at) = (on_screen(&mut app, camera, Vec3::new(-3.0, 0.3, 0.0)), on_screen(&mut app, camera, Vec3::new(3.0, 0.3, 0.0)));
+    let alone = capture(&mut app);
+    let plain = halo(&alone, plain_at, 14.0, 30.0);
+    assert!(alone.find(green).iter().any(|p| p.distance(plain_at) < 8.0), "the plain cube drawn");
+    ok(&mut app, "effect_play", json!({"effect": "bright", "point": [3.0, 0.0, 0.0]}));
+    let picture = capture_until(&mut app, "the bloom", |p| halo(p, bright_at, 14.0, 30.0) > 20.0);
+    let bright = halo(&picture, bright_at, 14.0, 30.0);
+    eprintln!("bloom: halo {bright:.1} round the bright cube, {plain:.1} round the plain one alone; {} green pixels", picture.find(green).len());
+    assert!(picture.find(green).iter().any(|p| p.distance(bright_at) < 8.0), "the bright cube drawn");
+    assert!(plain < 3.0, "a colour no brighter than white does not pass the threshold: {plain}");
+    assert!(bright > 20.0, "six times white spills a glow round it: {bright}");
 }

@@ -12,7 +12,7 @@ act telegraph_decals on=true
 # --- the sandbox's effects, their pools and the table; headless nothing is drawn
 act effects
 expect result contains "8 effects · nothing is drawn headless: effects play in a window or with --offscreen · telegraph decals on"
-expect result contains "  hit_spark    18 quad glow #fff2b3 → #ff6a1a00 · 0.2-0.4 s · aim hit · gravity -9 · pool 128"
+expect result contains "  hit_spark    18 quad glow x3 #fff2b3 → #ff6a1a00 · 0.2-0.4 s · aim hit · gravity -9 · pool 128"
 expect result contains "  block_spark  10 shard #bfe6ff → #4d9fff00 · 0.3-0.5 s · aim hit · gravity -12 · pool 64"
 expect result contains "  death_dust   16 cube + 24/s for 0.8s #8c8061cc → #5c554400 · 0.8-1.4 s · gravity -0.6 · pool 96"
 expect result contains "  guard_ring   1 disc unlit #ffb36bb3 → transparent · 0.3 s · size ease 2.5 · strength: count +0, size · pool 8"
@@ -25,6 +25,10 @@ expect result contains "Cube"
 act content_get kind=fx id=sandbox
 expect result contains "sandbox.fx.ron"
 expect result contains "parry_flash"
+# the camera's bloom, which makes the sparks' intensity glow: the picture's, never the simulation's
+act content_get kind=camera id=default
+expect result contains '"threshold": 1.5'
+expect result contains '"composite": "Additive"'
 
 # --- headless an effect plays nowhere, and the error says why; a typo names the closest
 act? effect_play effect=hit_spark at=e6

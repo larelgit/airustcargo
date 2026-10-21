@@ -41,7 +41,7 @@ pub(super) fn plugin(app: &mut App) {
         (lock_on.run_if(not(lock_rules)), lock_by_rules.run_if(lock_rules)).run_if(not(shot_playing)).after(ControlSystems::Read),
     )
     .add_systems(PostUpdate, orbit_camera.in_set(CameraSystems::Orbit).after(InterpSystems::Blend).before(TransformSystems::Propagate))
-    .add_systems(Update, apply_motion_blur);
+    .add_systems(Update, (apply_motion_blur, super::picture::apply_picture));
 }
 
 /// `Update`: the accessibility setting `motion_blur` (0 none, 1 full) on every camera that
