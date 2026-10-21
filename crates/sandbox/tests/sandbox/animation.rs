@@ -183,3 +183,23 @@ fn the_prop_is_content_and_the_sandbox_has_a_menu_entry() {
     let menu = text(&ok(&mut app, "dev_menu", json!({}))).to_owned();
     assert!(menu.contains("animation"), "{menu}");
 }
+
+#[test]
+fn a_downed_body_falls_at_the_clips_speed_and_then_lies_still() {
+    let mut app = sandbox::test_app(42);
+    ok(&mut app, "set", json!({"id": PLAYER, "component": "Fighter", "path": "moveset", "value": "partner"}));
+    step(&mut app, 2);
+    ok(&mut app, "down", json!({"id": PLAYER, "bleed": 20}));
+    let body = |app: &mut App| {
+        let said = text(&ok(app, "animation", json!({"id": PLAYER, "animset": "humanoid"}))).to_owned();
+        said.lines().nth(1).unwrap_or_default().to_owned()
+    };
+    // The 1.2 s fall at its own speed: 0.6 s into the 20 s pose is halfway through it, not 3 %.
+    step(&mut app, 36);
+    let falling = body(&mut app);
+    assert!(falling.contains("downed seeked to 50 % by phase, holding down (action spar_down"), "{falling}");
+    // Then the last pose, held for the rest of the pose.
+    step(&mut app, 120);
+    let lying = body(&mut app);
+    assert!(lying.contains("downed seeked to 100 % by phase, holding down"), "{lying}");
+}
