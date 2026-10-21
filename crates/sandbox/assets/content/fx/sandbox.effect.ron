@@ -1,5 +1,5 @@
 // The sandbox's effects (the engine's effects, E10.3; content kind `effect`): particles from a
-// pool of `max_live` meshes made once, a soft spot (`Quad`), a `Cube` or a `Shard`. The table
+// pool of `max_live` meshes made once, a soft spot (`Quad`), a `Cube`, a `Shard` or a level `Disc`. The table
 // (sandbox.fx.ron) says which engine event plays which; `shards act effect_play effect=hit_spark
 // at=e1` plays one by hand (in a window or with --offscreen), `shards act effects` lists them and
 // their pools. Edit a number here and the next play takes it.
@@ -28,4 +28,13 @@
     "heal_glow": (count: 8, rate: 30.0, duration: 0.6, lifetime: (0.6, 1.0), speed: (0.6, 1.4), spread: 25.0,
         size: (0.16, 0.26), size_end: 0.3, color: "#7dff9e", color_end: "#2bd96b00", glow: true, radius: 0.8,
         offset: (0.0, 0.4, 0.0), max_live: 48),
+    // A guard that breaks: a pale ring at the waist that opens fast, slows and fades, in its own colour (a level disc,
+    // `unlit`: it keeps its colour in any light and lies over what is behind it).
+    "guard_ring": (count: 1, lifetime: (0.3, 0.3), speed: (0.0, 0.0), size: (1.0, 1.0), size_end: 4.0, size_ease: 2.5,
+        color: "#ffb36bb3", shape: Disc, unlit: true, offset: (0.0, 0.9, 0.0), strength: (count_per: 0.0), max_live: 8),
+    // A body that kicks off (a roll, a sprint's start; the game plays it with the body's way as `push`): dust that billows
+    // before it thins and is carried off with a share of the push, and a bigger kick throws more of it, faster.
+    "kick_dust": (count: 8, lifetime: (0.4, 0.6), speed: (0.4, 1.0), spread: 140.0, lift: 15.0, drag: 3.0,
+        size: (0.12, 0.18), swell: 1.0, color: "#8c8061d9", shape: Cube, spin: 120.0, radius: 0.2, offset: (0.0, 0.05, 0.0),
+        push: (0.6, 1.0), strength: (count_per: 4.0, speed: true, size: false), max_live: 64),
 }

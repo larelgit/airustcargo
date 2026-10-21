@@ -5,7 +5,7 @@
 use serde_json::json;
 use shards::action::AnimationCue;
 use shards::bevy::mesh::MeshTag;
-use shards::fx::{EffectAt, FxParticle, Particle, Particles, PlayEffect};
+use shards::fx::{play_with, EffectAt, FxParticle, Particle, Particles, PlayEffect, PlayOptions};
 
 use crate::*;
 
@@ -268,4 +268,109 @@ fn the_tables_events_and_cues_play_their_effects() {
     let journal = ok(&mut app, "journal", json!({}));
     let warned: Vec<&str> = journal.lines().filter(|l| l.contains("fx: PlayEffect: no effect `glwo` (did you mean `glow`?)")).collect();
     assert_eq!(warned.len(), 1, "{journal}");
+}
+
+/// A fan of chips that answers a blow's strength, a wake that a run pushes, a shockwave.
+const RESPONSES: &str = r##"{
+    "fan": (count: 12, speed: (2.0, 2.0), size: (0.1, 0.1), shape: Cube, unlit: true, max_live: 64,
+        strength: (count_per: 6.0, speed: true, size: true)),
+    "wake": (count: 4, rate: 20.0, duration: 0.5, speed: (0.0, 0.0), push: (0.6, 1.0), swell: 1.0, max_live: 32),
+    "ring": (count: 1, shape: Disc, speed: (0.0, 0.0), lifetime: (0.3, 0.3), size: (0.7, 0.7), size_end: 4.0,
+        size_ease: 2.5, color: "#ffffffb3", unlit: true, offset: (0.0, 0.05, 0.0), strength: (count_per: 0.0), max_live: 8),
+}"##;
+
+#[test]
+fn a_strength_response_sets_the_number_the_speed_and_the_size_of_a_play() {
+    let assets = Folder::new("response");
+    assets.put("content/fx/responses.effect.ron", RESPONSES);
+    let mut app = drawn(&assets);
+    app.update();
+    let at = EffectAt::Point(Vec3::ZERO);
+    let strong = |strength: f32| PlayOptions { strength, ..PlayOptions::default() };
+    // 6 more for each 1 of strength above 1, each faster and bigger with it.
+    assert_eq!(play_with(app.world_mut(), "fan", at, strong(1.5)).unwrap().particles, 15);
+    let fan = take(&mut app, "fan");
+    assert_eq!(fan.len(), 15);
+    assert!(fan.iter().all(|p| (p.velocity.length() - 3.0).abs() < 1e-4 && (p.size - 0.15).abs() < 1e-6), "{fan:?}");
+    // 6 fewer for each 1 below, slower and smaller.
+    assert_eq!(play_with(app.world_mut(), "fan", at, strong(0.6)).unwrap().particles, 9);
+    assert!(take(&mut app, "fan").iter().all(|p| (p.velocity.length() - 1.2).abs() < 1e-4 && (p.size - 0.06).abs() < 1e-6));
+    // `PlayEffect` takes the strength too.
+    app.world_mut().trigger(PlayEffect::new("fan", at).strength(1.8));
+    app.world_mut().flush();
+    assert_eq!(take(&mut app, "fan").len(), 16, "int(6 + 6 × 1.8)");
+
+    // A shockwave: one disc at any strength, as much bigger; level (no tumble), the size it says.
+    assert_eq!(
+        ok(&mut app, "effect_play", json!({"effect": "ring", "point": [1, 0, 2], "strength": 1.8})),
+        "played ring at a point (1.0, 0.0, 2.0): 1 particles, 1/8 alive in its pool"
+    );
+    app.update();
+    let world = app.world_mut();
+    let mut query = world.query::<(&FxParticle, &Transform, &Visibility)>();
+    let rings: Vec<Transform> = query.iter(world).filter(|(p, _, v)| p.effect == "ring" && **v != Visibility::Hidden).map(|(_, t, _)| *t).collect();
+    assert_eq!(rings.len(), 1);
+    assert!(rings[0].translation.abs_diff_eq(Vec3::new(1.0, 0.05, 2.0), 1e-5) && rings[0].rotation == Quat::IDENTITY, "{:?}", rings[0]);
+    assert!(rings[0].scale.abs_diff_eq(Vec3::splat(0.7 * 1.8), 1e-5), "{:?}", rings[0].scale);
+    assert!(refused(&mut app, "effect_play", json!({"effect": "ring", "point": [0, 0, 0], "strength": -1})).starts_with("strength: "));
+}
+
+#[test]
+fn a_push_gives_each_particle_its_share_the_burst_and_what_the_rate_adds() {
+    let assets = Folder::new("push");
+    assets.put("content/fx/responses.effect.ron", RESPONSES);
+    let mut app = drawn(&assets);
+    app.update();
+    let push = Vec3::new(3.0, 0.0, -1.0);
+    // `wake` starts still: what moves it is its share (0.6 to 1.0) of the push.
+    let shares = |burst: &[Particle]| -> Vec<f32> {
+        burst
+            .iter()
+            .map(|p| {
+                assert!(p.velocity.cross(push).length() < 1e-4, "along the push: {}", p.velocity);
+                p.velocity.length() / push.length()
+            })
+            .collect()
+    };
+    let played = play_with(app.world_mut(), "wake", EffectAt::Point(Vec3::ZERO), PlayOptions { push, ..PlayOptions::default() }).unwrap();
+    assert_eq!((played.particles, played.later), (4, 10));
+    let burst = shares(&take(&mut app, "wake"));
+    assert!(burst.iter().all(|s| (0.6..=1.0).contains(s)), "{burst:?}");
+    assert!(burst.windows(2).any(|w| w[0] != w[1]), "scattered: {burst:?}");
+    step(&mut app, 32);
+    app.update();
+    let later = shares(&take(&mut app, "wake"));
+    assert_eq!(later.len(), 10, "what the rate adds is pushed too");
+    assert!(later.iter().all(|s| (0.6..=1.0).contains(s)), "{later:?}");
+    // From `PlayEffect`; a push that is no number pushes nothing.
+    app.world_mut().trigger(PlayEffect::new("wake", EffectAt::Point(Vec3::ZERO)).push(Vec3::new(f32::NAN, 0.0, 0.0)));
+    app.world_mut().flush();
+    assert!(take(&mut app, "wake").iter().all(|p| p.velocity == Vec3::ZERO));
+    let said = ok(&mut app, "effect_play", json!({"effect": "wake", "point": [0, 0, 0], "push": [0, 0, 2]}));
+    assert!(said.starts_with("played wake at a point (0.0, 0.0, 0.0): 4 particles (+10 as it goes on)"), "{said}");
+    assert!(take(&mut app, "wake").iter().all(|p| (1.2..=2.0).contains(&p.velocity.z)));
+}
+
+#[test]
+fn a_play_without_the_new_fields_starts_the_particles_it_always_did() {
+    let assets = Folder::new("legacy");
+    let mut app = drawn(&assets);
+    app.update();
+    let at = Vec3::new(1.0, 0.0, -2.0);
+    let played = shards::fx::play_scaled(app.world_mut(), "spark", EffectAt::Point(at), Some(Vec3::X), 0.5).unwrap();
+    let burst = take(&mut app, "spark");
+    // What a scaled play always did: `round(count × strength)` particles from the pool's stream, each its size times
+    // the strength, nothing else drawn.
+    let db = app.world().resource::<shards::content::ContentDb>();
+    let def = db.get::<shards::fx::EffectDef>("spark").unwrap().clone();
+    let mut rng = shards::fx::sim::Rng::new(0x5EED_F00D);
+    let aim = shards::fx::sim::aim_of(&def, Some(Vec3::X));
+    let expected: Vec<Particle> = (0..6)
+        .map(|_| {
+            let mut p = shards::fx::sim::spawn(&def, at, aim, burst[0].born, &mut rng);
+            p.size *= 0.5;
+            p
+        })
+        .collect();
+    assert_eq!((played.particles, burst), (6, expected));
 }

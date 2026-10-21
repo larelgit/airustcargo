@@ -66,6 +66,10 @@ fn effect_play_says_how_to_call_it() {
         "give `at` (an entity) or `point` (x, y, z), not both"
     );
     assert!(refused(&mut app, "effect_play", json!({"effect": "spark", "at": "e99"})).contains("e99"));
+    assert_eq!(
+        refused(&mut app, "effect_play", json!({"effect": "spark", "point": [0, 0, 0], "strength": -0.5})),
+        "strength: a number, 0 or more (1 plays the effect as it is), not -0.5"
+    );
 }
 
 #[test]

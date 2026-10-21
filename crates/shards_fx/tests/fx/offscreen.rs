@@ -1,6 +1,7 @@
 //! Effects on a GPU (`--offscreen`): a grey floor seen from above, the decal of a slam's
 //! telegraph colouring it inside the zone and nowhere else, and glowing particles where an effect
-//! plays; drawn into the offscreen image and read back pixel by pixel.
+//! plays, a level disc of its own colour on the floor as wide as its size; drawn into the offscreen image and read back pixel by
+//! pixel.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -13,9 +14,12 @@ use shards::bevy::render::view::{DebandDither, Msaa, Tonemapping};
 
 use crate::*;
 
-/// A glowing green spot that stays put for half a minute.
+/// A glowing green spot that stays put for half a minute, and a magenta disc 2 m across that lies on the floor as long, in its
+/// own colour (`unlit`) and over the floor as its alpha says.
 const BEACON: &str = r##"{"beacon": (count: 6, speed: (0.0, 0.0), lifetime: (30.0, 30.0), size: (0.8, 0.8), size_end: 1.0,
-    color: "#00ff00", color_end: "#00ff00", glow: true, max_live: 6)}"##;
+    color: "#00ff00", color_end: "#00ff00", glow: true, max_live: 6),
+    "pad": (count: 1, speed: (0.0, 0.0), lifetime: (30.0, 30.0), size: (2.0, 2.0), size_end: 1.0, shape: Disc,
+    color: "#ff00ffcc", color_end: "#ff00ffcc", unlit: true, offset: (0.0, 0.05, 0.0), max_live: 1)}"##;
 
 const SIZE: (u32, u32) = (320, 240);
 
@@ -61,6 +65,10 @@ fn warm([r, g, b]: [u8; 3]) -> bool {
 
 fn green([r, g, b]: [u8; 3]) -> bool {
     g > r.saturating_add(50) && g > b.saturating_add(50)
+}
+
+fn magenta([r, g, b]: [u8; 3]) -> bool {
+    r > g.saturating_add(80) && b > g.saturating_add(80)
 }
 
 fn mean(points: &[Vec2]) -> Vec2 {
@@ -185,4 +193,16 @@ fn offscreen_a_telegraph_colours_the_floor_inside_its_zone_and_particles_glow() 
     assert!(mean(&green_px).distance(at) < 10.0, "{} vs {at}", mean(&green_px));
     let said = ok(&mut app, "effects", json!({}));
     assert!(said.contains("beacon") && said.contains("pool 6/6"), "{said}");
+
+    // A disc on the floor: a level round patch of its colour, as wide as its size, where it plays.
+    ok(&mut app, "effect_play", json!({"effect": "pad", "point": [-5.0, 0.0, -2.0]}));
+    let padded = capture_until(&mut app, "the disc", |p| p.find(magenta).len() > 200);
+    let pad_px = padded.find(magenta);
+    let (left, right) = (on_screen(&mut app, camera, Vec3::new(-6.0, 0.05, -2.0)), on_screen(&mut app, camera, Vec3::new(-4.0, 0.05, -2.0)));
+    let middle = on_screen(&mut app, camera, Vec3::new(-5.0, 0.05, -2.0));
+    let span = pad_px.iter().fold((f32::MAX, f32::MIN), |(l, h), p| (l.min(p.x), h.max(p.x)));
+    eprintln!("disc: {} magenta pixels, centre {}, across {:?} (2 m is {}..{})", pad_px.len(), mean(&pad_px), span, left.x, right.x);
+    assert!(mean(&pad_px).distance(middle) < 6.0, "{} vs {middle}", mean(&pad_px));
+    assert!((span.0 - left.x).abs() < 4.0 && (span.1 - right.x).abs() < 4.0, "2 m across: {span:?} vs {}..{}", left.x, right.x);
+    assert!(padded.find(green).len() > 50, "the beacon still glows beside it");
 }

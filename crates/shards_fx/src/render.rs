@@ -31,12 +31,15 @@ const ZONE_SHADER: &str = "embedded://shards_fx/shaders/zone.wesl";
 /// ground and the feet of who stands on it, not a body or a wall.
 pub const DEPTH_FADE: f32 = 0.6;
 
+/// The edges of a disc particle's rim: round at the size of a shockwave a few metres across.
+const DISC_SEGMENTS: u32 = 48;
+
 /// A particle's material, one per effect: the colour comes from each particle's `MeshTag`
 /// (sRGB bytes, alpha last), so an effect's particles share it and draw in batches.
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone, PartialEq)]
 pub struct ParticleMaterial {
-    /// 0 a soft round spot (a quad), 1 a shaded solid (a cube or a shard), 2 a solid lit by
-    /// itself.
+    /// 0 a soft round spot (a quad), 1 a shaded solid (a cube, a shard or a disc), 2 a solid lit
+    /// by itself (`glow` or `unlit`).
     #[uniform(0)]
     pub kind: u32,
     /// Added to what is behind (`AlphaMode::Add`), else blended over it.
@@ -45,7 +48,7 @@ pub struct ParticleMaterial {
 
 impl ParticleMaterial {
     pub fn of(def: &EffectDef) -> Self {
-        let kind = match (def.shape, def.glow) {
+        let kind = match (def.shape, def.glow || def.unlit) {
             (ParticleShape::Quad, _) => 0,
             (_, false) => 1,
             (_, true) => 2,
@@ -156,7 +159,7 @@ struct PoolView {
 #[derive(Resource, Default)]
 struct Pools {
     views: BTreeMap<String, PoolView>,
-    meshes: Option<[Handle<Mesh>; 3]>,
+    meshes: Option<[Handle<Mesh>; 4]>,
 }
 
 /// The decals made so far (shown or hidden) and what each shows now.
@@ -207,6 +210,11 @@ fn shard_mesh() -> Mesh {
         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
 }
 
+/// A flat round disc a unit across, lying level and facing up (drawn from both sides: no culling).
+fn disc_mesh() -> Mesh {
+    Circle::new(0.5).mesh().resolution(DISC_SEGMENTS).build().rotated_by(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
+}
+
 /// A triangle from a tip to two points of the ring, wound to face out (away from the middle).
 fn outward(tip: Vec3, a: Vec3, b: Vec3) -> [Vec3; 3] {
     let n = (a - tip).cross(b - tip);
@@ -231,6 +239,7 @@ fn sync_pools(world: &mut World) {
                     meshes.add(Rectangle::from_size(Vec2::ONE).mesh().build()),
                     meshes.add(Cuboid::from_length(1.0).mesh().build()),
                     meshes.add(shard_mesh()),
+                    meshes.add(disc_mesh()),
                 ]
             })
             .clone()
@@ -262,6 +271,7 @@ fn sync_pools(world: &mut World) {
             ParticleShape::Quad => meshes[0].clone(),
             ParticleShape::Cube => meshes[1].clone(),
             ParticleShape::Shard => meshes[2].clone(),
+            ParticleShape::Disc => meshes[3].clone(),
         };
         let entities: Vec<Entity> = (0..def.pool_size())
             .map(|slot| {
@@ -319,7 +329,11 @@ fn draw_particles(
             match slot {
                 Some(particle) => {
                     let look = particle.shown(now, &playing.def, playing.colors);
-                    let rotation = if playing.def.shape == ParticleShape::Quad { billboard } else { look.rotation };
+                    let rotation = match playing.def.shape {
+                        ParticleShape::Quad => billboard,
+                        ParticleShape::Disc => Quat::IDENTITY,
+                        ParticleShape::Cube | ParticleShape::Shard => look.rotation,
+                    };
                     *transform = Transform { translation: look.position, rotation, scale: Vec3::splat(look.size.max(0.0)) };
                     visibility.set_if_neq(Visibility::Inherited);
                     let packed = pack(look.color);
@@ -491,6 +505,24 @@ mod tests {
         assert_eq!(material(ParticleShape::Shard, false).kind, 1);
         assert_eq!(material(ParticleShape::Cube, true).alpha_mode(), AlphaMode::Add);
         assert_eq!(material(ParticleShape::Cube, false).alpha_mode(), AlphaMode::Blend);
+        assert_eq!(material(ParticleShape::Disc, false).kind, 1, "a disc is shaded as a solid");
+        // `unlit`: its own colour as `glow` has it, but blended over what is behind, not added.
+        let unlit = |shape| ParticleMaterial::of(&EffectDef { shape, unlit: true, ..EffectDef::default() });
+        assert_eq!((unlit(ParticleShape::Cube).kind, unlit(ParticleShape::Cube).alpha_mode()), (2, AlphaMode::Blend));
+        assert_eq!((unlit(ParticleShape::Disc).kind, unlit(ParticleShape::Quad).kind), (2, 0));
+    }
+
+    #[test]
+    fn a_disc_lies_level_a_unit_across_and_faces_up() {
+        let mesh = disc_mesh();
+        let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().as_float3().unwrap();
+        assert!(positions.iter().all(|p| p[1].abs() < 1e-6), "level");
+        let widest = positions.iter().map(|p| Vec2::new(p[0], p[2]).length()).fold(0.0f32, f32::max);
+        assert!((widest - 0.5).abs() < 1e-5, "a unit across: {widest}");
+        match mesh.attribute(Mesh::ATTRIBUTE_NORMAL).unwrap() {
+            bevy::mesh::VertexAttributeValues::Float32x3(n) => assert!(n.iter().all(|n| Vec3::from(*n).abs_diff_eq(Vec3::Y, 1e-5))),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

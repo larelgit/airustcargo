@@ -45,6 +45,7 @@ Read this when you touch screens and menus, sound and music, mesh looks, particl
   a combat event (`damaged`, `died`, …) or a clip marker picks it from the table, and the game plays it at its own moment with
   `PlayEffect`. Effects and decals are only pictures (the `render` feature, a window or `--offscreen`): they do not change the world, their entities have no
   `AiId`, and the particle clock is the simulation clock (pause freezes it). Effect numbers are not put in game code.
+- **A play carries its strength and its push** (`PlayOptions`, `PlayEffect::strength` and `::push`, a cue's `strength`): how an effect answers them (more, faster or bigger particles; the share of the push each takes) is its own content (`strength`, `push`), and its look over a life (`size_ease`, `swell`, `Disc`, `unlit`) too. A play without a push draws no number, so existing effects start the particles they always did; keep new fields off by default.
 
 ## Animation
 

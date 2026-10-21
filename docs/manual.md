@@ -85,7 +85,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 216 definitions in 65 files
+cargo shards content check                 # ok: 218 definitions in 65 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -108,7 +108,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 216 definitions in 65 files
+# ok: 218 definitions in 65 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -598,7 +598,7 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 216 definitions in 65 files
+content: 218 definitions in 65 files
   action  70
   animset  1
   attack_plan  3
@@ -5965,10 +5965,12 @@ What an effect looks like is decided by content of the `effect` kind (`*.effect.
   the width of the cone of directions (degrees, 360 means all directions); `aim` — the axis of the cone: `Up` (upwards, the default) or `Hit` (for an event
   with an attacker: outwards from the point of impact, back towards the attacker); `lift: 25.0` — how far the `Hit` axis is raised above the horizontal.
 - `gravity: -9.0` — acceleration along Y (m/s²); `drag: 2.0` — resistance (1/s: the speed decays as e^(−drag·t)).
-- `size: (0.08, 0.12)` — the size at birth (m); `size_end: 0.0` — the size at the end of life, as a share of the starting size (0 means it vanishes, 1.6 means it grows).
-- `color: "#ffffff"` and `color_end` — the colour at birth and at the end (`#rrggbb` or `#rrggbbaa`, sRGB). Without `color_end`, it keeps the same colour and turns transparent. `glow: true` — the particle is added to the picture (sparks, flashes); otherwise it lies on top (dust).
-- `shape` — `Quad` (a soft spot, turned towards the camera; the default), `Cube` or `Shard` (a shard): these are lit from above and tumble at a rate of `spin: 360.0` (degrees per second, each particle has its own share of it).
+- `size: (0.08, 0.12)` — the size at birth (m); `size_end: 0.0` — the size at the end of life, as a share of the starting size (0 means it vanishes, 1.6 means it grows). `size_ease: 1.0` — how the size gets there: at the share `t` of its life it has gone `1 − (1 − t)^size_ease` of the way (1 is a straight line; 2.5 opens fast and slows, like a shockwave). `swell: 0.0` — the size times `1 + swell × sin(π t)` on top: 1 makes a particle that shrinks to nothing first billow to about 1.3 times its size at a quarter of its life (dust).
+- `color: "#ffffff"` and `color_end` — the colour at birth and at the end (`#rrggbb` or `#rrggbbaa`, sRGB). Without `color_end`, it keeps the same colour and turns transparent. `glow: true` — the particle is added to the picture (sparks, flashes); otherwise it lies on top (dust). `unlit: true` — a cube, a shard or a disc keeps its own colour in any light (it is not shaded) but still lies on top as its alpha says, not added: bright chips on a pale ground, a shockwave. Quads are unshaded anyway; with `glow` it changes nothing.
+- `shape` — `Quad` (a soft spot, turned towards the camera; the default), `Cube` or `Shard` (a shard): these are lit from above and tumble at a rate of `spin: 360.0` (degrees per second, each particle has its own share of it). `Disc` — a flat round disc `size` across that lies level and never turns (a shockwave, a ripple): give it `speed: (0.0, 0.0)` and let `size_end` open it.
 - `offset: (0.0, 1.0, 0.0)` — where they start, as an offset from the entity's feet or from the point; `radius: 0.5` — the particles are born in a sphere of this radius.
+- `push: (1.0, 1.0)` — the share of a play's push (`PlayOptions::push`, `PlayEffect::push`, `effect_play push=[…]`: a velocity in m/s, such as a body's run or the way of a roll) that each particle adds to its velocity; `(0.6, 1.0)` scatters it. A play without a push draws no number for it.
+- `strength` — how a play's strength (`play_scaled`, a cue's `strength`, `PlayEffect::strength`, `effect_play strength=…`) changes the particles: `(count_per: 6.0, speed: true, size: true)`. `count_per` — particles more for each 1 of strength above 1 (fewer below): a burst starts `count + count_per × (strength − 1)`, rounded down (`count: 12, count_per: 6.0` is `int(6 + 6 × strength)`; `0.0` always `count`); left out, `count × strength`, rounded and at least one. `speed: true` — each particle's starting speed times the strength. `size: true` (the default) — its size times the strength. Left out entirely, it is what a scaled play always did: the number and the size, not the speed. What a `rate` emits later follows the strength in proportion.
 - `max_live: 64` — the size of the pool (up to 4096): the effect creates this many meshes once, and it never has more live particles than that.
 
 **The `fx` table.** `effects` maps an engine event to an effect; `cues` maps a clip label (`AnimationCue`: `footstep`, `swoosh`) to an effect, on the body (its feet), or at the world position of the cue's `bone` when the clip's cue names one (`EffectAt::Point`; the effect's `offset` still adds to it), with the cue's `strength` scaling the burst and the particles' size (and what a `rate` emits later, over the same `duration`): `shards::fx::play_scaled(world, …, strength)`, which `play` calls at 1; at 0 nothing plays;
@@ -5977,7 +5979,7 @@ a label with no entry plays the effect of its own name, if there is one. Events:
 attacker plays the effect on the side of the body that faces the attacker (at the edge of the collider), and `aim: Hit` sends the particles from there back toward the
 attacker; such an effect plays at the point and does not follow the body. The game plays its own effect with the event
 `commands.trigger(PlayEffect::new("coin_sparkle", EffectAt::Entity(chest)))` (`shards::fx::{PlayEffect, EffectAt}`) (or `EffectAt::Point`, `.toward(dir)` — the axis for
-`aim: Hit`), or with the function `shards::fx::play(world, …)`, which returns how many particles started.
+`aim: Hit`, `.strength(1.5)`, `.push(velocity)`), or with the function `shards::fx::play(world, …)`, which returns how many particles started (`play_with(world, effect, at, PlayOptions { toward, strength, push })` for all of them at once).
 
 **Particles.** The engine has its own particles, which run on the CPU (`bevy_hanabi` has no version for Bevy 0.20). Each effect has a pool of `max_live` meshes. They are made when the content loads (and again when the effect is changed), and they are hidden while free. A play takes the free ones; when none are free, it takes the oldest. All particles of an effect share one mesh and one material. Each particle's colour is in its `MeshTag`, so Bevy draws them in batches. A particle's position is a function of its age (the flight under gravity and drag is solved with a formula, not with steps), on the **simulation clock** (`Time<Fixed>` and its remainder). A pause freezes the sparks; `step` moves them by as many ticks as have passed; in real time they fly along with the ticks. A snapshot that sets the time back removes the particles that were born "later". The pools and particles are entities without an `AiId`: replay, snapshot and co-op do not see them. A co-op client plays the effects of the events that the host sends it, on its own.
 
@@ -5985,34 +5987,38 @@ attacker; such an effect plays at the point and does not follow the body. The ga
 The zone's shape in the decal's square is a circle, a cone sector, a box's rectangle, a line, or a capsule's "stadium". The zone is pale, with stripes at 45° to the world axes, and it gets lighter toward the edge. The stripes get denser as the hit comes (`hatch_far` → `hatch_near`, like the gizmo's hatching) and converge on the point the fill grows from. They are counted from that point, not from the origin of the world, so no more stripes pass that point than fit across the zone, however far from the world origin the zone lies. The copy of the zone grows from its middle (the centre of the footprint, like the gizmo ring) as the hit gets closer (`TelegraphStyle::horizon`, as for the gizmo), with a bright edge. At the moment of the hit it covers the zone and flickers (the flicker follows the accessibility setting `flashes`). The colour is as for the gizmo: warm for an enemy's attack, cold for an ally's. The decal lies on whatever is under it, and fades out by 0.6 m in height from its plane (the ground, and the legs of those standing in the zone, not walls and bodies). While decals are on, the gizmos draw only the outline, the symbol and its stem; the hatching and the growing ring go to the decals (`TelegraphStyle::decals`). Decals need the scene's depth: each camera with `AiCamera` gets a `DepthPrepass` while they are on (and loses it when they are switched off, if the module gave it; the camera's own prepass stays). That is one extra depth pass per frame. `telegraph_decals on=false` brings back the gizmos' fill. Decals also come from a pool: one entity per zone, and the spare ones are hidden.
 
 **For agents.** `effects` (Dev, query) lists the effects (what and how many, colours, life, axis, gravity, pool: live/size), the table of events and cues, and the decals on the ground now: whose attack, shape, size, and how far the fill has grown. `effect_play effect=hit_spark at=e6` (or
-`point=[4, 0, -2]`, `toward=[1, 0, 0]` for `aim: Hit`; Dev, control) plays the effect and replies how many particles started and how many are alive in the
+`point=[4, 0, -2]`, `toward=[1, 0, 0]` for `aim: Hit`, `strength=1.5`, `push=[0, 0, 3]`; Dev, control) plays the effect and replies how many particles started and how many are alive in the
 pool. `telegraph_decals on=false` (Dev, query; without an argument it turns them on) switches the decals. The setting is the resource `FxSettings`, not part of the
 replay or the snapshot.
 
 ```text
 $ shards act effects
-6 effects · 36 particles alive in pools of 448 · telegraph decals on, on the ground: 2
+8 effects · 36 particles alive in pools of 520 · telegraph decals on, on the ground: 2
   block_spark  10 shard #bfe6ff → #4d9fff00 · 0.3-0.5 s · aim hit · gravity -12 · pool 0/64
   death_dust   16 cube + 24/s for 0.8s #8c8061cc → #5c554400 · 0.8-1.4 s · gravity -0.6 · pool 0/96
+  guard_ring   1 disc unlit #ffb36bb3 → transparent · 0.3 s · size ease 2.5 · strength: count +0, size · pool 0/8
   heal_glow    8 quad + 30/s for 0.6s glow #7dff9e → #2bd96b00 · 0.6-1 s · pool 0/48
   hit_spark    18 quad glow #fff2b3 → #ff6a1a00 · 0.2-0.4 s · aim hit · gravity -9 · pool 36/128
+  kick_dust    8 cube #8c8061d9 → transparent · 0.4-0.6 s · swell 1 · push 0.6-1 · strength: count +4, speed · pool 0/64
   parry_flash  24 quad glow #ffffff → #ffd24d00 · 0.12-0.22 s · pool 0/64
   step_dust    4 cube #8c806199 → #5c554400 · 0.3-0.5 s · gravity -1 · pool 0/48
-events: blocked → block_spark · damaged → hit_spark · died → death_dust · healed → heal_glow · parried → parry_flash
+events: blocked → block_spark · damaged → hit_spark · died → death_dust · guard_broken → guard_ring · healed → heal_glow · parried → parry_flash
 cues: footstep → step_dust
   decal e7 claw: sector 3.1×2.2 m, fill 0.82, hostile
   decal e8 claw: sector 3.1×2.2 m, fill 1.00, hostile
 $ shards act effect_play effect=death_dust at=e7
 played death_dust at e7 (-5.1, 0.0, 2.8): 16 particles (+20 as it goes on), 16/96 alive in its pool
+$ shards act effect_play effect=kick_dust at=e1 strength=1.5 push=[0, 0, -4]
+played kick_dust at e1 (0.0, 0.0, 3.0): 10 particles, 10/64 alive in its pool
 $ shards act telegraph_decals on=false
 telegraph decals off: the gizmos draw the fill
 ```
 
-Without rendering, `effects` says `6 effects · nothing is drawn headless: effects play in a window or with --offscreen · telegraph
+Without rendering, `effects` says `8 effects · nothing is drawn headless: effects play in a window or with --offscreen · telegraph
 decals on` and lists the effects with their pool sizes, and `effect_play` refuses: ``nothing is drawn headless: effects play in a window
 or with --offscreen (effect `hit_spark` is known)``; events then play nothing. For an effect that is not in the content, `effect_play`
 suggests the nearest name (``no effect `hit_sprak` (did you mean `hit_spark`?)``), and `PlayEffect` writes to the journal once
-(`fx: PlayEffect: no effect …`). `ai/status` has the field `fx`: `{"effects": 6, "live": 36, "decals": 2, "telegraph_decals": true}`. In the developer menu there is the item `effects` ("Effects, their pools and decals", section `world`) and the switch `telegraph_decals` ("Telegraphs as
+(`fx: PlayEffect: no effect …`). `ai/status` has the field `fx`: `{"effects": 8, "live": 36, "decals": 2, "telegraph_decals": true}`. In the developer menu there is the item `effects` ("Effects, their pools and decals", section `world`) and the switch `telegraph_decals` ("Telegraphs as
 decals on the ground", section `combat`).
 
 **Checking the content.** `--check-content` and `content_check` name the file, the effect and the field:
@@ -6025,9 +6031,9 @@ content/fx/sandbox.fx.ron: fx `sandbox`: effects: no engine event `damged` (did 
 content/fx/sandbox.fx.ron: fx `sandbox`: effects.damaged -> unknown effect `hit_sprak` (did you mean `hit_spark`?)
 ```
 
-Also checked: an effect that starts no particles (neither `count` nor `rate` with `duration`), `spread` outside 0…360, `lift` outside −90…90, negative `drag`, `size_end`, `radius`, `max_live` outside 1…4096, a second `fx` table in the game, an empty cue label. An effect with an error on its first load still plays (like any definition that was read), but within the limits that the check names: the pool is at most 4096 meshes, one play starts at most 1024 particles, a `rate` of at most 4096, and a particle lives at most 30 s. A typo such as `max_live: 4000000000` or `rate: 5e9` does not hang the game; the check names it (`one play starts 4294967295 particles …`).
+Also checked: an effect that starts no particles (neither `count` nor `rate` with `duration`), `spread` outside 0…360, `lift` outside −90…90, negative `drag`, `size_end`, `radius`, `swell`, a `size_ease` that is not above 0, a `push` range out of order, a `count_per` that is no number, `max_live` outside 1…4096, a second `fx` table in the game, an empty cue label. An effect with an error on its first load still plays (like any definition that was read), but within the limits that the check names: the pool is at most 4096 meshes, one play starts at most 1024 particles, a `rate` of at most 4096, and a particle lives at most 30 s. A typo such as `max_live: 4000000000` or `rate: 5e9` does not hang the game; the check names it (`one play starts 4294967295 particles …`).
 
-**How the game uses it.** (1) The effects are in `assets/content/*.effect.ron`, and the table is one `*.fx.ron`. The sandbox has the hit and block sparks (shard particles), the parry flash, the death dust (cubes) and the heal glow. The template has the hit and block sparks and the death dust. (2) Its own moments are `PlayEffect` from the game's code, or the clip labels in `cues`. (3) To see it: `cargo sandbox --offscreen --paused --port 0
+**How the game uses it.** (1) The effects are in `assets/content/*.effect.ron`, and the table is one `*.fx.ron`. The sandbox has the hit and block sparks (shard particles), the parry flash, the death dust (cubes), the heal glow, a broken guard's ring (a `Disc`) and a kick's dust (`swell`, `push`, a `strength` response) that the game plays with a push. The template has the hit and block sparks and the death dust. (2) Its own moments are `PlayEffect` from the game's code, or the clip labels in `cues`. (3) To see it: `cargo sandbox --offscreen --paused --port 0
 --port-file F &`, `shards act god`, `shards step 1800 --until "journal:winds up"`, `shards shot -o shots/fx.png` — in the picture, the decal under the attack and the sparks on the hit.
 
 **What is missing.** Particles run on the CPU, so tens of thousands alive at once are too much for them (an effect's pool is up to 4096). Particles have no textures or animated sprites, no trails, no collisions with the ground, no light from the particles, and no sound (sound is the audio module). Decals are for telegraphs only: there is no general API for spots (blood, tracks). A decal projects straight down, within 0.6 m: on a steep slope its edge fades. Checked on the GPU with `--offscreen` (the `offscreen` test in pixels and the sandbox's screenshots); it has not been checked by eye in a window on a display.
