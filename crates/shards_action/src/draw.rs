@@ -329,6 +329,27 @@ pub fn hitbox_wireframe(shape: &WorldShape) -> Vec<Vec<Vec3>> {
 
 // --- symbols ------------------------------------------------------------------------------
 
+/// The ring of `◌`, the mark of an attack that cannot be blocked: a circle round the middle of
+/// the glyph's cell, open at the top.
+const RING_RADIUS: f32 = 0.42;
+/// The gap in the ring, in degrees of the circle, centred at the top (60: the chord across it
+/// is the radius).
+const RING_GAP_DEG: f32 = 60.0;
+/// The points of the ring's stroke, ends included (one every 15 degrees).
+const RING_POINTS: usize = 21;
+
+/// The stroke of the ring: from the left edge of the gap (120 degrees) the long way round,
+/// counter-clockwise, to its right edge (420 degrees).
+fn open_ring() -> Vec<Vec2> {
+    let span = 360.0 - RING_GAP_DEG;
+    (0..RING_POINTS)
+        .map(|i| {
+            let t = (90.0 + RING_GAP_DEG * 0.5 + span * i as f32 / (RING_POINTS - 1) as f32).to_radians();
+            Vec2::new(RING_RADIUS * ops::cos(t), 0.5 + RING_RADIUS * ops::sin(t))
+        })
+        .collect()
+}
+
 /// Strokes of a symbol glyph in a cell `x` in -0.5..0.5, `y` in 0..1, or `None` when the
 /// character is an ordinary one the stroke font draws.
 fn glyph_strokes(c: char) -> Option<Vec<Vec<Vec2>>> {
@@ -359,6 +380,8 @@ fn glyph_strokes(c: char) -> Option<Vec<Vec<Vec2>>> {
         '◆' | '◇' => vec![vec![v(0.0, 0.0), v(0.4, 0.5), v(0.0, 1.0), v(-0.4, 0.5), v(0.0, 0.0)]],
         '↓' => vec![vec![v(0.0, 1.0), v(0.0, 0.05)], vec![v(-0.3, 0.35), v(0.0, 0.05), v(0.3, 0.35)]],
         '↑' => vec![vec![v(0.0, 0.0), v(0.0, 0.95)], vec![v(-0.3, 0.65), v(0.0, 0.95), v(0.3, 0.65)]],
+        // A ring with a gap at the top: the mark of an attack that cannot be blocked.
+        '◌' => vec![open_ring()],
         c if c.is_ascii() => return None,
         // Any other symbol the stroke font cannot draw: a bang, the generic warning.
         _ => return glyph_strokes('!'),
@@ -366,7 +389,7 @@ fn glyph_strokes(c: char) -> Option<Vec<Vec<Vec2>>> {
 }
 
 /// A symbol as drawing: vector glyphs for the symbols games use for danger (`!`, `⚠`, `↯`,
-/// `✖`...), the stroke font for plain ASCII text, left to right and centered on `at` in the
+/// `✖`, `◌`...), the stroke font for plain ASCII text, left to right and centered on `at` in the
 /// plane of `rotation`. `height` is its size in meters.
 pub fn symbol(symbol: &str, at: Vec3, rotation: Quat, height: f32, color: Color) -> DrawList {
     let mut out = DrawList::default();
@@ -398,7 +421,7 @@ pub fn symbol(symbol: &str, at: Vec3, rotation: Quat, height: f32, color: Color)
 }
 
 /// The symbol as plain ASCII, for a font that has nothing else (Bevy's default font):
-/// `⚠` and `‼` become `!`, `↯` `/`, `✖` `x`; ASCII stays.
+/// `⚠` and `‼` become `!`, `↯` `/`, `✖` `x`, `◌` `C`; ASCII stays.
 pub fn ascii_symbol(symbol: &str) -> String {
     symbol
         .chars()
@@ -409,6 +432,7 @@ pub fn ascii_symbol(symbol: &str) -> String {
             '✖' | '✕' | '×' => "x".to_owned(),
             '▲' => "^".to_owned(),
             '↓' => "v".to_owned(),
+            '◌' => "C".to_owned(),
             _ => "!".to_owned(),
         })
         .collect()
@@ -1035,7 +1059,47 @@ mod tests {
         assert_eq!(mixed.counts().2, 1, "an ASCII letter next to a glyph is text");
         let unknown = symbol("☃", Vec3::ZERO, q, 1.0, c);
         assert_eq!(unknown.counts(), (4, 0, 0), "an unknown symbol is a bang");
+        assert_eq!(symbol("◌", Vec3::ZERO, q, 1.0, c).counts(), (1, 0, 0), "an open ring: one strip, no text, not the bang's four");
+        let ring_and_letter = symbol("◌x", Vec3::ZERO, q, 1.0, c);
+        assert_eq!(ring_and_letter.counts(), (1, 0, 1), "an ASCII letter next to the ring is text");
         assert!(symbol("", Vec3::ZERO, q, 1.0, c).is_empty());
+    }
+
+    #[test]
+    fn the_ring_glyph_is_an_open_circle_with_its_gap_at_the_top() {
+        let strokes = glyph_strokes('◌').expect("a vector glyph");
+        assert_eq!(strokes.len(), 1, "one stroke");
+        let ring = &strokes[0];
+        assert_eq!(ring.len(), 21);
+        let centre = Vec2::new(0.0, 0.5);
+        for p in ring {
+            assert!(p.x.abs() <= 0.5 && (0.0..=1.0).contains(&p.y), "inside the cell: {p}");
+            assert!((p.distance(centre) - 0.42).abs() < 1e-3, "on the circle: {p}");
+        }
+        let (first, last) = (ring[0], ring[ring.len() - 1]);
+        assert!((first.distance(last) - 0.42).abs() < 1e-3, "the gap is a sixth of the circle: {first} {last}");
+        assert!(first.y > 0.5 && last.y > 0.5, "and it is at the top");
+        assert!(first.abs_diff_eq(Vec2::new(-0.21, 0.864), 1e-3) && ring[10].abs_diff_eq(Vec2::new(0.0, 0.08), 1e-3));
+    }
+
+    #[test]
+    fn a_telegraph_that_names_the_ring_draws_the_ring_over_its_zone() {
+        let z = zone(HitShape::Circle { radius: 3.0, height: 2.0 }, 0.6, Some("◌"));
+        let list = telegraph(&z, 0.0, true, &TelegraphStyle::default(), 0.0, Quat::IDENTITY);
+        assert_eq!(list.counts().2, 0, "no letter: {:?}", list.counts());
+        let rings: Vec<&Vec<Vec3>> = list
+            .0
+            .iter()
+            .filter_map(|p| match p {
+                Prim::Strip { points, .. } if points.len() == 21 => Some(points),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rings.len(), 1, "one ring of 21 points: {:?}", list.counts());
+        // The symbol floats 2.4 m up; the ring's lowest point is 2.02 m at this urgency.
+        for q in rings[0] {
+            assert!(q.y > 1.5, "the ring floats above the zone, not on the ground: {q}");
+        }
     }
 
     #[test]
@@ -1043,12 +1107,14 @@ mod tests {
         let at = Vec3::new(3.0, 2.0, -4.0);
         // A camera looking along +X (rotated a quarter turn): the glyph's plane is the YZ plane.
         let turned = Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2);
-        let list = symbol("!", at, turned, 1.0, Color::WHITE);
-        for p in &list.0 {
-            let Prim::Strip { points, .. } = p else { panic!() };
-            for q in points {
-                assert!((q.x - at.x).abs() < 1e-4, "flat in the view plane: {q}");
-                assert!((q.y - at.y).abs() <= 0.5 + 1e-4, "centered vertically: {q}");
+        for glyph in ["!", "◌"] {
+            let list = symbol(glyph, at, turned, 1.0, Color::WHITE);
+            for p in &list.0 {
+                let Prim::Strip { points, .. } = p else { panic!() };
+                for q in points {
+                    assert!((q.x - at.x).abs() < 1e-4, "{glyph} flat in the view plane: {q}");
+                    assert!((q.y - at.y).abs() <= 0.5 + 1e-4, "{glyph} centered vertically: {q}");
+                }
             }
         }
         let wide = symbol("!!", at, Quat::IDENTITY, 1.0, Color::WHITE);
@@ -1072,6 +1138,8 @@ mod tests {
         assert_eq!(ascii_symbol("!!"), "!!");
         assert_eq!(ascii_symbol("☃"), "!");
         assert_eq!(ascii_symbol("RUN ✖"), "RUN x");
+        assert_eq!(ascii_symbol("◌"), "C");
+        assert_eq!(ascii_symbol("RUN ◌"), "RUN C");
     }
 
     #[test]
