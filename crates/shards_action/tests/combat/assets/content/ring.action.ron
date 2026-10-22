@@ -1,0 +1,9 @@
+// An attack that cannot be blocked, marked with `◌`, a ring with a gap: the symbol on the ground telegraph and at the screen edge.
+{
+    "wail": (
+        net_id: 26,
+        phases: [("windup", 0.9), ("active", 0.2), ("recovery", 0.6)],
+        hits: [(span: Phase("active"), shape: Circle(radius: 3.0), damage: 20, poise: 30, flags: [Unblockable])],
+        telegraph: (symbol: "◌"),
+    ),
+}
