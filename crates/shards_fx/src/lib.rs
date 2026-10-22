@@ -60,9 +60,9 @@ use shards_content::db::closest;
 use shards_content::{ContentAppExt, ContentDb};
 use shards_core::EngineAppExt;
 
-use crate::def::{MAX_COUNT, MAX_LIVE};
+use crate::def::{in_proportion, MAX_COUNT, MAX_LIVE};
 pub use decal::{DecalShape, ZoneDecal};
-pub use def::{Aim, EffectDef, FxDef, ParticleShape, EVENTS};
+pub use def::{Aim, EffectDef, FxDef, ParticleShape, StrengthResponse, EVENTS};
 #[cfg(feature = "render")]
 pub use render::{FxParticle, FxPrepass, ParticleMaterial, TelegraphDecal, ZoneDecalMaterial, ZoneMaterial};
 pub use sim::{Particle, Pool, Shown};
@@ -91,17 +91,57 @@ pub struct PlayEffect {
     /// The way an effect with `aim: Hit` sends its particles (level, tilted up by its `lift`): for
     /// a hit, out of the struck side, back towards the attacker.
     pub toward: Option<Vec3>,
+    /// How strong the play is ([`PlayOptions::strength`]); 1 plays the effect as it is.
+    pub strength: f32,
+    /// A velocity (m/s) every particle takes its share of ([`PlayOptions::push`]).
+    pub push: Vec3,
 }
 
 impl PlayEffect {
     pub fn new(effect: impl Into<String>, at: EffectAt) -> Self {
-        Self { effect: effect.into(), at, toward: None }
+        Self { effect: effect.into(), at, toward: None, strength: 1.0, push: Vec3::ZERO }
     }
 
     /// The way an `aim: Hit` effect sends its particles.
     pub fn toward(mut self, direction: Vec3) -> Self {
         self.toward = Some(direction);
         self
+    }
+
+    /// Played at `strength` ([`play_scaled`]).
+    pub fn strength(mut self, strength: f32) -> Self {
+        self.strength = strength;
+        self
+    }
+
+    /// Every particle pushed by `velocity` (its share of it, the effect's `push`).
+    pub fn push(mut self, velocity: Vec3) -> Self {
+        self.push = velocity;
+        self
+    }
+
+    /// How it plays.
+    pub fn options(&self) -> PlayOptions {
+        PlayOptions { toward: self.toward, strength: self.strength, push: self.push }
+    }
+}
+
+/// How one play of an effect goes ([`play_with`]): the way it aims, how strong it is, what pushes it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlayOptions {
+    /// The way an effect with `aim: Hit` sends its particles.
+    pub toward: Option<Vec3>,
+    /// How strong the play is: the effect's [`StrengthResponse`] says what it scales (its particles' number and size in
+    /// proportion, by default). 1 plays the effect as it is; 0, or a value that is not a number, plays nothing.
+    pub strength: f32,
+    /// A velocity (m/s, world axes) added to every particle as it starts, each taking the share of it the effect's `push`
+    /// range gives: the wind of a body's run, the kick of a roll. Gravity and drag then act on it as on the rest.
+    pub push: Vec3,
+}
+
+impl Default for PlayOptions {
+    fn default() -> Self {
+        Self { toward: None, strength: 1.0, push: Vec3::ZERO }
     }
 }
 
@@ -153,8 +193,10 @@ pub struct Emitter {
     /// Particles emitted so far, and in all (scaled by `strength`).
     pub emitted: u32,
     pub total: u32,
-    /// How strong the play was ([`play_scaled`]): the size of each particle it emits.
+    /// How strong the play was ([`play_scaled`]): what the effect's strength response scales in each particle it emits.
     pub strength: f32,
+    /// The play's push ([`PlayOptions::push`]): each particle it emits takes its share.
+    pub push: Vec3,
 }
 
 /// The particles in flight, by effect, and the effects still emitting. Only while something is
@@ -279,13 +321,21 @@ pub fn play(world: &mut World, effect: &str, at: EffectAt, toward: Option<Vec3>)
     play_scaled(world, effect, at, toward, 1.0)
 }
 
-/// [`play`] at `strength` (a clip cue's, `CueDef::strength`): the effect's particles, the burst and
-/// what its `rate` adds, are scaled in number (rounded, and at least one while the effect has
-/// any and `strength` is above 0) and in size; what the rate adds is spread over the same
-/// `duration`, at a rate scaled with it. 1 is [`play`]; 0, or a value that is not a number,
-/// plays nothing and leaves the pools alone. The pools are made for the effect as content defines
-/// it: a scaled play never remakes one.
+/// [`play`] at `strength` (a clip cue's, `CueDef::strength`): what the effect's `strength` response
+/// says, by default its particles, the burst and what its `rate` adds, scaled in number (rounded,
+/// and at least one while the effect has any and `strength` is above 0) and in size; what the rate
+/// adds is spread over the same `duration`, at a rate scaled with it. 1 is [`play`]; 0, or a value
+/// that is not a number, plays nothing and leaves the pools alone. The pools are made for the effect
+/// as content defines it: a scaled play never remakes one.
 pub fn play_scaled(world: &mut World, effect: &str, at: EffectAt, toward: Option<Vec3>, strength: f32) -> Result<Played, String> {
+    play_with(world, effect, at, PlayOptions { toward, strength, push: Vec3::ZERO })
+}
+
+/// [`play`] as `options` say: aimed `toward`, at `strength` (as [`play_scaled`]: the effect's
+/// [`StrengthResponse`] scales the burst's number, and each particle's speed and size; what its
+/// `rate` adds follows the strength in proportion), every particle pushed by its share of `push`.
+pub fn play_with(world: &mut World, effect: &str, at: EffectAt, options: PlayOptions) -> Result<Played, String> {
+    let PlayOptions { toward, strength, push } = options;
     let db = world.get_resource::<ContentDb>().ok_or("this game has no content")?;
     let Some(def) = db.get::<EffectDef>(effect).cloned() else {
         let known: Vec<&str> = db.iter::<EffectDef>().map(|(id, _)| id).collect();
@@ -317,18 +367,18 @@ pub fn play_scaled(world: &mut World, effect: &str, at: EffectAt, toward: Option
         effects.get_mut(effect).expect("just made")
     };
     // A definition the check refuses still plays at the first load: within the limits it names.
-    let burst = scaled(def.count.min(MAX_COUNT), strength).min(MAX_COUNT);
+    let push = if push.is_finite() { push } else { Vec3::ZERO };
+    let burst = def.strength.burst(def.count.min(MAX_COUNT), strength).min(MAX_COUNT);
     for _ in 0..burst {
-        let mut particle = sim::spawn(&def, position, aim, now, rng);
-        particle.size *= strength;
-        playing.pool.add(particle);
+        let particle = sim::spawn(&def, position, aim, now, rng);
+        playing.pool.add(sim::played(particle, &def, strength, push, rng));
     }
     let full = def.later().min(MAX_LIVE);
-    let later = scaled(full, strength).min(MAX_LIVE);
+    let later = in_proportion(full, strength).min(MAX_LIVE);
     if later > 0 {
         // Fewer particles over the same duration: a weaker cue's dust lasts as long, thinner.
         let rate = def.rate * (later as f32 / full as f32);
-        emitters.push(Emitter { effect: effect.to_owned(), at, aim, born: now, rate, emitted: 0, total: later, strength });
+        emitters.push(Emitter { effect: effect.to_owned(), at, aim, born: now, rate, emitted: 0, total: later, strength, push });
     }
     *played += 1;
     Ok(Played { particles: burst, later, position, live: playing.pool.live(), pool: playing.pool.size() })
@@ -342,10 +392,15 @@ pub fn play_quietly(world: &mut World, effect: &str, at: EffectAt, toward: Optio
 
 /// [`play_quietly`] at `strength`, as [`play_scaled`] takes it.
 pub fn play_quietly_scaled(world: &mut World, effect: &str, at: EffectAt, toward: Option<Vec3>, strength: f32, why: &str) {
+    play_quietly_with(world, effect, at, PlayOptions { toward, strength, push: Vec3::ZERO }, why);
+}
+
+/// [`play_quietly`] as `options` say, as [`play_with`] takes them.
+pub fn play_quietly_with(world: &mut World, effect: &str, at: EffectAt, options: PlayOptions, why: &str) {
     if !draws(world) {
         return;
     }
-    if let Err(e) = play_scaled(world, effect, at, toward, strength)
+    if let Err(e) = play_with(world, effect, at, options)
         && e.starts_with("no effect")
         && world.resource_mut::<Particles>().unknown.insert(effect.to_owned())
     {
@@ -373,9 +428,8 @@ pub fn emit_due(world: &mut World) {
         if let Some(playing) = effects.get_mut(&emitter.effect).filter(|p| p.def == def) {
             for i in emitter.emitted..due {
                 let born = emitter.born + f64::from(i + 1) / f64::from(emitter.rate);
-                let mut particle = sim::spawn(&def, position, emitter.aim, born, rng);
-                particle.size *= emitter.strength;
-                playing.pool.add(particle);
+                let particle = sim::spawn(&def, position, emitter.aim, born, rng);
+                playing.pool.add(sim::played(particle, &def, emitter.strength, emitter.push, rng));
             }
         }
         emitter.emitted = due;
@@ -387,17 +441,8 @@ pub fn emit_due(world: &mut World) {
 }
 
 fn on_play_effect(event: On<PlayEffect>, mut commands: Commands) {
-    let PlayEffect { effect, at, toward } = event.event().clone();
-    commands.queue(move |world: &mut World| play_quietly(world, &effect, at, toward, "PlayEffect"));
-}
-
-/// `count` particles at `strength` above 0: scaled and rounded, and at least one while there are
-/// any.
-fn scaled(count: u32, strength: f32) -> u32 {
-    if count == 0 {
-        return 0;
-    }
-    ((count as f32 * strength).round() as u32).max(1)
+    let play = event.event().clone();
+    commands.queue(move |world: &mut World| play_quietly_with(world, &play.effect, play.at, play.options(), "PlayEffect"));
 }
 
 /// A clip's cue: the effect the table gives it, else the effect of its name, from the body (its

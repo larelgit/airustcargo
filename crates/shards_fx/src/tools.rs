@@ -10,7 +10,7 @@ use serde::Deserialize;
 use shards_content::ContentDb;
 
 use crate::def::EffectDef;
-use crate::{draws, fx_def, play, EffectAt, FxSettings, Particles};
+use crate::{draws, fx_def, play_with, EffectAt, FxSettings, Particles, PlayOptions};
 
 pub(crate) fn register(world: &mut World) {
     register_tool(world, "effects", Scope::Dev, ToolKind::Query, effects);
@@ -87,18 +87,30 @@ pub struct EffectPlayArgs {
     /// The way an effect with `aim: Hit` sends its particles (for a hit, back towards the
     /// attacker): `[1, 0, 0]`.
     pub toward: Option<[f32; 3]>,
+    /// How strong the play is (default 1): the effect's `strength` response scales its particles
+    /// (by default their number and size): `1.5`.
+    pub strength: Option<f32>,
+    /// A velocity (m/s) every particle takes its share of (the effect's `push` range): `[0, 0, 3]`.
+    pub push: Option<[f32; 3]>,
 }
 
 fn effect_play(In(call): In<Call<EffectPlayArgs>>, world: &mut World) -> ToolResult {
-    let EffectPlayArgs { effect, at, point, toward } = call.args;
+    let EffectPlayArgs { effect, at, point, toward, strength, push } = call.args;
     let (at, label) = match (at, point) {
         (Some(_), Some(_)) => return Err("give `at` (an entity) or `point` (x, y, z), not both".into()),
         (Some(id), None) => (EffectAt::Entity(id.entity(world)?), id.to_string()),
         (None, Some([x, y, z])) => (EffectAt::Point(Vec3::new(x, y, z)), "a point".to_owned()),
         (None, None) => return Err("give `at` (an entity: `at=e6`) or `point` (`point=[4, 0, -2]`)".into()),
     };
-    let toward = toward.map(Vec3::from);
-    let played = play(world, &effect, at, toward)?;
+    let strength = strength.unwrap_or(1.0);
+    if !(strength.is_finite() && strength >= 0.0) {
+        return Err(format!("strength: a number, 0 or more (1 plays the effect as it is), not {strength}"));
+    }
+    let push = push.map_or(Vec3::ZERO, Vec3::from);
+    if !push.is_finite() {
+        return Err(format!("push: three numbers (m/s), not {push}"));
+    }
+    let played = play_with(world, &effect, at, PlayOptions { toward: toward.map(Vec3::from), strength, push })?;
     let p = played.position;
     let later = if played.later > 0 { format!(" (+{} as it goes on)", played.later) } else { String::new() };
     Ok(format!(

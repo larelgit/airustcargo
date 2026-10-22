@@ -1,0 +1,357 @@
+//! The picture a camera draws ([`PictureTuning`], the `picture` of the `camera` content): its tone
+//! mapping and its bloom. Both are left out by default, and then a camera keeps what the game
+//! spawned it with: a game without a `picture` sees no change.
+//!
+//! Bloom needs the camera to draw in HDR (Bevy's `Hdr`), which moves the tone mapping from each
+//! material's shader to a pass over the whole picture: the colours the materials compute are the
+//! same, but a colour brighter than white (an effect's `intensity` above 1) now reaches the tone
+//! mapping and the bloom instead of stopping at full. While the content gives a camera a bloom it
+//! draws in HDR; taking the bloom out of the content gives the camera back what it had.
+//!
+//! Only the picture changes: the `camera` kind is not simulation content, and nothing here is in a
+//! snapshot or a replay.
+
+use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
+
+/// How a camera turns the light it draws into the picture's colours: Bevy's tone mapping operators,
+/// by name. `TonyMcMapface` is Bevy's default.
+#[derive(Reflect, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToneMapping {
+    /// None at all: no colour grading, exposure or dither either.
+    None,
+    /// The identity curve: exposure, colour grading and dither still apply.
+    Linear,
+    Reinhard,
+    ReinhardLuminance,
+    AcesFitted,
+    AgX,
+    SomewhatBoringDisplayTransform,
+    TonyMcMapface,
+    BlenderFilmic,
+    KhronosPbrNeutral,
+}
+
+/// How a bloom's glow joins the picture.
+#[derive(Reflect, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BloomComposite {
+    /// The glow takes its share of the light from the picture (Bevy's natural bloom).
+    #[default]
+    EnergyConserving,
+    /// The glow is added on top: with a `threshold`, only what passes it glows and the rest is left as it was.
+    Additive,
+}
+
+/// A bloom: light brighter than `threshold` spreads into a glow around it (Bevy's `Bloom`, whose
+/// defaults these are: its natural bloom).
+///
+/// ```ron
+/// (intensity: 0.3, threshold: 1.2, composite: Additive)
+/// ```
+#[derive(Reflect, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[reflect(Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct BloomTuning {
+    /// How much of the light scatters (energy-conserving: 0 none to 1 all) or how much glow is added (additive).
+    pub intensity: f32,
+    /// How much more the widest glow takes (a low shelf): 0 to 1.
+    pub low_frequency_boost: f32,
+    /// How far that boost reaches into the narrower glows: 0 to 1.
+    pub low_frequency_boost_curvature: f32,
+    /// Above 0 and at most 1: lower cuts the narrowest glows (1 keeps them all).
+    pub high_pass_frequency: f32,
+    /// Light below this (linear, the brightest channel) does not glow: 0 everything glows a little; above 1 only what
+    /// is brighter than white (an effect's `intensity`, an emissive surface).
+    pub threshold: f32,
+    /// 0 a hard edge at the threshold, up to 1 a soft one.
+    pub threshold_softness: f32,
+    pub composite: BloomComposite,
+}
+
+impl Default for BloomTuning {
+    fn default() -> Self {
+        Self {
+            intensity: 0.15,
+            low_frequency_boost: 0.7,
+            low_frequency_boost_curvature: 0.95,
+            high_pass_frequency: 1.0,
+            threshold: 0.0,
+            threshold_softness: 0.0,
+            composite: BloomComposite::EnergyConserving,
+        }
+    }
+}
+
+/// The picture a camera draws: each part left out leaves the camera as the game made it.
+///
+/// ```ron
+/// { "default": (picture: (tone_mapping: Some(AgX), bloom: Some((intensity: 0.3, threshold: 1.2, composite: Additive)))) }
+/// ```
+#[derive(Reflect, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[reflect(Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct PictureTuning {
+    /// The tone mapping; `None` keeps the camera's own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tone_mapping: Option<ToneMapping>,
+    /// A bloom, drawn in HDR; `None` keeps the camera's own (none, unless the game gave it one).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bloom: Option<BloomTuning>,
+}
+
+impl PictureTuning {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// What is wrong with these numbers, one line each; empty when they are fine.
+    pub fn problems(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let Some(bloom) = &self.bloom else { return out };
+        let at_least_zero = [
+            ("intensity", bloom.intensity),
+            ("low_frequency_boost", bloom.low_frequency_boost),
+            ("low_frequency_boost_curvature", bloom.low_frequency_boost_curvature),
+            ("threshold", bloom.threshold),
+        ];
+        for (name, v) in at_least_zero {
+            if !(v >= 0.0 && v.is_finite()) {
+                out.push(format!("picture.bloom.{name}: 0 or more, not {v}"));
+            }
+        }
+        if !(bloom.high_pass_frequency > 0.0 && bloom.high_pass_frequency <= 1.0) {
+            out.push(format!("picture.bloom.high_pass_frequency: above 0 and at most 1, not {}", bloom.high_pass_frequency));
+        }
+        if !(0.0..=1.0).contains(&bloom.threshold_softness) {
+            out.push(format!("picture.bloom.threshold_softness: 0 to 1, not {}", bloom.threshold_softness));
+        }
+        out
+    }
+}
+
+#[cfg(feature = "render")]
+pub(super) use render::apply_picture;
+
+#[cfg(feature = "render")]
+mod render {
+    use bevy::camera::Hdr;
+    use bevy::post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter};
+    use bevy::prelude::*;
+    use bevy::render::view::Tonemapping;
+
+    use super::{BloomComposite, BloomTuning, ToneMapping};
+    use crate::camera::{CameraTuning, ThirdPersonCamera};
+
+    impl ToneMapping {
+        pub fn bevy(self) -> Tonemapping {
+            match self {
+                ToneMapping::None => Tonemapping::None,
+                ToneMapping::Linear => Tonemapping::Linear,
+                ToneMapping::Reinhard => Tonemapping::Reinhard,
+                ToneMapping::ReinhardLuminance => Tonemapping::ReinhardLuminance,
+                ToneMapping::AcesFitted => Tonemapping::AcesFitted,
+                ToneMapping::AgX => Tonemapping::AgX,
+                ToneMapping::SomewhatBoringDisplayTransform => Tonemapping::SomewhatBoringDisplayTransform,
+                ToneMapping::TonyMcMapface => Tonemapping::TonyMcMapface,
+                ToneMapping::BlenderFilmic => Tonemapping::BlenderFilmic,
+                ToneMapping::KhronosPbrNeutral => Tonemapping::KhronosPbrNeutral,
+            }
+        }
+    }
+
+    impl BloomTuning {
+        pub fn bevy(&self) -> Bloom {
+            Bloom {
+                intensity: self.intensity,
+                low_frequency_boost: self.low_frequency_boost,
+                low_frequency_boost_curvature: self.low_frequency_boost_curvature,
+                high_pass_frequency: self.high_pass_frequency,
+                prefilter: BloomPrefilter { threshold: self.threshold, threshold_softness: self.threshold_softness },
+                composite_mode: match self.composite {
+                    BloomComposite::EnergyConserving => BloomCompositeMode::EnergyConserving,
+                    BloomComposite::Additive => BloomCompositeMode::Additive,
+                },
+                ..Bloom::NATURAL
+            }
+        }
+    }
+
+    /// What the content changed on a camera, kept so that taking it out of the content gives the
+    /// camera back what it had.
+    #[derive(Component, Clone, Default)]
+    pub struct PictureSet {
+        /// The camera's own tone mapping while the content's is in force.
+        tone_mapping: Option<Tonemapping>,
+        /// The camera's own bloom (or none) while the content's is in force.
+        bloom: Option<Option<Bloom>>,
+        /// Whether the content's bloom made the camera draw in HDR (it did not before).
+        hdr_added: bool,
+    }
+
+    /// The cameras a picture applies to, with what they have now.
+    type Cameras<'w, 's> = Query<
+        'w,
+        's,
+        (Entity, Option<&'static Tonemapping>, Option<&'static Bloom>, Has<Hdr>, Option<&'static PictureSet>),
+        (With<Camera3d>, With<ThirdPersonCamera>),
+    >;
+
+    /// `Update`: the `picture` of the camera tuning onto every 3D camera with a
+    /// [`ThirdPersonCamera`], when the tuning changes and when such a camera appears.
+    pub fn apply_picture(
+        tuning: Res<CameraTuning>,
+        added: Query<(), Added<ThirdPersonCamera>>,
+        cameras: Cameras,
+        mut commands: Commands,
+    ) {
+        if !tuning.is_changed() && added.is_empty() {
+            return;
+        }
+        let picture = &tuning.picture;
+        for (entity, tone_mapping, bloom, hdr, set) in &cameras {
+            let mut set = set.cloned().unwrap_or_default();
+            let mut camera = commands.entity(entity);
+            match (picture.tone_mapping, set.tone_mapping) {
+                (Some(want), _) => {
+                    set.tone_mapping.get_or_insert(tone_mapping.copied().unwrap_or_default());
+                    if tone_mapping != Some(&want.bevy()) {
+                        camera.insert(want.bevy());
+                    }
+                }
+                (None, Some(own)) => {
+                    camera.insert(own);
+                    set.tone_mapping = None;
+                }
+                (None, None) => {}
+            }
+            match (&picture.bloom, set.bloom.take()) {
+                (Some(want), own) => {
+                    if own.is_none() {
+                        set.hdr_added = !hdr;
+                    }
+                    set.bloom = Some(own.unwrap_or_else(|| bloom.cloned()));
+                    camera.insert(want.bevy());
+                }
+                (None, Some(own)) => {
+                    match own {
+                        Some(own) => {
+                            camera.insert(own);
+                        }
+                        None => {
+                            camera.remove::<Bloom>();
+                        }
+                    }
+                    if set.hdr_added {
+                        camera.remove::<Hdr>();
+                    }
+                    set.hdr_added = false;
+                }
+                (None, None) => {}
+            }
+            if set.tone_mapping.is_none() && set.bloom.is_none() {
+                camera.remove::<PictureSet>();
+            } else {
+                camera.insert(set);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::camera::PictureTuning;
+
+        fn app() -> (App, Entity) {
+            let mut app = App::new();
+            app.init_resource::<CameraTuning>().add_systems(Update, apply_picture);
+            let camera = app.world_mut().spawn((Camera3d::default(), ThirdPersonCamera::default(), Tonemapping::Reinhard)).id();
+            app.update();
+            (app, camera)
+        }
+
+        fn set(app: &mut App, picture: PictureTuning) {
+            app.world_mut().resource_mut::<CameraTuning>().picture = picture;
+            app.update();
+        }
+
+        #[test]
+        fn a_camera_without_a_picture_keeps_what_the_game_gave_it() {
+            let (app, camera) = app();
+            let world = app.world();
+            assert_eq!(world.get::<Tonemapping>(camera), Some(&Tonemapping::Reinhard));
+            assert!(world.get::<Bloom>(camera).is_none() && world.get::<Hdr>(camera).is_none() && world.get::<PictureSet>(camera).is_none());
+        }
+
+        #[test]
+        fn the_contents_bloom_draws_in_hdr_and_taking_it_out_gives_the_camera_back() {
+            let (mut app, camera) = app();
+            let bloom = BloomTuning { intensity: 0.4, threshold: 1.2, threshold_softness: 0.1, composite: BloomComposite::Additive, ..default() };
+            set(&mut app, PictureTuning { tone_mapping: Some(ToneMapping::AgX), bloom: Some(bloom) });
+            let world = app.world();
+            let drawn = world.get::<Bloom>(camera).expect("a bloom");
+            assert_eq!((drawn.intensity, drawn.prefilter.threshold, drawn.prefilter.threshold_softness), (0.4, 1.2, 0.1));
+            assert_eq!((drawn.composite_mode, drawn.low_frequency_boost, drawn.high_pass_frequency), (BloomCompositeMode::Additive, 0.7, 1.0));
+            assert!(world.get::<Hdr>(camera).is_some(), "a bloom draws in HDR");
+            assert_eq!(world.get::<Tonemapping>(camera), Some(&Tonemapping::AgX));
+
+            set(&mut app, PictureTuning::default());
+            let world = app.world();
+            assert_eq!(world.get::<Tonemapping>(camera), Some(&Tonemapping::Reinhard), "its own tone mapping back");
+            assert!(world.get::<Bloom>(camera).is_none() && world.get::<Hdr>(camera).is_none(), "no bloom, and no HDR it did not have");
+            assert!(world.get::<PictureSet>(camera).is_none());
+        }
+
+        #[test]
+        fn a_camera_the_game_drew_in_hdr_with_its_own_bloom_gets_them_back() {
+            let (mut app, camera) = app();
+            let own = Bloom { intensity: 0.02, ..Bloom::OLD_SCHOOL };
+            app.world_mut().entity_mut(camera).insert(own.clone());
+            app.update();
+            set(&mut app, PictureTuning { bloom: Some(BloomTuning::default()), ..default() });
+            assert_eq!(app.world().get::<Bloom>(camera).unwrap().intensity, 0.15, "the content's bloom in force");
+            set(&mut app, PictureTuning { bloom: Some(BloomTuning { intensity: 0.5, ..default() }), ..default() });
+            assert_eq!(app.world().get::<Bloom>(camera).unwrap().intensity, 0.5, "a changed bloom replaces it");
+            set(&mut app, PictureTuning::default());
+            let world = app.world();
+            assert_eq!(world.get::<Bloom>(camera).map(|b| b.intensity), Some(0.02), "the game's own bloom back");
+            assert!(world.get::<Hdr>(camera).is_some(), "and the HDR its bloom needs");
+            assert_eq!(world.get::<Tonemapping>(camera), Some(&Tonemapping::Reinhard));
+        }
+
+        #[test]
+        fn a_camera_that_appears_later_gets_the_picture_too() {
+            let (mut app, _) = app();
+            set(&mut app, PictureTuning { tone_mapping: Some(ToneMapping::BlenderFilmic), ..default() });
+            let late = app.world_mut().spawn((Camera3d::default(), ThirdPersonCamera::default())).id();
+            app.update();
+            assert_eq!(app.world().get::<Tonemapping>(late), Some(&Tonemapping::BlenderFilmic));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_picture_left_out_is_not_written_and_bad_numbers_are_named() {
+        assert!(PictureTuning::default().is_default());
+        assert_eq!(ron::to_string(&PictureTuning::default()).unwrap(), "()");
+        let read: PictureTuning = ron::from_str("(bloom: Some((threshold: 1.15, composite: Additive)))").unwrap();
+        assert_eq!(read.bloom.as_ref().map(|b| (b.intensity, b.threshold, b.composite)), Some((0.15, 1.15, BloomComposite::Additive)));
+        assert!(read.problems().is_empty());
+        let bad = PictureTuning {
+            bloom: Some(BloomTuning { intensity: -1.0, high_pass_frequency: 0.0, threshold_softness: 2.0, threshold: f32::NAN, ..default() }),
+            ..default()
+        };
+        assert_eq!(
+            bad.problems(),
+            [
+                "picture.bloom.intensity: 0 or more, not -1",
+                "picture.bloom.threshold: 0 or more, not NaN",
+                "picture.bloom.high_pass_frequency: above 0 and at most 1, not 0",
+                "picture.bloom.threshold_softness: 0 to 1, not 2",
+            ]
+        );
+    }
+}

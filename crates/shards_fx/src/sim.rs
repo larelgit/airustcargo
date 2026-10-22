@@ -4,7 +4,7 @@
 //! where those ticks take it. A pool keeps an effect's particles in a fixed number of slots; one
 //! more than it holds takes the slot of the oldest.
 
-use std::f32::consts::TAU;
+use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
 
@@ -106,6 +106,14 @@ impl Particle {
         self.origin + terminal * age + (self.velocity - terminal) * ((1.0 - ops::exp(-drag * age)) / drag)
     }
 
+    /// Its size at the share `t` of its life (0 to 1), as `def` grows it: from its size at birth to `size_end` of it,
+    /// eased by `size_ease`, swollen by `swell`.
+    pub fn size_at(&self, t: f32, def: &EffectDef) -> f32 {
+        let way = if def.size_ease == 1.0 { t } else { 1.0 - ops::powf(1.0 - t, def.size_ease) };
+        let size = self.size * (1.0 + (def.size_end - 1.0) * way);
+        if def.swell == 0.0 { size } else { size * (1.0 + def.swell * ops::sin(PI * t)) }
+    }
+
     /// How it looks at clock `now`, as `def` draws it (colours from [`EffectDef::colors`]).
     pub fn shown(&self, now: f64, def: &EffectDef, colors: ([u8; 4], [u8; 4])) -> Shown {
         let age = ((now - self.born) as f32).max(0.0);
@@ -114,7 +122,7 @@ impl Particle {
         let (start, end) = colors;
         Shown {
             position: self.position(age, def.gravity, def.drag),
-            size: self.size * (1.0 + (def.size_end - 1.0) * t),
+            size: self.size_at(t, def),
             color: [lerp(start[0], end[0]), lerp(start[1], end[1]), lerp(start[2], end[2]), lerp(start[3], end[3])],
             rotation: Quat::from_axis_angle(self.spin_axis, self.spin * age),
         }
@@ -148,6 +156,20 @@ pub fn spawn(def: &EffectDef, at: Vec3, aim: Vec3, born: f64, rng: &mut Rng) -> 
         spin_axis: rng.in_cone(Vec3::Y, 360.0),
         spin: def.spin.to_radians() * rng.between((-1.0, 1.0)),
     }
+}
+
+/// `particle` as a play at `strength` with `push` starts it: its speed and size as `def.strength` scales them, and its
+/// share (`def.push`) of the push added to its velocity. No push draws no number, so a play without one starts the
+/// particles it always did.
+pub fn played(mut particle: Particle, def: &EffectDef, strength: f32, push: Vec3, rng: &mut Rng) -> Particle {
+    particle.size *= def.strength.size_at(strength);
+    if def.strength.speed {
+        particle.velocity *= strength;
+    }
+    if push != Vec3::ZERO {
+        particle.velocity += push * rng.between(def.push);
+    }
+    particle
 }
 
 /// An effect's particles: a fixed number of slots, each empty or holding one.
@@ -208,6 +230,7 @@ impl Pool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::def::StrengthResponse;
 
     fn particle(velocity: Vec3) -> Particle {
         Particle { born: 1.0, life: 2.0, origin: Vec3::ZERO, velocity, size: 0.2, spin_axis: Vec3::Y, spin: 1.0 }
@@ -244,6 +267,52 @@ mod tests {
         assert_eq!(p.shown(3.0, &def, colors).color, [55, 0, 100, 0]);
         assert!(p.alive(2.99) && !p.alive(3.0));
         assert!(half.rotation.abs_diff_eq(Quat::from_rotation_y(1.0), 1e-6), "it tumbles a radian a second");
+    }
+
+    #[test]
+    fn a_size_can_ease_and_swell_and_without_them_is_the_line_it_was() {
+        let p = particle(Vec3::ZERO);
+        let line = |t: f32, end: f32| 0.2 * (1.0 + (end - 1.0) * t);
+        let plain = EffectDef { size_end: 0.5, ..EffectDef::default() };
+        for t in [0.0, 0.3, 0.5, 1.0] {
+            assert_eq!(p.size_at(t, &plain), line(t, 0.5), "bit for bit the line at {t}");
+        }
+        // A shockwave from a quarter to the whole: `1 − (1 − t)^2.5` of the way.
+        let ring = EffectDef { size_end: 4.0, size_ease: 2.5, ..EffectDef::default() };
+        assert_eq!((p.size_at(0.0, &ring), p.size_at(1.0, &ring)), (0.2, 0.8));
+        let half = p.size_at(0.5, &ring);
+        assert!((half - 0.2 * (1.0 + 3.0 * (1.0 - ops::powf(0.5, 2.5)))).abs() < 1e-6, "{half}");
+        assert!(half > line(0.5, 4.0), "most of the way early: {half}");
+        // Dust that billows before it thins: `(1 + sin(π t))(1 − t)`, the most at a quarter of its life.
+        let dust = EffectDef { swell: 1.0, ..EffectDef::default() };
+        let at = |t: f32| p.size_at(t, &dust);
+        assert!((at(0.25) - 0.2 * (1.0 + ops::sin(PI * 0.25)) * 0.75).abs() < 1e-6);
+        assert!(at(0.25) > at(0.0) && at(0.25) > at(0.5) && at(1.0).abs() < 1e-6, "{} {} {}", at(0.0), at(0.25), at(0.5));
+        assert_eq!(p.shown(2.0, &dust, ([255; 4], [255; 4])).size, at(0.5), "what is shown");
+    }
+
+    #[test]
+    fn a_play_scales_and_pushes_as_the_effect_says_and_without_a_push_draws_nothing() {
+        let born = particle(Vec3::new(0.0, 2.0, 0.0));
+        let plain = EffectDef::default();
+        // The default: bigger with the strength, not faster; no push, no number drawn.
+        let mut rng = Rng::new(9);
+        let strong = played(born, &plain, 1.5, Vec3::ZERO, &mut rng);
+        assert_eq!((strong.size, strong.velocity), (0.2 * 1.5, born.velocity));
+        assert_eq!(rng.next_u64(), Rng::new(9).next_u64(), "the stream goes on where it was");
+        // Faster, not bigger.
+        let fan = EffectDef { strength: StrengthResponse { count_per: Some(6.0), speed: true, size: false }, ..EffectDef::default() };
+        let fast = played(born, &fan, 1.5, Vec3::ZERO, &mut Rng::new(9));
+        assert_eq!((fast.size, fast.velocity), (0.2, Vec3::new(0.0, 3.0, 0.0)));
+        // A push of 2 m/s along x: each particle a share of it from the range, the push taken whole by default.
+        let whole = played(born, &plain, 1.0, Vec3::X * 2.0, &mut Rng::new(9));
+        assert_eq!(whole.velocity, Vec3::new(2.0, 2.0, 0.0));
+        let dust = EffectDef { push: (0.6, 1.0), ..EffectDef::default() };
+        let mut rng = Rng::new(9);
+        for _ in 0..200 {
+            let pushed = played(born, &dust, 1.0, Vec3::X * 2.0, &mut rng);
+            assert!((1.2..=2.0).contains(&pushed.velocity.x) && pushed.velocity.y == 2.0, "{}", pushed.velocity);
+        }
     }
 
     #[test]
