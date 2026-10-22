@@ -3,7 +3,8 @@
 //!
 //! The skills keep in step too: each `.agents/skills/<name>/SKILL.md` (the Agent Skills format, where
 //! Codex reads it) has a name and a description an agent can load, an entry in `.claude/skills/` with
-//! the same two that sends Claude Code to it, its name in `AGENTS.md`, and only paths that exist.
+//! the same two that sends Claude Code to it, a row in the index `.agents/skills/README.md` that
+//! `AGENTS.md` points to, and only paths that exist.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -147,11 +148,18 @@ fn every_skill_has_a_claude_code_entry_that_matches_it() {
 }
 
 #[test]
-fn agents_md_names_every_skill() {
-    let core = fs::read_to_string(root().join("AGENTS.md")).expect("AGENTS.md");
-    for name in skills().keys() {
-        assert!(core.contains(&format!("`{name}`")), "AGENTS.md does not name the skill `{name}`: agents without skills would never hear of it");
+fn the_skills_index_lists_every_skill_and_agents_md_points_to_it() {
+    let skills = skills();
+    let index = fs::read_to_string(root().join(".agents/skills/README.md")).expect(".agents/skills/README.md");
+    for name in skills.keys() {
+        assert!(index.contains(&format!("| `{name}` |")), ".agents/skills/README.md has no row for the skill `{name}`: agents choose a skill from that index");
     }
+    for row in index.lines().filter_map(|line| line.strip_prefix("| `")) {
+        let name = &row[..row.find('`').expect("a closed name")];
+        assert!(skills.contains_key(name), ".agents/skills/README.md lists `{name}`, which has no .agents/skills/{name}/SKILL.md");
+    }
+    let core = fs::read_to_string(root().join("AGENTS.md")).expect("AGENTS.md");
+    assert!(core.contains(".agents/skills/README.md"), "AGENTS.md must point to the skills index: agents without skills would never hear of them");
 }
 
 /// The paths from the repository root that `text` names: words that start with one of these folders,

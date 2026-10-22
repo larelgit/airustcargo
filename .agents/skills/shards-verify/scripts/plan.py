@@ -326,6 +326,9 @@ def main():
     if any(re.search(r"add_snapshot_resource|register_type::<|#\[reflect\(Component", line) for _, line in added):
         fast.append("cargo test -p sandbox --test sandbox -- state_audit:: snapshots::   # new state: the audit and snapshot round trips")
 
+    # Every diff, last: the review of what no command checks.
+    gate.append("python3 .agents/skills/shards-review/scripts/red_flags.py   # then read the diff with .agents/skills/shards-review/SKILL.md")
+
     # --- docs owed
     def owed(path, what):
         docs.append(f"[{'done' if path in files else 'todo'}] {path}: {what}")

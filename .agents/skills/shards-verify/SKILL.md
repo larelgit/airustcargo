@@ -77,6 +77,8 @@ The template's own binary checks run from its folder, as CI's `template` job doe
   same files in reverse order (`$(ls crates/sandbox/scenarios/*.scenario | sort -r)`).
 - `cargo test` and nextest must agree. nextest runs each test in its own process (`.config/nextest.toml`): a test
   that writes a fixed file name needs the test group there, and CI's profile fails a test that passes only on a retry.
+- Last, review the diff as a reader would: `.agents/skills/shards-review/SKILL.md` (its `scripts/red_flags.py` flags
+  the added lines that break a rule; its checklist covers what no command checks).
 
 ## 4. Choose the kind of test
 

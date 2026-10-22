@@ -100,5 +100,4 @@ runs the same commands from its folder.
 
 ## 7. A new game
 
-From a copy of the template, step by step, with the check after each step:
-`.agents/skills/shards-game/references/new-game.md`.
+From a copy of the template, step by step, with the check after each step: `.agents/skills/shards-new-game/SKILL.md`.
