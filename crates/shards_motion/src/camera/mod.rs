@@ -24,6 +24,7 @@
 
 pub mod lock;
 pub mod math;
+pub mod picture;
 pub mod shot;
 #[cfg(feature = "render")]
 mod systems;
@@ -43,6 +44,7 @@ pub use lock::{
     body_point, in_frustum, lock_candidates, lock_score, pick_lock, signed_bearing, sight_clear, switch_lock, switch_target, LockHooks,
     LockOnDef, LockWeights, Lockable, PickView,
 };
+pub use picture::{BloomComposite, BloomTuning, PictureTuning, ToneMapping};
 pub use tuning::{ArmTuning, AutoCentreTuning, CameraOffsets, CameraTuning, FitTuning, FlickTuning, FramingTuning, TraumaTuning};
 pub use shot::{ShotDef, ShotEnded, ShotKey, ShotPoint, ShotStarted, Shots};
 

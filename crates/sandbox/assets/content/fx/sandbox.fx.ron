@@ -1,5 +1,5 @@
 // The sandbox's table of effects (content kind `fx`, one per game): which effect each engine
-// event plays. A hit plays at the one hit, away from the attacker; a guard's, a parry's at the
+// event plays. A hit plays at the one hit, away from the attacker; a guard's, a parry's, a broken guard's at the
 // defender; a death's, a heal's at who died or healed. A clip's cue plays from the body: the
 // walk's and the run's `footstep` (content/anim/humanoid.animset.ron) a puff of dust.
 {
@@ -10,6 +10,7 @@
             "parried": "parry_flash",
             "died": "death_dust",
             "healed": "heal_glow",
+            "guard_broken": "guard_ring",
         },
         cues: {"footstep": "step_dust"},
     ),

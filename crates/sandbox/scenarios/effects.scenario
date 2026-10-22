@@ -1,5 +1,6 @@
 # Effects (E10.3): what the sandbox's effects look like is content (`content/fx/sandbox.effect.ron`:
-# sparks of a hit and of a guard, a parry's flash, a death's dust, a heal's glow, a footstep's dust),
+# sparks of a hit and of a guard, a parry's flash, a death's dust, a heal's glow, a footstep's dust, a broken
+# guard's ring, a kick's dust that a push carries off),
 # and its table (`content/fx/sandbox.fx.ron`) says which engine event and which clip's cue plays
 # which. Particles and the telegraph
 # decals are the picture's: headless nothing plays and the tools say so, but the effects, their
@@ -10,11 +11,13 @@ act telegraph_decals on=true
 
 # --- the sandbox's effects, their pools and the table; headless nothing is drawn
 act effects
-expect result contains "6 effects · nothing is drawn headless: effects play in a window or with --offscreen · telegraph decals on"
-expect result contains "  hit_spark    18 quad glow #fff2b3 → #ff6a1a00 · 0.2-0.4 s · aim hit · gravity -9 · pool 128"
+expect result contains "8 effects · nothing is drawn headless: effects play in a window or with --offscreen · telegraph decals on"
+expect result contains "  hit_spark    18 quad glow x3 #fff2b3 → #ff6a1a00 · 0.2-0.4 s · aim hit · gravity -9 · pool 128"
 expect result contains "  block_spark  10 shard #bfe6ff → #4d9fff00 · 0.3-0.5 s · aim hit · gravity -12 · pool 64"
 expect result contains "  death_dust   16 cube + 24/s for 0.8s #8c8061cc → #5c554400 · 0.8-1.4 s · gravity -0.6 · pool 96"
-expect result contains "events: blocked → block_spark · damaged → hit_spark · died → death_dust · healed → heal_glow · parried → parry_flash"
+expect result contains "  guard_ring   1 disc unlit #ffb36bb3 → transparent · 0.3 s · size ease 2.5 · strength: count +0, size · pool 8"
+expect result contains "  kick_dust    8 cube #8c8061d9 → transparent · 0.4-0.6 s · swell 1 · push 0.6-1 · strength: count +4, speed · pool 64"
+expect result contains "events: blocked → block_spark · damaged → hit_spark · died → death_dust · guard_broken → guard_ring · healed → heal_glow · parried → parry_flash"
 expect result contains "cues: footstep → step_dust"
 act content_get kind=effect id=death_dust
 expect result contains "sandbox.effect.ron"
@@ -22,12 +25,18 @@ expect result contains "Cube"
 act content_get kind=fx id=sandbox
 expect result contains "sandbox.fx.ron"
 expect result contains "parry_flash"
+# the camera's bloom, which makes the sparks' intensity glow: the picture's, never the simulation's
+act content_get kind=camera id=default
+expect result contains '"threshold": 1.5'
+expect result contains '"composite": "Additive"'
 
 # --- headless an effect plays nowhere, and the error says why; a typo names the closest
 act? effect_play effect=hit_spark at=e6
 expect result contains "nothing is drawn headless: effects play in a window or with --offscreen (effect `hit_spark` is known)"
 act? effect_play effect=hit_sprak at=e6
 expect result contains "no effect `hit_sprak` (did you mean `hit_spark`?)"
+act? effect_play effect=kick_dust point=[0,0,0] strength=-1 push=[0,0,3]
+expect result contains "strength: a number, 0 or more (1 plays the effect as it is), not -1"
 
 # --- the decals off and on again, by the tool and by the developer menu's switch
 act telegraph_decals on=false
@@ -49,4 +58,4 @@ act? content_apply changes='[{"kind": "fx", "id": "spare", "def": {"effects": {"
 expect result contains "a game has one table of effects, and this one has more: sandbox; keep one"
 expect result contains "unknown effect `hit_sprak` (did you mean `hit_spark`?)"
 act effects
-expect result contains "6 effects · "
+expect result contains "8 effects · "

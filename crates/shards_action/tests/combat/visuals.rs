@@ -201,3 +201,20 @@ fn a_threat_behind_the_camera_gets_a_marker_on_the_bottom_edge() {
     let marker = edge_marker(ahead[0].angle_deg, Vec2::new(1280.0, 720.0), 48.0);
     assert!((marker.position - Vec2::new(640.0, 48.0)).length() < 1.0, "{:?}", marker.position);
 }
+
+#[test]
+fn an_attack_that_cannot_be_blocked_wears_the_ring_on_the_ground_and_at_the_screen_edge() {
+    let (mut app, hero, brute) = duel();
+    app.world_mut().entity_mut(hero).insert(LocalPlayer);
+    // `wail` (test content `ring.action.ron`): unblockable, its telegraph's symbol is `◌`.
+    assert!(shards_action::force_action(app.world_mut(), brute, "wail"));
+    step(&mut app, 2);
+    let list = telegraphs(app.world(), &TelegraphStyle::default(), 0.0, Quat::IDENTITY);
+    let rings = list.0.iter().filter(|p| matches!(p, Prim::Strip { points, .. } if points.len() == 21)).count();
+    assert_eq!(rings, 1, "the ring over the zone: {:?}", list.counts());
+    assert!(texts(&list).is_empty(), "no letter: {:?}", texts(&list));
+    let marks = threat_indicators(app.world(), hero, Vec3::NEG_Z);
+    assert_eq!(marks.len(), 1);
+    assert_eq!(marks[0].symbol, "◌");
+    assert_eq!(shards_action::draw::ascii_symbol(&marks[0].symbol), "C", "the off-screen marker's stand-in without a font");
+}

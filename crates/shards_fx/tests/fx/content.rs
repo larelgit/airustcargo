@@ -31,6 +31,11 @@ fn a_broken_effect_says_what_and_where() {
             "bad_colour": (color: "#12345"),
             "too_wide": (spread: 400.0),
             "endless": (count: 16, rate: 5e9, duration: 1.0, max_live: 64),
+            "flat": (size_ease: 0.0),
+            "shrinking": (swell: -1.0),
+            "backwards": (push: (1.0, 0.5)),
+            "darker_than_black": (intensity: -1.0),
+            "uncountable": (strength: (count_per: NaN)),
         }"##,
     );
     assets.put("content/fx/more.fx.ron", r#"{"more": (effects: {"damged": "spark", "blocked": "sprak"}, cues: {"": "glow"})}"#);
@@ -45,6 +50,11 @@ fn a_broken_effect_says_what_and_where() {
         // A rate too big to count: named, not an overflow (a panic in a debug build, a pass in a
         // release one).
         "one play starts 4294967295 particles and max_live keeps 64",
+        "size_ease: above 0 (1 a line), not 0",
+        "swell: 0 or more, not -1",
+        "push: (min, max) with min 0 or more and at most max, not (1, 0.5)",
+        "intensity: 0 or more, not -1",
+        "strength.count_per: a number of particles, not NaN",
         "broken.effect.ron",
         "a game has one table of effects, and this one has more",
         "no engine event `damged` (did you mean `damaged`?)",

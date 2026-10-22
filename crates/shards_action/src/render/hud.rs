@@ -30,8 +30,9 @@ pub struct ThreatHud {
     pub margin: f32,
     /// The marker's size (logical pixels).
     pub size: f32,
-    /// A font with the symbols of the game's telegraphs (`⚠`, `↯`). The engine's default font
-    /// (Fira Sans) has neither; without a font those are shown as ASCII stand-ins (`!`, `/`).
+    /// A font with the symbols of the game's telegraphs (`⚠`, `↯`, `◌`). The engine's default
+    /// font (Fira Sans) has neither `⚠` nor `↯`, and the manual's coverage list for it does not
+    /// name `◌`; without a font those are shown as ASCII stand-ins (`!`, `/`, `C`).
     pub font: Option<Handle<Font>>,
     /// How much the markers flicker (the player's accessibility setting).
     pub flashes: FlashLevel,

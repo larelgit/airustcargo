@@ -1,7 +1,8 @@
 // A particle (shards_fx): its colour is its `MeshTag` (sRGB bytes, alpha last), so every particle
 // of an effect shares one material and they draw in batches. A quad is a soft round spot; a cube
 // or a shard is shaded by a light from above, or lit by itself when it glows. A glowing effect is
-// added to what is behind it (`AlphaMode::Add`, drawn premultiplied with alpha 0).
+// added to what is behind it (`AlphaMode::Add`, drawn premultiplied with alpha 0). Its `intensity` scales the
+// colour's light: above 1 it is brighter than white, for an HDR camera's bloom and tone mapping.
 
 import bevy_pbr::render::{
     forward_io::VertexOutput,
@@ -10,6 +11,7 @@ import bevy_pbr::render::{
 
 struct Particle {
     kind: u32,
+    intensity: f32,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(0)
@@ -38,6 +40,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if alpha <= 0.003 {
         discard;
     }
+    rgb = rgb * particle.intensity;
     var out = vec4<f32>(rgb, alpha);
 @if(BLEND_PREMULTIPLIED_ALPHA) {
     out = vec4<f32>(rgb * alpha, 0.0);

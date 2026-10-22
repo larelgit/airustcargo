@@ -45,6 +45,8 @@ Read this when you touch screens and menus, sound and music, mesh looks, particl
   a combat event (`damaged`, `died`, …) or a clip marker picks it from the table, and the game plays it at its own moment with
   `PlayEffect`. Effects and decals are only pictures (the `render` feature, a window or `--offscreen`): they do not change the world, their entities have no
   `AiId`, and the particle clock is the simulation clock (pause freezes it). Effect numbers are not put in game code.
+- **A play carries its strength and its push** (`PlayOptions`, `PlayEffect::strength` and `::push`, a cue's `strength`): how an effect answers them (more, faster or bigger particles; the share of the push each takes) is its own content (`strength`, `push`), and its look over a life (`size_ease`, `swell`, `Disc`, `unlit`) too. A play without a push draws no number, so existing effects start the particles they always did; keep new fields off by default.
+- **Light past white is content too.** An effect's `intensity` multiplies its light; only a camera that draws in HDR keeps light above white, and the camera's picture (`picture.bloom`, `picture.tone_mapping` in the `camera` content) is what turns HDR and a bloom on. Do not add `Bloom`, `Hdr` or `Tonemapping` to a camera in game code for the look: put it in the content, which leaves a camera as the game spawned it while it says nothing. Under HDR, particles are tone mapped like everything else (their shader has no tone mapping of its own).
 
 ## Animation
 
