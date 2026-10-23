@@ -22,11 +22,15 @@ shards_settings.workspace = true
 shards_action.workspace = true
 # Menu sounds, and the body a HUD is about (the listener).
 shards_ui.workspace = true
+# Occlusion: a ray through the physics world from the ears to a voice (read only).
+shards_motion.workspace = true
 # Subtitles: their `@id` messages, checked and shown in the language played.
 shards_locale.workspace = true
 bevy = { workspace = true, features = ["std", "serialize"] }
 serde.workspace = true
 serde_json.workspace = true
+# A prefab's `SoundEmitter` is RON text; the content check reads its `sound`.
+ron.workspace = true
 schemars.workspace = true
 
 [dev-dependencies]

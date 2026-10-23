@@ -1,9 +1,11 @@
 //! Playback (feature `playback`): Bevy's audio plays what the mixer decided. A voice is a sink
 //! of its file at the gain the mixer gives it; a spatial one sits a meter from the ears in the
-//! direction it comes from, so playback pans it while the mixer's gain says how far it is. A
-//! track's stems start together once all their files are loaded, and loop. While the game is
-//! paused the voices of the simulation hold; music and menu sounds go on. With no audio device
-//! the sinks never start, and the mixer does not mind.
+//! direction it comes from, so playback pans it while the mixer's gain says how far it is and what
+//! stands in its way (a muffled voice is a quieter one: Bevy's sinks have no per-voice filter). A
+//! looped voice, an emitter's, plays on until the mixer lets it go. A track's stems start together
+//! once all their files are loaded, and loop. While the game is paused the voices of the simulation
+//! hold; music and menu sounds go on. With no audio device the sinks never start, and the mixer does
+//! not mind.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -125,7 +127,9 @@ fn voices(
             },
             None if !sinks.finished.contains(&voice.id) => {
                 let Some(handle) = sinks.handles.get(&voice.file).cloned() else { continue };
-                let settings = PlaybackSettings::DESPAWN
+                // A looped voice (an emitter's) goes on until the mixer lets it go; the others end with their file.
+                let base = if voice.looped { PlaybackSettings::LOOP } else { PlaybackSettings::DESPAWN };
+                let settings = base
                     .with_volume(Volume::Linear(voice.gain))
                     .with_spatial(voice.position.is_some())
                     .with_spatial_scale(SpatialScale::new(1.0));

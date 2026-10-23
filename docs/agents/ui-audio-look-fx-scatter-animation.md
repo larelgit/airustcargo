@@ -22,6 +22,7 @@ Read this when you touch screens and menus, sound and music, mesh looks, particl
   `JournalKind::Local`, not `Event` (the host sends events to clients). Sound is resolved on the simulation clock and is the same without a window and on
   a co-op client, so a sound the game must always hear is `telegraph.sound` or the `Sound` effect, not a clip marker:
   its sound (`AnimationCue` with the sound's name) exists only where a model is drawn, and `audio` without a window will not show it.
+- **Placed sounds are emitters** (F10): a sound with `looped: true` plays only from a `SoundEmitter { sound, playing }` (a component, so a level node, a prefab or code places it; not `AiId` state, `replay_ignore`d, its journal lines `Local`), never as a one-shot (a `Sound` effect, a telegraph or a mixer event that names one is a content error). The mixer holds one voice per emitter while the listener is within `far`, under the normal priority rules (a one-shot of a lower priority never takes a loop's voice); `refresh` runs in both `FixedPostUpdate` and `Update`, so emitter code must start nothing when nothing changed. Walls are opt-in (`occlusion: Some((gain: 0.3))` in the mixer): a `WORLD` ray from the listener through `PhysicsWorld`, a collider's `SoundTransmission` (else the mixer's gain) per collider, multiplied; a gain only, since Bevy's sinks have no per-voice filter. Order emitters by name and place, never by `Entity`.
 
 ## Looks
 

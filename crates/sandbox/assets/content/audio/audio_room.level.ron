@@ -1,0 +1,12 @@
+// A small room for the placed sounds (content kind `level`): a wall, a pane of glass that lets part of a
+// sound through (`SoundTransmission`) and four emitters of `room_hum`, one behind the wall, one behind the
+// glass, one in the open and one that is off. How an artist places a sound in Blender: an empty with the
+// custom property `SoundEmitter` = {"sound": "room_hum"}; a collider with `SoundTransmission` = 0.6.
+// `spawn_level id=audio_room` puts it where `at` says; the scenario `ambient_audio.scenario` builds the
+// same room from prefabs (`audio_room.prefab.ron`), which it can despawn again.
+{
+    "audio_room": (
+        file: "tiles/audio_room.gltf",
+        at: (400.0, 0.0, 400.0),
+    ),
+}

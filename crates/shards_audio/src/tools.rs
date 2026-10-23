@@ -1,5 +1,6 @@
-//! Tools: `audio` (what plays and why), `sound_play` and `music_set` (dev: try a sound, hold a
-//! layer). Sound is this machine's, so all three run where they are called, a co-op client too.
+//! Tools: `audio` (what plays and why), `sound_play`, `music_set`, `emitter_play` and `emitter_stop` (dev: try a
+//! sound, hold a layer, start or stop a placed sound). Sound is this machine's, so all of them run where they
+//! are called, a co-op client too.
 
 use ai_core::tools::{register_tool, ToolKind};
 use ai_core::{Call, Id, Scope, ToolResult};
@@ -9,7 +10,8 @@ use serde::Deserialize;
 use shards_content::ContentDb;
 
 use crate::def::{Bus, MusicDef};
-use crate::mixer::{bus_volume, play, voice_limit, Mixer, Played, SoundAt};
+use crate::emitter::{self, emitter_play, emitter_stop};
+use crate::mixer::{self, bus_volume, play, voice_limit, Mixer, Played, SoundAt};
 use crate::music::{check_layer, force_layer, set_track, summary, Music};
 use crate::subtitles::{self, Subtitles};
 
@@ -20,10 +22,13 @@ pub(crate) fn register(world: &mut World) {
     register_tool(world, "audio", Scope::Player, ToolKind::Query, audio);
     register_tool(world, "sound_play", Scope::Dev, ToolKind::Control, sound_play);
     register_tool(world, "music_set", Scope::Dev, ToolKind::Control, music_set);
+    register_tool(world, "emitter_play", Scope::Dev, ToolKind::Control, emitter_play_tool);
+    register_tool(world, "emitter_stop", Scope::Dev, ToolKind::Control, emitter_stop_tool);
 }
 
 /// What this machine hears: the music (track, layer, stems), the buses' volumes, the voices
-/// playing (sound, source, distance, how loud, priority), the sounds dropped lately and the
+/// playing (sound, source, distance, how loud, priority, and what stands in the way of a muffled one), the
+/// emitters (where each is, heard or out of earshot or stopped), the sounds dropped lately and the
 /// subtitles showing. Change volumes with `settings_set group=audio key=<bus> value=0.5`.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct AudioArgs {}
@@ -44,15 +49,31 @@ fn audio(In(_): In<Call<AudioArgs>>, world: &World) -> ToolResult {
     let mut loudest: Vec<_> = voices.iter().collect();
     loudest.sort_by(|a, b| b.gain.total_cmp(&a.gain).then(a.id.cmp(&b.id)));
     for v in loudest.iter().take(VOICES_SHOWN) {
-        let from = v.source_id.map(|id| format!(" {id}")).unwrap_or_default();
+        let from = match (v.source_id, v.emitter) {
+            (Some(id), _) => format!(" {id}"),
+            (None, Some(emitter)) => format!(" {}", crate::occlusion::name_of(world, emitter)),
+            (None, None) => String::new(),
+        };
         let at = v.distance.map(|d| format!(" {d:.1}m")).unwrap_or_default();
-        out.push_str(&format!("  #{} {} {}{from}{at} gain {:.2} prio {} ({:.2}s)\n", v.id, v.sound, v.bus.name(), v.gain, v.priority, v.length));
+        let length = if v.looped { "loop".to_owned() } else { format!("{:.2}s", v.length) };
+        let walls = if v.occlusion.by.is_empty() { String::new() } else { format!(" (occluded: {})", v.occlusion.describe()) };
+        out.push_str(&format!("  #{} {} {}{from}{at} gain {:.2} prio {} ({length}){walls}\n", v.id, v.sound, v.bus.name(), v.gain, v.priority));
     }
     if voices.len() > VOICES_SHOWN {
         out.push_str(&format!("  and {} quieter\n", voices.len() - VOICES_SHOWN));
     }
     for drop in mixer.drops() {
         out.push_str(&format!("  dropped {} at {:.1}s: {}\n", drop.sound, drop.at, drop.reason));
+    }
+    let seen = emitter::collect(world);
+    if !seen.is_empty() {
+        let assessed: Vec<_> = seen.iter().map(|s| emitter::assess(world, s, mixer.listener)).collect();
+        let heard = seen.iter().filter(|s| voices.iter().any(|v| v.emitter == Some(s.entity))).count();
+        out.push_str(&format!("emitters {} ({heard} heard)\n", seen.len()));
+        for (s, a) in seen.iter().zip(&assessed) {
+            out.push_str(&emitter::line(world, s, a));
+            out.push('\n');
+        }
     }
     if let Some(lines) = world.get_resource::<Subtitles>().map(Subtitles::lines).filter(|l| !l.is_empty()) {
         let state = if subtitles::enabled(world) { "shown" } else { "not shown: accessibility.subtitles is off" };
@@ -127,7 +148,8 @@ fn sound_play(In(call): In<Call<SoundPlayArgs>>, world: &mut World) -> ToolResul
             let voice = world.resource::<Mixer>().voices().iter().find(|v| v.id == id).cloned();
             let heard = voice.map(|v| {
                 let at = v.distance.map(|d| format!(" at {d:.1} m")).unwrap_or_default();
-                format!("{}{at}, gain {:.2}, {:.2}s", v.file, v.gain, v.length)
+                let walls = if v.occlusion.by.is_empty() { String::new() } else { format!(" (occluded: {})", v.occlusion.describe()) };
+                format!("{}{at}, gain {:.2}, {:.2}s{walls}", v.file, v.gain, v.length)
             });
             let stole = stole.map(|s| format!("; took the voice of {s}")).unwrap_or_default();
             format!("playing {sound} #{id}: {}{stole}", heard.unwrap_or_default())
@@ -179,4 +201,29 @@ fn music_set(In(call): In<Call<MusicSetArgs>>, world: &mut World) -> ToolResult 
         said.push(force_layer(world, (layer != "auto").then_some(layer.as_str()))?);
     }
     Ok(said.join("; "))
+}
+
+/// Start or stop a sound emitter: a looped sound placed in the world (`SoundEmitter`). Local, like all
+/// sound; the emitter takes a voice while its sound is in earshot (`audio` lists them).
+#[derive(Deserialize, JsonSchema)]
+pub struct EmitterArgs {
+    /// The emitter: its name (a level node's, `Vent.North`), its id (`e20`) if it has one, or its
+    /// sound when only one emitter plays it.
+    pub emitter: String,
+}
+
+fn emitter_play_tool(In(call): In<Call<EmitterArgs>>, world: &mut World) -> ToolResult {
+    set_emitter(world, &call.args.emitter, emitter_play)
+}
+
+fn emitter_stop_tool(In(call): In<Call<EmitterArgs>>, world: &mut World) -> ToolResult {
+    set_emitter(world, &call.args.emitter, emitter_stop)
+}
+
+fn set_emitter(world: &mut World, name: &str, set: fn(&mut World, Entity) -> Result<(), String>) -> ToolResult {
+    let entity = emitter::find(world, name)?;
+    set(world, entity)?;
+    // At once, so the answer (and the `audio` after it) shows what the emitter does now.
+    mixer::refresh(world);
+    Ok(emitter::describe(world, entity).trim().to_owned())
 }

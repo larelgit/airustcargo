@@ -70,7 +70,7 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   people play in, what each one is missing), `text` (a message with parameters in any language); the language is changed with `settings_set group=locale
   key=language value=ru`; **audio** — `audio` (what this machine hears: the track and music layer, stems, buses, voices, sounds that were not heard, with the reason),
   `sound_play` (play a sound by the mixer's rules: `at=eN`, `point=[x,y,z]`, `times=25`), `music_set`
-  (`track=…`/`none`, `layer=combat`/`auto`); volume — `settings_set group=audio key=sfx value=0.5`; **look** — `looks` (looks from
+  (`track=…`/`none`, `layer=combat`/`auto`), `emitter_play`/`emitter_stop` (`emitter=<name, id or sound>`: a placed looped sound; `audio` also lists the emitters and what muffles a voice); volume — `settings_set group=audio key=sfx value=0.5`; **look** — `looks` (looks from
   `*.look.ron`, how many meshes each one draws; without a window and `--offscreen` nothing is styled, and it says so),
   `look_outlines on=false` (hide the outlines); **foliage** — `scatter` (`*.scatter.ron` definitions, how many of each were scattered
   and what found no room; without a window and `--offscreen` nothing is scattered, and it says so), `scatter_set on=false`

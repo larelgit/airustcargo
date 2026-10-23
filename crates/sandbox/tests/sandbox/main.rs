@@ -4,6 +4,7 @@
 //! `system_failures.rs`), and so do the ones that time ticks (`perf.rs`).
 
 mod actions;
+mod ambient;
 mod animation;
 mod common;
 mod content;
