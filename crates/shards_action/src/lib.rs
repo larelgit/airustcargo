@@ -145,6 +145,7 @@ pub mod stance;
 pub mod status;
 mod tools;
 pub mod using;
+pub mod view_model;
 pub mod zone;
 
 use ai_core::{AiAppExt, SimSet};
@@ -216,6 +217,7 @@ pub use parts::{
     PartHit, PartTurn, PartsDef, SpawnedParts,
 };
 pub use look::{view_hit, ViewHit, AIM_RANGE};
+pub use view_model::{ShowsBody, ViewModelDef};
 pub use shot::{
     cone_dir, fire, fire_effects, line_of_fire, shot_aim, shot_ray, trace_shot, AimedBy, FireDef, FireLine, ShotAim, ShotFired, ShotHit,
     ShotImpact, ShotPath,
@@ -432,6 +434,9 @@ impl Plugin for ActionPlugin {
             .add_content::<CombatTuning>()
             .add_content::<AnimSet>()
             .add_content::<PropDef>()
+            .add_content::<view_model::ViewModelDef>()
+            .add_content_check::<shards_motion::camera::CameraTuning>("first-person view model", view_model::check_camera)
+            .register_type::<ShowsBody>()
             .init_resource::<DamageHooks>()
             .init_resource::<LethalHooks>()
             .init_resource::<StatusEffects>()

@@ -43,7 +43,8 @@ impl PlaySound {
 }
 
 /// The ear: the body this machine plays (the HUD's [`viewer`](shards_ui::viewer)) hears, facing
-/// the way an [`AudioListener`] (the camera) faces, else the way the body does.
+/// the way an [`AudioListener`] (the camera) faces, else the way the body does. It hears from the body's
+/// feet, except a body that is looked through in the first person (F1b): that one hears from its eye.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Listener {
     pub position: Vec3,
@@ -357,9 +358,25 @@ pub fn listener(world: &World) -> Option<Listener> {
     let mut ears = world.try_query_filtered::<&Transform, With<AudioListener>>();
     let ears = ears.as_mut().and_then(|q| q.iter(world).next().copied());
     let body_at = body.and_then(|b| world.get::<Transform>(b).copied());
-    let position = body_at.or(ears)?.translation;
+    let position = body.and_then(|b| first_person_ears(world, b)).or_else(|| body_at.or(ears).map(|t| t.translation))?;
     let rotation = ears.or(body_at).map_or(Quat::IDENTITY, |t| t.rotation);
     Some(Listener { position, rotation, body })
+}
+
+/// Where a body that is looked through in the first person hears from: its eye (F1b). It is looked
+/// through when it faces its look (`face: Look`) or when an active `FirstPersonCamera` looks through it (its `target`,
+/// else the local player when it names none). `None` for any
+/// other body (it hears from its feet) and for an entity that is no character. The eye is the
+/// simulation's (`shards_motion::eye_of`), not the camera's, so a headless run and a window hear alike,
+/// and a shaking or bobbing view does not move the ears.
+fn first_person_ears(world: &World, body: Entity) -> Option<Vec3> {
+    let params = shards_motion::params_of(world, body)?;
+    let local = world.get::<shards_core::LocalPlayer>(body).is_some();
+    let looked_through = params.face == shards_motion::Facing::Look
+        || world.try_query_filtered::<&shards_motion::FirstPersonCamera, ()>().is_some_and(|mut cameras| {
+            cameras.iter(world).any(|camera| camera.looks_through(body, local))
+        });
+    looked_through.then(|| shards_motion::eye_of(world, body)).flatten()
 }
 
 fn refresh_listener(world: &mut World) {
@@ -472,7 +489,40 @@ mod tests {
     }
 
     #[test]
+    fn the_ears_of_a_first_person_body_are_at_its_eye_and_any_other_is_at_its_feet() {
+        use shards_core::LocalPlayer;
+        use shards_motion::{CharacterController, CharacterParams, Facing};
+
+        let mut world = World::new();
+        let feet = Transform::from_xyz(2.0, 1.0, -3.0).with_rotation(Quat::from_rotation_y(0.5));
+        // A body that faces its movement hears where it stands, as before.
+        let body = world.spawn((LocalPlayer, CharacterController::default(), feet)).id();
+        let ear = listener(&world).unwrap();
+        assert_eq!((ear.position, ear.body), (Vec3::new(2.0, 1.0, -3.0), Some(body)));
+        // One that faces its look hears from its eye: its feet plus its eye height, turned like the body without a camera.
+        world.entity_mut(body).insert(CharacterParams { face: Facing::Look, eye_height: Some(1.6), ..default() });
+        let ear = listener(&world).unwrap();
+        assert!(ear.position.distance(Vec3::new(2.0, 2.6, -3.0)) < 1e-6, "{}", ear.position);
+        assert!(ear.rotation.abs_diff_eq(feet.rotation, 1e-6));
+        // A first-person camera turns the ears with the view, and moves a body that faces its movement to its eye too.
+        world.entity_mut(body).insert(CharacterParams { eye_height: Some(1.5), ..default() });
+        assert_eq!(listener(&world).unwrap().position, Vec3::new(2.0, 1.0, -3.0), "no camera, no first person");
+        let view = Transform::from_xyz(2.0, 2.5, -3.0).with_rotation(Quat::from_rotation_y(1.0));
+        // A first-person camera that looks through another body (a spectator's) does not move this body's ears.
+        let other = world.spawn_empty().id();
+        let looking = world.spawn((AudioListener, shards_motion::FirstPersonCamera::looking_through(other), view)).id();
+        assert_eq!(listener(&world).unwrap().position, Vec3::new(2.0, 1.0, -3.0), "a camera of another body");
+        world.entity_mut(looking).insert(shards_motion::FirstPersonCamera { active: false, ..default() });
+        assert_eq!(listener(&world).unwrap().position, Vec3::new(2.0, 1.0, -3.0), "a camera that is switched off");
+        world.entity_mut(looking).insert(shards_motion::FirstPersonCamera::default());
+        let ear = listener(&world).unwrap();
+        assert!(ear.position.distance(Vec3::new(2.0, 2.5, -3.0)) < 1e-6, "{}", ear.position);
+        assert!(ear.rotation.abs_diff_eq(view.rotation, 1e-6), "faces the way the camera faces");
+    }
+
+    #[test]
     fn a_voice_without_a_place_is_heard_whole() {
+
         let mut menu = voice(None);
         hear(&mut menu, None, 0.5);
         assert_eq!((menu.gain, menu.distance, menu.direction), (0.4, None, None));

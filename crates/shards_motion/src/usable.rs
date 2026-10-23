@@ -226,7 +226,7 @@ pub(crate) fn plugin(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::controller::{CharacterController, CharacterParams};
+    use crate::controller::{CharacterController, CharacterParams, Crouch};
     use crate::physics::{CollisionLayers, PhysicsPlugin, Shape};
     use shards_core::{Gaze, Intent};
 
@@ -401,6 +401,20 @@ mod tests {
         assert_eq!(target(&mut app, user).map(|t| t.entity), Some(lamp), "looking up at it");
     }
 
+    #[test]
+    fn a_crouched_bodys_ray_starts_lower() {
+        // `eye_of` follows the crouch (F2), and the use ray starts at the eye.
+        let (mut app, user) = room();
+        let high = area(&mut app, "high", Vec3::new(0.0, 1.6, -1.5), Vec3::splat(0.2), Usable::default());
+        assert_eq!(target(&mut app, user).map(|t| t.entity), Some(high), "standing: the eye is at 1.6 m");
+        app.world_mut().entity_mut(user).insert((
+            CharacterParams { eye_height: Some(1.6), crouch_height: Some(0.9), ..default() },
+            Crouch { depth: 1.0, ..default() },
+        ));
+        assert_eq!(target(&mut app, user), None, "crouched the eye is at 0.8 m: the level ray passes under the panel");
+        let low = area(&mut app, "low", Vec3::new(0.0, 0.8, -1.5), Vec3::splat(0.2), Usable::default());
+        assert_eq!(target(&mut app, user).map(|t| t.entity), Some(low));
+    }
     #[test]
     fn the_point_of_a_use_area_is_its_middle() {
         let (mut app, _) = room();

@@ -1,0 +1,32 @@
+// What the sandbox's view model shows (F1b, content kind `animset`): the clips of `models/view_model.glb`,
+// made by `cargo run -p sandbox --example make_view_model` (a pair of arms with a slab of a weapon, boxes
+// on named nodes). The first-person camera draws the model over the world and the animation bridge plays
+// these clips from the actions and the movement of the body that is looked through, exactly as it does for
+// a body (`humanoid.animset.ron`): standing, walking or running picks a clip by speed, and the two test
+// weapons' shots and reloads (`combat/weapons.action.ron`) play `fire` and `reload` across the action.
+// The picture only: the actions are the simulation's, and the clip does not change what they do.
+{
+    "arms": (
+        source: "models/view_model.glb",
+        clips: {
+            "idle": (),
+            "walk": (),
+            "run": (),
+            "fire": (blend: 0.03),
+            "reload": (blend: 0.08),
+            "draw": (),
+        },
+        locomotion: {"idle": "idle", "walk": "walk", "run": "run"},
+        // A shot or a reload plays its clip from the action's start to its end, whatever the action's length.
+        actions: {
+            "arm_sidearm_shot": "fire",
+            "arm_blaster_shot": "fire",
+            "arm_sidearm_reload": "reload",
+            "arm_blaster_reload": "reload",
+        },
+        blend: 0.15,
+        action_blend: 0.03,
+        // The sway of the walk and the run clips keeps pace at these speeds.
+        speeds: (walk: 2.0, run: 5.0, sprint: 7.5),
+    ),
+}
