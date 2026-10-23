@@ -1,6 +1,6 @@
 # Combat tools
 
-Read this when you drive a fight through `dodge`, `light_attack`, `block`, `use_item`, `attack` or `lock_on`, or react to enemy warnings. Part of the [AGENTS.md](../../AGENTS.md) index.
+Read this when you drive a fight through `dodge`, `light_attack`, `block`, `use_item`, `attack`, `lock_on`, `reload` or `weapon`, or react to enemy warnings. Part of the [AGENTS.md](../../AGENTS.md) index.
 
 - Combat tools (`dodge`, `light_attack`, `block`, `use_item`, `attack`) answer at once, under the game's rules: `ok: roll (W)`,
   `ok: queued, heavy starts in 0.10s` (the input waits in the buffer), or an error with the reason and the time (`not enough stamina: 10/20
@@ -40,3 +40,4 @@ Read this when you drive a fight through `dodge`, `light_attack`, `block`, `use_
   to hit; `side=left|right` moves between points too. A broken point lets the lock go (`e5 lock released: e21 (hand of
   e19)`; lock on another), and the body's death loses it (`lock lost: … dead`). `attack target=` on the body keeps your lock on
   one of its points.
+- Weapons (F4): a weapon is a moveset, its ammo the body's `Charges` (a magazine and a reserve are two: `observe` shows `weapon pistol 6/6 (24) · slots 1 pistol, 2 blaster`; `inspect` the charges). `light_attack` on an empty magazine answers `pistol empty (0/6): reload` (with `pistol empty: no pistol.reserve left` when the reserve is empty too); `reload` starts the reload (`ok: pistol_reload`) and answers `pistol is already full (6/6)` when it would move nothing. The rounds move at one moment of the reload, so a reload cut before it (a stagger, a death, a weapon switch) loads nothing: `step --until "journal:refilled"` waits for the rounds (`e5 refilled pistol +6 (6/6), 6 pistol.reserve left`). A moveset with `auto_reload` reloads on the press that would fire it empty (`ok: blaster_reload`). `weapon slot=2` (or `next`, `prev`) switches: `ok: switches to 2 (blaster)` when nothing runs, else `ok: switches to 2 (blaster) in 0.20s, when a cancel window of pistol_shot opens` (or `when pistol_shot ends`): the running action's cancel window must name the input `weapon`; watch for `e5 switches to blaster (slot 2, from pistol)`. A slot nobody holds is refused with what the body carries. A dev agent gives and takes what a pickup would: `give_weapon moveset=ID [slot=N] [id=eN]`, `take_weapon slot=N`, `give_ammo charge=NAME n=N`. Manual: "Weapons: slots, switching, ammo, reload (F4)".

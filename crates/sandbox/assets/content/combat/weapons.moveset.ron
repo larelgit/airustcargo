@@ -1,0 +1,25 @@
+// Two test weapons (see `weapons.action.ron`). A body carries them in an `Arsenal` (`weapons.prefab.ron`, or
+// the dev tool `give_weapon`); holding one is having its moveset.
+{
+    // Six rounds in the magazine and 24 in the reserve at most (12 to begin with). Reloaded by hand.
+    "test_sidearm": (
+        inputs: {"light": "arm_sidearm_shot", "reload": "arm_sidearm_reload"},
+        weapon: (
+            name: "Test sidearm",
+            magazine: "sidearm",
+            reserve: "sidearm.reserve",
+            charges: {"sidearm": (max: 6), "sidearm.reserve": (max: 24, start: 12)},
+        ),
+    ),
+    // Three rounds and nine in the reserve. Reloads itself.
+    "test_blaster": (
+        inputs: {"light": "arm_blaster_shot", "reload": "arm_blaster_reload"},
+        auto_reload: "arm_blaster_reload",
+        weapon: (
+            name: "Test blaster",
+            magazine: "blaster",
+            reserve: "blaster.reserve",
+            charges: {"blaster": (max: 3), "blaster.reserve": (max: 9)},
+        ),
+    ),
+}

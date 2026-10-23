@@ -28,7 +28,7 @@
 //! writes the curve, and content checks say when the clip changed and the curve is stale
 //! ([`crate::bake`]).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use bevy::prelude::*;
@@ -50,6 +50,10 @@ fn is_zero(v: &f32) -> bool {
 
 fn is_zero_u8(v: &u8) -> bool {
     *v == 0
+}
+
+fn is_one_u32(v: &u32) -> bool {
+    *v == 1
 }
 
 fn is_true(v: &bool) -> bool {
@@ -437,6 +441,18 @@ pub enum Effect {
         #[serde(default, skip_serializing_if = "is_zero")]
         grace: f32,
     },
+    /// Moves charges from the charge `from` into the charge `charge` of the actor: up to the room
+    /// `charge` has (`max - current`) and what `from` holds, at this moment, so a run cut before it
+    /// moves nothing (a reload: `Refill(charge: "pistol", from: "pistol.reserve")`). `per_round`
+    /// moves one charge instead of all that fit: shell-by-shell reloads put one such effect at each
+    /// moment (or let a `hold` loop pass it again and again; an effect in a loop fires on every pass).
+    /// [`Refilled`](crate::Refilled) says what moved.
+    Refill {
+        charge: String,
+        from: String,
+        #[serde(default, skip_serializing_if = "is_false")]
+        per_round: bool,
+    },
 }
 
 /// An [`Effect`] at `at` seconds into the action. Inside a hold loop it fires on every
@@ -541,16 +557,20 @@ pub struct MotionBake {
 }
 
 /// What starting an action costs.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Cost {
     /// Needed in full to start.
     pub stamina: f32,
     /// Seconds before the action can start again.
     pub cooldown: f32,
-    /// One charge of this named consumable (a healing flask).
+    /// `charge_count` of this named consumable (a healing flask; a weapon's rounds).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub charge: Option<String>,
+    /// How many of `charge` a run takes (a shotgun's two shells, a burst of three): all of them must
+    /// be there to start. At least 1; needs `charge`.
+    #[serde(skip_serializing_if = "is_one_u32")]
+    pub charge_count: u32,
     /// Whether `stamina` must be there in full to start.
     #[serde(skip_serializing_if = "StaminaMode::is_full")]
     pub stamina_mode: StaminaMode,
@@ -636,6 +656,20 @@ pub enum StaminaMode {
 impl StaminaMode {
     fn is_full(&self) -> bool {
         *self == StaminaMode::Full
+    }
+}
+
+impl Default for Cost {
+    fn default() -> Self {
+        Self {
+            stamina: 0.0,
+            cooldown: 0.0,
+            charge: None,
+            charge_count: 1,
+            stamina_mode: StaminaMode::default(),
+            cooldown_key: None,
+            cooldown_if_interrupted: None,
+        }
     }
 }
 
@@ -1139,6 +1173,25 @@ impl ActionDef {
             _ => self.hits.first().map(|h| (h.shape, h.at)),
         }
     }
+
+    /// The [`Effect::Refill`]s of this action, in order: `(charge, from, per_round)`.
+    pub fn refills(&self) -> impl Iterator<Item = (&str, &str, bool)> + '_ {
+        self.effects.iter().filter_map(|e| match &e.effect {
+            Effect::Refill { charge, from, per_round } => Some((charge.as_str(), from.as_str(), *per_round)),
+            _ => None,
+        })
+    }
+
+    /// Whether a run of this action would move something into `charge` now, given what the fighter
+    /// holds: it has a `Refill` into `charge` whose target has room and whose source has a charge.
+    pub fn refills_now(&self, charge: &str, charges: Option<&crate::Charges>) -> bool {
+        self.refills().any(|(into, from, _)| {
+            into == charge
+                && charges.is_some_and(|c| {
+                    c.get(into).is_some_and(|t| t.current < t.max) && c.get(from).is_some_and(|s| s.current > 0)
+                })
+        })
+    }
 }
 
 /// What `input` turns into under `into`.
@@ -1160,6 +1213,19 @@ impl ContentDef for ActionDef {
         check.phases();
         check.number("cost.stamina", self.cost.stamina);
         check.number("cost.cooldown", self.cost.cooldown);
+        match &self.cost.charge {
+            Some(charge) if charge.is_empty() => {
+                check.refs.error("cost.charge is empty; name the consumable it takes, e.g. `flask`");
+            }
+            Some(_) if self.cost.charge_count == 0 => {
+                check.refs.error("cost.charge_count must be at least 1 (is 0): it is how many charges a run takes");
+            }
+            None if self.cost.charge_count != 1 => check.refs.error(format!(
+                "cost.charge_count {} counts the charges `cost.charge` takes, and the cost names none: give `charge`, or leave the count out",
+                self.cost.charge_count
+            )),
+            _ => {}
+        }
         check.number("track_until", self.track_until);
         if let Some(m) = self.move_speed {
             check.number("move_speed", m);
@@ -1301,6 +1367,18 @@ impl ContentDef for ActionDef {
                 Effect::Spawn(spawn) => check.spawn(&format!("effects[{i}] Spawn"), spawn),
                 // The sound is checked where the mixer is (`AudioDef`), as a telegraph's is.
                 Effect::Sound(_) | Effect::Custom(_) => {}
+                Effect::Refill { charge, from, .. } => {
+                    for (name, value) in [("charge", charge), ("from", from)] {
+                        if value.is_empty() {
+                            check.refs.error(format!("effects[{i}] Refill {name} is empty; name the charge, e.g. `pistol`"));
+                        }
+                    }
+                    if charge == from {
+                        check.refs.error(format!(
+                            "effects[{i}] Refill moves charges from `{from}` into `{charge}`, the same charge: name the reserve it draws from"
+                        ));
+                    }
+                }
                 Effect::Revive { health, grace } => {
                     if !(*health > 0.0 && *health <= 1.0) {
                         check.refs.error(format!("effects[{i}] Revive health is a share of max health, above 0 and at most 1 (is {health})"));
@@ -1892,6 +1970,65 @@ pub struct MovesetDef {
     /// as before.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub context: Vec<BindingDef>,
+    /// The action that starts instead when an action of this moveset cannot pay its `cost.charge` and
+    /// the reload can help: an empty magazine reloads on the press that would have fired
+    /// (`Some("pistol_reload")`, an action with a `Refill`). It starts only when it would move
+    /// something (room in the charge, a charge in the reserve); otherwise the press is refused as
+    /// usual (`pistol empty: no pistol.reserve left`). `None`: the press is refused and the player reloads by hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_reload: Option<String>,
+    /// What this moveset is as a weapon: the charges it brings, which one is the magazine and which
+    /// the reserve ([`WeaponDef`]). `None`: not a weapon (or one the game wires by hand).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weapon: Option<WeaponDef>,
+}
+
+/// A moveset as a weapon ([`MovesetDef::weapon`]): what its `Arsenal` slot brings and shows.
+///
+/// ```ron
+/// "weapon": (
+///     name: "@weapon-sidearm",
+///     magazine: "sidearm",
+///     reserve: "sidearm.reserve",
+///     charges: {"sidearm": (max: 6), "sidearm.reserve": (max: 36, start: 12)},
+/// )
+/// ```
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct WeaponDef {
+    /// What the player reads for the weapon (`you.weapon` in a HUD): a Fluent `@id` or plain text.
+    /// `None`: the moveset's id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The charge that holds the rounds in the weapon (what `cost.charge` of its fire takes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub magazine: Option<String>,
+    /// The charge that holds the rest of its ammo (what a `Refill` draws from).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reserve: Option<String>,
+    /// The charges a body gets (those it lacks) when the weapon is granted or selected, by name. Every
+    /// charge the moveset's actions take or refill is declared here or in a prefab's `Charges`; two
+    /// weapons sharing a reserve declare it alike.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub charges: BTreeMap<String, Stock>,
+}
+
+/// One charge a weapon brings ([`WeaponDef::charges`]).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Stock {
+    /// The most the charge holds.
+    pub max: u32,
+    /// What it holds when the body gets it; `None`: full.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<u32>,
+}
+
+impl Stock {
+    /// What a body that gets the charge starts with: `start` (at most `max`), else full.
+    pub fn initial(&self) -> u32 {
+        self.start.map_or(self.max, |s| s.min(self.max))
+    }
 }
 
 /// Something a fighter remembers for `seconds` ([`MovesetDef::remember`]): when `on` happens it
@@ -2113,10 +2250,104 @@ impl ContentDef for MovesetDef {
             }
         }
         self.validate_context(refs);
+        self.validate_weapon(refs);
     }
 }
 
+/// Every charge name the prefabs' `Charges` components give a body (a healing flask's, say).
+fn prefab_charge_names(refs: &Refs) -> BTreeSet<String> {
+    #[derive(Deserialize)]
+    struct Named {
+        name: String,
+    }
+    #[derive(Deserialize)]
+    struct Listed(Vec<Named>);
+    refs.iter::<shards_content::PrefabDef>()
+        .flat_map(|(_, prefab)| {
+            prefab
+                .components
+                .iter()
+                .filter(|(name, _)| name.as_str() == "Charges" || name.ends_with("::Charges"))
+                .filter_map(|(_, value)| ron::from_str::<Listed>(value.get_ron()).ok())
+                .flat_map(|listed| listed.0.into_iter().map(|n| n.name))
+        })
+        .collect()
+}
+
 impl MovesetDef {
+    /// `auto_reload` and `weapon`: the reload exists and refills; the charges the weapon's actions take
+    /// and refill are declared (here, or in a prefab's `Charges`); the magazine and the reserve are
+    /// among them; two weapons that declare one charge declare it alike.
+    fn validate_weapon(&self, refs: &mut Refs) {
+        if let Some(reload) = &self.auto_reload
+            && refs.require::<ActionDef>(reload, "auto_reload")
+            && refs.get::<ActionDef>(reload).is_some_and(|d| d.refills().next().is_none())
+        {
+            refs.error(format!(
+                "auto_reload -> action `{reload}` has no Refill effect: an empty magazine would start something that reloads nothing"
+            ));
+        }
+        let Some(weapon) = &self.weapon else { return };
+        for (name, stock) in &weapon.charges {
+            if name.is_empty() || name.chars().any(char::is_control) {
+                refs.error(format!("weapon.charges has the name `{name}`; a charge is named by a short text without control characters"));
+            }
+            if stock.max == 0 {
+                refs.error(format!("weapon.charges `{name}`: max must be at least 1"));
+            }
+            if let Some(start) = stock.start
+                && start > stock.max
+            {
+                refs.error(format!("weapon.charges `{name}`: start {start} is above max {}", stock.max));
+            }
+        }
+        // Two weapons that share a charge (a common reserve) have one place for it in a body: one max.
+        for (other, moveset) in refs.iter::<MovesetDef>() {
+            let Some(theirs) = &moveset.weapon else { continue };
+            for (name, stock) in &weapon.charges {
+                if let Some(there) = theirs.charges.get(name)
+                    && there.max != stock.max
+                {
+                    refs.error(format!(
+                        "weapon.charges `{name}`: max {} here, {} in moveset `{other}`; a body has one `{name}`, so weapons that share it declare the same max",
+                        stock.max, there.max
+                    ));
+                }
+            }
+        }
+        let known: BTreeSet<String> = weapon.charges.keys().cloned().chain(prefab_charge_names(refs)).collect();
+        let names = |known: &BTreeSet<String>| known.iter().cloned().collect::<Vec<_>>().join(", ");
+        for (field, charge) in [("weapon.magazine", &weapon.magazine), ("weapon.reserve", &weapon.reserve)] {
+            if let Some(charge) = charge
+                && !known.contains(charge)
+            {
+                refs.error(format!("{field} -> charge `{charge}` is declared nowhere: not in weapon.charges, not in a prefab's Charges ({})", names(&known)));
+            }
+        }
+        let actions = self.inputs.iter().map(|(input, action)| (format!("inputs.{input}"), action)).chain(self.auto_reload.iter().map(|a| ("auto_reload".to_owned(), a)));
+        for (field, id) in actions {
+            let Some(def) = refs.get::<ActionDef>(id) else { continue };
+            if let Some(charge) = &def.cost.charge
+                && !known.contains(charge)
+            {
+                refs.error(format!(
+                    "{field} -> action `{id}` costs the charge `{charge}`, which this weapon does not have: declare it in weapon.charges, or in a prefab's Charges ({})",
+                    names(&known)
+                ));
+            }
+            for (charge, from, _) in def.refills() {
+                for name in [charge, from] {
+                    if !known.contains(name) {
+                        refs.error(format!(
+                            "{field} -> action `{id}` refills with the charge `{name}`, which this weapon does not have: declare it in weapon.charges, or in a prefab's Charges ({})",
+                            names(&known)
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     /// `remember` and `context`: keys unique, times above 0, bindings naming actions and keys that exist.
     fn validate_context(&self, refs: &mut Refs) {
         for (i, memory) in self.remember.iter().enumerate() {
@@ -2886,5 +3117,145 @@ mod tests {
             assert!(errors.iter().any(|e| e == line), "missing `{line}` in {errors:#?}");
         }
         assert_eq!(errors.len(), expected.len(), "{errors:#?}");
+    }
+}
+
+#[cfg(test)]
+mod weapon_tests {
+    use super::*;
+
+    /// The errors of `actions` and `movesets` (and `prefabs`, whose `Charges` the weapon check reads).
+    fn errors_of(actions: &str, movesets: &str, prefabs: &str) -> Vec<String> {
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<ActionDef>();
+        kinds.register::<MovesetDef>();
+        kinds.register::<crate::status::StatusDef>();
+        kinds.register::<shards_content::PrefabDef>();
+        let sources = [
+            shards_content::db::Source { path: "content/a.action.ron".into(), text: actions.into() },
+            shards_content::db::Source { path: "content/m.moveset.ron".into(), text: movesets.into() },
+            shards_content::db::Source { path: "content/p.prefab.ron".into(), text: prefabs.into() },
+        ];
+        shards_content::ContentDb::build(&kinds, &sources).errors().map(|e| e.to_string()).collect()
+    }
+
+    fn assert_errors(errors: &[String], expected: &[&str]) {
+        for line in expected {
+            assert!(errors.iter().any(|e| e == line), "missing `{line}` in {errors:#?}");
+        }
+        assert_eq!(errors.len(), expected.len(), "{errors:#?}");
+    }
+
+    const ACTIONS: &str = r#"{
+        "shoot": (net_id: 1, phases: [("a", 0.3)], cost: (charge: "pistol")),
+        "reload": (net_id: 2, phases: [("a", 0.3)], effects: [(at: 0.3, effect: Refill(charge: "pistol", from: "pistol.reserve"))]),
+        "pump": (net_id: 3, phases: [("a", 0.3)], cost: (charge: "shells", charge_count: 2)),
+        "pull": (net_id: 4, phases: [("a", 0.3)], effects: [(at: 0.3, effect: Refill(charge: "shells", from: "rockets"))]),
+        "flask": (net_id: 5, phases: [("a", 0.3)], cost: (charge: "flask")),
+    }"#;
+
+    #[test]
+    fn a_weapon_that_declares_what_it_uses_is_clean() {
+        let movesets = r#"{
+            "pistol": (
+                inputs: {"light": "shoot", "reload": "reload", "use_item.flask": "flask"},
+                auto_reload: "reload",
+                weapon: (magazine: "pistol", reserve: "pistol.reserve", charges: {"pistol": (max: 6), "pistol.reserve": (max: 36, start: 12)}),
+            ),
+            "plain": (inputs: {"light": "shoot"}),
+        }"#;
+        // The flask is a prefab's: declared there, not by the weapon. A moveset with no `weapon` is not checked.
+        let prefabs = r#"{"hero": (components: {"Charges": ([(name: "flask", current: 3, max: 3)])})}"#;
+        assert_errors(&errors_of(ACTIONS, movesets, prefabs), &[]);
+    }
+
+    #[test]
+    fn a_cost_or_a_refill_on_a_charge_the_weapon_lacks_is_an_error_that_names_the_field() {
+        let movesets = r#"{
+            "stray": (
+                inputs: {"light": "shoot", "reload": "reload", "technique.1": "pull", "technique.2": "pump"},
+                weapon: (magazine: "mag", reserve: "pistol.reserve", charges: {"pistol.reserve": (max: 36)}),
+            ),
+        }"#;
+        let tail = "which this weapon does not have: declare it in weapon.charges, or in a prefab's Charges (pistol.reserve)";
+        let errors = errors_of(ACTIONS, movesets, "{}");
+        assert_errors(
+            &errors,
+            &[
+                "content/m.moveset.ron: moveset `stray`: weapon.magazine -> charge `mag` is declared nowhere: not in weapon.charges, not in a prefab's Charges (pistol.reserve)",
+                &format!("content/m.moveset.ron: moveset `stray`: inputs.light -> action `shoot` costs the charge `pistol`, {tail}"),
+                &format!("content/m.moveset.ron: moveset `stray`: inputs.reload -> action `reload` refills with the charge `pistol`, {tail}"),
+                &format!("content/m.moveset.ron: moveset `stray`: inputs.technique.1 -> action `pull` refills with the charge `shells`, {tail}"),
+                &format!("content/m.moveset.ron: moveset `stray`: inputs.technique.1 -> action `pull` refills with the charge `rockets`, {tail}"),
+                &format!("content/m.moveset.ron: moveset `stray`: inputs.technique.2 -> action `pump` costs the charge `shells`, {tail}"),
+            ],
+        );
+    }
+
+    #[test]
+    fn auto_reload_names_an_action_that_refills() {
+        let movesets = r#"{
+            "ghost": (inputs: {"light": "shoot"}, auto_reload: "relod"),
+            "idle": (inputs: {"light": "shoot"}, auto_reload: "flask"),
+        }"#;
+        assert_errors(
+            &errors_of(ACTIONS, movesets, "{}"),
+            &[
+                "content/m.moveset.ron: moveset `ghost`: auto_reload -> unknown action `relod` (did you mean `reload`?)",
+                "content/m.moveset.ron: moveset `idle`: auto_reload -> action `flask` has no Refill effect: an empty magazine would start something that reloads nothing",
+            ],
+        );
+    }
+
+    #[test]
+    fn charge_counts_and_refills_are_checked_where_they_are_written() {
+        let actions = r#"{
+            "free": (net_id: 1, phases: [("a", 0.3)], cost: (charge_count: 2)),
+            "none": (net_id: 2, phases: [("a", 0.3)], cost: (charge: "x", charge_count: 0)),
+            "blank": (net_id: 3, phases: [("a", 0.3)], cost: (charge: "")),
+            "same": (net_id: 4, phases: [("a", 0.3)], effects: [(at: 0.1, effect: Refill(charge: "x", from: "x"))]),
+            "empty": (net_id: 5, phases: [("a", 0.3)], effects: [(at: 0.1, effect: Refill(charge: "", from: "y"))]),
+        }"#;
+        assert_errors(
+            &errors_of(actions, "{}", "{}"),
+            &[
+                "content/a.action.ron: action `free`: cost.charge_count 2 counts the charges `cost.charge` takes, and the cost names none: give `charge`, or leave the count out",
+                "content/a.action.ron: action `none`: cost.charge_count must be at least 1 (is 0): it is how many charges a run takes",
+                "content/a.action.ron: action `blank`: cost.charge is empty; name the consumable it takes, e.g. `flask`",
+                "content/a.action.ron: action `same`: effects[0] Refill moves charges from `x` into `x`, the same charge: name the reserve it draws from",
+                "content/a.action.ron: action `empty`: effects[0] Refill charge is empty; name the charge, e.g. `pistol`",
+            ],
+        );
+    }
+
+    #[test]
+    fn weapons_that_share_a_charge_declare_the_same_max_and_start_inside_it() {
+        let movesets = r#"{
+            "a": (inputs: {"light": "shoot"}, weapon: (charges: {"pistol": (max: 6)})),
+            "b": (inputs: {"light": "shoot"}, weapon: (charges: {"pistol": (max: 8, start: 9), "zero": (max: 0)})),
+        }"#;
+        assert_errors(
+            &errors_of(ACTIONS, movesets, "{}"),
+            &[
+                "content/m.moveset.ron: moveset `a`: weapon.charges `pistol`: max 6 here, 8 in moveset `b`; a body has one `pistol`, so weapons that share it declare the same max",
+                "content/m.moveset.ron: moveset `b`: weapon.charges `pistol`: max 8 here, 6 in moveset `a`; a body has one `pistol`, so weapons that share it declare the same max",
+                "content/m.moveset.ron: moveset `b`: weapon.charges `pistol`: start 9 is above max 8",
+                "content/m.moveset.ron: moveset `b`: weapon.charges `zero`: max must be at least 1",
+            ],
+        );
+    }
+
+    #[test]
+    fn the_new_fields_leave_an_old_definition_exactly_as_it_was() {
+        // A cost and a moveset that say nothing of weapons serialize as they always did: the replay hash of the
+        // content they are in does not move.
+        let cost: Cost = ron::from_str("(charge: Some(\"flask\"))").unwrap();
+        assert_eq!(cost.charge_count, 1);
+        assert_eq!(serde_json::to_string(&cost).unwrap(), r#"{"stamina":0.0,"cooldown":0.0,"charge":"flask"}"#);
+        assert!(Cost::default().is_free());
+        let moveset: MovesetDef = ron::from_str("(inputs: {\"light\": \"jab\"})").unwrap();
+        assert_eq!(serde_json::to_string(&moveset).unwrap(), r#"{"inputs":{"light":"jab"}}"#);
+        let counted: Cost = ron::from_str("(charge: Some(\"shell\"), charge_count: 2)").unwrap();
+        assert_eq!(serde_json::to_string(&counted).unwrap(), r#"{"stamina":0.0,"cooldown":0.0,"charge":"shell","charge_count":2}"#);
     }
 }

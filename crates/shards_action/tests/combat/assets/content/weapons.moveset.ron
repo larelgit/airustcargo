@@ -1,0 +1,35 @@
+// The movesets of `weapons.rs`.
+{
+    // A six-round magazine and a reserve of 36, 12 of them to begin with. Reloaded by hand.
+    "w_sidearm": (
+        inputs: {"light": "w_shot", "reload": "w_reload"},
+        stagger: "w_stagger",
+        weapon: (
+            name: "Sidearm",
+            magazine: "sidearm",
+            reserve: "sidearm.reserve",
+            charges: {"sidearm": (max: 6), "sidearm.reserve": (max: 36, start: 12)},
+        ),
+    ),
+    // Reloads itself.
+    "w_auto": (
+        inputs: {"light": "w_auto_shot", "reload": "w_auto_reload"},
+        auto_reload: "w_auto_reload",
+        weapon: (
+            magazine: "auto",
+            reserve: "auto.reserve",
+            charges: {"auto": (max: 4), "auto.reserve": (max: 8)},
+        ),
+    ),
+    // Starts empty; two shells a shot; loads a shell at a time.
+    "w_scatter": (
+        inputs: {"light": "w_scatter_shot", "reload": "w_scatter_load"},
+        weapon: (
+            magazine: "shells",
+            reserve: "shells.reserve",
+            charges: {"shells": (max: 4, start: 0), "shells.reserve": (max: 12)},
+        ),
+    ),
+    // No ammo, no weapon block.
+    "w_blade": (inputs: {"light": "w_swing"}, stagger: "w_stagger"),
+}

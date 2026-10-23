@@ -46,3 +46,4 @@ mod stand_udp;
 mod tiles;
 mod tool_contracts;
 mod voxel_arena;
+mod weapons;

@@ -1,0 +1,41 @@
+// Weapons (F4): a sidearm with a hand reload, a sidearm that reloads by itself, a scatter gun that takes
+// two shells a shot and loads one at a time, and a blade with no ammo. Net ids 4400 and up are this file's.
+{
+    // One round a shot. Its recover phase lets a weapon switch through.
+    "w_shot": (
+        net_id: 4400,
+        phases: [("fire", 0.1), ("recover", 0.2)],
+        cost: (charge: "sidearm"),
+        cancels: [(span: Phase("recover"), into: [Input("weapon")])],
+    ),
+    // The rounds move at 0.5 s, at the end of the draw; a switch may cut the draw before that.
+    "w_reload": (
+        net_id: 4401,
+        phases: [("draw", 0.5), ("seat", 0.2)],
+        effects: [(at: 0.5, effect: Refill(charge: "sidearm", from: "sidearm.reserve"))],
+        cancels: [(span: Phase("draw"), into: [Input("weapon")])],
+    ),
+    // The same pistol that reloads itself on the press that would fire it empty.
+    "w_auto_shot": (net_id: 4402, phases: [("fire", 0.1), ("recover", 0.2)], cost: (charge: "auto")),
+    "w_auto_reload": (
+        net_id: 4403,
+        phases: [("draw", 0.4)],
+        effects: [(at: 0.4, effect: Refill(charge: "auto", from: "auto.reserve"))],
+    ),
+    // Two shells a shot.
+    "w_scatter_shot": (net_id: 4404, phases: [("fire", 0.2)], cost: (charge: "shells", charge_count: 2)),
+    // A shell at a time, at three moments: a run cut after the second keeps two.
+    "w_scatter_load": (
+        net_id: 4405,
+        phases: [("load", 1.0)],
+        effects: [
+            (at: 0.3, effect: Refill(charge: "shells", from: "shells.reserve", per_round: true)),
+            (at: 0.6, effect: Refill(charge: "shells", from: "shells.reserve", per_round: true)),
+            (at: 0.9, effect: Refill(charge: "shells", from: "shells.reserve", per_round: true)),
+        ],
+    ),
+    // A weapon with no ammo, whose swing lets nothing through.
+    "w_swing": (net_id: 4406, phases: [("swing", 0.3)]),
+    // What a hit does to a fighter: a stagger to cut any of the above with.
+    "w_stagger": (net_id: 4407, phases: [("stagger", 0.4)]),
+}

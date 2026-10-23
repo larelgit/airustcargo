@@ -1,0 +1,143 @@
+# Weapons (F4): ammo as named charges, a cost per shot, a refusal that says what to do, a reload that
+# moves the rounds when it ends, a second weapon that reloads itself, and switching between the two.
+# A reload cut before it ends gives nothing.
+#
+# The player e5 is given the two test weapons (`content/combat/weapons.*.ron`) the way a pickup gives
+# them (`give_weapon`), plays with them through the player's tools, and is put back at the end: the
+# weapons taken, its own moveset and its flask as they were.
+
+seed 42
+
+# --- the arena as the game spawns it, whatever was played in it before: everyone stands down
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+# (a dead player is brought back first: its own controls refuse a dead body)
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god on=false
+step 150
+act heal id=e5
+act heal id=e6
+act heal id=e7
+act set id=e6 component=Boss path=phase value=1
+act teleport id=e5 x=0 z=0 y=0
+act teleport id=e7 x=-16 z=8 y=0
+act teleport id=e8 x=14 z=-14 y=0
+act teleport id=e6 x=-14 z=-14 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+step 2
+invariant field e5 Health.current > 0
+
+# --- 1. the arsenal: two weapons given, the first in the hands, with the charges they bring
+act give_weapon id=e5 moveset=test_sidearm
+expect result contains "e5 carries test_sidearm in slot 1"
+act give_weapon id=e5 moveset=test_blaster
+expect result contains "e5 carries test_blaster in slot 2"
+step 2
+expect shows e5 "weapon test_sidearm 6/6 (12)"
+expect shows e5 "slots 1 test_sidearm, 2 test_blaster"
+act give_weapon id=e5 moveset=test_blaster
+expect result contains "carries test_blaster in slot 2 already; nothing changed"
+
+# --- 2. fire the sidearm dry: six shots, then the refusal says what to do
+act light_attack
+expect result contains "ok: arm_sidearm_shot"
+step 25
+act light_attack
+step 25
+act light_attack
+step 25
+act light_attack
+step 25
+act light_attack
+step 25
+act light_attack
+step 25
+expect shows e5 "weapon test_sidearm 0/6 (12)"
+act? light_attack
+expect result contains "sidearm empty (0/6): reload"
+act? weapon slot=5
+expect result contains "no weapon in slot 5; you carry: 1 test_sidearm, 2 test_blaster"
+
+# --- 3. reload: nothing moves until the draw ends (0.8 s), then all six
+mark
+act reload
+expect result contains "ok: arm_sidearm_reload"
+step 40
+expect shows e5 "weapon test_sidearm 0/6 (12)"
+expect !journal "refilled"
+step 30
+expect journal "e5 refilled sidearm +6 (6/6), 6 sidearm.reserve left"
+expect shows e5 "weapon test_sidearm 6/6 (6)"
+act? reload
+expect result contains "sidearm is already full (6/6)"
+
+# --- 4. switch to the second weapon; it reloads itself on the press that would fire it empty
+mark
+act weapon slot=2
+expect result contains "ok: switches to 2 (test_blaster)"
+step 3
+expect journal "e5 switches to test_blaster (slot 2, from test_sidearm)"
+expect shows e5 "weapon test_blaster 3/3 (9)"
+act light_attack
+expect result contains "ok: arm_blaster_shot"
+step 22
+act light_attack
+step 22
+act light_attack
+step 22
+expect shows e5 "weapon test_blaster 0/3 (9)"
+mark
+act light_attack
+expect result contains "ok: arm_blaster_reload"
+step 45
+expect journal "e5 refilled blaster +3 (3/3), 6 blaster.reserve left"
+expect shows e5 "weapon test_blaster 3/3 (6)"
+
+# --- 5. and back to the first, its rounds as they were
+act weapon slot=1
+step 3
+expect shows e5 "weapon test_sidearm 6/6 (6)"
+
+# --- 6. a reload cut by a switch gives nothing: two rounds fired, a reload started, the switch
+# made inside its draw (a cancel window lets it through) before the rounds move
+act light_attack
+step 25
+act light_attack
+step 25
+expect shows e5 "weapon test_sidearm 4/6 (6)"
+mark
+act reload
+expect result contains "ok: arm_sidearm_reload"
+step 20
+act weapon slot=2
+expect result contains "ok: switches to 2 (test_blaster)"
+step 70
+expect journal "e5 switches to test_blaster (slot 2, from test_sidearm)"
+expect !journal "refilled sidearm"
+expect shows e5 "weapon test_blaster 3/3 (6)"
+# (the sidearm's rounds are where the cut left them)
+act weapon slot=1
+step 3
+expect shows e5 "weapon test_sidearm 4/6 (6)"
+# the reload, left to end, loads the two that fit
+mark
+act reload
+step 70
+expect journal "e5 refilled sidearm +2 (6/6), 4 sidearm.reserve left"
+
+# --- the player as it was: no weapons, its own moveset, its flask
+act take_weapon id=e5 slot=2
+expect result contains "e5 no longer carries test_blaster (slot 2)"
+act take_weapon id=e5 slot=1
+expect result contains "e5 no longer carries test_sidearm (slot 1)"
+act set id=e5 component=Charges path='"0"' value='[{"name":"flask","current":3,"max":3}]'
+step 2
+act get id=e5 component=Fighter path=moveset
+expect result contains "player"
+act? take_weapon id=e5 slot=1
+expect result contains "e5 carries no weapons"
