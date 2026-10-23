@@ -31,8 +31,8 @@ pub const DEFAULT_USE_RANGE: f32 = 2.0;
 /// refusal can say how far it is.
 pub const PROBE_RANGE: f32 = 100.0;
 
-/// How much nearer than a wall a use area may stand before it counts as in front of it (m): float
-/// noise, so a button laid flush with its wall is not lost to rounding.
+/// How far behind a wall's face (m) a use area still counts as at it: float noise, so a button laid flush with its wall is not lost to
+/// rounding. A tenth of a millimetre, far less than any real depth.
 const FLUSH: f32 = 1e-4;
 
 /// Something a character can use by looking at it (F5). A level's `interactable` marker makes one
@@ -317,6 +317,19 @@ mod tests {
         app.world_mut().despawn(glass);
         wall(&mut app, Vec3::new(2.0, 1.6, -0.9), Vec3::new(0.5, 1.0, 0.02));
         assert!(target(&mut app, user).is_some());
+    }
+
+    #[test]
+    fn a_button_flush_with_its_wall_counts_and_one_behind_it_does_not() {
+        let (mut app, user) = room();
+        // The wall's face and the button's are both at z -1.0 (distance 1.0 from the eye).
+        wall(&mut app, Vec3::new(0.0, 1.6, -1.1), Vec3::new(2.0, 2.0, 0.1));
+        let button = area(&mut app, "button", Vec3::new(0.0, 1.6, -1.05), Vec3::new(0.2, 0.2, 0.05), Usable::default());
+        assert_eq!(target(&mut app, user).map(|t| t.entity), Some(button), "flush: the same distance counts");
+        // A centimetre behind the face it is behind the wall.
+        app.world_mut().despawn(button);
+        area(&mut app, "behind", Vec3::new(0.0, 1.6, -1.06), Vec3::new(0.2, 0.2, 0.05), Usable::default());
+        assert_eq!(target(&mut app, user), None, "a centimetre in the wall is out of sight");
     }
 
     #[test]

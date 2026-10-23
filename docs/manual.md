@@ -2272,7 +2272,7 @@ owns (`mover_go`, a pickup, a line of text).
 
 - **The ray** (`shards::motion::use_target(world, user) -> Option<UseTarget>`, pure, and `use_probe` for everything it passes): from `eye_of` along
   `look_dir`, against the `WORLD` layer (the first solid on the ray is the wall) and the new `USE` layer (the use areas). A thing counts when it is
-  nearer than the wall, or at its distance (a button flush with its wall; a door is a wall and a target at once), and within its reach: the marker's own
+  nearer than the wall, or at its distance (to a tenth of a millimetre: a button flush with its wall; a door is a wall and a target at once), and within its reach: the marker's own
   `use_range`, else the body's (`locomotion` `use_range`, above 0, 2 m by default). A glass pane or a wall in between blocks the use, a body in
   between does not (bodies are on no layer the ray asks for). Of the things that count the **nearest wins; two at one distance go to the lower
   `ColliderId`**, never to an entity order. `use_probe` also lists what is out of its reach (up to 100 m, `PROBE_RANGE`), so a refusal can say how far a thing is.
