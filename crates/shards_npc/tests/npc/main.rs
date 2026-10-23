@@ -14,6 +14,7 @@ mod navmesh;
 #[cfg(feature = "render")]
 mod overlay;
 mod perception;
+mod ranged;
 mod replay;
 mod rules;
 mod schedule;

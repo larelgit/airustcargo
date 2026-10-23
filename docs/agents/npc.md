@@ -33,6 +33,17 @@ Read this when you touch enemy brains, behaviour, perception, the director, atta
   every plan would change existing replays' `content` check. Give `FightCx::live` to every caller that judges a grant or a choice (`direct`,
   `plan_attacks`, `schedule_report`). An attack in flight carries its pressed input (`InFlight`), and `plan_attacks` adds each press with
   its input, so a later NPC on the same tick sees what the press will lay at the target; a new place that presses for the planner must add it too. A live tag is only ever an action's tag (the action a zone, a summon or a spawn runs), so the content check holds the two lists to the actions' tags, not to plan options' tags or names.
+- **Gunfire, hiding, ranged fighters, turrets** (F11; "Gunfire, hiding, ranged fighters, turrets (F11)" in the manual). Everything is off until
+  content asks for it, and the new state lives on new components that only such NPCs carry: `NpcThreats` (a perception with
+  `notice: Threats`, inserted on its first active tick), `NpcFireLine` (an NPC whose plan has `keep_range`), `Turret`. Keep it that way: a field
+  on `NpcBrain`, `NpcPlan`, `Grant` or `Npc` changes every recorded hash, and a `db.get` that existing content reaches changes their `content`
+  check (tools read with `db.peek`). The line of fire is one trace per NPC per tick (`ranged::fire_lines`, chained after `brain::decide` in
+  `NpcSystems::Decide`); the director, the planner and `npc_schedule` read `NpcFireLine` through `schedule::inputs()` and never trace again, and
+  `Refusal::LineOfFire` sits after `Machine` (fifteen rules), so the machine is still asked where it was. `hiding_spot` is pure: it walks the
+  navmesh in the bake's order, sorts by distance with node ids for ties and casts at most `HIDE_RAYS` rays; keep it free of `SimRng` and of
+  query order. The `hide` state keeps its spot in `NpcBrain::point` and `step` (already hashed), not in a new field. The turret system runs after
+  `drive_intents` in `NpcSystems::Drive` and writes only `Intent` (look and press); `set_turret_active` is a call where the simulation runs, not
+  a net event. A threat heard (`shot_threat`) is an observer: it returns at once where the machine does not simulate.
 - **Encounters** (`shards_encounter`, "Encounters (G9)" in the manual) spawn NPCs in waves and pull the survivors of a placed wave back home
   on a wipe or a reset: they `force_state` the behaviour state the encounter's `pull_back.state` names (so a behaviour needs that state,
   `return_home` kind, which the content check enforces: a state of any other kind is refused), and set `EncounterMember.returning` until the member is home; the NPC condition

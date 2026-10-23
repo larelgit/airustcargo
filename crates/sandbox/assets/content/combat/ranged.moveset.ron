@@ -1,0 +1,5 @@
+// What the ranged NPCs and the turret of `ranged.prefab.ron` fire on `light` (F11).
+{
+    "ranged_gunner": (inputs: {"light": "ranged_burst"}),
+    "ranged_turret": (inputs: {"light": "turret_shot"}),
+}
