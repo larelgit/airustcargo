@@ -13,6 +13,8 @@
 //!   and in the replay's `content` read, so a game loaded in the middle of a scene goes on with it. Timers
 //!   are whole ticks. A run is ordered by its number, its bodies by `AiId`; nothing here draws a random
 //!   number.
+//! - **An agent's orders are dropped.** `play_sequence` clears the `Intent.orders` of the NPCs it holds: an NPC under orders
+//!   is driven by them before anything else, so the run could not walk it.
 //! - **A body that acts is held, its brain dormant.** While a run holds an NPC, its behaviour does not
 //!   choose (`decide` leaves its brain, plan and decision timer exactly as they were), it asks for no
 //!   attack token and presses nothing (it counts as *under orders*, as when an agent drives it), its
@@ -50,6 +52,7 @@ use ai_core::{AiAppExt, AiId};
 use bevy::prelude::*;
 use shards_action::{ActionState, Dead, Downed};
 use shards_content::{ContentAppExt, ContentDb};
+use shards_core::Intent;
 
 pub use def::{FaceTarget, SequenceDef, Step, DEFAULT_FACE_TIMEOUT, DEFAULT_LONG_TIMEOUT, FACE_TOLERANCE_DEG};
 pub use run::{Facing, Run, SequenceEnded, SequenceHold, SequenceId, SequenceSignal, SequenceStarted, SequenceStep, Sequences};
@@ -152,6 +155,14 @@ pub fn play_sequence(world: &mut World, id: &str, roles: &[(&str, Entity)]) -> R
         let role = bound.iter().find(|(_, b)| b == ai).map(|(r, _)| r.clone()).unwrap_or_default();
         if let Some(entity) = world.get_resource::<ai_core::AiIndex>().and_then(|i| i.get(*ai)) {
             world.entity_mut(entity).insert(SequenceHold { run: number, def: id.to_owned(), role });
+            // An agent's order (`move_to`, `attack`) would take the NPC over from the run (`drive_intents` follows orders first):
+            // the scene is the NPC's now, so what it was told to do is dropped.
+            if let Some(mut intent) = world.get_mut::<Intent>(entity)
+                && !intent.orders.is_empty()
+            {
+                intent.orders.clear();
+                intent.move_dir = Vec3::ZERO;
+            }
         }
     }
     world.trigger(SequenceStarted { sequence: SequenceId(number), def: id.to_owned(), roles: bound });

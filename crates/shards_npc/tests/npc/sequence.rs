@@ -268,6 +268,25 @@ fn a_run_that_cannot_be_played_says_what_to_fix_and_changes_nothing() {
 }
 
 #[test]
+fn an_order_an_agent_gave_the_actor_is_dropped_when_the_scene_takes_it() {
+    use shards_core::{Intent, Order, Target};
+    let mut app = scene_app();
+    let (actor, _) = stage(&mut app);
+    // An agent sent it off the other way.
+    {
+        let mut intent = app.world_mut().get_mut::<Intent>(actor).unwrap();
+        intent.orders.push_back(Order::MoveTo { target: Target::Point(Vec3::new(-20.0, 0.0, 0.0)), within: 0.5 });
+    }
+    step(&mut app, 10);
+    assert!(feet(&app, actor).x < -0.5, "it walks west on the order: {}", feet(&app, actor));
+    play_sequence(app.world_mut(), "stand", &[("actor", actor)]).unwrap();
+    assert!(app.world().get::<Intent>(actor).unwrap().orders.is_empty(), "the scene has it now");
+    let here = feet(&app, actor);
+    step(&mut app, 30);
+    assert!(flat_distance(feet(&app, actor), here) < 0.3, "it stands for the scene: {} -> {}", here, feet(&app, actor));
+}
+
+#[test]
 fn stopping_a_run_frees_its_bodies_at_once_and_says_skipped() {
     let mut app = scene_app();
     let (actor, _) = stage(&mut app);
