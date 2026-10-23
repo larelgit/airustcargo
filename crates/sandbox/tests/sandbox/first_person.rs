@@ -99,6 +99,7 @@ fn an_offscreen_first_person_shot_shows_the_view_model_and_not_the_own_body() {
     assert!(world < 50, "the world is the world: {world} pixels differ above the arms");
     let arms = changed(&with, &without, (230, 440, 870, 280));
     assert!(arms > 5000, "the lower part of the picture holds the arms: {arms} pixels differ with the view model and without");
+    eprintln!("first-person shot: {world} pixels differ in the world above the arms, {arms} with the view model against without");
     shot_to(&mut app, "first-person-no-view-model");
 
     // The control: the same camera given the own-body layer shows the body below the eye (its shadow was always there).
@@ -108,6 +109,7 @@ fn an_offscreen_first_person_shot_shows_the_view_model_and_not_the_own_body() {
     let with_body = capture_stable(&mut app, &picture);
     let body = changed(&with, &with_body, (300, 300, 700, 420));
     assert!(body > 3000, "with the layer the body is drawn below the eye: {body} pixels differ");
+    eprintln!("first-person shot: {body} pixels differ when the own body is drawn too");
     shot_to(&mut app, "first-person-own-body-shown");
     assert!(app.world().get::<Intent>(player).is_some_and(|i| i.look.is_some()), "the look the camera turns is the player's");
 }

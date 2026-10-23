@@ -22,7 +22,7 @@ use bevy::render::view::{Msaa, Tonemapping};
 use shards_content::ContentDb;
 use shards_core::LocalPlayer;
 use shards_look::Look;
-use shards_motion::camera::{CameraTuning, FirstPersonCamera, VIEW_MODEL_LAYER};
+use shards_motion::camera::{CameraTuning, FirstPersonCamera, Shots, VIEW_MODEL_LAYER};
 
 use super::model::GltfModel;
 use crate::anim::Animated;
@@ -91,6 +91,7 @@ fn sync_view_model(
     asset_server: Res<AssetServer>,
     db: Option<Res<ContentDb>>,
     tuning: Res<CameraTuning>,
+    shots: Option<Res<Shots>>,
     players: Query<Entity, With<LocalPlayer>>,
     bodies: Query<Option<&Fighter>>,
     worlds: WorldCameras,
@@ -105,6 +106,8 @@ fn sync_view_model(
     }
     let Some(db) = db else { return };
     let player = players.single().ok();
+    // A scene camera shot (K3) has the view: the arms are not drawn over it.
+    let in_shot = shots.is_some_and(|s| s.playing().is_some());
     for (world, first, world_camera, hdr, msaa, tonemapping) in &worlds {
         let subject = if first.target == Entity::PLACEHOLDER { player } else { Some(first.target) };
         let shown = subject.and_then(|body| {
@@ -127,9 +130,10 @@ fn sync_view_model(
         let tone = if hdr { Some(Tonemapping::None) } else { tonemapping.copied() };
         let camera = match existing {
             Some((camera, _, mut cam, mut proj, has_hdr, has_msaa, has_tone)) => {
-                if cam.order != world_camera.order + 1 || cam.is_active != world_camera.is_active {
+                let active = world_camera.is_active && !in_shot;
+                if cam.order != world_camera.order + 1 || cam.is_active != active {
                     cam.order = world_camera.order + 1;
-                    cam.is_active = world_camera.is_active;
+                    cam.is_active = active;
                 }
                 if !right_projection(&proj) {
                     *proj = projection;
@@ -159,7 +163,7 @@ fn sync_view_model(
                     Name::new("view model camera"),
                     ViewModelCamera,
                     Camera3d::default(),
-                    Camera { order: world_camera.order + 1, is_active: world_camera.is_active, clear_color: ClearColorConfig::None, ..default() },
+                    Camera { order: world_camera.order + 1, is_active: world_camera.is_active && !in_shot, clear_color: ClearColorConfig::None, ..default() },
                     projection,
                     RenderLayers::layer(VIEW_MODEL_LAYER),
                     Transform::IDENTITY,

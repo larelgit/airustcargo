@@ -163,4 +163,48 @@ mod tests {
         assert_eq!(ron::from_str::<ViewModelDef>(&ron::to_string(&full).unwrap()).unwrap(), full);
         assert!(ron::from_str::<ViewModelDef>(r#"(model: "m.glb", animset: "a", fov: 50.0)"#).is_err(), "a typo is an error");
     }
+
+    #[test]
+    fn what_a_view_model_names_must_exist_wherever_it_is_named() {
+        use shards_content::db::Source;
+        let mut kinds = shards_content::ContentKinds::default();
+        kinds.register::<ViewModelDef>();
+        kinds.register::<crate::def::MovesetDef>();
+        kinds.register::<crate::def::ActionDef>();
+        kinds.register::<AnimSet>();
+        kinds.register::<shards_look::LookDef>();
+        kinds.register::<shards_motion::camera::CameraTuning>();
+        kinds.add_check::<shards_motion::camera::CameraTuning>("first-person view model", check_camera);
+        let source = |path: &str, text: &str| Source { path: path.into(), text: text.into() };
+        let sources = [
+            source("content/set.animset.ron", r#"{ "arms": (source: "models/arms.glb", clips: {"idle": ()}) }"#),
+            source("content/looks.look.ron", r#"{ "stone": () }"#),
+            source(
+                "content/v.view_model.ron",
+                r#"{
+                    "arms": (model: "models/arms.glb", animset: "arms", look: Some("stone")),
+                    "wrong": (model: "models/arms.png", animset: "legs", look: Some("moss"), fov_deg: 3.0, near: 2.0, scale: 0.0, offset: (9.0, 0.0, 0.0)),
+                    "up": (model: "../arms.glb", animset: "arms"),
+                }"#,
+            ),
+            source("content/m.moveset.ron", r#"{ "good": (inputs: {}, view_model: Some("arms")), "bad": (inputs: {}, view_model: Some("legs")) }"#),
+            source("content/c.camera.ron", r#"{ "default": (first_person: (view_model: Some("hands"))), "other": (first_person: (view_model: Some("arms"))) }"#),
+        ];
+        let db = shards_content::ContentDb::build(&kinds, &sources);
+        let errors: Vec<String> = db.errors().map(|e| e.to_string()).collect();
+        // In the order of the files' paths.
+        let expected = [
+            "content/c.camera.ron: camera `default`: first_person.view_model -> unknown view_model `hands`",
+            "content/m.moveset.ron: moveset `bad`: view_model -> unknown view_model `legs`",
+            "content/v.view_model.ron: view_model `up`: model `../arms.glb` leaves the assets folder",
+            "content/v.view_model.ron: view_model `wrong`: model `models/arms.png` is not a glTF file (.gltf or .glb)",
+            "content/v.view_model.ron: view_model `wrong`: animset -> unknown animset `legs`",
+            "content/v.view_model.ron: view_model `wrong`: look -> unknown look `moss`",
+            "content/v.view_model.ron: view_model `wrong`: fov_deg is 3, it must be between 10 and 120 degrees",
+            "content/v.view_model.ron: view_model `wrong`: near is 2, it must be above 0 and below 1 metre",
+            "content/v.view_model.ron: view_model `wrong`: offset is [9, 0, 0], it must be a point within 5 m of the camera",
+            "content/v.view_model.ron: view_model `wrong`: scale is 0, it must be above 0",
+        ];
+        assert_eq!(errors, expected);
+    }
 }
