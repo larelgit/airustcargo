@@ -1,0 +1,6 @@
+// The crouch test room (F2), written by the sandbox's tests (`tests/sandbox/crouch.rs`): a floor 20 x 8 m with a
+// duct only a crouch passes and a ledge only a crouch jump clears. `scenarios/crouch.scenario` lays it on the
+// canyon floor and takes it away.
+{
+    "crouch": (file: "levels/crouch.gltf"),
+}

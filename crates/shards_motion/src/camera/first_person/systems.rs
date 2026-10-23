@@ -19,7 +19,7 @@ use crate::camera::math::shake_offset_with;
 use crate::camera::shot::Shots;
 use crate::camera::systems::orbit_camera;
 use crate::camera::{CameraOffsets, CameraSettings, CameraShake, CameraSystems, CameraTuning};
-use crate::controller::{CharacterController, CharacterParams, Landed, MotionState};
+use crate::controller::{CharacterController, CharacterParams, Crouch, Landed, MotionState};
 use crate::input::{ControlState, ControlSystems};
 use crate::interp::{shown_translation, InterpSystems, Interpolated};
 
@@ -35,7 +35,14 @@ type LocalBody<'w, 's> = Query<
 type Subject<'w, 's> = Query<
     'w,
     's,
-    (&'static Transform, Option<&'static Intent>, Option<&'static CharacterController>, Option<&'static CharacterParams>, Option<&'static MotionState>),
+    (
+        &'static Transform,
+        Option<&'static Intent>,
+        Option<&'static CharacterController>,
+        Option<&'static CharacterParams>,
+        Option<&'static MotionState>,
+        Option<&'static Crouch>,
+    ),
     Without<FirstPersonCamera>,
 >;
 
@@ -190,11 +197,14 @@ fn first_person_camera(
     let wobble = shake_offset_with(trauma, time.elapsed_secs(), &tuning.trauma);
     for (mut camera, mut tf, projection) in &mut cameras {
         let subject = if camera.target == Entity::PLACEHOLDER { player } else { Some(camera.target) };
-        let Some((subject, (body_tf, intent, controller, own, motion))) = subject.and_then(|e| bodies.get(e).ok().map(|b| (e, b))) else {
+        let Some((subject, (body_tf, intent, controller, own, motion, crouch))) = subject.and_then(|e| bodies.get(e).ok().map(|b| (e, b))) else {
             continue;
         };
         let params = controller.map(|c| c.resolve(own, db.as_deref()));
-        let eye_above = params.map_or_else(|| CharacterParams::default().eye_above_feet(), CharacterParams::eye_above_feet);
+        // The eye keeps its place in the capsule while the body crouches (F2): the camera reads the eye at the stance's
+        // depth, as `eye_of` does, and the ease on steps carries the crouch the controller already eases tick by tick.
+        let depth = crouch.map_or(0.0, |c| c.depth);
+        let eye_above = params.map_or_else(|| CharacterParams::default().eye_above_feet_at(depth), |p| p.eye_above_feet_at(depth));
         // Where the body is drawn this frame (between ticks too), not where the tick left it.
         let feet = shown_translation(subject, body_tf, &children, &visuals);
         let seen = camera.subject_seen.replace(feet);

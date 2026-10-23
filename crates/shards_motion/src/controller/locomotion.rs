@@ -48,6 +48,9 @@ pub(crate) struct Step<'a, 'w> {
     pub jumped_flight: bool,
     /// A launch asked for this tick: the height (m) the body should peak at.
     pub launch: Option<f32>,
+    /// The body is below its standing height (F2): on the ground it walks no faster than the params'
+    /// `crouch_speed` and never sprints.
+    pub crouched: bool,
     pub notes: Vec<Note>,
 }
 
@@ -119,7 +122,7 @@ impl Step<'_, '_> {
             return self.jump(feet);
         }
         let wish = self.wish();
-        let (speed, sprinting) = self.modifiers.ground_speed(p, wish.length(), self.input.sprint);
+        let (speed, sprinting) = self.ground_speed(wish.length());
         self.state.sprinting = sprinting;
         let target = wish.normalize_or_zero() * speed;
         let v0 = flat(self.state.velocity);
@@ -143,6 +146,20 @@ impl Step<'_, '_> {
             return feet;
         }
         self.stick(moved.feet)
+    }
+
+    /// The speed of a walk on the ground for an input of length `amount`, and whether it is a sprint:
+    /// the modifiers', and a crouched body's `crouch_speed` as one more cap that takes the sprint away.
+    fn ground_speed(&self, amount: f32) -> (f32, bool) {
+        if !self.crouched {
+            return self.modifiers.ground_speed(self.params, amount, self.input.sprint);
+        }
+        let mut crouched = *self.modifiers;
+        crouched.forbid_sprint();
+        if let Some(cap) = self.params.crouch_speed {
+            crouched.cap_at(cap);
+        }
+        crouched.ground_speed(self.params, amount, self.input.sprint)
     }
 
     /// Slide along the ground; when something steep blocks the way, also try stepping

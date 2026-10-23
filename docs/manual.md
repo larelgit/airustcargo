@@ -85,7 +85,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 270 definitions in 88 files
+cargo shards content check                 # ok: 274 definitions in 92 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -108,7 +108,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 270 definitions in 88 files
+# ok: 274 definitions in 92 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -487,11 +487,11 @@ starts at tick N: the main menu moved the world`), and the session's replay stil
 |---|---|
 | `move_dir` | where to walk on the ground, length ≤ 1 (up to 0.5 is a walk, 1 is a run) |
 | `aim`, `target` | where to look; the lock-on target |
-| `held` | buttons held now: `sprint`, `block`, `glide`, … |
+| `held` | buttons held now: `sprint`, `block`, `glide`, `crouch`, … |
 | `pressed` | presses since the last tick (`Press { input, dir }`); gameplay takes them, the rest are cleared at the end of the tick |
 | `orders` | orders that last many ticks: `Order::MoveTo { target, within }`, `Order::Attack { target, input, repeat }` |
 
-The engine's input names are in `shards::core::input_names` (`jump`, `sprint`, `glide`, `dodge`, `light`, `heavy`, `block`, `parry`, `technique.N`, `use_item`, `interact`, `lock_on`, `lock_switch` (C6: a press whose `dir.x` is the side, `+1` right), and `assist_off`, held while the player has turned the attack assist off); the game adds its own. `Intent` is the replay input (the engine makes `replay_input::<Intent>()` itself): changes between ticks are recorded. `PlayerId` and `LocalPlayer` mark players, and `NetRole` (`Single` by default) is groundwork for networking.
+The engine's input names are in `shards::core::input_names` (`jump`, `sprint`, `glide`, `crouch` (F2, held), `dodge`, `light`, `heavy`, `block`, `parry`, `technique.N`, `use_item`, `interact`, `lock_on`, `lock_switch` (C6: a press whose `dir.x` is the side, `+1` right), and `assist_off`, held while the player has turned the attack assist off); the game adds its own. `Intent` is the replay input (the engine makes `replay_input::<Intent>()` itself): changes between ticks are recorded. `PlayerId` and `LocalPlayer` mark players, and `NetRole` (`Single` by default) is groundwork for networking.
 
 **Groundwork for networking (phase C).** None of this changes a single-player game.
 
@@ -598,7 +598,7 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 270 definitions in 88 files
+content: 274 definitions in 92 files
   action  80
   animset  2
   attack_plan  5
@@ -618,10 +618,10 @@ content: 270 definitions in 88 files
   hitstop  1
   input_map  0
   layout  3
-  level  3
+  level  4
   locale  2
   lock_on  1
-  locomotion  6
+  locomotion  7
   look  15
   mover  4
   moveset  21
@@ -629,11 +629,11 @@ content: 270 definitions in 88 files
   nav  1
   net  0
   npc_tuning  0
-  parts  2
+  parts  3
   perception  6
   perf  2
   poi  4
-  prefab  27
+  prefab  28
   prop  1
   region  3
   room  0
@@ -655,7 +655,7 @@ content: 270 definitions in 88 files
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 270 definitions in 88
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 274 definitions in 92
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -795,7 +795,7 @@ It is pinned, lives inside `shards_motion`, and stays out of the public API: the
 **Controller.** `CharacterController { params: "id" }` is a capsule that only it moves (actions such as a roll hand their displacement to it, and a wall stops a lunge). Modes: ground (walking, running, sprinting, slopes up to `max_slope_deg`,
 steps up to `step_height`, sticking down on stairs), air (gravity, control in the air, a jump with "coyote time" and a buffer), glider (slow fall, updrafts), water (swimming on the surface, getting out over shallows or by a jump), climbing onto a ledge
 up to `mantle_height` along a path checked in advance. Characters do not block each other as they pass: after everyone has moved, in id order, the capsules are pushed apart. A fall from height is the event `Landed {
-fall_height }`, plus `Jumped`, `Mantled`, `ModeChanged`. The `Transform` position is the feet; writing to it from outside (`teleport`, respawn) places the character again, with no speed and no fall.
+fall_height }`, plus `Jumped`, `Mantled`, `ModeChanged`. A body whose `locomotion` gives a `crouch_height` can crouch (F2, "Crouching (F2)"): `Crouched`, `Stood`. The `Transform` position is the feet; writing to it from outside (`teleport`, respawn) places the character again, with no speed and no fall.
 
 **Ground laid in the middle of play (R2).** The controller stands on, and is stopped by, every `WORLD` collider that is not a
 volume, `Body::Static` and `Body::Kinematic` alike. A plain kinematic collider does not carry what stands on it: a body on one that
@@ -1053,7 +1053,7 @@ For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, spr
   `settings_set` for `controls` checks the same things as `rebind`: the action and context must exist (the error names similar ones and gives the list), no other action of the context may already use the input (`force=true` on `rebind`, the developer tool, takes it by force; for `settings_set` free the input first: the refusal names the call), and putting an entry back to its default must not take an input that another action already uses. It takes the game's own actions and contexts into account, but they cannot be set in the settings; a context with a dot in its name is a content error (`context.action` cannot be split at the dot). `rebind` and
   `input_bindings` right after `settings_set` (with no frame between the calls) see its result. A file entry that cannot be read or does not fit (an action the map does not have, a typo in a key, an unknown mode) does not stop the others: each one is named in the journal, the rest apply, and at the next save the entry stays in the file as it is, so the player does not lose what they wrote. The journal names an input that clashes in the file.
   The old file `input.ron` (`<user settings folder>/<game>/input.ron`) is moved once, and only if the game asked for it: `app.insert_resource(InputSettings::for_game("my_game"))` (`app_name` is the old game's folder, `config_dir` replaces the user folder in tests). So a game without this line does not pick up someone else's shared `~/.config/shards/input.ron`, and the move happens only in a window, where the settings live in the platform folder (not with `--settings-dir`, not in tests and not in a headless run). If the settings do not have controls yet and the file can be read, its content goes into `controls.bindings`, and only after `settings.toml` is written and holds them is the file renamed to `input.ron.imported`; in the journal: `settings: imported the controls from …`. A file that cannot be read or could not be written stays as it is, and the journal gets a warning. An explicit `InputSettings.file` is always read and is never renamed without the settings being written.
-- `accessibility.hold_to_toggle` turns hold actions (`sprint`, `block`, `glide`) into toggles: a press holds, the next one releases. The map does not change (its mode stays the same, and `input_bindings` says so).
+- `accessibility.hold_to_toggle` turns hold actions (`sprint`, `block`, `glide`, `crouch`) into toggles: a press holds, the next one releases. The map does not change (its mode stays the same, and `input_bindings` says so).
 - `input_bindings` shows which input controls what:
   ```text
   $ shards act input_bindings
@@ -1221,10 +1221,11 @@ lock pick and the flick read the camera's `Transform`, so with a tilt they measu
 | `move_to` | walk to an entity or to a point `{x, z}`; `within`, `queue`; `path=true` follows the route from `path_to` |
 | `move`, `stop` | walk N metres by compass (N = −Z, E = +X); stop. `move`, `move_to`, `stop`, `jump`, `sprint` and `glide` refuse a dead body with the text every action tool gives (`you are dead; a dev agent can `heal` you`), and a death drops the orders the body held (`Intent.orders`, and the `move_dir` they set; a body with no orders keeps its `Intent`, which its keyboard or brain rewrites every tick), so nothing runs after a `heal`; a downed body (B5) is refused them with its own words (`you are down: ...`) and drops its orders when it goes down, so nothing runs after a revive |
 | `jump`, `sprint`, `glide` | jump (out of water, onto the shore); sprint and glide as a state that is on (`on=false` turns it off) |
+| `crouch` | hold the crouch, or let go with `hold=false` (F2, "Crouching (F2)"): the capsule comes down (up from the feet in the air), the answer says how far and over how long, and a stand-up under a ceiling says that it waits; a body whose `locomotion` has no `crouch_height` is refused with that reason. A dead or downed body is refused it as it is the rest of the movement tools |
 | `look` | where you look (F1a, "Look as input"): `yaw=` and/or `pitch=` in degrees, `at=eN [part=NAME]`, `clear=true`; `observe` then has an `AIM` line |
-| `clearance` | query: how far in the eight directions, and what will stop you |
+| `clearance` | query: how far in the eight directions, and what will stop you; `stance=` (F2: `standing`, `crouched` or `current`, the default) measures with that size of body |
 | `move_info` | query: what modifies a character's movement (slow, caps, root, stance, rates, sprint cost), the walk, run, sprint and swim speeds they leave, and the wading depth |
-| `path_to` | query: the route over what can be walked, swum and climbed |
+| `path_to` | query: the route over what can be walked, swum and climbed; `stance=` as `clearance` (a crouched route is planned on the local grid: the navmesh is baked for the standing body) |
 | `input_bindings` (player), `rebind` (developer) | controls; `rebind` writes to the `controls` settings |
 | `physics_overlay` (developer, window) | colliders and volumes |
 | `camera_mode` (developer, a query) | `mode=first`, `third` or `content` (F1b): look through the first-person camera or the orbit one for this session, or leave it to the `camera` content; without `mode`, says which |
@@ -1296,8 +1297,8 @@ headless run, a replay and a window agree. `None` (the default) is a character t
 - **The eye and the ray, for every system that needs them** (`shards::motion`): `eye_of(world, body)` (the feet plus `eye_height`; `None` for an entity with no character
   controller), `look_dir(world, body)` (the unit vector of `Intent.look` held to the body's pitch limits, else the way the body faces, level), `aim_point_of(world,
   entity)` (the lock-on's aim point, 0.6 of the collider's height by default, or the middle of a lock point) and `params_of`. Hitscan (F3), use-by-looking
-  (F5), turrets (F11) and the audio listener build on them. `eye_height` is per `locomotion` definition: a stance that changes the body's height (the crouch of F2)
-  changes the eye with it. `shards::action::view_hit(world, viewer, range)` is the ray the `AIM` line is made of; `shards::action::shot_ray(world,
+  (F5), turrets (F11) and the audio listener build on them. `eye_height` is per `locomotion` definition: the standing eye. A crouched body's eye is lower (F2, "Crouching (F2)": it keeps its place in the shorter capsule), so a
+  shot, the `AIM` line and a first-person camera that follows `eye_of` all see the stance. `shards::action::view_hit(world, viewer, range)` is the ray the `AIM` line is made of; `shards::action::shot_ray(world,
   shooter)` (F3) is the one a shot flies along, from the same eye, and the two share one walk through bodies and their parts.
 - **For the AI.** The player tool **`look`**: `look yaw=90 pitch=-10` (degrees; give one to keep the other), `look at=e7` (yaw and pitch from the eye to that
   entity's aim point), `look at=e7 part=head` (to the centre of one of its body parts, R1), `look clear=true` (stop looking). It acts through `Intent`, so it is
@@ -1323,7 +1324,7 @@ A first-person game looks through the eye of the body it plays. `FirstPersonCame
 
 - **Choosing it.** (Only a camera that is on (`FirstPersonCamera::active`, which the renderer copies from `Camera::is_active` before the input is read) and looks through the local player counts as the local player's view: a first-person camera of another body, a spectator's, or one switched off, leaves the keyboard's walk and the orbit camera's lock-on to the orbit camera, the ears at the feet, and the body drawn; a scene shot (K3) holds the view, and the look input turns nothing until it ends.) A game spawns `FirstPersonCamera::default()` (it looks through the `LocalPlayer`; `FirstPersonCamera::looking_through(body)` names one) on its `Camera3d`; or the `camera` content says `mode: FirstPerson` (`CameraTuning::mode`, default `ThirdPerson`, so nothing changes for a game that never says it), and every `ThirdPersonCamera` entity also gets a `FirstPersonCamera` (marked `FromMode`; the orbit camera stays on the entity, standing still: no orbit, no lock-on picking or switching, though the `lock_on` button still lets go of a lock that is held, and the K3 shots still play over it), and loses it when the mode goes back. The tool **`camera_mode mode=first|third|content`** (developer, a query: not recorded) sets the same for this session over the content (`CameraModeOverride`); without `mode` it says what the cameras are. `AudioListener` and the camera `picture` (`bloom`, `tone_mapping`) apply to a first-person camera as to an orbit one.
 - **The look.** In `PreUpdate`, after the input map, the `look` axis (mouse and right stick, rebindable) times the player's `sensitivity` (`aim_sensitivity` while `CameraOffsets::aiming`), inverted by `invert_y`, turns the local player's `Intent.look` and holds the pitch to the body's `pitch_limits_deg`: a mouse to the right turns the view right, up looks up. It starts from the look the intent holds (else the body's heading, level) and **writes only on a frame the axis moved**: a frame with no mouse writes nothing, so a look the `look` tool wrote, a recorded input and a body that is not looked through are never overwritten, and a replay that plays (`AiReplay`) is the recording's whatever the mouse does. The camera's own rotation is read from `Intent.look` every frame, so a tool-written or replayed look turns the picture too. The keyboard's walk is turned by the same yaw (`read_input`: a body that faces its look, else a `FirstPersonCamera` whatever the body faces, else the orbit camera's), one frame behind the mouse as the orbit camera's is. No smoothing and no aim assist. `CameraOffsets::{fov_add_deg, focus_dip_m, aiming}` and the shake (`AddTrauma`, the U2 flash) work as they do for the orbit camera; its pitch offsets do not (the body's limits rule).
-- **The eye.** The camera sits at `shown_translation` (the interpolated body, `shards_motion::interp`) plus the body's `eye_height` (a crouch's changes it with the stance), turned to the look. The field of view is the player's (`CameraSettings::fov_deg`, clamped 30..120) plus the game's offset. The `camera` content's new fields (all optional and left out at their defaults, so no content hash moves):
+- **The eye.** The camera sits at `shown_translation` (the interpolated body, `shards_motion::interp`) plus the body's `eye_height` at its stance (F2: the eye keeps its place in the shorter capsule, `eye_above_feet_at(Crouch::depth)`, as `eye_of` has it), turned to the look. The crouch is already eased by the controller tick by tick; the camera's own ease on steps (`step_ease`) smooths those 60 Hz steps and delays the eye by about 40 ms behind it (a 0.2 s crouch of 71 cm is followed within 12 cm and lands exactly; `step_ease: None` follows the controller's ease as it is). The field of view is the player's (`CameraSettings::fov_deg`, clamped 30..120) plus the game's offset. The `camera` content's new fields (all optional and left out at their defaults, so no content hash moves):
 
   | field | default | meaning |
   |---|---|---|
@@ -1356,6 +1357,77 @@ A first-person game looks through the eye of the body it plays. `FirstPersonCame
   Not in the numbers: the mouse's and the OS's own delay, the GPU's frame and the monitor's scan-out, which a game measures on its hardware. If a click feels late the game raises the tick through `EngineConfig::tick_hz` (the 120 Hz row); there is no sub-tick input.
 - **What stays the game's**: the field of view, the bob and the lean, the weapon models and their clips, and the window's cursor (grab and hide it while the gameplay context is on, `Window::cursor_options`: the engine does not). **Not built (item 7, optional)**: the view from a bone (a camera that follows a bone of the body's model during an action, to get up from a bed): it needs the model's skeleton posed before the camera is placed, and the bridge writes poses in `PostUpdate` too, so it is worth its own slice.
 - **Checked by** `tests/motion/camera/first_person.rs` (the look, the eye, the layers, the mode, the tool), the unit tests of `first_person/mod.rs` (the maths and the numbers), `crates/shards/tests/action_render/view_model.rs` (the second camera and the rig, a weapon switch, the bridge driving a rig that is no fighter), `scenarios/first_person.scenario`, `tests/sandbox/first_person.rs` (the latency; and an `--offscreen` shot, ignored without a GPU: with the view model and without the own body, then with the layer added as a control) and the listener test of `shards_audio`.
+
+### Crouching (F2)
+
+A body whose `locomotion` gives a `crouch_height` can crouch: while the `crouch` input is held its capsule comes down to that height, and with it the body's eye, hurtbox
+and parts, its walk is held to `crouch_speed`, and it passes under what a standing body does not. It stands up again when the input is let go and the standing capsule has room.
+A body without a `crouch_height` ignores the input.
+
+- **`locomotion` options** (`CharacterParams`, all left out of the written form at their defaults, so no content hash moves):
+
+  | field | default | what |
+  |---|---|---|
+  | `crouch_height` | none | the capsule's height when crouched, in metres from the feet; none: the body cannot crouch (the input does nothing, the `crouch` tool says why). Checked: at least the capsule's diameter and below `height` |
+  | `crouch_speed` | none | the highest ground speed while crouched (m/s; a cap on the walk and the run, composed with the modifiers' caps like `cap_at`; a crouched body never sprints). None: crouching does not slow the walk. Not applied in the air: a crouch jump keeps its speed |
+  | `crouch_time` | 0 | seconds a full crouch, and a full stand, take: the capsule moves between the two heights at an even rate. 0: at once |
+
+  The eye needs no field of its own: it keeps its place in the capsule, so crouched it is `eye_height` (or 0.9 of `height`) times `crouch_height / height` above the feet, and
+  between the two heights the same fraction of the height it has then (`CharacterParams::eye_above_feet_at(depth)`). A game that wants another crouched eye changes `crouch_height`.
+- **The input.** The name `crouch` (`shards::core::input_names::CROUCH`) is a held button: `Intent::held`, so the keyboard, the `crouch` tool, a brain and a replay all write
+  the same. The standard input map binds it to `X` only, no pad button (a first-person game binds Ctrl, which is the dodge here, and its pad button in its own `input_map`);
+  `accessibility.hold_to_toggle` turns it into a toggle like the sprint, with no code of its own. A body that is `rooted` (a scene took its movement away) keeps the stance it
+  wanted; a climb holds the stance as it is.
+- **Which end of the capsule moves.** On the ground the feet stay and the head comes down. **In the air the head stays and the feet are pulled up** (`MotionMode::Air` and
+  `Glide`): the shrinking capsule lifts the body's feet by what it lost in that tick, so a crouch in the middle of a jump clears a ledge a plain jump misses, as in
+  *Half-Life*; standing up in the air lets them down again. The shift is added to the body's `Transform` in the tick it happens. (`fall_from_y`, the highest feet height of a
+  fall, counts the raised feet: a fall measured from a crouch jump's apex starts from the crouched feet.) A jump from a crouch gains nothing by itself: the gain is the shrink
+  in the air.
+- **Standing up waits for room.** A stand-up is a shape cast of the standing capsule: the crouched one cast up by the height it lacks on the ground (that sweeps out exactly the
+  standing capsule, and keeps the skin gap to the ceiling), down by the same in the air (the feet would drop that far: it does not grow into a floor). While that is blocked the
+  body stays as it is (`Crouch::blocked`), whether it is a ceiling over a duct or the floor under a jump's feet, and nothing is ever half stood in geometry. It stands the tick the
+  cast is clear, at the same rate. A crouched body can always walk out from under the ceiling at its crouch pace.
+- **The stance is state, in `Crouch`.** `Crouch { depth, wanted, blocked }` (`depth` 0 standing to 1 crouched; a body is *crouched* while it is above 0) is a reflected component,
+  so snapshots, the replay hash, `inspect` and co-op replication hold it, and a client predicts it for its own body (`net_predicted`; a predicting client leaves the capsule's shape, the `Collider`, to the host's replicated state: a predicted body may change only predicted components, or the desync check sees the difference, so the client's controller does not fit its own collider). **It lives next to `MotionState`, not in
+  it, on purpose**: the replay hash serializes every field of every gameplay component through reflection, so a new field of `MotionState` (or of `LocomotionInput`) would
+  change the hash of every body in every recording, crouching or not. The controller puts `Crouch` on a body the first time it crouches (the `JumpedFlight` pattern); a body
+  that cannot crouch, or never did, carries nothing, and the reference replays recorded before the stance verify unchanged. The crouch input is read from `Intent::held` in the
+  controller, so `LocomotionInput` has no new field either. The rule `motion.finite` also judges `Crouch::depth` (a number from 0 to 1).
+- **Events.** `Crouched { entity }` when a body leaves its standing height (journal `e5 crouches`), `Stood { entity }` when it is back at it (`e5 stands up`); a stand-up that is
+  blocked fires nothing until it succeeds. Like the other motion events they are for the journal and for game code, not net events.
+- **What reads the size of the body, and so sees the stance.** `CharacterParams::at_depth(depth)` is the params of the body at that depth of crouch (its `height` and `eye_height`
+  at the depth, the rest as they are; borrowed, not copied, for a standing body), and the controller's casts, its collider, the separation pass, the movers that carry and push
+  it and `clearance` all ask for it:
+  - **the eye**: `eye_of(world, body)` follows the stance, so a shot's origin (`shot_ray`, F3), the `AIM` line, and a first-person camera that follows `eye_of` all see the crouch
+    ease in and out over `crouch_time` (the camera of F1b adds its own smoothing on top);
+  - **the hurtbox**: a fighter's own `Collider` is its hurtbox, and the controller fits it to the body's height every tick, so a shot or a swing at a crouched body meets a capsule
+    of the crouched height; the lock-on's aim point and NPC perception (which looks at the centre of the target's collider) follow it;
+  - **body parts (R1)**: `PartDef::at_crouched` is where a part sits when the body is fully crouched, and between the two it moves in a straight line by the depth, so a head stays a
+    head (the head of a 1.8 m body at 1.6 m is at 0.95 m on a 1.0 m one); none (the default): the same as `at`;
+  - **movers (F6)**: a crouched body on a lift or a turntable is carried and pushed as the shorter capsule it is (`riding` probes from the feet, so it rides as a standing one does);
+  - **`clearance` and `path_to`** take `stance=`.
+
+  Not followed: the lock-on attack assist's line of sight and a leap's landing probe use the standing size (`CharacterParams::height`), and an NPC looks from its `perception`
+  content's `eye_height`, which no stance changes (an NPC brain does not crouch yet).
+- **`clearance` and `path_to` with `stance=`.** `standing`, `crouched` or `current` (the default: the size the body has now, so what the query says is what walking on would find).
+  `clearance stance=crouched` measures with the crouched capsule (a duct only a crouch passes is `free`, and for a standing body it is a wall). `path_to` and `move_to
+  path=true` plan on the local grid with that size; **the navmesh is baked for one size of body, the standing one, so a crouched route is never asked of it** (the answer's
+  `provider` is `local grid`, and the grid's 80 m limit applies). A body that cannot crouch is refused `stance=crouched` with the reason. `move_to` does not crouch for you: hold `crouch`
+  and `move_to path=true` plans (and follows) as the crouched body.
+- **For the AI.** The player tool **`crouch`**: `crouch` holds the crouch, `crouch hold=false` lets go. Answers say what follows: `ok: crouch held; you go down to 1.0m over 0.20s,
+  walking at most 2.0m/s`, in the air `ok: crouch held; your feet are pulled up 0.8m over 0.20s`, `ok: crouch off; you stand up over 0.20s`, and when there is no room `ok: crouch off,
+  but there is no room to stand: 0.64m more is needed above your head; you stay crouched until you move out from under it` (in the air: `below your feet` and `land`). Errors: `your
+  body cannot crouch: its locomotion has no crouch_height`, `cannot crouch now: your movement is taken away (rooted)`, `cannot crouch while climbing`; a dead or downed body is refused
+  as it is the other movement tools. **`observe`** adds the stance to the body's motion: `ground 2.1m/s crouched`, `air ↑3.1m/s crouched`, `crouched` standing still, `crouching`
+  and `standing up` while it moves, and `crouched, no room to stand` while a ceiling holds it; the journal says `e5 crouches` and `e5 stands up`. `move_info` gives `crouch_height`,
+  `crouch_speed`, `crouch_time` and the depth.
+- **In the sandbox**: the locomotion `crouch_viewer` (`characters/crouch.locomotion.ron`: the `viewer` with a 1.0 m crouch in 0.2 s, a crouched walk of 2 m/s and a climb as high as a step, so
+  that a ledge is jumped), the prefab `crouch_dummy` (`characters/crouch.prefab.ron`, with the parts of `combat/crouch.parts.ron`: a head at 1.6 m and 0.95 m crouched), the test room `crouch`
+  (`levels/crouch.gltf`, written by `room()` in `tests/sandbox/crouch.rs`, and `world/crouch.level.ron`): a duct 6 m long whose ceiling is 1.2 m up, and a ledge 1.7 m high (a jump peaks
+  1.2 m). The scenario `crouch.scenario` stops a standing player at the duct, walks it crouched, shows that letting go under the ceiling changes nothing and that it stands out the far end,
+  jumps the ledge plain and with a crouch in the air, and shoots a standing and a crouched dummy from a standing and a crouched eye (also the reference replay `crouch.json`).
+  `tests/sandbox/crouch.rs` checks the duct, the ledge, the dummy's hurtbox, eye and head, a crouched body riding a lift, a co-op client crouching its own body (the host agrees, no desync), and the replay in heavy mode (`--heavy 10`);
+  `tests/motion/crouch.rs` the stance, the ceiling and floor casts, the air shift, the speed cap and the queries on bare worlds.
 
 ## Actions and combat (E3)
 
@@ -2333,11 +2405,12 @@ prefab check refuses a name that is not in content). The kind `parts` (`*.parts.
 ```
 
 A part's fields: `shape` (a physics `Shape`: `Sphere`, `Capsule`, `Cuboid`, `Cylinder`, `Cone`), `at` (metres from the body's
-feet in its own frame: `forward`, `up`, `right`), `turn` (`pitch`, `yaw`, `roll` in degrees: a capsule pitched 90 lies along
+feet in its own frame: `forward`, `up`, `right`), `at_crouched` (F2: where the part is when the body is fully crouched, none by default: the same as `at`; while the
+body goes down or up the part moves in a straight line between the two by how deep the crouch is, so a head stays a head, see "Crouching (F2)"), `turn` (`pitch`, `yaw`, `roll` in degrees: a capsule pitched 90 lies along
 forward), `health` (none: the part never breaks), the factors `damage`, `to_body` and `poise` (1 each), `tags` (added to a hit
 through it), `enabled` (true: whether it takes hits from the start) and `lock` (false: whether it is a lock point, see "Lock
 points (R3)"). The check refuses a definition with no parts or more
-than 16, an id that is not letters, digits and `_`, a size that is not above 0, an `at` or `turn` that is not finite, a health
+than 16, an id that is not letters, digits and `_`, a size that is not above 0, an `at`, `at_crouched` or `turn` that is not finite, a health
 that is not above 0, a factor that is not a finite number `>= 0`, an empty tag, and `lock_body: false` with no part that has
 `lock: true`. Fields at their defaults are not written.
 
@@ -2345,7 +2418,7 @@ that is not above 0, a factor that is not a finite number `>= 0`, an empty tag, 
 after the controller and the projectiles, before the hits), the engine spawns one top-level entity per part, bodies in `AiId`
 order and parts in the definition's (by id): `AiKind` `Part`, `Part { body, id, on, broken }`, `PartHealth { current, max }`
 when it has health, a kinematic `Collider` on the hurtbox layer only (no character or world collides with it), and the body
-gets `SpawnedParts` with their ids. Every tick each part is put where its definition says on its body: `at` turned with the
+gets `SpawnedParts` with their ids. Every tick each part is put where its definition says on its body: `at` (or, while the body is crouched, the point between `at` and `at_crouched` that the depth of its crouch gives) turned with the
 body, from its feet. A part has no bone: bones are posed only in a window, and the simulation gives the same hits without one.
 A part whose body is gone, or no longer lists it, goes on the next tick.
 
@@ -3916,7 +3989,7 @@ A tool is an argument struct (serde + schemars) and an ordinary Bevy system, `In
 
 | scope | tools |
 |---|---|
-| **Player** (plays fair, only through `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; movement: move_to (`path=true`), move, stop, jump, sprint, glide, look, clearance, path_to, input_bindings; combat: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack, combat_objects, reload, weapon (F4), fire, shot_trace (F3); world: region_info, level_info, nav_path, npc_state; settings: settings, settings_set (like the settings menu for a human); sound: audio; Steam (feature `steam`): steam, steam_invite |
+| **Player** (plays fair, only through `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; movement: move_to (`path=true`), move, stop, jump, sprint, glide, crouch (F2), look, clearance, path_to, input_bindings; combat: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack, combat_objects, reload, weapon (F4), fire, shot_trace (F3); world: region_info, level_info, nav_path, npc_state; settings: settings, settings_set (like the settings menu for a human); sound: audio; Steam (feature `steam`): steam, steam_invite |
 | **Dev** (everything, including time) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, give_weapon, take_weapon, give_ammo (F4), content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset, motion_bake, animation; world: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, level_despawn, mover_go, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; sound: sound_play, music_set, emitter_play, emitter_stop; mesh looks: looks, look_outlines; foliage: scatter, scatter_set; effects: effects, effect_play, telegraph_decals; Steam (feature `steam`): steam_host, steam_join, achievement_unlock; developer menu and console: dev_menu, console |
 
 The game adds its own (in the template, `taunt` and the conditions `arena_cleared`, `foe_near`, `in_fight`; in the sandbox, the conditions `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`). Modules add conditions for `step --until named:…`: `near_poi` (world, appears with the first region), `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_avoiding`, `npc_engaged`, `npc_near` (NPC), `objects_live`, `projectile_flying` (combat objects), `mover_arrived` (movers, F6). Each
@@ -5163,7 +5236,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify -
 # replay finished at tick 1010: identical to the recording (17 checks) [1010 ticks in 3.00s, 22 frames]
 ```
 
-**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`), the voxel arena (`voxel_arena`) and its navmesh (`voxel_nav`), the timeline (`timeline`), the context and paired actions (`context`), the body replays (`body_motion`, `body_state`), the encounter (`encounter`), the spawned combat objects (`objects`), the downed state and the revive (`downed`), the boss scheduler (`boss_schedule`), the body parts (`parts`), a first-person look (`look`), the weapons (`weapons`), the movers' room (`movers`), the hitscan shots (`hitscan`) and the NPCs and gunfire (`npc_ranged`): 24 files, each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
+**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`), the voxel arena (`voxel_arena`) and its navmesh (`voxel_nav`), the timeline (`timeline`), the context and paired actions (`context`), the body replays (`body_motion`, `body_state`), the encounter (`encounter`), the spawned combat objects (`objects`), the downed state and the revive (`downed`), the boss scheduler (`boss_schedule`), the body parts (`parts`), a first-person look (`look`), the weapons (`weapons`), the movers' room (`movers`), the hitscan shots (`hitscan`), the NPCs and gunfire (`npc_ranged`) and crouching (`crouch`): 25 files, each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
 (for the template: `cargo test --test game record_reference_replays -- --ignored`).
 
 - Game data follows the same rule as `inspect`: everything except the `bevy_*` types and the internal markers of `ai_core`, plus `Transform` and `Name`. So components that only the window adds (`Visibility`, `GlobalTransform`, meshes) do not change the hash, and an `Entity` inside a component is hashed as its `AiId`. Labels and describe fragments are text for the AI and are not part of the hash: a new wording or a new describer does not break old replays.
@@ -7463,6 +7536,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 - `movers.scenario` (F6) — the test room `movers` (`levels/movers.gltf`, `world/movers.*.ron`) laid on the canyon floor by `spawn_level` (its movers called by name: their ids depend on what was spawned before): the player rides the lift 4 m up to the deck (`Lift goes to key 1 (3.3s)`, `step --until named:mover_arrived`, `Lift at key 1`, the feet 4 m higher and not moved sideways) and back down, the gate sliding shut pushes it ahead to where the gate stops, the crusher pins it and hurts it (`Crusher crushes e5`), the turntable carries it half a turn round its middle, and `level_despawn id=movers` takes the room away; `movers.json` is its reference replay;
 - `weapons.scenario` (F4) — the player is given the sandbox's two test weapons (`give_weapon`; `content/combat/weapons.*.ron`) and plays them through the player's tools: six shots empty the sidearm (`observe` shows `weapon test_sidearm 0/6 (12)`), `light_attack` answers `sidearm empty (0/6): reload`, `reload` moves the six rounds only when its draw ends (0.8 s, `e5 refilled sidearm +6 (6/6), 6 sidearm.reserve left`) and answers `sidearm is already full (6/6)` after; `weapon slot=2` switches at once (`e5 switches to test_blaster (slot 2, from test_sidearm)`), the blaster reloads itself on the press that would fire it empty (`ok: arm_blaster_reload`), and a switch made inside a reload's draw cuts it: nothing was loaded, the sidearm keeps its rounds, and the reload left to end loads what fits. The weapons are taken at the end and the player gets its moveset and flask back. Its session is the reference replay `weapons.json` (and, in heavy mode, the snapshots restored along it)
 - `hitscan.scenario` (F3) — the player, with the `viewer` locomotion and the sandbox's test guns (`give_weapon`; `content/combat/hitscan.*.ron`), shoots range dummies and a pillar spawned with the yard region (nothing names their ids): `observe` shows `SHOT hitscan_rifle_shot -> e… Dummy head 4.8m (x1.00)` and `shot_trace` the whole ray, three head shots kill one dummy (`e5 fires hitscan_rifle_shot: e… head -48 hp (hp 52)`; the look kicks half a degree up after each) and five torso shots another (`torso -24 hp`), a dummy 15 m away keeps 0.88 of the hit (`head -42 hp`), the piercer stops at a pillar (`e… Pillar 3.0m`) and passes one dummy into the one behind it (`head -40 hp (hp 60), e… head -40 hp (hp 60)`), the scatter gun fires `(8 pellets)` and the launcher's bolt leaves the eye (`bolt_fly at` a part); then the guns are taken and the yard takes the targets;
+- `crouch.scenario` (F2) — the player, with the `crouch_viewer` locomotion (`characters/crouch.locomotion.ron`: a crouch to 1.0 m in 0.2 s, a crouched walk of 2 m/s), shoots a standing range dummy and one born crouching (`crouch_dummy`, spawned with the yard region; nothing names their ids): a level look from the 1.6 m eye meets the standing dummy's head (`Dummy head 4.8m`) and passes over the crouched one (`"hits": []`), a look 7.7° down meets its head, now 0.95 m up (`e5 fires hitscan_rifle_shot: e… head -48 hp`), and the player's own shot starts at the crouched eye (`"from": "(-18.0, 0.9, -4.0)"`); then the test room `crouch` (`levels/crouch.gltf`, `world/crouch.level.ron`) is laid on the canyon floor: a standing player stops at the mouth of a duct whose ceiling is 1.2 m up, a crouched one walks in (`e5 crouches`), letting go inside changes nothing (`ok: crouch off, but there is no room to stand`, `crouched, no room to stand`), out the far end it stands (`e5 stands up`), a plain jump 2.1 m short of a 1.7 m ledge stops at its face and a jump with a crouch in the air lands on top;
 - `boss_schedule.scenario` (N8a2, N8b) — the warden on two plans with gated options (`angle`, `players`, `max_repeats`, `forbid_after`) that are tokenless and wait in a strafe of their own, on the same director as two skeletons (`sched_arena`: two tokens, strikes 0.7 s apart), all written with `content_apply`; the skeletons take the director's tokens (`e7 takes an attack token on e5`) and the warden none (`!journal "e6 takes an attack token"`), and `npc_state` shows its grant as `"counted": false`: `npc_schedule` explains each refusal (`angle: the target is 10 degrees off the facing; this option needs 95-180`, `players: 1 living, this option needs 2-3`), a 900-tick fight holds every gate under the engine rules (`npc.plan_sequence` among them), and a phase swap keeps the history and the cooldowns the two plans share by name; with N8d a borrowed caster's bolt bursts into a chilling puddle (`chill_puddle`, tagged `capture`) at the player's feet, and the warden's `heavy` (`forbid_while: ["capture"]`) is refused while the puddle is live and open again in its fade; `boss_schedule.json` is its reference replay, and `stand/boss_schedule.scenario` counts the living players in co-op (three, then two when a client's body dies) and shows a client the host's plan history;
 - `boss_fight`, `dodge`, `errors` — the switch to phase 2, a roll to dodge a hit, errors that teach;
 - `npc_director.scenario` (E6) — three skeletons against one player in god mode, 30 s of combat: the sandbox condition `three_attacking`
@@ -7503,8 +7577,8 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
   generated`), the hash is `7bbfdc3b62623fbc` again, and `save_check` agrees.
 
 The scenarios start with `heal`/`teleport`/`set`/`npc_set_state … calm`, so they run on a fresh game and after other scenarios, in any order:
-CI runs them forward and then backward in one game. Sessions of twenty-four of them are recorded as reference replays in `tests/replays/`
-(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`, `parts`, `look`, `weapons`, `movers`, `hitscan`, `npc_ranged`; see "Replays").
+CI runs them forward and then backward in one game. Sessions of twenty-five of them are recorded as reference replays in `tests/replays/`
+(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`, `parts`, `look`, `weapons`, `movers`, `hitscan`, `npc_ranged`, `crouch`; see "Replays").
 
 ## Tests and CI
 

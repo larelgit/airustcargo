@@ -516,3 +516,42 @@ fn a_plain_camera_that_becomes_a_first_person_one_gives_the_own_body_layer_back(
     frame(&mut s);
     assert_eq!(s.app.world().get::<RenderLayers>(own).cloned(), Some(RenderLayers::layer(7)));
 }
+
+#[test]
+fn the_crouch_shows_in_the_first_person_and_the_step_ease_does_not_fight_it() {
+    use shards_motion::controller::Crouch;
+    let mut s = fp();
+    // A body that can crouch: its eye keeps its place in a capsule that goes from 1.8 m to 1.0 m.
+    s.app.world_mut().entity_mut(s.player).insert((
+        CharacterParams { face: Facing::Look, eye_height: Some(1.6), crouch_height: Some(1.0), crouch_time: 0.2, ..default() },
+        MotionState { grounded: true, ..default() },
+        Crouch::default(),
+    ));
+    frame(&mut s);
+    assert!((camera_at(&s).translation.y - 1.6).abs() < 1e-4, "standing: the standing eye");
+    let eye = |s: &Fp| shards_motion::eye_of(s.app.world(), s.player).unwrap().y;
+
+    // The controller eases the depth tick by tick (here one step a frame, in 12 of them); the camera follows
+    // `eye_of` within a few centimetres, never above it while going down, and lands exactly on it.
+    let mut worst: f32 = 0.0;
+    for step in 1..=12 {
+        s.app.world_mut().get_mut::<Crouch>(s.player).unwrap().depth = step as f32 / 12.0;
+        frame(&mut s);
+        let (camera, body) = (camera_at(&s).translation.y, eye(&s));
+        assert!(camera >= body - 1e-4, "the eased eye is above or on the body's own eye while it goes down: {camera} against {body}");
+        worst = worst.max(camera - body);
+    }
+    assert!(worst < 0.13, "the lag of the ease behind a 0.2 s crouch of 71 cm (3.7 m/s) is 12 cm at the most: {worst}");
+    for _ in 0..40 {
+        frame(&mut s);
+    }
+    let (camera, body) = (camera_at(&s).translation.y, eye(&s));
+    assert!((camera - body).abs() < 1e-3 && (body - 0.8889).abs() < 1e-3, "crouched: the camera is at the crouched eye, {camera} against {body}");
+
+    // Standing up: the same the other way.
+    s.app.world_mut().get_mut::<Crouch>(s.player).unwrap().depth = 0.0;
+    for _ in 0..40 {
+        frame(&mut s);
+    }
+    assert!((camera_at(&s).translation.y - 1.6).abs() < 1e-3);
+}
