@@ -181,16 +181,18 @@ pub fn grant_weapon(world: &mut World, body: Entity, slot: u8, moveset: &str) ->
     };
     world.entity_mut(body).insert(arsenal);
     give_stock(world, body, moveset);
-    let hold_now = world.get::<Arsenal>(body).is_some_and(|a| a.current.is_none() || (a.current == Some(slot) && grant != Grant::Added));
-    if hold_now {
-        switch_to(world, body, slot, false);
+    let held = world.get::<Arsenal>(body).is_some_and(|a| a.current.is_some());
+    let replaced_in_hands = world.get::<Arsenal>(body).is_some_and(|a| a.current == Some(slot) && grant != Grant::Added);
+    if !held || replaced_in_hands {
+        switch_to(world, body, slot, false, held);
     }
     Ok(grant)
 }
 
 /// Takes the weapon in `slot` from `body`; its moveset. A weapon in the hands is replaced by the lowest
-/// slot left, or by the body's bare moveset when none is (the arsenal goes then). The charges stay: the
-/// game decides what becomes of the rounds (`add_to_charge` and a pickup of its own).
+/// slot left, or by the body's bare moveset when none is (the arsenal goes then; a body that started armed
+/// has a bare moveset only if its prefab names one in `bare`, else it keeps the last weapon's moveset). The charges
+/// stay: the game decides what becomes of the rounds (`add_to_charge` and a pickup of its own).
 pub fn take_weapon(world: &mut World, body: Entity, slot: u8) -> Option<String> {
     if !simulates(world) {
         return None;
@@ -214,7 +216,8 @@ pub fn take_weapon(world: &mut World, body: Entity, slot: u8) -> Option<String> 
     }
     if in_hands {
         match next {
-            Some(next) => switch_to(world, body, next, true),
+            // The weapon that was in the hands just went: the one that comes up replaces it (`from` says so).
+            Some(next) => switch_to(world, body, next, true, true),
             None => {
                 cut_action(world, body);
                 if let (Some(bare), Some(mut fighter)) = (bare, world.get_mut::<Fighter>(body)) {
@@ -283,12 +286,12 @@ fn give_stock(world: &mut World, body: Entity, moveset: &str) {
 }
 
 /// Puts the weapon in `slot` into the hands of `body` now: cuts the running action when `cut`, changes
-/// the body's moveset (remembering the one it had as `bare` the first time), drops the presses that
-/// waited for the old weapon and says so ([`WeaponSwitched`]).
-fn switch_to(world: &mut World, body: Entity, slot: u8, cut: bool) {
+/// the body's moveset (remembering the one it had as `bare` when it held no weapon before: `had_weapon`
+/// is the caller's word for that, since the arsenal may already have let the old weapon go), drops the
+/// presses that waited for the old weapon and says so ([`WeaponSwitched`]).
+fn switch_to(world: &mut World, body: Entity, slot: u8, cut: bool, had_weapon: bool) {
     let Some(arsenal) = world.get::<Arsenal>(body) else { return };
     let Some(moveset) = arsenal.weapon(slot).map(str::to_owned) else { return };
-    let had_weapon = arsenal.current.is_some();
     if cut {
         cut_action(world, body);
     }
@@ -392,7 +395,8 @@ pub(crate) fn run_arsenals(world: &mut World, bodies: &mut QueryState<(Entity, O
         }
         let Some(slot) = world.get::<Arsenal>(body).and_then(|a| a.pending) else { continue };
         if may_switch(world, body) {
-            switch_to(world, body, slot, true);
+            let held = world.get::<Arsenal>(body).is_some_and(|a| a.current.is_some());
+            switch_to(world, body, slot, true, held);
         }
     }
 }

@@ -1982,14 +1982,14 @@ arsenal in `AiId` order.
   this slice leaves it alone: a game with weapons binds `weapon.slot.N` to keys and, when it has no lock-on, the wheel to
   `weapon.next`/`weapon.prev` in its own `input_map` content. A press of `weapon.next` while a switch waits goes on from the switch asked for.
 - **A switch waits** until nothing runs, or the running action has a cancel window open (read as a press reads it) that names the input
-  `weapon` (`Input("weapon")`, or `Any`); the action ends the window or the switch waits for its end. Then it cuts the action
+  `weapon` (`Input("weapon")`, or `Any`), or until the action ends if no such window comes first. Then it cuts the action
   (`ActionEnded` `Interrupted`, with the cooldown share a cut windup keeps), sets the moveset, drops the presses that waited for the old
   weapon and says `e5 switches to blaster (slot 2, from pistol)` (`WeaponSwitched`). A dead or downed body switches nothing. A
   slot nobody holds is refused like any input (`e5 weapon.slot.7 rejected: no weapon in slot 7; you carry: 1 pistol, 2 blaster`).
 - **The calls a pickup makes**, on the host (they refuse or do nothing on a co-op client): `grant_weapon(world, body, slot, moveset)`
   (`Added`, `Replaced(old)`, `AlreadyHeld`: the same weapon again changes nothing and the pickup gives ammo instead; a body that held
   nothing takes it into its hands, a weapon that replaces the one in the hands replaces it in the hands; the body gets the charges the weapon
-  brings), `take_weapon` (the lowest slot left comes up, the last weapon restores `bare` and removes the arsenal; the rounds stay),
+  brings), `take_weapon` (the lowest slot left comes up, `WeaponSwitched::from` naming the weapon that left; the last weapon restores `bare` and removes the arsenal, and a body that started armed from a prefab has a `bare` only if the prefab gives one; the rounds stay),
   `select_slot` (asks for a switch), `add_to_charge(world, body, name, n)` (returns how many it took: a full reserve takes 0, so the pickup stays on the floor)
   and `refill` (what the effect calls). `weapon_in_hands` reads the weapon, magazine and reserve for a picture.
 
@@ -2005,8 +2005,8 @@ without a value for a body that holds no weapon. The engine rule `action.arsenal
 **Content checks** (file and field named): `cost.charge_count` below 1 or without a `cost.charge`; a `Refill` with an empty name or the
 same charge on both sides; `auto_reload` naming no action or an action with no `Refill`; and for a moveset with a `weapon` block, a
 `weapon.magazine`/`reserve`, a `cost.charge` or a `Refill` of one of its input actions on a charge that neither `weapon.charges` nor a
-prefab's `Charges` declares (`inputs.light -> action `shoot` costs the charge `pistol`, which this weapon does not have: declare it in
-weapon.charges, or in a prefab's Charges (...)`), a `start` above `max`, a `max` of 0, and two weapons that declare one shared charge with
+prefab's `Charges` declares (`` inputs.light -> action `shoot` costs the charge `pistol`, which this weapon does not have: declare it in
+weapon.charges, or in a prefab's Charges (...) ``), a `start` above `max`, a `max` of 0, and two weapons that declare one shared charge with
 different maxima; for a prefab, an `Arsenal` whose slots are outside 1 to 9, repeated or name no moveset, or whose `current` or `pending` names an empty slot.
 A moveset with no `weapon` block is not checked (a game may give its charges in code).
 

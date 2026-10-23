@@ -356,3 +356,29 @@ fn a_dead_body_switches_nothing() {
     assert_eq!(moveset(&app, hero), "w_sidearm");
     assert_eq!(fails(&mut app, "weapon", json!({"slot": 2})), "you are dead; a dev agent can `heal` you");
 }
+
+#[test]
+fn taking_the_weapon_in_the_hands_says_what_replaced_it_and_a_body_that_started_armed_has_no_bare_moveset() {
+    let mut app = app();
+    // A body that starts armed: its moveset is the weapon in its hands, so nothing says what it fought with before.
+    let hero = hero(app.world_mut(), "w_sidearm", Vec3::ZERO, N);
+    let h = id(&app, hero);
+    let slots = vec![Held { slot: 1, moveset: "w_sidearm".into() }, Held { slot: 2, moveset: "w_blade".into() }];
+    app.world_mut().entity_mut(hero).insert(Arsenal { slots, current: Some(1), ..default() });
+    step(&mut app, 2);
+    assert_eq!(arsenal(&app, hero).bare, None);
+
+    // The weapon in the hands goes, the other comes up, and the journal names the one that left. No weapon is taken for the bare moveset.
+    assert_eq!(take_weapon(app.world_mut(), hero, 1).as_deref(), Some("w_sidearm"));
+    assert_eq!(moveset(&app, hero), "w_blade");
+    assert_eq!(arsenal(&app, hero).bare, None, "the sidearm the body started with is not its bare moveset");
+    assert!(
+        lines(&app, "switches to").iter().any(|l| l.ends_with(&format!("{h} switches to w_blade (slot 2, from w_sidearm)"))),
+        "{:?}",
+        journal(&app)
+    );
+    // The last one goes: the arsenal with it, and the moveset stays what it was (there is no bare one to put back).
+    assert_eq!(take_weapon(app.world_mut(), hero, 2).as_deref(), Some("w_blade"));
+    assert!(app.world().get::<Arsenal>(hero).is_none());
+    assert_eq!(moveset(&app, hero), "w_blade");
+}
