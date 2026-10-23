@@ -156,6 +156,9 @@ fn state_of(world: &World, s: &Seen, distance: Option<f32>) -> State {
     if !def.looped {
         return State::Broken(format!("`{}` does not loop: an emitter plays a sound with `looped: true`", s.sound));
     }
+    if def.files.is_empty() {
+        return State::Broken(format!("`{}` names no file", s.sound));
+    }
     let falloff = def.spatial;
     if falloff.is_some() && s.at.is_none() {
         return State::Broken("it has no Transform to be heard from".to_owned());
@@ -322,8 +325,8 @@ pub(crate) fn check_prefab(prefab: &PrefabDef, _id: &str, refs: &mut Refs) {
                 .is_ok_and(|reg| reg.type_id() == std::any::TypeId::of::<SoundEmitter>()),
             None => name == "SoundEmitter",
         };
-        // A value that does not read, or names no sound, is the prefab's own error.
-        if ours && let Ok(Fields { sound }) = ron::from_str::<Fields>(value.get_ron()) && !sound.is_empty() {
+        // A value that does not read is the prefab's own error; an empty sound is ours.
+        if ours && let Ok(Fields { sound }) = ron::from_str::<Fields>(value.get_ron()) {
             check_sound(refs, &sound, "SoundEmitter.sound");
         }
     }

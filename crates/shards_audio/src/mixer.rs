@@ -226,6 +226,9 @@ pub(crate) fn start(
     gain: f32,
     emitter: Option<Entity>,
 ) -> Result<Played, String> {
+    if def.files.is_empty() {
+        return Err(format!("sound `{sound}` names no file"));
+    }
     refresh_listener(world);
     let limit = voice_limit(world) as usize;
     let (source, position) = match at {

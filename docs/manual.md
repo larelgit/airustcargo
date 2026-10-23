@@ -618,7 +618,7 @@ content: 234 definitions in 74 files
   hitstop  1
   input_map  0
   layout  3
-  level  1
+  level  2
   locale  2
   lock_on  1
   locomotion  5
@@ -632,7 +632,7 @@ content: 234 definitions in 74 files
   perception  3
   perf  2
   poi  4
-  prefab  18
+  prefab  21
   prop  1
   region  3
   room  0
@@ -643,7 +643,7 @@ content: 234 definitions in 74 files
   screen  3
   shot  0
   socket_rules  1
-  sound  16
+  sound  17
   status  2
   theme  0
   tile  16
@@ -5928,7 +5928,7 @@ which no `*.sound.ron` defines (did you mean `boom`?)``) or plays it with a `Sou
 **What is missing.** A muffled voice is quieter, not duller: Bevy 0.20's sinks (`AudioSink`, `SpatialAudioSink`) take a volume, a speed, a pause and a mute, and no filter, so there is no per-voice low-pass. A custom `Decodable` that wraps the decoder with a one-pole low-pass, whose cutoff the mixer sets from the voice's `occlusion`, would do it with no new crate (`bevy_audio` re-exports rodio's `Source`), but it cannot be checked without an output device, so it is not built; the mixer already holds what it needs (`Voice::occlusion`). The listener is the body's `Transform` (at its feet, turned like the camera), as before; when the first-person camera lands (F1b) the ears move to the eye, and the ray, the ear clearance of 5 cm and the distance to the emitters all start from there. One ray from the ears to the source's centre is all the occlusion there is: no sound bends round a doorframe, no reverb, no thickness (a thick wall is one collider and counts once, however deep). The floor under the listener's feet is skipped (a ray from a point on its surface starts inside it), so a sound from a floor below is not muffled by that floor until the ears move to the eye. A loop that comes back into earshot starts from its beginning, not from where it would be. A level has no tool to take it away again (`despawn_level` is code), so the scenario builds its room from prefabs; the level file `audio_room.level.ron` is checked by a test that spawns it.
 
 
-Tests: `crates/shards_audio` (unit tests: WAV and Ogg lengths, falloff with distance, buses from the settings, voices and voice stealing, the share a transmission gives; `tests/audio/`: the voice limit and `max_instances`, distance and source, the simulation clock, the player's volume, events, telegraphs, the `Sound` action effect and the menu, tools, music layers and `hold`, `music_set`, `local` lines, the snapshot, the content check; `tests/audio/subtitles.rs`: a played voice's line and its time, the same line once, a taken voice's line, the setting, the language, the check), `tests/audio/ambient.rs` (F10: an emitter's voice held in earshot, let go beyond `far` and taken again, refreshing twice starts nothing, start and stop by flag, API and tools and with the entity, loops against one-shots of lower and higher priority, a sound with no place, an emitter that cannot play said once, a looped sound refused as a one-shot, nothing of it in the replay hash, a wall and a pane and walls in a row and a door that goes, the listener's floor and the source's own collider and bodies and sensors not counting, a mixer without occlusion unchanged, the transmission's clamp, the content check of a bad loop and of an emitter in a level or a prefab, a level file that places an emitter and a pane), the sandbox test `tests/sandbox/ambient.rs` (the level file `audio_room.level.ron`), the scenarios `crates/sandbox/scenarios/audio.scenario` and `ambient_audio.scenario` (hums in a canyon room: three in earshot and one not, a wall and a pane muffling them once the mixer asks, an emitter stopped and started by name, out of earshot and back), and in the template `tests/game/audio.rs` (the music switches to `combat` when the hero approaches the ground; the hero's swing sounds without a model).
+Tests: `crates/shards_audio` (unit tests: WAV and Ogg lengths, falloff with distance, buses from the settings, voices and voice stealing, the share a transmission gives; `tests/audio/`: the voice limit and `max_instances`, distance and source, the simulation clock, the player's volume, events, telegraphs, the `Sound` action effect and the menu, tools, music layers and `hold`, `music_set`, `local` lines, the snapshot, the content check; `tests/audio/subtitles.rs`: a played voice's line and its time, the same line once, a taken voice's line, the setting, the language, the check), `tests/audio/ambient.rs` (F10: an emitter's voice held in earshot, let go beyond `far` and taken again, refreshing twice starts nothing, start and stop by flag, API and tools and with the entity, loops against one-shots of lower and higher priority, a sound with no place, an emitter that cannot play said once (an unknown sound, one that does not loop, one with no file), a looped sound refused as a one-shot, nothing of it in the replay hash, a wall and a pane and walls in a row and a door that goes, the listener's floor and the source's own collider and bodies and sensors not counting, a mixer without occlusion unchanged, the transmission's clamp, the content check of a bad loop and of an emitter in a level or a prefab, a level file that places an emitter and a pane), the sandbox test `tests/sandbox/ambient.rs` (the level file `audio_room.level.ron`), the scenarios `crates/sandbox/scenarios/audio.scenario` and `ambient_audio.scenario` (hums in a canyon room: three in earshot and one not, a wall and a pane muffling them once the mixer asks, an emitter stopped and started by name, out of earshot and back), and in the template `tests/game/audio.rs` (the music switches to `combat` when the hero approaches the ground; the hero's swing sounds without a model).
 
 ## Stylised materials (E10.1)
 

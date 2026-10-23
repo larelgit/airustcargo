@@ -459,9 +459,10 @@ fn the_content_check_finds_an_emitter_that_names_no_sound_or_one_that_does_not_l
     let level = json!({
         "asset": {"version": "2.0"},
         "scene": 0,
-        "scenes": [{"nodes": [0, 1, 2, 3]}],
+        "scenes": [{"nodes": [0, 1, 2, 3, 4]}],
         "nodes": [
             {"name": "Vent", "extras": {"SoundEmitter": {"sound": "hum"}}},
+            {"name": "Blank", "extras": {"SoundEmitter": {"sound": ""}}},
             {"name": "Typo", "extras": {"SoundEmitter": {"sound": "hom"}}},
             {"name": "Short", "extras": {"shards_audio::emitter::SoundEmitter": {"sound": "beep"}}},
             {"name": "Text", "extras": {"SoundEmitter": "{\"sound\": \"drop\"}"}},
@@ -475,6 +476,7 @@ fn the_content_check_finds_an_emitter_that_names_no_sound_or_one_that_does_not_l
             "fan": (components: {"Name": "Fan", "SoundEmitter": (sound: "hmm")}),
             "lamp": (components: {"SoundEmitter": (sound: "beep", playing: false)}),
             "good": (components: {"SoundEmitter": (sound: "hum")}),
+            "mute": (components: {"SoundEmitter": (sound: "")}),
         }"#,
     );
     let errors: Vec<String> = check_dir(assets.path(), &kinds).unwrap_err().iter().map(ToString::to_string).collect();
@@ -484,6 +486,23 @@ fn the_content_check_finds_an_emitter_that_names_no_sound_or_one_that_does_not_l
     has("node `Text`: SoundEmitter.sound -> unknown sound `drop`");
     has("prefab `fan`: SoundEmitter.sound -> unknown sound `hmm` (did you mean `hum`?)");
     has("prefab `lamp`: SoundEmitter.sound: `beep` does not loop");
+    has("node `Blank`: SoundEmitter.sound -> unknown sound ``");
+    has("prefab `mute`: SoundEmitter.sound -> unknown sound ``");
     assert!(!errors.iter().any(|e| e.contains("Vent") || e.contains("prefab `good`")), "a looped sound is fine: {errors:#?}");
-    assert_eq!(errors.len(), 5, "{errors:#?}");
+    assert_eq!(errors.len(), 7, "{errors:#?}");
+}
+
+#[test]
+fn an_emitter_whose_sound_names_no_file_plays_nothing_and_does_not_panic() {
+    // The content check refuses `files: []`, but a game keeps running with the content that loaded.
+    let assets = Folder::new("hollow");
+    assets.put("content/audio/hollow.sound.ron", r#"{"hollow": (files: [], looped: true, spatial: (near: 1.0, far: 9.0))}"#);
+    let mut app = game(&assets);
+    emit(&mut app, "Hollow", "hollow", Vec3::new(0.0, 0.0, -2.0));
+    wait(&mut app, 0.5);
+    assert!(playing(&app).is_empty(), "{:?}", playing(&app));
+    let warned = journal(&app, JournalKind::Warn, "cannot play");
+    assert_eq!(warned, ["audio: emitter Hollow (hollow) cannot play: `hollow` names no file"]);
+    let said = ok(&mut app, "audio", json!({}));
+    assert!(said.contains("Hollow hollow 2.0m cannot play: `hollow` names no file"), "{said}");
 }

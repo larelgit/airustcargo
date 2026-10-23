@@ -41,7 +41,7 @@ fn check_level_emitters(def: &LevelDef, _id: &str, refs: &mut Refs) {
                 Value::String(text) => serde_json::from_str(text).unwrap_or(Value::Null),
                 other => other.clone(),
             };
-            if let Some(sound) = value.get("sound").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+            if let Some(sound) = value.get("sound").and_then(Value::as_str) {
                 found.push((node.path.clone(), sound.to_owned()));
             }
         }
