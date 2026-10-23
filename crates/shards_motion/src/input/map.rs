@@ -663,7 +663,7 @@ impl InputMap {
             ActionBinding::new("glide", [Key(KeyCode::KeyF), Pad(GamepadButton::RightTrigger2)]).held(),
             // Held: lowers a body whose `locomotion` has a `crouch_height` (F2). A first-person game binds Ctrl, which is
             // the dodge here; `hold_to_toggle` makes it a toggle like the sprint.
-            ActionBinding::new("crouch", [Key(KeyCode::KeyX), Pad(GamepadButton::Select)]).held(),
+            ActionBinding::new("crouch", [Key(KeyCode::KeyX)]).held(),
             ActionBinding::new("dodge", [Key(KeyCode::ControlLeft), Pad(GamepadButton::East)]).directional(),
             ActionBinding::new("light", [Mouse(MouseButton::Left), Pad(GamepadButton::West)]),
             // Pressed and held: a charged heavy turns while the button stays down.

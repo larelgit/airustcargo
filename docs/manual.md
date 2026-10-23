@@ -654,7 +654,7 @@ content: 272 definitions in 90 files
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 268 definitions in 86
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 272 definitions in 90
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -1329,7 +1329,7 @@ A body without a `crouch_height` ignores the input.
   The eye needs no field of its own: it keeps its place in the capsule, so crouched it is `eye_height` (or 0.9 of `height`) times `crouch_height / height` above the feet, and
   between the two heights the same fraction of the height it has then (`CharacterParams::eye_above_feet_at(depth)`). A game that wants another crouched eye changes `crouch_height`.
 - **The input.** The name `crouch` (`shards::core::input_names::CROUCH`) is a held button: `Intent::held`, so the keyboard, the `crouch` tool, a brain and a replay all write
-  the same. The standard input map binds it to `X` and the pad's Select (a first-person game binds Ctrl, which is the dodge here, in its own `input_map`);
+  the same. The standard input map binds it to `X` only, no pad button (a first-person game binds Ctrl, which is the dodge here, and its pad button in its own `input_map`);
   `accessibility.hold_to_toggle` turns it into a toggle like the sprint, with no code of its own. A body that is `rooted` (a scene took its movement away) keeps the stance it
   wanted; a climb holds the stance as it is.
 - **Which end of the capsule moves.** On the ground the feet stay and the head comes down. **In the air the head stays and the feet are pulled up** (`MotionMode::Air` and
