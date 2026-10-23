@@ -7,6 +7,7 @@
 
 mod content;
 mod decals;
+mod gore;
 mod offscreen;
 mod particles;
 mod tools;

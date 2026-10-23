@@ -42,8 +42,13 @@
 //!   that are not `#rrggbb` or `#rrggbbaa`, a pool smaller than one play, an event the engine
 //!   does not have, and events and cues that name an effect no file defines.
 
+pub mod debris;
 pub mod decal;
 pub mod def;
+mod gore;
+pub mod mark;
+#[cfg(feature = "render")]
+pub mod marks_render;
 #[cfg(feature = "render")]
 pub mod render;
 pub mod sim;
@@ -62,11 +67,18 @@ use shards_core::EngineAppExt;
 
 use crate::def::{in_proportion, MAX_COUNT, MAX_LIVE};
 pub use decal::{DecalShape, ZoneDecal};
-pub use def::{Aim, EffectDef, FxDef, ParticleShape, StrengthResponse, EVENTS};
+pub use def::{Aim, EffectDef, FxDef, ParticleShape, Rest, StrengthResponse, EVENTS};
+pub use gore::{
+    clear, clear_all, mark_seed, seed_of, spawn_mark, spawn_mark_quietly, spawn_mark_seeded, surface_along, Cleared, GoreStats, Marked, Marks, PlayMark,
+    RAYS_PER_FRAME,
+};
+pub use mark::{Mark, MarkDef, MarkLife, MarkLink, MarkPool, Place, MARK_EVENTS};
+#[cfg(feature = "render")]
+pub use marks_render::MarkDecal;
 #[cfg(feature = "render")]
 pub use render::{FxParticle, FxPrepass, ParticleMaterial, TelegraphDecal, ZoneDecalMaterial, ZoneMaterial};
 pub use sim::{Particle, Pool, Shown};
-pub use tools::{EffectPlayArgs, EffectsArgs, TelegraphDecalsArgs};
+pub use tools::{EffectPlayArgs, EffectsArgs, FxClearArgs, MarkSpawnArgs, TelegraphDecalsArgs};
 
 /// Version of the engine crates (they share one).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -253,8 +265,11 @@ impl Plugin for FxPlugin {
         );
         app.add_content::<EffectDef>()
             .add_content::<FxDef>()
+            .add_content::<MarkDef>()
             .init_resource::<FxSettings>()
             .init_resource::<Particles>()
+            .init_resource::<Marks>()
+            .init_resource::<GoreStats>()
             .add_engine_module("fx", VERSION)
             .add_ai_status("fx", status)
             .add_dev_entry("world", "effects", "Effects, their pools and decals", ai_core::DevCommand::Run("effects".into()))
@@ -274,7 +289,16 @@ impl Plugin for FxPlugin {
             .add_observer(|e: On<Staggered>, c: Commands| event_effect(c, "staggered", e.entity, None))
             .add_observer(|e: On<Died>, c: Commands| event_effect(c, "died", e.entity, None))
             .add_observer(|e: On<Healed>, c: Commands| event_effect(c, "healed", e.entity, None))
-            .add_observer(|e: On<Telegraph>, c: Commands| event_effect(c, "telegraph", e.attacker, None));
+            .add_observer(|e: On<Telegraph>, c: Commands| event_effect(c, "telegraph", e.attacker, None))
+            .add_observer(gore::on_play_mark)
+            .add_observer(gore::on_shot_fired)
+            .add_observer(gore::on_shot_impact)
+            .add_observer(gore::on_damaged)
+            .add_observer(gore::on_died)
+            .add_observer(gore::on_part_broken)
+            // A world built again (a region, a snapshot) and the main menu take the old one's marks and debris with them.
+            .add_observer(|_: On<ai_core::WorldRebuilt>, mut commands: Commands| commands.queue(gore::clear_on_new_world))
+            .add_systems(OnExit(shards_core::EngineState::InGame), |mut commands: Commands| commands.queue(gore::clear_on_new_world));
         tools::register(app.world_mut());
         #[cfg(feature = "render")]
         render::plugin(app);
@@ -502,12 +526,33 @@ pub fn decals(world: &World) -> usize {
     }
 }
 
-/// `ai/status` → `fx: {effects, live, decals, telegraph_decals}`.
+/// Particles of the effects that land (`collide: true`), at rest and still moving.
+pub fn debris_counts(world: &World) -> (usize, usize) {
+    let Some(particles) = world.get_resource::<Particles>() else { return (0, 0) };
+    let mut counts = (0, 0);
+    for body in particles.effects.values().filter(|p| p.def.collide).flat_map(|p| p.pool.slots.iter().flatten()).filter_map(|p| p.body) {
+        if body.rested {
+            counts.0 += 1;
+        } else {
+            counts.1 += 1;
+        }
+    }
+    counts
+}
+
+/// `ai/status` → `fx: {effects, live, decals, telegraph_decals, marks, debris, rays}`: `marks` the marks alive, `debris` the
+/// landing particles at rest and in flight, `rays` the rays of the last frame and the most in any (the performance counters
+/// of the gore).
 fn status(world: &World) -> Value {
+    let (resting, flying) = debris_counts(world);
+    let stats = world.get_resource::<GoreStats>().copied().unwrap_or_default();
     json!({
         "effects": world.get_resource::<ContentDb>().map_or(0, |db| db.ids::<EffectDef>().count()),
         "live": world.get_resource::<Particles>().map_or(0, Particles::live),
         "decals": decals(world),
         "telegraph_decals": world.get_resource::<FxSettings>().is_none_or(|s| s.decals),
+        "marks": world.get_resource::<Marks>().map_or(0, Marks::live),
+        "debris": {"resting": resting, "flying": flying},
+        "rays": {"last": stats.rays, "max": stats.rays_max, "total": stats.rays_total, "budget": stats.budget},
     })
 }

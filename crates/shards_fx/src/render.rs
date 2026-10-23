@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 
 use ai_core::AiCamera;
+use shards_motion::{FirstPersonCamera, LayerMask, PhysicsWorld, QueryFilter};
 use bevy::asset::{embedded_asset, RenderAssetUsages};
 use bevy::core_pipeline::prepass::DepthPrepass;
 use bevy::light::NotShadowCaster;
@@ -20,9 +21,11 @@ use shards_action::draw::{intensity, palette, pulse_at, shown_telegraphs};
 use shards_action::render::TelegraphSettings;
 use shards_content::ContentDb;
 
+use crate::debris::{Ground, Surface};
 use crate::decal::{DecalShape, ZoneDecal};
 use crate::def::{EffectDef, ParticleShape};
-use crate::{FxSettings, FxSystems, Particles, Playing};
+use crate::marks_render;
+use crate::{FxSettings, FxSystems, GoreStats, Marks, Particles, Playing};
 
 const PARTICLE_SHADER: &str = "embedded://shards_fx/shaders/particle.wesl";
 const ZONE_SHADER: &str = "embedded://shards_fx/shaders/zone.wesl";
@@ -38,8 +41,8 @@ const DISC_SEGMENTS: u32 = 48;
 /// (sRGB bytes, alpha last), so an effect's particles share it and draw in batches.
 #[derive(Asset, AsBindGroup, TypePath, Debug, Clone, PartialEq)]
 pub struct ParticleMaterial {
-    /// 0 a soft round spot (a quad), 1 a shaded solid (a cube, a shard or a disc), 2 a solid lit
-    /// by itself (`glow` or `unlit`).
+    /// 0 a soft round spot (a quad), 1 a shaded solid (a cube, a shard, a disc or a mesh), 2 a solid lit
+    /// by itself (`glow` or `unlit`), 3 a quad wearing a picture.
     #[uniform(0)]
     pub kind: u32,
     /// The factor on the colour's light (`EffectDef::intensity`): above 1 brighter than white, for an HDR camera.
@@ -47,16 +50,22 @@ pub struct ParticleMaterial {
     pub intensity: f32,
     /// Added to what is behind (`AlphaMode::Add`), else blended over it.
     pub glow: bool,
+    /// The picture a quad particle wears (`EffectDef::image`); every particle samples it, a white pixel when there is none.
+    #[texture(1)]
+    #[sampler(2)]
+    pub image: Option<Handle<Image>>,
 }
 
 impl ParticleMaterial {
     pub fn of(def: &EffectDef) -> Self {
-        let kind = match (def.shape, def.glow || def.unlit) {
-            (ParticleShape::Quad, _) => 0,
-            (_, false) => 1,
-            (_, true) => 2,
+        let lit_by_itself = def.glow || def.unlit;
+        let kind = match (def.shape, def.mesh.is_some()) {
+            (ParticleShape::Quad, false) if def.image.is_some() => 3,
+            (ParticleShape::Quad, false) => 0,
+            _ if lit_by_itself => 2,
+            _ => 1,
         };
-        Self { kind, intensity: def.intensity, glow: def.glow }
+        Self { kind, intensity: def.intensity, glow: def.glow, image: None }
     }
 }
 
@@ -158,6 +167,11 @@ struct PoolView {
     entities: Vec<Entity>,
 }
 
+/// The path a glTF mesh particle is loaded from: the first primitive of the file's first mesh unless the path names a label.
+fn mesh_path(path: &str) -> String {
+    if path.contains('#') { path.to_owned() } else { format!("{path}#Mesh0/Primitive0") }
+}
+
 /// The pools' meshes and materials, by effect.
 #[derive(Resource, Default)]
 struct Pools {
@@ -179,9 +193,10 @@ pub(crate) fn plugin(app: &mut App) {
     app.add_plugins((MaterialPlugin::<ParticleMaterial>::default(), MaterialPlugin::<ZoneDecalMaterial>::default()))
         .init_resource::<Pools>()
         .init_resource::<Decals>()
+        .init_resource::<marks_render::MarkViews>()
         .add_systems(
             PostUpdate,
-            (sync_pools, crate::emit_due, draw_particles, draw_decals, prepass_cameras)
+            (sync_pools, crate::emit_due, step_debris, draw_particles, draw_decals, marks_render::draw_marks, prepass_cameras)
                 .chain()
                 .in_set(FxSystems::Draw)
                 .run_if(ai_core::display::drawn),
@@ -269,12 +284,17 @@ fn sync_pools(world: &mut World) {
             world.resource_mut::<Particles>().effects.remove(&id);
             continue;
         };
-        let material = world.resource_mut::<Assets<ParticleMaterial>>().add(ParticleMaterial::of(def));
-        let mesh = match def.shape {
-            ParticleShape::Quad => meshes[0].clone(),
-            ParticleShape::Cube => meshes[1].clone(),
-            ParticleShape::Shard => meshes[2].clone(),
-            ParticleShape::Disc => meshes[3].clone(),
+        let mut look = ParticleMaterial::of(def);
+        if let Some(image) = &def.image {
+            look.image = Some(world.resource::<AssetServer>().load(image.clone()));
+        }
+        let material = world.resource_mut::<Assets<ParticleMaterial>>().add(look);
+        let mesh = match (&def.mesh, def.shape) {
+            (Some(path), _) => world.resource::<AssetServer>().load::<Mesh>(mesh_path(path)),
+            (None, ParticleShape::Quad) => meshes[0].clone(),
+            (None, ParticleShape::Cube) => meshes[1].clone(),
+            (None, ParticleShape::Shard) => meshes[2].clone(),
+            (None, ParticleShape::Disc) => meshes[3].clone(),
         };
         let entities: Vec<Entity> = (0..def.pool_size())
             .map(|slot| {
@@ -313,6 +333,40 @@ fn facing_camera(cameras: &Query<(&Camera, &GlobalTransform, Has<AiCamera>), Wit
     found.first().map_or(Quat::IDENTITY, |(_, r)| *r)
 }
 
+/// The world as debris meets it: rays through the physics world's `WORLD` colliders (read-only).
+struct WorldGround<'a> {
+    physics: Option<&'a PhysicsWorld>,
+    filter: QueryFilter,
+}
+
+impl Ground for WorldGround<'_> {
+    fn cast(&mut self, from: Vec3, dir: Vec3, max: f32) -> Option<Surface> {
+        let dir = Dir3::new(dir).ok()?;
+        let hit = self.physics?.raycast(from, dir, max, &self.filter)?;
+        Some(Surface { point: hit.point, normal: hit.normal })
+    }
+}
+
+/// The particles that land, stepped up to the simulation's clock: a ray a step against the world, a bounce, a slide, a
+/// rest. A frame casts at most [`GoreStats::budget`] rays; the steps it leaves are taken by the next, and a particle
+/// always ends up where the same steps put it. Counts the rays for the performance counters.
+fn step_debris(mut particles: ResMut<Particles>, physics: Option<Res<PhysicsWorld>>, fixed: Res<Time<Fixed>>, mut stats: ResMut<GoreStats>) {
+    let now = fixed.elapsed_secs_f64() + fixed.overstep().as_secs_f64();
+    let mut ground = WorldGround { physics: physics.as_deref(), filter: QueryFilter { mask: LayerMask::WORLD, exclude: Vec::new(), volumes: false } };
+    let (mut rays, budget) = (0u32, stats.budget);
+    for playing in particles.effects.values_mut().filter(|p| p.def.collide) {
+        let Playing { def, pool, .. } = playing;
+        for particle in pool.slots.iter_mut().flatten() {
+            particle.advance(now, def, &mut ground, &mut rays, budget);
+        }
+    }
+    // The searches for a surface behind a body, made when the shots landed, count with the frame that follows them.
+    let searches = std::mem::take(&mut stats.searches);
+    stats.rays = rays + searches;
+    stats.rays_max = stats.rays_max.max(stats.rays);
+    stats.rays_total += u64::from(stats.rays);
+}
+
 /// Every particle where its age puts it, the size and colour of that age; an empty slot's mesh
 /// hidden.
 fn draw_particles(
@@ -333,6 +387,7 @@ fn draw_particles(
                 Some(particle) => {
                     let look = particle.shown(now, &playing.def, playing.colors);
                     let rotation = match playing.def.shape {
+                        _ if playing.def.mesh.is_some() => look.rotation,
                         ParticleShape::Quad => billboard,
                         ParticleShape::Disc => Quat::IDENTITY,
                         ParticleShape::Cube | ParticleShape::Shard => look.rotation,
@@ -455,15 +510,16 @@ pub fn zone_material(decal: &ZoneDecal, color: LinearRgba, fill: f32, flicker: f
 }
 
 /// The AI's 3D cameras: whether each has a depth prepass, and whether this module gave it.
-type AiCameras<'w, 's> = Query<'w, 's, (Entity, Has<DepthPrepass>, Has<FxPrepass>), (With<Camera3d>, With<AiCamera>)>;
+type AiCameras<'w, 's> = Query<'w, 's, (Entity, Has<DepthPrepass>, Has<FxPrepass>), (With<Camera3d>, Or<(With<AiCamera>, With<FirstPersonCamera>)>)>;
 
-/// The cameras the decals are seen through (every camera with `AiCamera`) get a depth prepass
-/// while decals are on, and lose the one this module gave them when they go off.
-fn prepass_cameras(mut commands: Commands, settings: Res<FxSettings>, cameras: AiCameras) {
+/// The cameras the decals are seen through (every camera with `AiCamera`, and a first-person camera) get a depth prepass
+/// while telegraph decals are on or a mark is laid, and lose the one this module gave them when neither is.
+fn prepass_cameras(mut commands: Commands, settings: Res<FxSettings>, marks: Res<Marks>, cameras: AiCameras) {
+    let wanted = settings.decals || marks.live() > 0;
     for (camera, has_prepass, ours) in &cameras {
-        if settings.decals && !has_prepass {
+        if wanted && !has_prepass {
             commands.entity(camera).insert((DepthPrepass, FxPrepass));
-        } else if !settings.decals && ours {
+        } else if !wanted && ours {
             commands.entity(camera).remove::<(DepthPrepass, FxPrepass)>();
         }
     }

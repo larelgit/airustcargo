@@ -8,7 +8,8 @@ use std::f32::consts::{PI, TAU};
 
 use bevy::prelude::*;
 
-use crate::def::{Aim, EffectDef, MAX_LIFETIME};
+use crate::debris::{Debris, Ground, Physics};
+use crate::def::{Aim, EffectDef, Rest, MAX_LIFETIME};
 
 /// A small, fast random source (SplitMix64) for what effects pick: picture only, never gameplay.
 #[derive(Clone, Debug)]
@@ -71,6 +72,9 @@ pub struct Particle {
     pub spin_axis: Vec3,
     /// Radians a second.
     pub spin: f32,
+    /// Where it is, once it lands (`collide: true`): stepped against the world, not solved from its age
+    /// ([`Debris`]). `None`: a particle in free flight, a function of its age.
+    pub body: Option<Debris>,
 }
 
 /// What a particle looks like at an age.
@@ -90,8 +94,28 @@ impl Particle {
         ((now - self.born) as f32 / self.life.max(1e-4)).max(0.0)
     }
 
+    /// Whether it is still there at clock `now`: within its life, or at rest for good (`rest: UntilCleared`), or a
+    /// particle bound for that whose steps have not caught up with the clock yet (a frame that came late, or ran out of
+    /// rays): it may have come to rest in the time it has not been stepped through.
     pub fn alive(&self, now: f64) -> bool {
-        now - self.born < f64::from(self.life)
+        self.lies_for_good() || now - self.born < f64::from(self.life) || self.body.is_some_and(|b| b.keep && !b.rested && b.t + crate::debris::STEP < self.born + f64::from(self.life))
+    }
+
+    /// It has come to rest and stays until it is cleared or recycled.
+    pub fn lies_for_good(&self) -> bool {
+        self.body.is_some_and(|b| b.keep && b.rested)
+    }
+
+    /// Takes the steps of a landing particle up to clock `now` (nothing for one in free flight):
+    /// `ground` is the world it lands on, `rays` counts the rays it casts, `budget` ends the work.
+    pub fn advance(&mut self, now: f64, def: &EffectDef, ground: &mut dyn Ground, rays: &mut u32, budget: u32) {
+        let Some(mut body) = self.body else { return };
+        // Not past the end of its life: a particle that has not landed by then is gone, and one that has stays or fades as it says.
+        let now = now.min(self.born + f64::from(self.life) + crate::debris::STEP);
+        let me = *self;
+        let radius = |at: f64| 0.5 * me.size_at(me.spent(at).min(1.0), def);
+        body.advance(now, &Physics::of(def), &radius, ground, rays, budget);
+        self.body = Some(body);
     }
 
     /// Where it is `age` seconds after its birth, under `gravity` (m/s² along Y) and `drag` (its
@@ -120,11 +144,15 @@ impl Particle {
         let t = self.spent(now).min(1.0);
         let lerp = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round().clamp(0.0, 255.0) as u8;
         let (start, end) = colors;
+        let (position, rotation) = match self.body {
+            Some(body) => body.shown(now),
+            None => (self.position(age, def.gravity, def.drag), Quat::from_axis_angle(self.spin_axis, self.spin * age)),
+        };
         Shown {
-            position: self.position(age, def.gravity, def.drag),
+            position,
             size: self.size_at(t, def),
             color: [lerp(start[0], end[0]), lerp(start[1], end[1]), lerp(start[2], end[2]), lerp(start[3], end[3])],
-            rotation: Quat::from_axis_angle(self.spin_axis, self.spin * age),
+            rotation,
         }
     }
 }
@@ -132,11 +160,15 @@ impl Particle {
 /// The way an effect's particles leave: `aim` of the effect, along `toward` when it has one
 /// (`Hit`: for a hit, back towards the attacker), level, tilted up by `lift`.
 pub fn aim_of(def: &EffectDef, toward: Option<Vec3>) -> Vec3 {
-    match (def.aim, toward.map(|d| Vec3::new(d.x, 0.0, d.z)).and_then(Vec3::try_normalize)) {
-        (Aim::Hit, Some(level)) => {
-            let lift = def.lift.to_radians();
-            (level * ops::cos(lift) + Vec3::Y * ops::sin(lift)).normalize_or(Vec3::Y)
-        }
+    let level = toward.map(|d| Vec3::new(d.x, 0.0, d.z)).and_then(Vec3::try_normalize);
+    let lifted = |level: Vec3| {
+        let lift = def.lift.to_radians();
+        (level * ops::cos(lift) + Vec3::Y * ops::sin(lift)).normalize_or(Vec3::Y)
+    };
+    match (def.aim, level) {
+        (Aim::Hit, Some(level)) => lifted(level),
+        (Aim::Away, Some(level)) => lifted(-level),
+        (Aim::Surface, _) => toward.and_then(Vec3::try_normalize).unwrap_or(Vec3::Y),
         _ => Vec3::Y,
     }
 }
@@ -147,7 +179,7 @@ pub fn spawn(def: &EffectDef, at: Vec3, aim: Vec3, born: f64, rng: &mut Rng) -> 
     let (x, y, z) = def.offset;
     let origin = at + Vec3::new(x, y, z) + rng.in_ball(def.radius);
     let velocity = rng.in_cone(aim, def.spread) * rng.between(def.speed);
-    Particle {
+    let mut particle = Particle {
         born,
         life: rng.between(def.lifetime).clamp(1e-3, MAX_LIFETIME),
         origin,
@@ -155,7 +187,14 @@ pub fn spawn(def: &EffectDef, at: Vec3, aim: Vec3, born: f64, rng: &mut Rng) -> 
         size: rng.between(def.size),
         spin_axis: rng.in_cone(Vec3::Y, 360.0),
         spin: def.spin.to_radians() * rng.between((-1.0, 1.0)),
+        body: None,
+    };
+    if def.collide {
+        // Only a landing particle draws this number: the others start the particles they always did.
+        let yaw = rng.between((0.0, TAU));
+        particle.body = Some(Debris::new(origin, velocity, born, particle.spin_axis, particle.spin, yaw, def.rest == Rest::UntilCleared));
     }
+    particle
 }
 
 /// `particle` as a play at `strength` with `push` starts it: its speed and size as `def.strength` scales them, and its
@@ -168,6 +207,10 @@ pub fn played(mut particle: Particle, def: &EffectDef, strength: f32, push: Vec3
     }
     if push != Vec3::ZERO {
         particle.velocity += push * rng.between(def.push);
+    }
+    // A landing particle starts with the velocity the play gave it.
+    if let Some(body) = &mut particle.body {
+        body.velocity = particle.velocity;
     }
     particle
 }
@@ -233,7 +276,7 @@ mod tests {
     use crate::def::StrengthResponse;
 
     fn particle(velocity: Vec3) -> Particle {
-        Particle { born: 1.0, life: 2.0, origin: Vec3::ZERO, velocity, size: 0.2, spin_axis: Vec3::Y, spin: 1.0 }
+        Particle { born: 1.0, life: 2.0, origin: Vec3::ZERO, velocity, size: 0.2, spin_axis: Vec3::Y, spin: 1.0, body: None }
     }
 
     #[test]
