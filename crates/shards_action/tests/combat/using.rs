@@ -276,7 +276,13 @@ fn a_revive_in_reach_wins_the_press() {
     // The hold of the revive goes on and the lever stays unused to the end.
     step(&mut app, 200);
     assert!(seen(&app).is_empty() && app.world().get::<Downed>(mate).is_none());
-    let _ = lever;
+    // The ally is up: the next press finds nothing to revive and is a use again (the revive turned the hero to its ally: look back).
+    hold(&mut app, hero, "interact", false);
+    look(&mut app, hero, 0.0);
+    step(&mut app, 2);
+    press(&mut app, hero, "interact");
+    step(&mut app, 2);
+    assert_eq!(seen(&app), [(hero, lever, "lever".to_owned())]);
 }
 
 #[test]
