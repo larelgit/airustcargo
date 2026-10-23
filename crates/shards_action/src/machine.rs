@@ -505,10 +505,34 @@ pub enum Blocker {
         action: String,
         ready_in: f32,
     },
+    /// The action's `cost.charge` takes `need` of a charge the fighter holds `have` of.
     NoCharges {
         charge: String,
         have: u32,
+        /// How many the action takes ([`Cost::charge_count`](crate::Cost::charge_count)).
+        need: u32,
         max: u32,
+    },
+    /// Like `NoCharges`, for a moveset that can refill the charge (an action of it has a `Refill`
+    /// into it): the magazine is empty, `reload` is the input that fills it. Waiting does not help.
+    Dry {
+        charge: String,
+        have: u32,
+        need: u32,
+        max: u32,
+        /// The moveset input of the action that refills it (`reload`); `None` when no input maps to it
+        /// (only `auto_reload` starts it).
+        reload: Option<String>,
+        /// The charge that action draws from, when that holds nothing: a reload would move nothing.
+        spent: Option<String>,
+    },
+    /// An action that only refills charges (`Refill`) would move nothing now: its charge is full
+    /// (`spent` is `None`), or the charge it draws from (`spent`) holds nothing.
+    NothingToRefill {
+        charge: String,
+        have: u32,
+        max: u32,
+        spent: Option<String>,
     },
     /// The moveset lets only some actions start in the motion mode the body is in
     /// ([`MovesetDef::only_in`]), and this is not one of them. Waiting will not do.
@@ -552,7 +576,15 @@ impl Blocker {
             Blocker::Busy { action, phase, phase_left, .. } => format!("busy ({phase} {action} {phase_left:.2}s)"),
             Blocker::Stamina { have, need, .. } => format!("stamina {have:.0}/{need:.0}"),
             Blocker::Cooldown { action, ready_in } => format!("cooldown {action} {ready_in:.2}s"),
-            Blocker::NoCharges { charge, have, max } => format!("no {charge} charges ({have}/{max})"),
+            Blocker::NoCharges { charge, have, need, max } if *need > 1 => format!("needs {need} {charge} charges ({have}/{max})"),
+            Blocker::NoCharges { charge, have, max, .. } => format!("no {charge} charges ({have}/{max})"),
+            Blocker::Dry { charge, have, need, spent: Some(from), .. } => {
+                format!("{charge} {}: no {from} left", short_of(*have, *need))
+            }
+            Blocker::Dry { charge, have, need, reload: Some(input), .. } => format!("{charge} {}: {input}", short_of(*have, *need)),
+            Blocker::Dry { charge, have, need, .. } => format!("{charge} {}", short_of(*have, *need)),
+            Blocker::NothingToRefill { charge, have, max, spent: None } => format!("{charge} full ({have}/{max})"),
+            Blocker::NothingToRefill { charge, spent: Some(from), .. } => format!("no {from} left to refill {charge}"),
             Blocker::Mode { mode, tags, .. } => format!("not while in {}: only actions tagged {}", mode_name(*mode), tags.join(" or ")),
             Blocker::NoLanding { min, max } => format!("no landing spot within {}-{}m", fmt_m(*min), fmt_m(*max)),
             Blocker::OffGround { mode } => format!("in {}; a leap starts from the ground", mode_name(*mode)),
@@ -586,7 +618,21 @@ impl Blocker {
             }
             Blocker::Stamina { have, need, ready_in: None } => format!("not enough stamina: {have:.0}/{need:.0}"),
             Blocker::Cooldown { action, ready_in } => format!("{action} is on cooldown (ready in {ready_in:.2}s)"),
-            Blocker::NoCharges { charge, have, max } => format!("no {charge} charges left ({have}/{max})"),
+            Blocker::NoCharges { charge, have, need, max } if *need > 1 => {
+                format!("needs {need} {charge} charges, you have {have}/{max}")
+            }
+            Blocker::NoCharges { charge, have, max, .. } => format!("no {charge} charges left ({have}/{max})"),
+            Blocker::Dry { charge, have, need, max, spent: Some(from), .. } => {
+                format!("{charge} {} ({have}/{max}) and no {from} left to reload with; find more", short_of(*have, *need))
+            }
+            Blocker::Dry { charge, have, need, max, reload: Some(input), .. } => {
+                format!("{charge} {} ({have}/{max}): {input}", short_of(*have, *need))
+            }
+            Blocker::Dry { charge, have, need, max, .. } => format!("{charge} {} ({have}/{max})", short_of(*have, *need)),
+            Blocker::NothingToRefill { charge, have, max, spent: None } => format!("{charge} is already full ({have}/{max})"),
+            Blocker::NothingToRefill { charge, spent: Some(from), .. } => {
+                format!("no {from} left to refill {charge} with; find more")
+            }
             Blocker::Mode { mode, action, tags } => format!(
                 "{action} cannot start while in {}: only actions tagged {} do",
                 mode_name(*mode),
@@ -635,6 +681,11 @@ fn mode_name(mode: MotionMode) -> &'static str {
 fn fmt_m(v: f32) -> String {
     let s = format!("{v:.2}");
     s.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
+/// `empty` for a charge with none left, else what is short (`short (1 of 2 needed)`).
+fn short_of(have: u32, need: u32) -> String {
+    if have == 0 { "empty".to_owned() } else { format!("short ({have} of {need} needed)") }
 }
 
 /// Ticks until `secs` have passed (0 when they already have).
@@ -723,7 +774,13 @@ pub(crate) fn can_start_toward(v: &FighterView, input: &str, dt: f32, dir: Optio
             known: moveset.inputs.keys().cloned().collect(),
         });
     };
-    let def = v.db.get::<ActionDef>(&action).ok_or_else(|| Blocker::NoAction { action: action.clone() })?;
+    let mut action = action;
+    let mut def = v.db.get::<ActionDef>(&action).ok_or_else(|| Blocker::NoAction { action: action.clone() })?;
+    // An action that cannot pay its charges, in a moveset with an `auto_reload` that would help: the
+    // press starts the reload instead, judged from here on as the reload (its own mode gate, cooldown, cost).
+    if let Some((reload, reload_def)) = auto_reload(v, moveset, &action, def) {
+        (action, def) = (reload, reload_def);
+    }
     // The mode gate: in a mode `only_in` names, only the actions with a listed tag start.
     if let Some(mode) = v.mode
         && !moveset.allows(mode, def)
@@ -748,11 +805,12 @@ pub(crate) fn can_start_toward(v: &FighterView, input: &str, dt: f32, dir: Optio
     if let Some(left) = v.cooldowns.map(|c| c.left(key)).filter(|l| *l > EPS) {
         blockers.push(Blocker::Cooldown { action: key.to_owned(), ready_in: ticks_until(left, dt) as f32 * dt });
     }
-    if let Some(charge) = &def.cost.charge {
-        let (have, max) = v.charges.and_then(|c| c.get(charge)).map_or((0, 0), |c| (c.current, c.max));
-        if have == 0 {
-            blockers.push(Blocker::NoCharges { charge: charge.clone(), have, max });
-        }
+    if let Some(blocker) = charges_short(v, moveset, def) {
+        blockers.push(blocker);
+    }
+    // A reload that would move nothing (the magazine is full, the reserve is empty) does not start.
+    if let Some(blocker) = nothing_to_refill(v, def) {
+        blockers.push(blocker);
     }
     let need = stamina_cost(def, &action, v.rules);
     if let Some(s) = v.stamina {
@@ -781,6 +839,85 @@ pub(crate) fn can_start_toward(v: &FighterView, input: &str, dt: f32, dir: Optio
         Some(blocker) => Err(blocker),
         None => Ok(Start { action, cancel }),
     }
+}
+
+/// The charge `def` takes more of than the fighter holds: `(charge, have, need, max)`. A fighter
+/// without the charge holds none.
+fn short_charge<'d>(v: &FighterView, def: &'d ActionDef) -> Option<(&'d str, u32, u32, u32)> {
+    let charge = def.cost.charge.as_deref()?;
+    let (have, max) = v.charges.and_then(|c| c.get(charge)).map_or((0, 0), |c| (c.current, c.max));
+    let need = def.cost.charge_count.max(1);
+    (have < need).then_some((charge, have, need, max))
+}
+
+/// The reload that starts instead of `def` (the action `action`): the moveset's `auto_reload`, when
+/// `def` is short of a charge and the reload would move something into it (room in the charge, a charge
+/// in the reserve). Without one the press is refused ([`charges_short`]).
+fn auto_reload<'a>(v: &FighterView<'a>, moveset: &MovesetDef, action: &str, def: &ActionDef) -> Option<(String, &'a ActionDef)> {
+    let (charge, ..) = short_charge(v, def)?;
+    let id = moveset.auto_reload.as_deref().filter(|id| *id != action)?;
+    let reload = v.db.get::<ActionDef>(id)?;
+    reload.refills_now(charge, v.charges).then(|| (id.to_owned(), reload))
+}
+
+/// Why `def` cannot pay its charges, if it cannot: `NoCharges`, or `Dry` when the moveset has an action
+/// that refills the charge (the hint says which input, or that the reserve is empty too).
+fn charges_short(v: &FighterView, moveset: &MovesetDef, def: &ActionDef) -> Option<Blocker> {
+    let (charge, have, need, max) = short_charge(v, def)?;
+    let charge = charge.to_owned();
+    let Some((reload, from)) = refill_input(v.db, moveset, &charge) else {
+        return Some(Blocker::NoCharges { charge, have, need, max });
+    };
+    let source_empty = v.charges.and_then(|c| c.get(from)).is_none_or(|c| c.current == 0);
+    Some(Blocker::Dry {
+        charge,
+        have,
+        need,
+        max,
+        reload: reload.map(str::to_owned),
+        spent: source_empty.then(|| from.to_owned()),
+    })
+}
+
+/// The moveset input of an action that refills `charge`, and the charge that action draws from: found in
+/// the moveset's `inputs` (in input order), else in its `auto_reload` (no input then). Reads with `peek`:
+/// the hint is words, not something the simulation's outcome depends on.
+fn refill_input<'a>(db: &'a ContentDb, moveset: &'a MovesetDef, charge: &str) -> Option<(Option<&'a str>, &'a str)> {
+    let draws = |action: &str| db.peek::<ActionDef>(action)?.refills().find(|(c, ..)| *c == charge).map(|(_, from, _)| from);
+    moveset
+        .inputs
+        .iter()
+        .find_map(|(input, action)| Some((Some(input.as_str()), draws(action)?)))
+        .or_else(|| Some((None, draws(moveset.auto_reload.as_deref()?)?)))
+}
+
+/// `NothingToRefill` when `def` is a reload (it has `Refill` effects and nothing else but sounds) and none
+/// of them would move anything now: every target is full, or every source is empty. An action that also
+/// heals, hits or spawns starts whatever its refills do.
+fn nothing_to_refill(v: &FighterView, def: &ActionDef) -> Option<Blocker> {
+    let only_refills = def.hits.is_empty() && def.effects.iter().all(|e| matches!(e.effect, Effect::Refill { .. } | Effect::Sound(_)));
+    if !only_refills {
+        return None;
+    }
+    let mut refills = def.refills().peekable();
+    refills.peek()?;
+    let charges = v.charges;
+    let (mut first, mut moves) = (None, false);
+    for (charge, from, _) in refills {
+        let (target, source) = (charges.and_then(|c| c.get(charge)), charges.and_then(|c| c.get(from)));
+        let (room, left) = (target.is_some_and(|t| t.current < t.max), source.is_some_and(|s| s.current > 0));
+        moves |= room && left;
+        if first.is_none() {
+            first = Some((charge, from, target.map_or((0, 0), |t| (t.current, t.max)), room));
+        }
+    }
+    let (charge, from, (have, max), room) = first?;
+    (!moves).then(|| Blocker::NothingToRefill {
+        charge: charge.to_owned(),
+        have,
+        max,
+        spent: room.then(|| from.to_owned()),
+    })
 }
 
 /// What starting `def` (the action `id`) costs a fighter under `rules`: `cost.stamina` times the rules'
@@ -898,6 +1035,22 @@ pub struct Healed {
     pub entity: Entity,
     pub amount: f32,
     pub hp: f32,
+}
+
+/// Charges moved from one charge into another by a `Refill` effect (a reload): `taken` of `from` went
+/// into `charge`. Host only; not a net event (the charges themselves are replicated).
+#[derive(Event, Reflect, Clone, Debug, PartialEq)]
+pub struct Refilled {
+    pub entity: Entity,
+    pub charge: String,
+    pub from: String,
+    /// How many moved (at least 1).
+    pub taken: u32,
+    /// What `charge` holds now, and its maximum.
+    pub current: u32,
+    pub max: u32,
+    /// What `from` holds now.
+    pub left: u32,
 }
 
 // --- the machine ---------------------------------------------------------------------
@@ -1590,9 +1743,16 @@ fn pay_branch(
     if key != from.cooldown_key(from_id) && cooldowns.left(key) > EPS {
         return false;
     }
-    let charge = into.cost.charge.as_ref().filter(|c| from.cost.charge.as_ref() != Some(*c));
+    // The charges the turn takes on top of what the start took: all of `into`'s, or the difference when it
+    // takes the same charge.
+    let (charge, count) = match &into.cost.charge {
+        Some(c) if from.cost.charge.as_ref() == Some(c) => (Some(c), into.cost.charge_count.saturating_sub(from.cost.charge_count)),
+        Some(c) => (Some(c), into.cost.charge_count),
+        None => (None, 0),
+    };
     if let Some(name) = charge
-        && !charges.as_deref().and_then(|c| c.get(name)).is_some_and(|c| c.current > 0)
+        && count > 0
+        && !charges.as_deref().and_then(|c| c.get(name)).is_some_and(|c| c.current >= count)
     {
         return false;
     }
@@ -1614,9 +1774,10 @@ fn pay_branch(
         s.spend(extra);
     }
     if let Some(name) = charge
+        && count > 0
         && let Some(c) = charges.and_then(|c| c.get_mut(name))
     {
-        c.current = c.current.saturating_sub(1);
+        c.current = c.current.saturating_sub(count);
     }
     cooldowns.start(key, into.cost.cooldown);
     true
@@ -1659,7 +1820,7 @@ fn pay(f: &mut FighterDataItem, action: &str, def: &ActionDef, stamina: f32) {
     if let Some(charge) = &def.cost.charge
         && let Some(c) = f.charges.as_mut().and_then(|c| c.get_mut(charge))
     {
-        c.current = c.current.saturating_sub(1);
+        c.current = c.current.saturating_sub(def.cost.charge_count.max(1));
     }
 }
 
@@ -2194,6 +2355,9 @@ pub fn apply_effect(world: &mut World, entity: Entity, action: &str, effect: &Ef
                 }
             }
         }
+        Effect::Refill { charge, from, per_round } => {
+            refill(world, entity, charge, from, *per_round);
+        }
         Effect::Revive { health, grace } => {
             // The victim of the pair this action holds, if it is still down.
             let victim = world
@@ -2205,6 +2369,32 @@ pub fn apply_effect(world: &mut World, entity: Entity, action: &str, effect: &Ef
             }
         }
     }
+}
+
+/// Moves charges from the charge `from` of `entity` into its charge `charge`: up to the room `charge`
+/// has and what `from` holds, one when `per_round`. Returns how many moved (0: a charge the body lacks,
+/// no room, nothing to take) and says so with [`Refilled`] when it is above 0. The `Refill` effect
+/// calls it at its moment; a game may call it directly.
+pub fn refill(world: &mut World, entity: Entity, charge: &str, from: &str, per_round: bool) -> u32 {
+    if charge == from {
+        return 0;
+    }
+    let Some(mut charges) = world.get_mut::<Charges>(entity) else { return 0 };
+    let (Some(into), Some(source)) = (charges.get(charge), charges.get(from)) else { return 0 };
+    let room = into.max.saturating_sub(into.current);
+    let taken = room.min(source.current).min(if per_round { 1 } else { u32::MAX });
+    if taken == 0 {
+        return 0;
+    }
+    if let Some(c) = charges.get_mut(charge) {
+        c.current += taken;
+    }
+    let Some(source) = charges.get_mut(from) else { return 0 };
+    source.current -= taken;
+    let left = source.current;
+    let (current, max) = charges.get(charge).map_or((0, 0), |c| (c.current, c.max));
+    world.trigger(Refilled { entity, charge: charge.to_owned(), from: from.to_owned(), taken, current, max, left });
+    taken
 }
 
 /// Puts `entity` into `action` now, cutting the running one short (staggers, deaths,

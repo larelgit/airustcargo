@@ -85,7 +85,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 218 definitions in 65 files
+cargo shards content check                 # ok: 225 definitions in 68 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -108,7 +108,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 218 definitions in 65 files
+# ok: 225 definitions in 68 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -598,8 +598,8 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 218 definitions in 65 files
-  action  70
+content: 225 definitions in 68 files
+  action  74
   animset  1
   attack_plan  3
   audio  1
@@ -622,7 +622,7 @@ content: 218 definitions in 65 files
   lock_on  1
   locomotion  3
   look  15
-  moveset  13
+  moveset  15
   music  1
   nav  1
   net  0
@@ -630,7 +630,7 @@ content: 218 definitions in 65 files
   perception  3
   perf  2
   poi  4
-  prefab  14
+  prefab  16
   prop  1
   region  3
   room  0
@@ -1398,7 +1398,7 @@ turns into `into` on the first tick with `after <= t <= until` (`until` defaults
 first hit window, else the end of the first phase). The turn keeps the run: the same `instance`, the same clock `t`, the same
 hit ledger (a target the first action already hit is not hit again by the same hit group), and the same input. It costs what
 `into` costs beyond the start: the difference of the two actions' stamina under `into`'s `stamina_mode`, one of `into`'s
-charges when it uses another charge than the action it turns from, and `into`'s cooldown, whose slot must be ready unless it
+charges (`cost.charge_count`) when it uses another charge than the action it turns from, or the difference of the counts when it uses the same one, and `into`'s cooldown, whose slot must be ready unless it
 is the slot of the action it turns from (this run started that one). When something is not there, nothing is paid and it is
 tried again on the next tick, until `until` (no event: the client cannot see a refusal, see prediction below). It triggers
 `ActionEnded { end: Branched }`, then `ActionStarted { action: into }`; the effects and the telegraph `into` has before the
@@ -1915,6 +1915,107 @@ time is the downed pose's length, read from content. (8) The timers end within h
 drifted past `EPS` and lasted a tick longer). (9) `lethal` and `resume_stagger` are public. (10) The test
 `loaded_zero_health_body_stays_dead` is in the sandbox's `saves.rs`, where the save files are. (11) The encounter module
 registers the `downed` out rule itself (G9), and its tests' stand-in became a game's own rule, `benched`.
+
+### Weapons: slots, switching, ammo, reload (F4)
+
+A weapon is a moveset; ammo is the body's named consumables, `Charges`. A magazine and its reserve are two charges (`pistol` and
+`pistol.reserve`), a shot costs one of the first, a reload moves rounds from the second into the first when it ends, and a body
+carries its weapons in an `Arsenal`. Nothing here is a new kind of pool: the flask of `cost: (charge: "flask")` is the same machine,
+and every existing action and moveset behaves, serializes and hashes as before (each new field is left out at its default).
+
+```ron
+// content/combat/pistol.action.ron
+{
+    "pistol_shot": (net_id: 40, phases: [("fire", 0.1), ("recover", 0.25)], cost: (charge: "pistol"),
+        cancels: [(span: Phase("recover"), into: [Input("weapon")])]),     // a weapon switch may cut the recovery
+    "pistol_reload": (net_id: 41, phases: [("draw", 0.8), ("seat", 0.3)],
+        effects: [(at: 0.8, effect: Refill(charge: "pistol", from: "pistol.reserve"))],
+        cancels: [(span: Phase("draw"), into: [Input("weapon")])]),
+    "shotgun_shot": (net_id: 42, phases: [("fire", 0.3)], cost: (charge: "shells", charge_count: 2)),   // two shells a shot
+}
+// content/combat/pistol.moveset.ron
+{
+    "pistol": (
+        inputs: {"light": "pistol_shot", "reload": "pistol_reload"},
+        auto_reload: "pistol_reload",                    // optional: the press that would fire it empty reloads instead
+        weapon: (
+            name: "@weapon-pistol",                      // what a HUD shows (`you.weapon`): a Fluent id or plain text
+            magazine: "pistol", reserve: "pistol.reserve",
+            charges: {"pistol": (max: 6), "pistol.reserve": (max: 36, start: 12)},   // what a body gets with the weapon
+        ),
+    ),
+}
+// content/combat/hero.prefab.ron: a body that starts armed
+"Arsenal": (slots: [(slot: 1, moveset: "pistol"), (slot: 2, moveset: "shotgun")], current: Some(1), pending: None, bare: None),
+```
+
+**Costs.** `Cost::charge_count` (default 1, left out of the file and of the hash at 1) is how many of `cost.charge` a run takes; all
+of them must be there to start (a shotgun's two shells), and a charge turn (`charge: (after, into)`) pays the difference when both
+actions take the same charge. A press that cannot pay is refused by the one start rule (`can_start`: the machine, the tools and a
+client's prediction all ask it), and the refusal says the way out: with a moveset input whose action has a `Refill` into the
+charge, `pistol empty: reload` (the journal line of a press that ran out of buffer, `e5 light rejected: pistol empty: reload`; the
+tool's answer is `pistol empty (0/6): reload`), and with nothing to reload from, `pistol empty: no pistol.reserve left`. A charge with
+no refill action in the moveset keeps the old text: `no flask charges left (0/3)`. None of these waits: `ready_in` is `None`.
+
+**Refill.** `Effect::Refill(charge, from, per_round)` moves, at its moment, up to the room `charge` has (`max - current`) and what `from`
+holds, and says it (`Refilled`, the journal line `e5 refilled pistol +6 (6/6), 6 pistol.reserve left`). A run cut before the moment
+moves nothing: that is all a "cut reload gives nothing" is (a stagger, a death, a switch through a cancel window). `per_round: true`
+moves one: a shell-by-shell reload is one `Refill` at each moment, or one in a `hold` loop (an effect inside a loop fires on every
+pass), and a run cut after the second keeps two. A reload (an action with `Refill` effects and nothing else but sounds) whose `Refill`s would all move nothing (the magazine is full, the
+reserve is empty) does not start: `reload` answers `pistol is already full (6/6)` or `no pistol.reserve left to refill pistol with; find more`.
+
+**Auto reload.** `MovesetDef::auto_reload: "action"` makes the press that cannot pay start that action instead, in the same
+decision (`can_start` answers with the reload, so the tool says `ok: pistol_reload` and a prediction follows), when the reload would
+move something; otherwise the press is refused as above. The reload is judged as an action of its own (mode gate, cooldown, cost).
+
+**The arsenal.** `Arsenal { slots: [(slot, moveset)], current, pending, bare }` is a reflected component on an `AiId` body, in
+snapshots and the replay hash: up to nine weapons by slot number (1 to 9, ascending, one weapon each), the slot in the hands, a switch
+asked for that waits, and the moveset the body had before its first weapon (`bare`, put back when it holds none). A weapon in the hands is
+the body's `Fighter::moveset`, set the way any moveset change is, so the animation bridge's `@moveset` equip rules (draw and holster
+pictures, "Props and clip families (D1.1)") see a switch like another. `ActionSystems::Weapons` (first in `SimSet::Act`, before the
+context and the machine) gives a body whose arsenal changed the charges its weapons bring (`weapon.charges`, those it lacks, sorted by
+name; `start` defaults to full) and the moveset of the weapon in its hands, and takes the `weapon.*` presses of every body with an
+arsenal in `AiId` order.
+
+- **Inputs** (`shards_core::input_names`): `weapon.slot.N` (like `technique.N`), `weapon.next`, `weapon.prev`; `reload` is an
+  ordinary moveset input. The standard input map binds the number keys to `technique.N` and the mouse wheel to `lock_switch`, and
+  this slice leaves it alone: a game with weapons binds `weapon.slot.N` to keys and, when it has no lock-on, the wheel to
+  `weapon.next`/`weapon.prev` in its own `input_map` content. A press of `weapon.next` while a switch waits goes on from the switch asked for.
+- **A switch waits** until nothing runs, or the running action has a cancel window open (read as a press reads it) that names the input
+  `weapon` (`Input("weapon")`, or `Any`); the action ends the window or the switch waits for its end. Then it cuts the action
+  (`ActionEnded` `Interrupted`, with the cooldown share a cut windup keeps), sets the moveset, drops the presses that waited for the old
+  weapon and says `e5 switches to blaster (slot 2, from pistol)` (`WeaponSwitched`). A dead or downed body switches nothing. A
+  slot nobody holds is refused like any input (`e5 weapon.slot.7 rejected: no weapon in slot 7; you carry: 1 pistol, 2 blaster`).
+- **The calls a pickup makes**, on the host (they refuse or do nothing on a co-op client): `grant_weapon(world, body, slot, moveset)`
+  (`Added`, `Replaced(old)`, `AlreadyHeld`: the same weapon again changes nothing and the pickup gives ammo instead; a body that held
+  nothing takes it into its hands, a weapon that replaces the one in the hands replaces it in the hands; the body gets the charges the weapon
+  brings), `take_weapon` (the lowest slot left comes up, the last weapon restores `bare` and removes the arsenal; the rounds stay),
+  `select_slot` (asks for a switch), `add_to_charge(world, body, name, n)` (returns how many it took: a full reserve takes 0, so the pickup stays on the floor)
+  and `refill` (what the effect calls). `weapon_in_hands` reads the weapon, magazine and reserve for a picture.
+
+**For agents.** The player tools `reload` (presses `reload`, answers like an attack) and `weapon slot=N|next|prev` (`ok: switches to 2
+(blaster)`, or `ok: switches to 2 (blaster) in 0.20s, when a cancel window of pistol_shot opens`, or `... when pistol_shot ends`, or the
+refusal with what the body carries); the dev tools `give_weapon moveset=ID [slot=N] [id=eN]`, `take_weapon slot=N [id=eN]` and
+`give_ammo charge=NAME n=N [id=eN]` (what a pickup does, for scenarios); the body's line `weapon pistol 6/6 (24) · slots 1 pistol,
+2 blaster · switching to 2`; the journal lines above. For a HUD, the UI sources `you.ammo` (the magazine as a bar), `you.reserve` (the
+reserve's rounds, a number) and `you.weapon` (`weapon.name`, a Fluent `@id` resolved in the language played, else the moveset's id),
+without a value for a body that holds no weapon. The engine rule `action.arsenal_sane` (slots ascending in 1 to 9, `current` and
+`pending` among them, no charge above its maximum on a body with an arsenal).
+
+**Content checks** (file and field named): `cost.charge_count` below 1 or without a `cost.charge`; a `Refill` with an empty name or the
+same charge on both sides; `auto_reload` naming no action or an action with no `Refill`; and for a moveset with a `weapon` block, a
+`weapon.magazine`/`reserve`, a `cost.charge` or a `Refill` of one of its input actions on a charge that neither `weapon.charges` nor a
+prefab's `Charges` declares (`inputs.light -> action `shoot` costs the charge `pistol`, which this weapon does not have: declare it in
+weapon.charges, or in a prefab's Charges (...)`), a `start` above `max`, a `max` of 0, and two weapons that declare one shared charge with
+different maxima; for a prefab, an `Arsenal` whose slots are outside 1 to 9, repeated or name no moveset, or whose `current` or `pending` names an empty slot.
+A moveset with no `weapon` block is not checked (a game may give its charges in code).
+
+**The sandbox's test weapons** (`content/combat/weapons.*.ron`, neutral numbers): `test_sidearm` (six rounds, 24 in the reserve at most,
+12 to begin with, reloaded by hand in 1.1 s, the rounds moving at 0.8 s) and `test_blaster` (three rounds, nine in the reserve, reloading
+itself), the prefab `armed` that carries both in an arsenal, and `weapons.scenario`: the player is given both (`give_weapon`), fires
+the sidearm dry and reads the refusal, reloads, switches to the blaster and back, lets the blaster reload itself, and cuts a reload
+with a switch (nothing loaded), then is put back as it was. Not built: saving an arsenal with a character (the `vitals` section keeps the
+charges) and a draw time of its own (a game can start an action from `WeaponSwitched`).
 
 ### Body parts (R1)
 
@@ -4263,6 +4364,7 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `action.downed_sane` | every `Downed` body (B5) is not dead too, has no health left (`Health.current` is 0) and a bleed-out that is none or a finite time `>= 0`. `go_down` puts all three in, a revive or a death takes the mark off with them, so a violation names a writer that laid a body down by hand (a downed body with health would stand and take no hits for ever) |
 | `action.grace_sane` | every `Grace` (the hits ignored after a survive or a revive, B5) holds a finite `left >= 0`. `grant_grace` takes only finite times above 0 and the countdown floors at 0, so a NaN or an infinity names a writer that put it there by hand: it would shield its body for ever |
 | `action.parts_sane` | every body part (R1) belongs to a body that is in the world and lists it in `SpawnedParts` (a body that went this tick takes its parts on the next), a broken part is off, and a `PartHealth` is finite with `0 <= current <= max` and `max > 0`. The engine spawns, places, breaks and despawns parts so that this holds; a part that breaks it was written by hand |
+| `action.arsenal_sane` | every `Arsenal` (the weapons a body carries, F4) holds its weapons by slot, ascending and without repeats, in 1 to 9; its `current` and `pending` name one of them; and every charge of a body with an arsenal holds between 0 and its maximum. `grant_weapon`, `take_weapon`, `select_slot` and the switch keep all of it; a violation names a writer that put the state there by hand (`set`, a prefab, a game system) |
 | `action.lock_on_valid` | with a `lock_on` definition, no body's `Intent.target` names an entity that no longer exists or is dead: the lock-on check (`LockSystems::Check`, after `CoreSystems::ClearPresses`) lets go of such a lock at the end of every tick, after the deaths and the engine's despawns of that tick, so a violation names a lock set later in the tick or a body taken away after the check (a game system in `SimSet::Cleanup` after the check: it belongs before it). Without a definition locks are not checked and the rule passes (C6) |
 | `action.pairs_match` | a `Pairing` (a paired action's hold, B3) belongs to the run its fighter is running (the same action and `instance`), its victim (when it still exists) carries `Paired` by that fighter, and every `Paired` whose holder still exists is named by the holder's `Pairing`. The two marks are put in and taken out together (`release_pair`), so one alone is a pair a system broke behind the engine's back |
 | `action.memory_sane` | every `Memory` (what a fighter remembers for a while, B3) is not empty, holds finite times above 0 and keys sorted and unique, and every `GuardArm`'s press is not after the current tick |
@@ -4292,7 +4394,7 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-35 rules, checked after every tick
+36 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
@@ -4315,6 +4417,7 @@ $ shards assert list
   action.downed_sane  engine rule  armed
   action.grace_sane  engine rule  armed
   action.parts_sane  engine rule  armed
+  action.arsenal_sane  engine rule  armed
   action.lock_on_valid  engine rule  armed
   npc.state_known  engine rule  armed
   npc.strike_spacing  engine rule  armed
@@ -5384,7 +5487,7 @@ app.add_ui_action("give_up", |world, press| {          // press: widget, screen,
 ```
 
 Engine sources (`shards`): `you.health`, `you.stamina`, `you.poise` (a bar), `you.charges:<charge>`, `you.cooldown:<action>`,
-`you.heading` (the compass), `you.nearest:<category>` (how far the nearest landmark of a category is, m; no value without one), `allies`, `input.bindings:<context>.<action>` (the inputs of an action in the input map, as the `controls`
+`you.ammo` (the magazine of the weapon in the hands, a bar), `you.reserve` (the rounds in its reserve, a number), `you.weapon` (its `weapon.name`, a Fluent `@id` resolved in the language played; none of the three for a body that holds no weapon, F4), `you.heading` (the compass), `you.nearest:<category>` (how far the nearest landmark of a category is, m; no value without one), `allies`, `input.bindings:<context>.<action>` (the inputs of an action in the input map, as the `controls`
 settings make it at that moment; `Binding` reads it). The audio module adds `subtitles` and `subtitles:<lines>` (the lines of voices playing; see "Audio", "Subtitles"). "You" is the body this machine controls (`LocalPlayer`), otherwise the body
 the agent plays (`AiPlayer`). An unknown source writes one warning to the journal, and the widget stays empty.
 
@@ -6948,6 +7051,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 | `characters/colossus.prefab.ron`, `combat/colossus.parts.ron` | body parts (R1): the prefab `colossus` (6 m tall, 1200 health, no brain, the locomotion `colossus`) and its five parts (two legs that double poise, a hand with 60 health that passes half a hit on, a horn out of reach, a core that starts closed and triples a hit), all five lock points (R3) and the body none; only `parts.scenario` spawns it |
 | `combat/camera.camera.ron` | the camera's numbers (C7): the code defaults, and the fit (R4) that keeps a high lock point on the colossus in frame with the player |
 | `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters; for the action timeline (B2a), `spar_heavy` (charges into `spar_heavy_full` when held 0.25 s; a light or a dodge pressed in its windup waits for its recovery), `spar_lunge` and `spar_lunge_far` (one `lunge` cooldown slot; the lunge turns at 360°/s within 45°, at most 0.4 m closer for the turning and not toward a target behind a wall, recovers 0.6 s longer on a whiff and keeps 40% of its cooldown when cut in its windup), `spar_channel` (`while_held`), `spar_roll_keep` (`face: Keep`), and the moveset `timeline` (a single slot by priority), which `timeline.scenario` lends to the player; for body state (B2b), `spar_ward` (a barrier of half the caster's health for 8 s), `spar_frost` and `spar_zap` (jabs that carry a full bar of chill or jolt), the moveset `bodystate`, and in `combat/sparring.status.ron` the statuses `spar_chill` (a 2 s proc gate, no cooling and a restart while active, a refused proc empties the bar) and `spar_jolt` (an instant status outside the cap), which `body_state.scenario` lends to the player |
+| `combat/weapons.action.ron`, `combat/weapons.moveset.ron`, `combat/weapons.prefab.ron` | the neutral test weapons of F4 (net ids 4410 to 4413): the movesets `test_sidearm` (six rounds, a reserve of 24 at most and 12 to begin with, `arm_sidearm_shot` takes a round, `arm_sidearm_reload` moves the rounds at 0.8 s, both let a weapon switch through a cancel window) and `test_blaster` (three rounds, nine in the reserve, `auto_reload`), and the prefab `armed` that carries both in an `Arsenal`; `weapons.scenario` gives them to the player (`give_weapon`) and plays them through the player's tools |
 | `combat/skeleton.action.ron`, `combat/fighters.moveset.ron`, `combat/tuning.combat_tuning.ron` | the skeleton's claw, the movesets, the input buffer |
 | `npc/monsters.behavior.ron`, `monsters.perception.ron`, `monsters.director.ron`, `monsters.attack_plan.ron` | how the monsters think: the `skeleton` and `warden` state machines (with a `calm` state that the scenarios do not let the monster leave), sight, the `default` director (two tokens for one player) and the `boss` director (the guard strikes on its own), the guard's attack plans |
 | `region/wilds.*.ron` | the wilds: tiles, socket rules, points of interest, the region, a fallback map, navmesh settings |
