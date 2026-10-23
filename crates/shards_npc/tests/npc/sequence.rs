@@ -531,3 +531,25 @@ fn the_observe_section_the_npc_fragment_and_npc_state_say_where_a_scene_is() {
     ok(&mut app, "sequence_stop", serde_json::json!({"all": true}));
     assert!(!playing(app.world()));
 }
+
+#[test]
+fn a_run_an_observer_stops_while_it_is_being_stepped_does_nothing_more() {
+    let mut app = scene_app();
+    // The game reacts to the first signal by stopping the run (a normal thing to do with a signal).
+    app.world_mut().add_observer(|e: On<SequenceSignal>, mut commands: Commands| {
+        let sequence = e.sequence;
+        if e.name == "hello" {
+            commands.queue(move |world: &mut World| {
+                stop_sequence(world, sequence);
+            });
+        }
+    });
+    play_sequence(app.world_mut(), "tell", &[]).unwrap();
+    step(&mut app, 5);
+    let names: Vec<&str> = log(&app).signals.iter().map(|(_, s)| s.name.as_str()).collect();
+    assert_eq!(names, ["hello"], "the second signal was never given: the run was over");
+    let [(_, ended)] = &log(&app).ended[..] else { panic!("{:?}", log(&app).ended) };
+    assert!(ended.skipped && ended.why.is_none(), "{ended:?}");
+    assert_eq!(log(&app).steps.len(), 1, "and no step began after it");
+    assert!(app.world().resource::<Sequences>().runs.is_empty());
+}

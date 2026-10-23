@@ -178,6 +178,8 @@ pub fn stop_sequence(world: &mut World, id: SequenceId) -> bool {
 }
 
 pub(crate) fn plugin(app: &mut App) {
+    // Known to the world from the start, so the rule's query over the holds builds before the first one.
+    app.world_mut().register_component::<SequenceHold>();
     app.register_type::<Sequences>()
         .register_type::<Run>()
         .register_type::<Facing>()

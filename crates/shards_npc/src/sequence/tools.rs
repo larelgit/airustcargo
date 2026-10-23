@@ -350,7 +350,8 @@ pub fn sequence_holds(world: &World) -> Option<String> {
             }
         }
     }
-    with_query::<(&AiId, &SequenceHold), (), _>(world, |query| {
+    // With no query to build (nothing ever carried a hold) there is nothing to judge here, and what the runs found stands.
+    let _ = with_query::<(&AiId, &SequenceHold), (), _>(world, |query| {
         for (id, hold) in query.iter(world) {
             let run = sequences.and_then(|s| s.get(SequenceId(hold.run)));
             match run {
@@ -367,6 +368,6 @@ pub fn sequence_holds(world: &World) -> Option<String> {
                 Some(_) => {}
             }
         }
-    })?;
+    });
     whole.or_else(|| bad.report())
 }

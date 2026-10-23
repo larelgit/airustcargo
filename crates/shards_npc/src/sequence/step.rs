@@ -27,6 +27,8 @@ enum Outcome {
     Done,
     /// It cannot go on: the reason.
     Failed(String),
+    /// Something that heard one of its events ended it (`stop_sequence`) while it ran: nothing more is done for it.
+    Gone,
 }
 
 /// A step's state this tick.
@@ -49,6 +51,7 @@ pub(crate) fn run_sequences(world: &mut World) {
             }
             Outcome::Done => end(world, run, false, None),
             Outcome::Failed(why) => end(world, run, true, Some(why)),
+            Outcome::Gone => {}
         }
     }
 }
@@ -83,6 +86,13 @@ fn advance(world: &mut World, run: &mut Run) -> Outcome {
         if !run.begun {
             if let Err(why) = begin(world, run, &def, step) {
                 return Outcome::Failed(why);
+            }
+            // `begin` triggers events, and whatever hears them may stop this run (a signal is something to react to):
+            // it is over then and its bodies are free, so nothing more is forced, said or written for it. (An observer's commands
+            // wait for a flush: it is done here, so a `stop_sequence` they hold lands before the next step.)
+            world.flush();
+            if world.get_resource::<Sequences>().and_then(|s| s.index(run.id)).is_none() {
+                return Outcome::Gone;
             }
             run.begun = true;
             run.age = 0;
