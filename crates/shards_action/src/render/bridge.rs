@@ -88,6 +88,7 @@ use crate::predict::PredictedAction;
 use crate::render::modes::{self, AnimSystems, ModeFrame, ModeState};
 use crate::render::props::{self, skeleton, MountEnv, MountFrame, MountState, PropOf, RunView};
 use crate::render::turn::{yaw_between, Turn};
+use crate::view_model::ShowsBody;
 
 /// A seeked clip stops this far (seconds) before its end: Bevy's player wraps a time at the
 /// duration back to zero, which would show the first pose in place of the last.
@@ -912,6 +913,24 @@ pub struct Driven {
     fighter: Option<&'static Fighter>,
     dead: Has<Dead>,
     swaps: Option<&'static PropSwaps>,
+    /// The body whose actions this rig shows instead of its own (a view model): everything above is read from it.
+    follows: Option<&'static ShowsBody>,
+}
+
+/// What [`drive`] reads of a body a rig follows ([`ShowsBody`]): the same things [`Driven`] reads of a body itself.
+#[derive(QueryData)]
+pub struct Followed {
+    state: Option<&'static ActionState>,
+    shown: Option<&'static PredictedAction>,
+    predicted: Has<Predicted>,
+    id: Option<&'static AiId>,
+    motion: Option<&'static MotionState>,
+    loco: Option<&'static LocomotionInput>,
+    transform: Option<&'static Transform>,
+    modifiers: Option<&'static MoveModifiers>,
+    fighter: Option<&'static Fighter>,
+    dead: Has<Dead>,
+    swaps: Option<&'static PropSwaps>,
 }
 
 /// `Update`: the clip each character shows, applied to its player. See the module docs.
@@ -927,6 +946,7 @@ pub fn drive(
     clips: Res<Assets<AnimationClip>>,
     // Disjoint from the props' transforms (`mounting`): a character is never a prop.
     mut animated: Query<Driven, Without<PropOf>>,
+    followed: Query<Followed, (Without<ShowsBody>, Without<PropOf>)>,
     mut players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
     mut mounting: MountEnv,
     mut bones: CueBones,
@@ -957,8 +977,17 @@ pub fn drive(
         fighter,
         dead,
         swaps,
+        follows,
     } in &mut animated
     {
+        // A rig that shows another body (a view model) is driven by that body's state, not its own.
+        let (state, shown, predicted, id, motion, loco, transform, modifiers, fighter, dead, swaps) = match follows {
+            Some(ShowsBody(body)) => {
+                let Ok(f) = followed.get(*body) else { continue };
+                (f.state, f.shown, f.predicted, f.id, f.motion, f.loco, f.transform, f.modifiers, f.fighter, f.dead, f.swaps)
+            }
+            None => (state, shown, predicted, id, motion, loco, transform, modifiers, fighter, dead, swaps),
+        };
         let (Some(set), Some(built)) = (db.get::<AnimSet>(&set_ref.animset), graphs.built(&set_ref.animset)) else {
             continue;
         };

@@ -6,9 +6,14 @@
 // The picture: a bloom, so the camera draws in HDR and light brighter than its threshold glows. The
 // threshold is well above white, so nothing lit by the sun glows, only effects that say an
 // `intensity` (the hit's sparks); the tone mapping stays the camera's own.
+// The first person (F1b): the sandbox plays through the orbit camera (`mode` stays third person);
+// `camera_mode mode=first` (or `mode: FirstPerson` here) looks through the body's eye instead, with the
+// engine's defaults for the ease on steps and the landing dip, and draws the view model `arms`
+// (`anim/arms.view_model.ron`) for any body whose moveset names none.
 {
     "default": (
         framing: (fit: Some(())),
         picture: (bloom: Some((intensity: 0.3, threshold: 1.5, composite: Additive))),
+        first_person: (view_model: Some("arms")),
     ),
 }
