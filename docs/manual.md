@@ -599,7 +599,7 @@ checks them without applying anything), `content_reload` (reread and apply, like
 ```text
 $ shards act content_list
 content: 242 definitions in 76 files
-  action  74
+  action  78
   animset  1
   attack_plan  3
   audio  1
@@ -623,7 +623,7 @@ content: 242 definitions in 76 files
   lock_on  1
   locomotion  5
   look  15
-  moveset  15
+  moveset  19
   music  1
   nav  1
   net  0
