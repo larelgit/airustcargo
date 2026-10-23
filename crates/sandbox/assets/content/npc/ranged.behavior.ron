@@ -1,0 +1,26 @@
+// Behaviours of the F11 scene (`characters/ranged.prefab.ron`): a bystander that hides from gunfire, a
+// gunner that keeps its distance, a body that only stands, and a turret's brain (the turret module aims).
+{
+    // Hears a shot or sees an armed body attack (`notice: Threats`): runs where the threat cannot see it
+    // and stays; with no such place within 14 m it cowers, and looks again every 2 s.
+    "ranged_bystander": (
+        initial: "idle",
+        states: {
+            "idle": (transitions: [(to: "hide", when: ["threat_known"])]),
+            "hide": (kind: "hide", params: {"within": 14.0}, transitions: [(to: "cower", when: ["no_hiding_spot"])]),
+            "cower": (kind: "cower", transitions: [(to: "hide", when: [("in_state", {"secs": 2.0})])]),
+        },
+    ),
+    // Fights what it sees by its plan (`ranged.attack_plan.ron`): it keeps its band and fires bursts.
+    "ranged_gunner": (
+        initial: "idle",
+        states: {
+            "idle": (transitions: [(to: "fight", when: ["target_known"])]),
+            "fight": (kind: "attack", transitions: [(to: "idle", when: ["target_lost"])]),
+        },
+    ),
+    // Stands where it is put.
+    "ranged_post": (initial: "stand", states: {"stand": (kind: "idle")}),
+    // A turret's brain: it perceives; its `Turret` aims and fires.
+    "ranged_turret": (initial: "watch", states: {"watch": (kind: "idle")}),
+}

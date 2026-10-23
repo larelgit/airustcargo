@@ -1,0 +1,10 @@
+// What the F11 scene's NPCs notice (`ranged.behavior.ron`).
+{
+    // A non-combatant: it notices only threats (a shot heard, an armed body seen attacking), all round,
+    // and remembers them 30 s.
+    "ranged_bystander": (sight_range: 25.0, fov_deg: 360.0, hearing: 1.0, memory: 30.0, notice: Threats),
+    // The gunner sees 30 m all round, not through walls.
+    "ranged_gunner": (sight_range: 30.0, fov_deg: 360.0, near: 3.0, hearing: 1.0, memory: 6.0),
+    // The turret sees 30 m all round; it forgets in a second.
+    "ranged_turret": (sight_range: 30.0, fov_deg: 360.0, memory: 1.0),
+}

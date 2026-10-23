@@ -19,7 +19,7 @@
 
 use ai_core::{AiId, AiIndex, DetRng, SimRng, SimTick};
 use bevy::prelude::*;
-use shards_action::{can_start, ActionDef, MovesetDef};
+use shards_action::{can_start, fire_effects, ActionDef, MovesetDef};
 use shards_motion::PhysicsWorld;
 use shards_content::ContentDb;
 use shards_core::flat;
@@ -28,6 +28,7 @@ use shards_rules::ActiveRules;
 use crate::brain::{clamp_to_leash, salt};
 use crate::def::{AttackPlanDef, DirectorDef, SequenceBan};
 use crate::director::{order, target_of, wait_in_role, Fighting, Grant, Targets};
+use crate::ranged::keep_band;
 use crate::schedule::{inputs, living_players, plan_notes, FightCx, Inputs, LiveZones, Players, Refusal};
 use crate::strike::pool;
 
@@ -128,6 +129,9 @@ pub struct Resolved {
     pub forbid_after: Vec<String>,
     pub forbid_while: Vec<String>,
     pub solo_forbid_while: Vec<String>,
+    /// Its action fires a shot (a `Fire` effect, F11): in a plan that keeps a range, its window
+    /// defaults to the band and the line of fire judges it.
+    pub fires: bool,
 }
 
 /// A cooldown at or below this (s) is none: [`NpcPlan::tick`] lets it go, and
@@ -145,12 +149,24 @@ pub fn resolve(plan: &AttackPlanDef, db: &ContentDb, moveset: &str, target_radiu
         tags.push(name.clone());
         tags.sort();
         tags.dedup();
-        let reach = def.reach() * plan.cover + target_radius;
+        // A shot reaches as far as its ray (a hit window's reach is none of its): in a plan that
+        // keeps a range, the band; else the shortest of its rays.
+        let shot = fire_effects(def).map(|f| f.range).reduce(f32::min);
+        let band = plan.keep_range.filter(|_| shot.is_some());
+        let reach = match (band, shot) {
+            (Some((_, max)), _) => max,
+            (None, Some(range)) => range,
+            _ => def.reach() * plan.cover + target_radius,
+        };
+        let min = o.map_or(0.0, |o| o.min);
         Resolved {
             input: input.to_owned(),
             action: action.to_owned(),
             weight: o.map_or(1.0, |o| o.weight),
-            min: o.map_or(0.0, |o| o.min),
+            min: match band {
+                Some((low, _)) if min <= 0.0 => low,
+                _ => min,
+            },
             max: o.and_then(|o| o.max).unwrap_or(reach),
             cooldown: o.map_or(0.0, |o| o.cooldown),
             cost: o.map_or(1.0, |o| o.cost),
@@ -161,6 +177,7 @@ pub fn resolve(plan: &AttackPlanDef, db: &ContentDb, moveset: &str, target_radiu
             forbid_after: o.map(|o| o.forbid_after.clone()).unwrap_or_default(),
             forbid_while: o.map(|o| o.forbid_while.clone()).unwrap_or_default(),
             solo_forbid_while: o.map(|o| o.solo_forbid_while.clone()).unwrap_or_default(),
+            fires: shot.is_some(),
             tags,
             name,
         }
@@ -396,6 +413,12 @@ pub(crate) fn refusal(o: &Resolved, i: &Inputs) -> Option<Refusal> {
     if let Some(blocker) = machine {
         return Some(Refusal::Machine { reason: blocker.reason() });
     }
+    // A shot of a plan that keeps a range: only along a clear line (F11; `NpcFireLine`, traced this tick).
+    if o.fires
+        && let Some(block) = i.fire_line
+    {
+        return Some(Refusal::LineOfFire { by: block.ally() });
+    }
     if let Some(left) = over_budget(o, i) {
         return Some(Refusal::Budget { left, cost: o.cost });
     }
@@ -471,8 +494,16 @@ pub(crate) fn plan_attacks(
             f.drive.waiting = false;
             f.drive.face = Some(target);
             if grant.in_flight() {
-                // Pressed or swinging: stand and face it.
-                f.drive.goal = None;
+                // Pressed or swinging: stand and face it. A plan that keeps a range (F11) holds its band as
+                // it fires, its role's moves included (an action with `move_speed` lets the body walk).
+                let band = f.npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p)).and_then(|p| p.keep_range.map(|b| (b, p.wait.clone())));
+                match band {
+                    Some((band, wait)) => {
+                        let home = f.home.map(|h| (h.pos.unwrap_or(f.transform.translation), h.leash));
+                        keep_band(&mut f, band, wait.as_ref(), target, home, dt);
+                    }
+                    None => f.drive.goal = None,
+                }
                 continue;
             }
             (grant, target, radius, distance)
@@ -503,8 +534,9 @@ pub(crate) fn plan_attacks(
                 can_start(&inputs.view, &o.input, dt).is_ok() && fits(o, &inputs) && sensed
             });
             let nearest = approach_window(&options, ok);
-            (options, chosen, nearest, decides, ready, plan_def.wait.clone())
+            (options, chosen, nearest, decides, ready, (plan_def.wait.clone(), plan_def.keep_range))
         };
+        let (wait, band) = wait;
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
         let here = f.transform.translation;
         let home = f.home.map(|h| (h.pos.unwrap_or(here), h.leash));
@@ -515,7 +547,11 @@ pub(crate) fn plan_attacks(
             // waiting role waits in it, on decision ticks and between them, as it does while it rests
             // (a boss chases beyond its melee range and strafes inside it); any other closes in to the
             // nearest window it could choose. Only the choice and the press wait for a decision tick.
-            if let Some(role) = &wait {
+            // A plan that keeps a range keeps its band (F11).
+            if let Some(band) = band {
+                let home = f.home.map(|h| (h.pos.unwrap_or(here), h.leash));
+                keep_band(&mut f, band, wait.as_ref(), target, home, dt);
+            } else if let Some(role) = &wait {
                 let home = f.home.map(|h| (h.pos.unwrap_or(here), h.leash));
                 wait_in_role(&mut f, role, target, home, dt);
             } else if nearest.is_finite() && distance > nearest {
@@ -543,7 +579,14 @@ pub(crate) fn plan_attacks(
             f.drive.goal = Some(leash(target + away * (o.min + 0.3)));
             f.drive.within = 0.2;
         } else {
-            f.drive.goal = None;
+            match band {
+                // In its window, a ranged NPC holds its band (its role's moves included) as it fires.
+                Some(band) => {
+                    let home = f.home.map(|h| (h.pos.unwrap_or(here), h.leash));
+                    keep_band(&mut f, band, wait.as_ref(), target, home, dt);
+                }
+                None => f.drive.goal = None,
+            }
             if ready && decides {
                 grant.pressed = Some(tick.0);
                 grant.instance = f.state.started;
@@ -585,6 +628,7 @@ mod tests {
             forbid_after: Vec::new(),
             forbid_while: Vec::new(),
             solo_forbid_while: Vec::new(),
+            fires: false,
         }
     }
 
@@ -851,6 +895,7 @@ mod tests {
         spacing: Option<(AiId, u64)>,
         open: Option<NpcOptions>,
         moment: Moment,
+        fire_line: Option<crate::ranged::LineBlock>,
     }
 
     /// What the rules said of a case: `refusal`, `feasible`, the old conjunction, whether `fits`
@@ -883,6 +928,7 @@ mod tests {
                 spacing: None,
                 open: None,
                 moment: Moment { angle: 0.0, players: 1, ..Default::default() },
+                fire_line: None,
             }
         }
 
@@ -902,6 +948,7 @@ mod tests {
                 spacing: self.spacing,
                 open: self.open.as_ref(),
                 moment: self.moment.clone(),
+                fire_line: self.fire_line,
             };
             let tags: Vec<Vec<String>> = self.overlapping.iter().map(|(_, tags)| tags.clone()).collect();
             let mut old = false;
@@ -933,11 +980,14 @@ mod tests {
     }
 
     /// The rules in the order `refusal` asks them.
-    const RULES: [&str; 14] =
-        ["weight", "cooldown", "angle", "closed", "players", "live", "live_solo", "repeats", "forbid_after", "banned", "machine", "budget", "overlap", "spacing"];
+    const RULES: [&str; 15] = [
+        "weight", "cooldown", "angle", "closed", "players", "live", "live_solo", "repeats", "forbid_after", "banned", "machine", "line_of_fire", "budget",
+        "overlap", "spacing",
+    ];
 
-    /// Which of [`RULES`] the old conjunction ([`feasible_old`]) had: the others are the scheduler's gates.
-    const OLD: [bool; 14] = [true, true, false, true, false, false, false, false, false, true, true, true, true, true];
+    /// Which of [`RULES`] the old conjunction ([`feasible_old`]) had: the others are the scheduler's gates
+    /// and the line of fire (F11).
+    const OLD: [bool; 15] = [true, true, false, true, false, false, false, false, false, true, true, false, true, true, true];
 
     fn rule(r: &Refusal) -> &'static str {
         match r {
@@ -952,6 +1002,7 @@ mod tests {
             Refusal::ForbidAfter { .. } => "forbid_after",
             Refusal::Banned { .. } => "banned",
             Refusal::Machine { .. } => "machine",
+            Refusal::LineOfFire { .. } => "line_of_fire",
             Refusal::Budget { .. } => "budget",
             Refusal::Overlap { .. } => "overlap",
             Refusal::Spacing { .. } => "spacing",
@@ -962,7 +1013,7 @@ mod tests {
     type Closer = (fn(&mut Case), Refusal);
 
     /// For each rule of [`RULES`], in order, its [`Closer`].
-    fn closers() -> [Closer; 14] {
+    fn closers() -> [Closer; 15] {
         [
             (|c| c.o.weight = 0.0, Refusal::Weight),
             (|c| c.plan.cooldowns = vec![PlanCooldown { name: "a".into(), left: 0.5 }], Refusal::Cooldown { left: 0.5 }),
@@ -1025,6 +1076,13 @@ mod tests {
                 Refusal::Banned { after: "slam".into(), ban: 0 },
             ),
             (|c| c.dead = true, Refusal::Machine { reason: "dead".into() }),
+            (
+                |c| {
+                    c.o.fires = true;
+                    c.fire_line = Some(crate::ranged::LineBlock::Ally(AiId(9)));
+                },
+                Refusal::LineOfFire { by: Some(AiId(9)) },
+            ),
             (|c| c.budget = Some(0.5), Refusal::Budget { left: 0.5, cost: 1.0 }),
             (
                 |c| {
@@ -1172,7 +1230,7 @@ mod tests {
         let tag_pool = ["light", "heavy", "zone", "move", "a", "b"];
         let tags = |rng: &mut DetRng| -> Vec<String> { tag_pool.iter().filter(|_| rng.chance(0.35)).map(|t| (*t).to_owned()).collect() };
         let conds = ["enraged", "!calm", "phase_2"];
-        let mut refused = [0u32; 14];
+        let mut refused = [0u32; RULES.len()];
         let mut passed = 0u32;
         for n in 0..20_000 {
             let name = *rng.pick(&names).unwrap();
@@ -1242,6 +1300,7 @@ mod tests {
                 spacing: rng.chance(0.4).then(|| (AiId(9), 1 + u64::from(rng.below(40)))),
                 open: rng.chance(0.5).then(|| NpcOptions { allowed: names.iter().filter(|_| rng.chance(0.5)).map(|n| (*n).to_owned()).collect() }),
                 moment: Moment { angle: 0.0, players: 1, ..Default::default() },
+                fire_line: None,
             };
             let judged = case.judge(&db, &scope);
             assert_eq!(judged.refusal.is_none(), judged.old, "case {n}: {case:?} gives {:?}", judged.refusal);

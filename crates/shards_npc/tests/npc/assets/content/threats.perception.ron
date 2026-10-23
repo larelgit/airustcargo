@@ -1,0 +1,4 @@
+// F11's tests: a non-combatant that notices threats only, all round, 20 m.
+{
+    "threats": (sight_range: 20.0, fov_deg: 360.0, hearing: 1.0, memory: 10.0, notice: Threats),
+}

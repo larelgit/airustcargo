@@ -1,0 +1,6 @@
+// The sandbox's turret (F11, content kind `turret`): it turns 60 degrees a second, up to 60 degrees
+// either way of where it faces and from 20 down to 30 up, and fires `light` at what it sees within 30 m
+// once its look is within 2 degrees of it.
+{
+    "sentry": (turn_rate_deg: 60.0, yaw_deg: 60.0, pitch_deg: (-20.0, 30.0), input: "light", on_target_deg: 2.0, range: 30.0),
+}

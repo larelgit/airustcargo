@@ -179,7 +179,7 @@ pub fn region_nav(world: &World) -> Option<&NavRegion> {
 }
 
 /// The navmesh of the tightest body class that serves a body of `params`.
-fn serving<'w>(world: &'w World, params: &CharacterParams) -> Option<&'w NavRegion> {
+pub(crate) fn serving<'w>(world: &'w World, params: &CharacterParams) -> Option<&'w NavRegion> {
     region_nav(world)?.serving(params)
 }
 

@@ -1,0 +1,23 @@
+// Ranged NPCs and a turret (F11), for `ranged.moveset.ron`, `scenarios/npc_ranged.scenario` and
+// `tests/sandbox/npc_ranged.rs`. Neutral numbers. Net ids 4490 to 4499 are this file's.
+{
+    // A burst of three shots, one press: the plan, the token and the line of fire judge the burst. A
+    // cone of 1.5 degrees standing, four times that at a run (`aim_error_moving`), twice as wide from
+    // 30 m on (`aim_error_far`); the body walks on as it fires (`move_speed`).
+    "ranged_burst": (
+        net_id: 4490,
+        phases: [("aim", 0.25), ("fire", 0.3), ("recover", 0.6)],
+        move_speed: Some(1.0),
+        effects: [
+            (at: 0.25, effect: Fire((range: 40, damage: 4, noise: 30, aim_error_deg: 1.5, aim_error_moving: 4.0, aim_error_far: [(10, 1.0), (30, 2.0)]))),
+            (at: 0.4, effect: Fire((range: 40, damage: 4, noise: 30, aim_error_deg: 1.5, aim_error_moving: 4.0, aim_error_far: [(10, 1.0), (30, 2.0)]))),
+            (at: 0.55, effect: Fire((range: 40, damage: 4, noise: 30, aim_error_deg: 1.5, aim_error_moving: 4.0, aim_error_far: [(10, 1.0), (30, 2.0)]))),
+        ],
+    ),
+    // The turret's shot: along its look (a body that looks aims itself: no aim error).
+    "turret_shot": (
+        net_id: 4491,
+        phases: [("fire", 0.05), ("recover", 0.45)],
+        effects: [(at: 0.0, effect: Fire((range: 30, damage: 3, noise: 30)))],
+    ),
+}

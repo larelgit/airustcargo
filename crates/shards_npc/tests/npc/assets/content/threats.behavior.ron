@@ -1,0 +1,11 @@
+// F11's tests: hides from what it holds for a threat, cowers when there is nowhere to hide.
+{
+    "hider": (
+        initial: "idle",
+        states: {
+            "idle": (transitions: [(to: "hide", when: ["threat_known"])]),
+            "hide": (kind: "hide", params: {"within": 12.0}, transitions: [(to: "cower", when: ["no_hiding_spot"])]),
+            "cower": (kind: "cower"),
+        },
+    ),
+}

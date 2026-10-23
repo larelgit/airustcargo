@@ -21,9 +21,11 @@
 //! 9. `ForbidAfter`: the newest past attack carries one of its `forbid_after` tags;
 //! 10. `Banned`: a plan ban (`SequenceBan`) after the last attacks;
 //! 11. `Machine`: the action machine would start it neither now nor by waiting;
-//! 12. `Budget`: it does not fit in what is left of the target's collision budget;
-//! 13. `Overlap`: it may not overlap with an attack in flight on the target;
-//! 14. `Spacing`: another NPC of its director began a strike less than `min_spacing` ago.
+//! 12. `LineOfFire`: it fires a shot, its plan keeps a range, and an ally or a wall stands between
+//!     the NPC and its target (F11, [`NpcFireLine`](crate::ranged::NpcFireLine), traced this tick);
+//! 13. `Budget`: it does not fit in what is left of the target's collision budget;
+//! 14. `Overlap`: it may not overlap with an attack in flight on the target;
+//! 15. `Spacing`: another NPC of its director began a strike less than `min_spacing` ago.
 //!
 //! Every rule is a pure read of the world as the system sees it, so the order changes nothing
 //! but the answer's name. The action machine is asked where the rules before this module asked
@@ -52,6 +54,7 @@ use crate::brain::{salt, Npc};
 use crate::def::{AttackPlanDef, DirectorDef};
 use crate::director::{npc_rules, npc_site, npc_view, target_of, FightingReadOnly, FightingReadOnlyItem, Grant, Targets};
 use crate::planner::{choice_pool, in_window, pick_weighted, refusal, resolve, InFlight, NpcOptions, NpcPlan, Resolved};
+use crate::ranged::LineBlock;
 use crate::strike::{chain_note, note_list, pool, spacing_ticks, strike_pressed, waiting, Note};
 
 /// Why an attack option may not be chosen now, distance aside: the first rule that refuses it,
@@ -86,6 +89,9 @@ pub enum Refusal {
     Banned { after: String, ban: usize },
     /// The action machine would start it neither now nor by waiting (`Blocker::reason`).
     Machine { reason: String },
+    /// It fires a shot, its plan keeps a range, and something stands in the line of fire to the
+    /// target (F11): the ally `by`, or a wall (`by` is `None`).
+    LineOfFire { by: Option<AiId> },
     /// It costs `cost`, more than the `left` of the target's collision budget.
     Budget { left: f32, cost: f32 },
     /// It may not overlap (the director's `allowed`) with an attack in flight on the target: the
@@ -231,6 +237,9 @@ pub(crate) struct Inputs<'a> {
     pub open: Option<&'a NpcOptions>,
     /// The target's angle, the living players and the live tags.
     pub moment: Moment,
+    /// What stands in the line of fire to the target, as traced this tick (only an NPC whose plan
+    /// keeps a range traces one, [`NpcFireLine`](crate::ranged::NpcFireLine)); `None`: clear.
+    pub fire_line: Option<LineBlock>,
 }
 
 /// The one builder of [`Inputs`], from the read-only view of a fighting NPC, its target as the
@@ -262,7 +271,8 @@ pub(crate) fn inputs<'a>(
         _ => BTreeSet::new(),
     };
     let moment = Moment { angle: target_angle(*f.transform.forward(), f.transform.translation, there), players: cx.players, live };
-    Some(Inputs { plan_def, plan: f.plan, view, dt: cx.dt, budget, overlapping, director, spacing, open: f.options, moment })
+    let fire_line = f.line.and_then(|l| l.blocking(id));
+    Some(Inputs { plan_def, plan: f.plan, view, dt: cx.dt, budget, overlapping, director, spacing, open: f.options, moment, fire_line })
 }
 
 /// The strike notes the planner judges by: every NPC's noted strike and pending press
@@ -411,6 +421,10 @@ pub struct ScheduleReport {
     pub options: Vec<OptionReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pick: Option<PickReport>,
+    /// A plan that keeps a range (F11): its line of fire to the target as traced this tick, `clear`
+    /// or what stands in the way (`e9 in the way`, `a wall in the way`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_of_fire: Option<String>,
 }
 
 fn round2(v: f32) -> f32 {
@@ -434,6 +448,8 @@ fn refusal_text(r: &Refusal, spacing: u64) -> String {
         Refusal::ForbidAfter { tag, after } => format!("forbid_after: {tag}, after {after}"),
         Refusal::Banned { after, ban } => format!("banned: after {after} (bans[{ban}])"),
         Refusal::Machine { reason } => format!("machine: {reason}"),
+        Refusal::LineOfFire { by: Some(by) } => format!("no line of fire: {by} in the way"),
+        Refusal::LineOfFire { by: None } => "no line of fire: a wall in the way".to_owned(),
         Refusal::Budget { left, cost } => format!("budget: {left:.1} left of the target's, costs {cost:.1}"),
         Refusal::Overlap { by, with } => format!("overlap: with {by}'s [{}]", with.join(", ")),
         Refusal::Spacing { by, ticks } => {
@@ -565,6 +581,10 @@ pub fn schedule_report(p: &ScheduleParams, entity: Entity, what_if: &WhatIf, dev
     // The planner's draw on the next tick: only for a grant holder that has not pressed, on a
     // decision tick. The draw is a pure function of (seed, tick, id, salt), so it is reproduced
     // without changing any state.
+    let line_of_fire = plan_def.keep_range.map(|_| match f.line {
+        Some(line) if line.target == Some(target_id) => line.blocked.map_or_else(|| "clear".to_owned(), |b| b.text()),
+        _ => "not traced to this target yet (the next tick traces it)".to_owned(),
+    });
     let pick = if dev && decides { holds.filter(|g| !g.in_flight()).and_then(|g| pick_of(&options, plan_def, &ok, g, &draw, total, (p.seed.0, tick, id))) } else { None };
     Ok(ScheduleReport {
         id: id.to_string(),
@@ -581,6 +601,7 @@ pub fn schedule_report(p: &ScheduleParams, entity: Entity, what_if: &WhatIf, dev
         chooses,
         options: reports,
         pick,
+        line_of_fire,
     })
 }
 
