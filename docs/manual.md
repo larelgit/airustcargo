@@ -1280,6 +1280,7 @@ headless run, a replay and a window agree. `None` (the default) is a character t
   | `face` | `Move` | `Move`: the body turns toward where it walks, its lock-on, its aim point or its action, at its turn rates, as always. `Look`: its yaw is the look's yaw **every tick, with no turn rate**, whatever it walks, climbs or runs (an action included) |
   | `pitch_limits_deg` | `(-89, 89)` | `(lowest, highest)`, within -90..90; readers of the look hold the pitch between them (`look_dir`, the `look` tool) |
   | `eye_height` | 0.9 of `height` | metres from the feet to the eye (the lock-on's own `eye_height` fraction); checked: above 0 and at most `height` |
+  | `use_range` | 2 | metres from the eye at which a thing can be used by looking at it (F5, "Use by looking"), unless the thing says its own `use_range`; checked: above 0 |
 
   A `Look` body without an `Intent.look` turns as a `Move` one does. **Movement input is relative to the look, not to a camera**: the keyboard and the stick
   (the input map, `ControlSystems::Read`) turn their axes by the yaw of the local player's look when its body faces its look, by the third-person camera's yaw
