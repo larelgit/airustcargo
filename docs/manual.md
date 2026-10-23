@@ -1234,7 +1234,7 @@ headless run, a replay and a window agree. `None` (the default) is a character t
 
 ### The first-person camera and the view model (F1b)
 
-A first-person game looks through the eye of the body it plays. `FirstPersonCamera` (a component on the game's camera entity, in a window or `--offscreen`; the maths is window-free in `shards_motion::camera::first_person`) puts the camera there, turns it with the mouse, hides the body's own model, and draws a **view model** (arms and a weapon) over the world with a second camera. The camera is only a view, as the orbit camera is: the eye and the ray (`eye_of`, `look_dir`, `AIM`) come from `Intent` and the body, so a headless run, a replay and a window play the same game. It changes nothing a reference replay holds: all 21 recorded before it verify as they were.
+A first-person game looks through the eye of the body it plays. `FirstPersonCamera` (a component on the game's camera entity, in a window or `--offscreen`; the maths is window-free in `shards_motion::camera::first_person`) puts the camera there, turns it with the mouse, hides the body's own model, and draws a **view model** (arms and a weapon) over the world with a second camera. The camera is only a view, as the orbit camera is: the eye and the ray (`eye_of`, `look_dir`, `AIM`) come from `Intent` and the body, so a headless run, a replay and a window play the same game. It changes nothing a reference replay holds: every reference replay recorded before it verifies as it was.
 
 ![the sandbox in the first person, drawn offscreen: the arms and the weapon of the view model over the arena, the HUD over them, and no body of the player below the eye (only its shadow)](media/first-person-view-model.png)
 
