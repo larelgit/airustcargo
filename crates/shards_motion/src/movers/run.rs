@@ -70,8 +70,9 @@ pub(crate) fn advance(def: &MoverDef, s: &mut MoverState, dt: f32, notes: &mut V
                 left -= s.wait;
                 s.wait = 0.0;
             }
-            let from = s.from;
             let Some(next) = next_key(def, s) else { return };
+            // After `next_key`: a cycle resting at its last key leaves from key 0 (the same pose).
+            let from = s.from;
             s.to = next;
             s.t = 0.0;
             s.up = next > s.from;
@@ -239,6 +240,24 @@ mod tests {
         assert!((s.from, s.to) == (0, 1), "{s:?}");
         let turned = pose(&def, &s).rotation;
         assert!(turned.angle_between(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)) < 1e-3, "{turned}");
+    }
+
+    #[test]
+    fn a_cycle_that_rests_at_its_last_key_leaves_from_key_0() {
+        let spin = |y: f32| MoverKey { turn: Vec3::Y * y, ..default() };
+        let def = MoverDef {
+            keys: vec![spin(0.0), spin(180.0), spin(360.0)],
+            speed: None,
+            turn_speed: Some(90.0),
+            wait: 0.5,
+            looping: MoverLoop::Cycle,
+            blocked: default(),
+        };
+        let mut s = MoverState::default();
+        // 2 s a half turn, half a second's rest at each key: at the last key by 5 s, gone by 5.5 s.
+        let notes = run(&def, &mut s, 60);
+        let starts: Vec<Note> = notes.into_iter().filter(|n| matches!(n, Note::Started { .. })).collect();
+        assert_eq!(starts, [Note::Started { from: 0, to: 1 }, Note::Started { from: 1, to: 2 }, Note::Started { from: 0, to: 1 }]);
     }
 
     #[test]

@@ -274,7 +274,7 @@ pub fn mover_go(world: &mut World, mover: Entity, key: u32) -> Result<MoverInfo,
         return Err(format!("{} moves by `{def_id}`, which content does not have (content kind `mover`)", ai_core::label(world, mover)));
     };
     if key >= def.len() {
-        return Err(format!("no key {key}: `{def_id}` has keys 0..={}", def.len() - 1));
+        return Err(format!("no key {key}: `{def_id}` has keys 0..={}", def.len().saturating_sub(1)));
     }
     let mut state = match world.get::<MoverState>(mover) {
         Some(state) => state.clone(),

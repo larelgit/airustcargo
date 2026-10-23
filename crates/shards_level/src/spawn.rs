@@ -295,6 +295,10 @@ fn spawn_node(
 /// character spawned there (a prefab with a controller) is not welded on: it stands on the mover and
 /// is carried as any body is.
 fn link_movers(world: &mut World, level: &LevelAsset, plans: &[NodePlan], spawned: &[(usize, Entity)]) {
+    // Most levels have no mover: they do not walk every node's parents.
+    if plans.iter().all(|p| p.mover.is_none()) {
+        return;
+    }
     for &(position, entity) in spawned {
         let Some(outer) = mover_above(level, plans, position) else { continue };
         let Some(&(_, mover)) = spawned.iter().find(|(p, _)| *p == outer) else { continue };
