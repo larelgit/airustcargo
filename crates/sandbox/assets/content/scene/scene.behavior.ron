@@ -1,0 +1,11 @@
+// The guide's own behaviour: it follows what it sees, at a walk, to 3 m. A sequence holds it (its brain is
+// dormant) and it goes on from here when the scene ends.
+{
+    "scene_guide": (
+        initial: "idle",
+        states: {
+            "idle": (transitions: [(to: "follow", when: ["target_known"])]),
+            "follow": (kind: "chase", params: {"speed": 0.5, "within": 3.0}, transitions: [(to: "idle", when: ["target_lost"])]),
+        },
+    ),
+}

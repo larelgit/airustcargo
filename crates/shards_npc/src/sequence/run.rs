@@ -42,7 +42,7 @@ impl Sequences {
 
     /// The run `body` acts in, if it acts in one.
     pub fn holding(&self, body: AiId) -> Option<&Run> {
-        self.runs.iter().find(|r| r.actors.iter().any(|a| *a == body))
+        self.runs.iter().find(|r| r.actors.contains(&body))
     }
 }
 

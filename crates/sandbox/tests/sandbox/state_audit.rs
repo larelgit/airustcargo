@@ -161,6 +161,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("shards_motion::ai::MotionAi", "the settings of motion queries (fall height, clearance range)"),
     ("shards_motion::camera::lock::LockHooks", "the lock-on hooks the action module installs at build time"),
     ("shards_motion::camera::", "the camera: the picture"),
+    ("shards_motion::control_lock::LockStash", "what the control lock took from an Intent for the tick under way, given back before the tick ends: empty between ticks"),
     ("shards_motion::input::", "the local controls and key bindings: gameplay reads Intent, which the replay records"),
     ("shards_motion::overlay::PhysicsOverlay", "the physics overlay: the picture"),
     ("shards_motion::perception::RoutePlanner", "the route planner the NPC module installs at build time"),

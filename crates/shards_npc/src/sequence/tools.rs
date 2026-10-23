@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use ai_core::prelude::*;
-use ai_core::{with_query, AiIndex, Offenders, Snapshot};
+use ai_core::{with_query, AiId, AiIndex, Offenders, Snapshot};
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -45,18 +45,37 @@ pub(super) fn register(app: &mut App) {
 }
 
 /// Plays a sequence: binds each of its roles to a body and runs it. Name the roles as `role.NAME=eN`
-/// (one for each role of the definition), or as `roles` in a JSON object. The bodies some step acts on must
-/// be NPCs: their brains are dormant until it ends. `sequences` lists the definitions and the runs.
+/// (one for each role of the definition), or as `roles` in a JSON object; a body is its id, or its name when
+/// only one body has it (`role.guide=Guide`). The bodies some step acts on must be NPCs: their brains are
+/// dormant until it ends. `sequences` lists the definitions and the runs.
 #[derive(Deserialize, JsonSchema)]
 pub struct PlayArgs {
     /// The `sequence` definition, e.g. "greeting".
     pub id: String,
     /// Role name to body: `{"guard": "e7"}`.
     #[serde(default)]
-    pub roles: BTreeMap<String, Id>,
+    pub roles: BTreeMap<String, String>,
     /// `role.NAME=eN` for each role, e.g. `role.guard=e7`.
     #[serde(flatten)]
     pub rest: BTreeMap<String, Value>,
+}
+
+/// The body a tool call names: an id (`e7`, `7`), else the name only one body with an id has (any case).
+fn body_of(world: &mut World, text: &str) -> Result<Entity, String> {
+    let text = text.trim();
+    if let Some(id) = AiId::parse(text) {
+        return Id(id).entity(world);
+    }
+    let mut named: Vec<(AiId, Entity)> = Vec::new();
+    if let Some(mut q) = world.try_query::<(Entity, &AiId, &Name)>() {
+        named = q.iter(world).filter(|(_, _, n)| n.as_str().eq_ignore_ascii_case(text)).map(|(e, id, _)| (*id, e)).collect();
+    }
+    named.sort();
+    match named[..] {
+        [(_, entity)] => Ok(entity),
+        [] => Err(format!("no body with the id or the name `{text}`")),
+        _ => Err(format!("{} bodies are named `{text}`: {}; name one by id", named.len(), named.iter().map(|(id, _)| id.to_string()).collect::<Vec<_>>().join(", "))),
+    }
 }
 
 fn sequence_play(In(call): In<Call<PlayArgs>>, world: &mut World) -> ToolResult {
@@ -65,16 +84,23 @@ fn sequence_play(In(call): In<Call<PlayArgs>>, world: &mut World) -> ToolResult 
         let Some(role) = key.strip_prefix("role.") else {
             return Err(format!("unknown argument `{key}`: sequence_play takes `id=` and `role.NAME=eN` for each role of the sequence"));
         };
-        let body: Id = serde_json::from_value(value.clone()).map_err(|_| format!("`{key}` is a body like e7, not {value}"))?;
+        let body = match value {
+            Value::String(text) => text,
+            Value::Number(n) => n.to_string(),
+            other => return Err(format!("`{key}` is a body like e7 (or its name), not {other}")),
+        };
         roles.insert(role.to_owned(), body);
     }
     let mut bound: Vec<(String, Entity)> = Vec::new();
     for (role, body) in &roles {
-        bound.push((role.clone(), body.entity(world)?));
+        bound.push((role.clone(), body_of(world, body).map_err(|e| format!("role `{role}`: {e}"))?));
     }
     let named: Vec<(&str, Entity)> = bound.iter().map(|(r, e)| (r.as_str(), *e)).collect();
     let run = play_sequence(world, &id, &named)?;
-    let held: Vec<String> = roles.iter().map(|(r, b)| format!("{r}={b}")).collect();
+    let held: Vec<String> = bound
+        .iter()
+        .map(|(r, e)| format!("{r}={}", world.get::<AiId>(*e).map_or_else(String::new, ToString::to_string)))
+        .collect();
     let steps = world.resource::<ContentDb>().peek::<SequenceDef>(&id).map_or(0, |d| d.steps.len());
     Ok(format!("ok: sequence {run} ({id}) plays, {steps} steps: {}", held.join(" ")))
 }
@@ -246,7 +272,7 @@ pub(super) fn runs_hash(world: &World) -> Option<u64> {
         eat(&[u8::from(run.begun)]);
         eat(&run.age.to_le_bytes());
         eat(&run.left.to_le_bytes());
-        eat(&run.instance.map_or(u32::MAX, |i| i).to_le_bytes());
+        eat(&run.instance.unwrap_or(u32::MAX).to_le_bytes());
         if let Some(p) = run.point {
             for f in [p.x, p.y, p.z] {
                 eat(&f.to_bits().to_le_bytes());

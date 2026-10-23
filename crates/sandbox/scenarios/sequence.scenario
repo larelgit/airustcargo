@@ -1,0 +1,119 @@
+# Scenes that keep the player's camera, and NPC sequences (F12; the manual's "Scenes that keep the player's camera
+# (F12)"): the test room `scene` (`content/scene/`, `assets/levels/scene.gltf`) laid on the canyon floor, in the strip north of the
+# goal's rock and east of the movers' room (its origin at x 122, z -11). The player is held, looking only: movement and actions locked, the look
+# kept within 35 degrees of the marker (`lock_controls`). The guide, a body that follows what it sees, is held by
+# the sequence `scene_intro`: its brain is dormant while it walks to the marker beside the player, turns to face
+# them, nods, says a line with a subtitle, waits as long as the line and signals; then the hold goes and its
+# brain goes on from where it was (it follows the player). The game lifts the lock; here the scenario does.
+#
+# The guide's id depends on what was spawned before it, so it is called by its name (`role.guide=Guide`).
+
+seed 42
+
+# --- the arena as the game spawns it, whatever was played in it before: everyone stands down
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god on=false
+act? sequence_stop all=true
+act? unlock_controls id=e5 all=true
+act? level_despawn id=scene
+step 60
+act heal id=e5
+
+# --- the room, on the canyon floor; the guide stands 14 m east of the player, who looks north. Nothing steps
+# between here and the scene's start: the guide's brain has not chosen anything yet (it is held from its first tick).
+act spawn_level id=scene x=122 y=-10 z=-11
+expect result contains "spawned level `scene`"
+expect result contains "1 markers"
+act teleport id=e5 x=122 z=-11 y=-9.7
+act look yaw=0
+expect result contains "ok: looking N"
+
+# --- 1. the game holds the player, looking only: within 35 degrees of the marker 3 m east (yaw -90); then the scene
+act lock_controls id=e5 reason=scene movement=true actions=true at=125,-8.5,-11 deg=35
+expect result contains "controls locked (scene): movement, actions, look within 35° of (125.0, -8.5, -11.0)"
+mark
+act sequence_play id=scene_intro role.guide=Guide role.visitor=e5
+expect result contains "(scene_intro) plays, 6 steps"
+act? sequence_play id=scene_intro role.guide=Guide role.visitor=e5
+expect result contains "is already in sequence"
+
+# --- 2. what the lock does: the look is held in the cone, the tools say why they do nothing
+step 2
+expect journal "(scene_intro) starts: guide=e"
+expect journal "(scene_intro) 1/6: e"
+expect journal "walks to `scene_stand`"
+observe
+expect result contains "CONTROL looking only, look within 35° of (125.0, -8.5, -11.0) (scene)"
+expect result contains "SEQUENCE "
+expect result contains "scene_intro step 1/6"
+expect result contains "in sequence "
+# north is 90 degrees off the cone's middle (east): the look lands on its edge (35 degrees from it), and stays there
+expect result contains "yaw -55."
+act look yaw=-80
+step 1
+observe
+expect result contains "yaw -80.0°"
+act look yaw=90
+step 1
+observe
+expect result contains "yaw -125."
+act? move dir=E meters=3
+expect result contains "your movement is locked (scene)"
+act? light_attack
+expect result contains "your actions are locked (scene)"
+act? jump
+expect result contains "your movement is locked (scene)"
+act? lock_controls id=e5 reason=other
+expect result contains "nothing to lock"
+
+# --- 3. the guide walks to the marker, 11 m at a walk, and turns to the player
+step 900 --until "journal:turns to the visitor"
+expect stopped "turns to the visitor"
+# its brain chose nothing meanwhile: it saw the player all the way and never took up following
+expect !journal "idle → follow"
+act nearby radius=4
+expect result contains "Guide"
+
+# --- 4. it nods (it comes from the east, so it faces the player already and the turn takes no time), says its
+# line (the subtitle is the journal's, and the audio tool's), waits as long as it, signals; the scene is over
+expect journal "plays `scene_nod`"
+step 300 --until "journal:says `scene_line`"
+expect stopped "says `scene_line`"
+step 4
+expect journal "subtitle: Guide: The way is clear."
+act audio
+expect result contains "scene_line"
+expect result contains "The way is clear."
+
+# --- 5. the scene is over; the guide is its own again
+step 300 --until "journal:(scene_intro) ended"
+expect stopped "(scene_intro) ended"
+expect journal "signals `scene_over`"
+expect !journal "abandoned"
+expect !journal "idle → follow"
+act sequences
+expect result contains "0 playing"
+# the game lifts the lock when the scene ends
+act unlock_controls id=e5 reason=scene
+expect result contains "controls unlocked (scene)"
+act move dir=W meters=1
+expect result contains "ok"
+step 30
+# the brain takes up where it was: the guide sees the player and follows (journal "idle → follow")
+expect journal "idle → follow"
+
+# --- the room goes with the guide; the player goes back to the arena
+act level_despawn id=scene
+expect result contains "ok: level taken away: scene"
+act stop
+act teleport id=e5 x=0 z=0 y=0
+act look clear=true
+act heal id=e5
+step 30

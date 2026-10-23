@@ -40,6 +40,11 @@
 //!   elsewhere), path following, the leash around [`Home`], avoidance between bodies
 //!   (sampled reciprocal velocity obstacles, numbers in content: [`AvoidanceDef`]). Dormant
 //!   NPCs (the world module's active zones) do nothing.
+//! - **Sequences** ([`sequence`], F12): scripted scenes as content (`*.sequence.ron`: `MoveTo`, `Face`, `Play`, `Sound`, `Wait`,
+//!   `WaitFor`, `Signal`, each on a role's NPC), played by [`play_sequence`] and stopped by [`stop_sequence`]. A run holds
+//!   the NPCs that act in it ([`SequenceHold`]): their brains are dormant, the run writes their `NpcDrive`, and when it ends
+//!   they go on from where they were. State in [`Sequences`] (snapshots, replay check); tools `sequence_play`,
+//!   `sequence_stop`, `sequences`.
 //!
 //! ```ron
 //! // content/npc/grunt.behavior.ron
@@ -73,7 +78,7 @@
 //!
 //! ```text
 //! NpcSystems::Sense     who is active (NpcActivity), perception: sight, hearing, memory, focus
-//! NpcSystems::Decide    each NPC: one transition at most, its state hook → NpcDrive; its decision timer and the plan options its conditions open
+//! NpcSystems::Decide    each NPC: one transition at most, its state hook → NpcDrive; its decision timer and the plan options its conditions open; then the sequences' steps (a held NPC is theirs)
 //! NpcSystems::Direct    tokens: started attacks remembered, finished ones back, grants; waiting roles
 //! NpcSystems::Plan      combo continuations at the start of a recovery, then token holders: choose an attack, close in, press it (budget, combinations)
 //! NpcSystems::Navigate  routes (NavPaths), following, leash → the velocity the route asks for

@@ -126,7 +126,7 @@ fn a_scene_walks_turns_plays_says_waits_and_signals_in_order_and_frees_the_npc()
     // 4. It says its line: the event the audio module plays an action's sound by, from the actor.
     assert_eq!(log(&app).steps[3].1.kind, "Sound");
     let [(_, said)] = &log(&app).sounds[..] else { panic!("one sound: {:?}", log(&app).sounds) };
-    assert_eq!((said.entity, said.sound.as_str(), said.action.as_str()), (actor, "line", "sequence `scene`"));
+    assert_eq!((said.entity, said.sound.as_str(), said.action.as_str()), (actor, "line", "sequence scene"));
 
     // 5. Half a second, to the tick; then it waits for the condition, which holds at tick GO.
     until(&mut app, 60, |a| log(a).steps.len() >= 6);

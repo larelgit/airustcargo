@@ -794,3 +794,84 @@ fn a_rule_set_content_does_not_have_stops_the_game() {
     app.world_mut().insert_resource(shards::rules::ActiveRules::default());
     assert_eq!(step(&mut app, 5), "ran 5 ticks (0 → 5)", "a neutral mode is no rule set, and known");
 }
+
+#[test]
+fn a_control_lock_nobody_could_have_made_stops_the_game() {
+    use shards::motion::{ControlLock, ControlLocks, CONTROL_LOCK_SANE};
+    for (index, (_, want)) in case_table().iter().enumerate() {
+        let mut app = sandbox::test_app(42);
+        // Which lock to plant goes by a static: the planting closure is a `fn`, which cannot capture.
+        PLANTED.store(index, std::sync::atomic::Ordering::SeqCst);
+        plant(&mut app, 2, |world| {
+            let player = body(world, 5);
+            let (make, _) = case_table()[PLANTED.load(std::sync::atomic::Ordering::SeqCst)];
+            world.entity_mut(player).insert(ControlLocks { held: make().into_iter().map(|(r, l)| (r.to_owned(), l)).collect() });
+        });
+        let line = stops_on(&mut app, CONTROL_LOCK_SANE, 2);
+        assert!(line.contains(want), "{line}");
+    }
+    // The call makes only sane ones: a lock put on and left on breaks nothing.
+    let mut app = sandbox::test_app(42);
+    let player = body(app.world(), 5);
+    shards::motion::lock_controls(app.world_mut(), player, "scene", ControlLock::LOOKING_ONLY).unwrap();
+    assert_eq!(step(&mut app, 10), "ran 10 ticks (0 → 10)");
+}
+
+static PLANTED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+type Locks = Vec<(&'static str, shards::motion::ControlLock)>;
+
+/// A case: the locks to plant, and what the rule says of them.
+type Case = (fn() -> Locks, &'static str);
+
+/// The locks nobody could have made through `lock_controls`, and what the rule says of each.
+fn case_table() -> [Case; 5] {
+    use shards::core::Target;
+    use shards::motion::{ControlLock, LookLock};
+    [
+        (|| vec![], "ControlLocks holds no reason"),
+        (|| vec![("b", ControlLock::LOOKING_ONLY), ("a", ControlLock::LOOKING_ONLY)], "reasons do not ascend: `b` then `a`"),
+        (|| vec![("a", ControlLock::default())], "the lock `a` takes nothing away"),
+        (
+            || vec![("a", ControlLock { movement: true, look: LookLock::Cone { at: Target::Point(Vec3::ZERO), deg: 270.0 }, ..default() })],
+            "the lock `a` has a look cone 270 degrees wide",
+        ),
+        (
+            || vec![("a", ControlLock { movement: true, look: LookLock::Cone { at: Target::Point(Vec3::NAN), deg: 20.0 }, ..default() })],
+            "pointing at",
+        ),
+    ]
+}
+
+#[test]
+fn a_sequence_hold_with_no_run_or_a_run_with_no_hold_stops_the_game() {
+    use shards::npc::{Run, SequenceHold, Sequences};
+    // A body that says it is held by a run that is not playing.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 3, |world| {
+        let boss = body(world, 6);
+        world.entity_mut(boss).insert(SequenceHold { run: 4, def: "scene_intro".into(), role: "guide".into() });
+    });
+    let line = stops_on(&mut app, "npc.sequence_holds", 3);
+    assert!(line.contains("e6 SequenceHold names sequence 4, which is not playing"), "{line}");
+
+    // A run whose actor does not carry the hold.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 3, |world| {
+        let boss = AiId(6);
+        world.insert_resource(Sequences {
+            next: 1,
+            runs: vec![Run { id: 1, def: "scene_intro".into(), roles: vec![("guide".into(), boss)], actors: vec![boss], ..default() }],
+        });
+    });
+    let line = stops_on(&mut app, "npc.sequence_holds", 3);
+    assert!(line.contains("e6 acts in sequence 1 (scene_intro) and has no SequenceHold for it"), "{line}");
+
+    // A run numbered past the counter.
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 3, |world| {
+        world.insert_resource(Sequences { next: 1, runs: vec![Run { id: 7, def: "scene_intro".into(), ..default() }] });
+    });
+    let line = stops_on(&mut app, "npc.sequence_holds", 3);
+    assert!(line.contains("sequence 7 is outside 1..=1"), "{line}");
+}

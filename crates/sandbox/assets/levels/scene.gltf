@@ -1,0 +1,41 @@
+{
+  "asset": {
+    "generator": "shards_level test fixture (stands in for Blender's exporter)",
+    "version": "2.0"
+  },
+  "nodes": [
+    {
+      "extras": {
+        "marker": "custom:scene",
+        "name": "scene_stand"
+      },
+      "name": "SceneStand",
+      "translation": [
+        3.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "extras": {
+        "prefab": "scene_guide"
+      },
+      "name": "Guide",
+      "translation": [
+        14.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Scene",
+      "nodes": [
+        0,
+        1
+      ]
+    }
+  ]
+}

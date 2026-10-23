@@ -1,0 +1,4 @@
+// The guide of the scene fights nobody: its moveset has no inputs (a fighter needs one to run an action).
+{
+    "scene_guide": (inputs: {}),
+}

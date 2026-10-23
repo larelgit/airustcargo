@@ -1,0 +1,18 @@
+// The guide of the scene (`scene.sequence.ron`): a body that follows what it sees (`scene.behavior.ron`),
+// fights nobody and can run an action. The level `scene` places it (`levels/scene.gltf`).
+{
+    "scene_guide": (
+        components: {
+            "Name": "Guide",
+            "AiKind": ("Guide"),
+            "AiImportance": (1.0),
+            "Team": ("monsters"),
+            "Fighter": (moveset: "scene_guide"),
+            "Health": (current: 50.0, max: 50.0),
+            "CharacterController": (params: "skeleton"),
+            "Look": ("skeleton"),
+            "Npc": (behavior: "scene_guide", perception: "skeleton", plan: None, director: ""),
+            "Home": (pos: None, leash: 30.0),
+        },
+    ),
+}

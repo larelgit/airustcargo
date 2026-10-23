@@ -10,6 +10,8 @@
 //!   steered.
 //! - [`input`]: the input action map: keyboard, mouse and gamepad become `Intent`;
 //!   contexts, press/hold/toggle, rebinding kept in the `controls` settings (`shards_settings`).
+//! - [`control_lock`] (F12): a scene takes movement, actions or the freedom of the look from a body, for a reason
+//!   (`lock_controls`, `ControlLocks`): a filter on `Intent` inside the tick, given back before the replay check.
 //! - [`camera`]: the third-person camera (orbit, wall collision, lock-on, aim assist,
 //!   shake) — presentation only; its field of view, shake and look speed follow the player's
 //!   accessibility and control settings.
@@ -23,6 +25,7 @@
 //! PhysicsSystems::Sync          start of the tick: colliders moved between ticks
 //! SimSet::Input … Think         orders walk, brains decide
 //! SimSet::Act
+//!   MotionSystems::Lock         the control lock takes what is locked out of Intent and holds the look in its cones
 //!   MotionSystems::Intent       intent_to_locomotion: Intent → LocomotionInput
 //!   …                           the action machine (shards_action) adds external, locked, face
 //! SimSet::Move
@@ -72,7 +75,8 @@ pub use invariants::{body_in_solid, launch_sane, motion_finite, BODY_IN_SOLID};
 
 pub use ai::{describe_motion, physics_line_of_sight, MotionAi};
 pub use control_lock::{
-    control_line, lock_controls, unlock_controls, within_cone, ControlLock, ControlLocks, ControlsLocked, ControlsUnlocked, LockStash, LookLock,
+    control_line, control_lock_sane, lock_controls, unlock_controls, within_cone, ControlLock, ControlLocks, ControlsLocked, ControlsUnlocked,
+    LockStash, LookLock, CONTROL_LOCK_SANE,
 };
 pub use camera::{CameraSettings, LockHooks, LockOnDef, LockOnTarget, LockPoint, ThirdPersonCamera};
 pub use eye::{aim_point_of, eye_of, look_dir, params_of};

@@ -94,25 +94,26 @@ fn a_movement_lock_stops_the_walk_and_hands_the_keys_back_when_it_lifts() {
 }
 
 #[test]
-fn a_jump_press_is_movement_and_an_attack_press_is_an_action() {
+fn a_jump_press_is_movement_an_attack_press_is_an_action_and_a_roll_is_both() {
     let (mut app, me) = arena();
     let press = |app: &mut App| {
         edit_intent(app, me, |i| {
             i.pressed.push(Press { input: JUMP.into(), dir: None });
             i.pressed.push(Press { input: "light".into(), dir: None });
+            i.pressed.push(Press { input: "dodge".into(), dir: None });
         });
     };
     press(&mut app);
     step(&mut app, 1);
-    assert_eq!(last(&app).pressed, ["jump", "light"], "no lock: both reach the readers");
+    assert_eq!(last(&app).pressed, ["jump", "light", "dodge"], "no lock: all reach the readers");
     lock(&mut app, me, "a", ControlLock { movement: true, ..default() });
     press(&mut app);
     step(&mut app, 1);
-    assert_eq!(last(&app).pressed, ["light"]);
+    assert_eq!(last(&app).pressed, ["light"], "a roll is a move");
     lock(&mut app, me, "a", ControlLock { actions: true, ..default() });
     press(&mut app);
     step(&mut app, 1);
-    assert_eq!(last(&app).pressed, ["jump"], "the same reason locks something else now");
+    assert_eq!(last(&app).pressed, ["jump"], "the same reason locks something else now, and a roll is an action too");
     lock(&mut app, me, "b", ControlLock { movement: true, ..default() });
     press(&mut app);
     step(&mut app, 1);

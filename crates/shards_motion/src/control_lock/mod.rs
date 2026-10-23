@@ -14,10 +14,10 @@
 //!
 //! ## What a lock does to `Intent`
 //!
-//! - **`movement`**: `move_dir` is zero for the tick, the `jump` and `dodge` presses and the `sprint`
-//!   and `glide` holds are dropped. Gravity, a push and an action already under way go on (a lock does
+//! - **`movement`**: `move_dir` is zero for the tick, the `jump` press and the `sprint` and `glide` holds are
+//!   dropped, and the `dodge` press (a roll is a move and an action: either lock stops it). Gravity, a push and an action already under way go on (a lock does
 //!   not freeze a body, it stops it from asking).
-//! - **`actions`**: every other press and every other held input is dropped (attacks, `fire`,
+//! - **`actions`**: every other press and every other held input is dropped (and `dodge`) (attacks, `fire`,
 //!   `reload`, weapon switches, `interact`, `lock_on`, `block`, ...). An action already running ends
 //!   as it would.
 //! - **`look`**: [`LookLock::Free`] leaves `Intent.look` alone; [`LookLock::Cone`] holds it within `deg`
@@ -37,10 +37,10 @@
 //! does), so a run that never locks anything hashes and records as before.
 
 use ai_core::replay::ReplaySystems;
-use ai_core::{label, AiAppExt, AiId, AiIndex, SimSet};
+use ai_core::{label, with_query, AiAppExt, AiId, AiIndex, Offenders, SimSet};
 use bevy::prelude::*;
 use shards_core::input_names::{DODGE, GLIDE, JUMP, SPRINT};
-use shards_core::{Gaze, Intent, Target};
+use shards_core::{EngineAppExt, Gaze, Intent, Target};
 
 mod tools;
 
@@ -279,7 +279,8 @@ pub(crate) fn plugin(app: &mut App) {
             let still = if e.still.is_empty() { String::new() } else { format!(", still held: {}", e.still.join(", ")) };
             Some(format!("{} controls unlocked ({}){still}", label(w, e.entity), e.reason))
         })
-        .register_ai_observe_lines(observe_lines);
+        .register_ai_observe_lines(observe_lines)
+        .add_engine_invariant(CONTROL_LOCK_SANE, control_lock_sane);
     tools::plugin(app);
 }
 
@@ -289,11 +290,6 @@ fn any_locked(locks: Query<(), With<ControlLocks>>) -> bool {
 
 fn any_taken(stash: Res<LockStash>) -> bool {
     !stash.0.is_empty()
-}
-
-/// The presses and holds that are movement.
-fn is_movement(input: &str) -> bool {
-    matches!(input, JUMP | DODGE | SPRINT | GLIDE)
 }
 
 /// `SimSet::Act`, before every reader of `Intent`: takes what the locks take from each locked body's
@@ -324,7 +320,12 @@ pub(crate) fn mask(world: &mut World) {
             taken.move_dir = Some(intent.move_dir);
             intent.move_dir = Vec3::ZERO;
         }
-        let drops = |input: &str| (movement && is_movement(input)) || (actions && !is_movement(input));
+        let drops = |input: &str| match input {
+            // A roll is a move and an action: either lock stops it.
+            DODGE => movement || actions,
+            JUMP | SPRINT | GLIDE => movement,
+            _ => actions,
+        };
         if intent.held.iter().any(|h| drops(h)) {
             taken.held = intent.held.iter().filter(|h| drops(h)).cloned().collect();
             intent.held.retain(|h| !drops(h));
@@ -391,6 +392,55 @@ pub fn within_cone(look: Gaze, center: Gaze, deg: f32) -> Gaze {
     }
     let k = max / len;
     Gaze { yaw: center.yaw + dyaw * k, pitch: center.pitch + dpitch * k }
+}
+
+/// The name of the engine rule [`control_lock_sane`].
+pub const CONTROL_LOCK_SANE: &str = "motion.control_lock_sane";
+
+/// The engine rule `motion.control_lock_sane`: every [`ControlLocks`] is one [`lock_controls`] could have made. It
+/// holds at least one reason, the reasons are named and ascend without repeats, every lock takes something away,
+/// and a look cone is 0 to 180 degrees wide (finite) and points at a finite place. The call keeps all of it (and
+/// takes the component away with the last reason); a violation names a writer that put a lock together by hand.
+pub fn control_lock_sane(world: &World) -> Option<String> {
+    let mut bad = Offenders::default();
+    with_query::<(&AiId, &ControlLocks), (), _>(world, |query| {
+        for (id, locks) in query.iter(world) {
+            if let Some(what) = problem(locks) {
+                bad.note(*id, || what);
+            }
+        }
+    })?;
+    bad.report()
+}
+
+fn problem(locks: &ControlLocks) -> Option<String> {
+    if locks.held.is_empty() {
+        return Some("ControlLocks holds no reason (the component goes with the last)".to_owned());
+    }
+    for pair in locks.held.windows(2) {
+        if pair[0].0 >= pair[1].0 {
+            return Some(format!("ControlLocks reasons do not ascend: `{}` then `{}`", pair[0].0, pair[1].0));
+        }
+    }
+    for (reason, lock) in &locks.held {
+        if reason.trim().is_empty() {
+            return Some("ControlLocks has a lock with no reason".to_owned());
+        }
+        if lock.is_empty() {
+            return Some(format!("the lock `{reason}` takes nothing away"));
+        }
+        if let LookLock::Cone { at, deg } = lock.look {
+            if !(deg.is_finite() && deg > 0.0 && deg <= 180.0) {
+                return Some(format!("the lock `{reason}` has a look cone {deg} degrees wide (0 to 180)"));
+            }
+            if let Target::Point(p) = at
+                && !p.is_finite()
+            {
+                return Some(format!("the lock `{reason}` has a look cone pointing at {p}"));
+            }
+        }
+    }
+    None
 }
 
 /// `CONTROL looking only (scene)`, `CONTROL locked: movement (door)`: under `YOU`, while the subject has a lock.

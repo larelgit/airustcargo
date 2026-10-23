@@ -209,7 +209,7 @@ fn begin(world: &mut World, run: &mut Run, def: &SequenceDef, step: &Step) -> Re
         }
         Step::Sound { sound, .. } => {
             let entity = actor.and_then(|a| entity_of(world, a)).ok_or("the body that speaks is gone")?;
-            world.trigger(ActionSound { entity, action: format!("sequence `{}`", run.def), sound: sound.clone() });
+            world.trigger(ActionSound { entity, action: format!("sequence {}", run.def), sound: sound.clone() });
         }
         Step::Wait { secs } => run.left = ticks(world, *secs),
         Step::WaitFor { condition, .. } => {
