@@ -51,7 +51,7 @@ use shards_settings::{AccessibilitySettings, ControlSettings, SettingsAppExt, Se
 pub use controls::ControlSync;
 pub use map::{ActionBinding, BindMode, Binding, InputContext, InputMap, RebindError, Stick};
 
-use crate::camera::{FirstPersonCamera, ThirdPersonCamera};
+use crate::camera::{look_through, FirstPersonCamera, ThirdPersonCamera};
 use crate::controller::{CharacterController, CharacterParams};
 
 /// The input systems other modules order against.
@@ -465,7 +465,7 @@ fn let_go(intent: &mut Mut<Intent>, applied: &Applied) {
 
 /// The local player's body as the controls see it: its `Intent` to write, and the numbers it moves by
 /// (they say whether it walks relative to its look).
-type LocalBody = (Entity, &'static mut Intent, Option<&'static CharacterController>, Option<&'static CharacterParams>);
+type LocalBody = (Entity, &'static mut Intent, Option<&'static CharacterController>, Option<&'static CharacterParams>, Option<&'static Transform>);
 
 /// The first-person cameras there are (the walk is then turned by the look).
 type FirstPersonCameras<'w, 's> = Query<'w, 's, &'static FirstPersonCamera>;
@@ -631,7 +631,7 @@ fn read_input(
 
     // Nobody to hear it: nothing counts as written, so a body that appears later (or
     // takes over the marker) gets everything that is down.
-    let Ok((player, mut intent, controller, own)) = players.single_mut() else {
+    let Ok((player, mut intent, controller, own, body_tf)) = players.single_mut() else {
         return;
     };
     if applied.player != Some(player) {
@@ -653,9 +653,13 @@ fn read_input(
         .and_then(|c| c.resolve(own, db.as_deref()).bound_look(&intent))
         .or_else(|| {
             // A first-person camera (F1b) looks through a body whatever it faces: forward is the way the
-            // view points. The look is the last frame's here (the camera turns it after this system), the
-            // same one frame behind the third-person camera's yaw is.
-            first_person.iter().any(|c| c.looks_through(player, true)).then(|| intent.look.filter(|l| l.is_finite())).flatten()
+            // view points, the camera's own `look_through` (the look the intent holds, else the body's heading:
+            // before the first mouse move the two agree). The look is the last frame's here (the camera turns it
+            // after this system), the same one frame behind the third-person camera's yaw is.
+            first_person.iter().any(|c| c.looks_through(player, true)).then(|| {
+                let params = controller.map(|c| c.resolve(own, db.as_deref()));
+                look_through(Some(&intent), params, body_tf)
+            })
         })
         .map_or_else(|| cameras.iter().next().map_or(0.0, |c| c.yaw), |gaze| gaze.yaw);
     let world_move = Quat::from_rotation_y(yaw) * Vec3::new(move_axis.x, 0.0, -move_axis.y);

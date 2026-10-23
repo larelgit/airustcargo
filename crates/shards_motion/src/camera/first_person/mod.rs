@@ -29,10 +29,11 @@ mod tool;
 use bevy::math::ops;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
-use shards_core::Gaze;
+use shards_core::{flat, Gaze, Intent};
 
 use super::math::{critically_damped_step, damp, wrap_angle};
 use super::{CameraTuning, ThirdPersonCamera};
+use crate::controller::CharacterParams;
 
 /// The render layer of the looked-through body's own model (and everything under it): the first-person
 /// camera does not draw it. Lights that carry no `RenderLayers` of their own get it (and
@@ -342,6 +343,23 @@ impl FirstPersonTuning {
 // ---------------------------------------------------------------------------------------------
 // The look
 // ---------------------------------------------------------------------------------------------
+
+/// The heading of a body, level: where it looks when it has no look yet. A body with no position looks north.
+pub fn heading_of(body: Option<&Transform>) -> Gaze {
+    body.and_then(|tf| Gaze::toward(Vec3::ZERO, flat(*tf.forward()))).unwrap_or_default()
+}
+
+/// The look a first-person camera has through a body: what its `Intent::look` holds (finite, with the pitch held
+/// to the body's limits), else the body's heading, level. The camera turns it with the mouse and draws by it, and
+/// the input map walks by its yaw, so the two never disagree about where forward is.
+pub fn look_through(intent: Option<&Intent>, params: Option<&CharacterParams>, body: Option<&Transform>) -> Gaze {
+    let held = intent.and_then(|i| i.look).filter(|l| l.is_finite());
+    match (held, params) {
+        (Some(look), Some(p)) => p.clamp_look(look),
+        (Some(look), None) => look,
+        (None, _) => heading_of(body),
+    }
+}
 
 /// `current` turned by this frame's `look` axis (`x` right, `y` up, radians per unit already scaled by
 /// the map) at `speed` (the player's sensitivity). Mouse right turns the view right (a negative yaw:

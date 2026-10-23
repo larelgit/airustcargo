@@ -477,3 +477,20 @@ fn a_camera_that_is_switched_off_is_nobodys_view() {
     frame(&mut s);
     assert_eq!(s.app.world().get::<RenderLayers>(model).cloned(), Some(RenderLayers::layer(OWN_BODY_LAYER)), "and hidden when it is on");
 }
+
+#[test]
+fn before_the_first_mouse_move_forward_is_the_way_the_camera_already_looks() {
+    // An active first-person camera over a body that faces east and has no look yet: the camera draws by the
+    // body's heading, and the keys walk the same way, not by an orbit camera's yaw or by north.
+    let mut s = fp();
+    s.app.world_mut().entity_mut(s.player).insert(CharacterParams::default());
+    s.app.world_mut().get_mut::<Transform>(s.player).unwrap().rotation = Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2);
+    s.app.world_mut().spawn(ThirdPersonCamera::following(s.player));
+    assert_eq!(look(&s), None);
+    s.app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyW);
+    frame(&mut s);
+    let forward = camera_at(&s).rotation * Vec3::NEG_Z;
+    let walk = s.app.world().get::<Intent>(s.player).unwrap().move_dir;
+    assert!(forward.distance(Vec3::X) < 1e-4, "the view looks east: {forward}");
+    assert!(walk.distance(Vec3::X) < 1e-4, "and W walks east, as the view looks: {walk}");
+}

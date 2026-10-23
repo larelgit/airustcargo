@@ -46,7 +46,7 @@ pub use lock::{
     LockOnDef, LockWeights, Lockable, PickView,
 };
 pub use first_person::{
-    turn_look, view_rotation, BobTuning, CameraMode, EyeFrame, EyeShift, EyeState, FirstPersonCamera, FirstPersonTuning, FromMode,
+    heading_of, look_through, turn_look, view_rotation, BobTuning, CameraMode, EyeFrame, EyeShift, EyeState, FirstPersonCamera, FirstPersonTuning, FromMode,
     LandingTuning, RollTuning, OWN_BODY_LAYER, VIEW_MODEL_LAYER,
 };
 pub use picture::{BloomComposite, BloomTuning, PictureTuning, ToneMapping};

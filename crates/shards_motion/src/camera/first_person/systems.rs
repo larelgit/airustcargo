@@ -10,10 +10,10 @@ use bevy::light::{DirectionalLight, PointLight, SpotLight};
 use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::input_names::LOCK_ON;
-use shards_core::{flat, Gaze, Intent, LocalPlayer};
+use shards_core::{flat, Intent, LocalPlayer};
 
 use super::{
-    turn_look, view_rotation, EyeFrame, FirstPersonCamera, OWN_BODY_LAYER, VIEW_MODEL_LAYER,
+    look_through, turn_look, view_rotation, EyeFrame, FirstPersonCamera, OWN_BODY_LAYER, VIEW_MODEL_LAYER,
 };
 use crate::camera::math::shake_offset_with;
 use crate::camera::shot::Shots;
@@ -86,21 +86,6 @@ fn mirror_active(mut cameras: Query<(&Camera, &mut FirstPersonCamera)>) {
     }
 }
 
-/// The facing of a body that has no look yet: its heading, level.
-fn facing(tf: &Transform) -> Gaze {
-    Gaze::toward(Vec3::ZERO, flat(*tf.forward())).unwrap_or_default()
-}
-
-/// What `Intent::look` holds, finite, with its pitch held to the body's limits; else the heading.
-fn current_look(intent: Option<&Intent>, params: Option<&CharacterParams>, tf: &Transform) -> Gaze {
-    let held = intent.and_then(|i| i.look).filter(|l| l.is_finite());
-    match (held, params) {
-        (Some(look), Some(p)) => p.clamp_look(look),
-        (Some(look), None) => look,
-        (None, _) => facing(tf),
-    }
-}
-
 /// A landing of the body a camera looks through: the dip starts on the next frame.
 fn note_landing(landed: On<Landed>, mut cameras: Query<&mut FirstPersonCamera>, players: Query<(), With<LocalPlayer>>) {
     let event = landed.event();
@@ -143,7 +128,7 @@ fn first_person_look(
     let limits = params.map_or_else(|| CharacterParams::default().pitch_limits(), CharacterParams::pitch_limits);
     // Aiming turns by its own speed (K1): the game says when the player aims.
     let speed = if offsets.aiming { settings.aim_sensitivity } else { settings.sensitivity };
-    let base = current_look(Some(&intent), params, tf);
+    let base = look_through(Some(&intent), params, Some(tf));
     let next = turn_look(base, axis, speed, settings.invert_y, limits);
     if next.is_finite() && intent.look != Some(next) {
         intent.look = Some(next);
@@ -213,7 +198,7 @@ fn first_person_camera(
         let seen = camera.subject_seen.replace(feet);
         let placed = seen.is_some_and(|was| was.distance(feet) > tuning.body_snap_distance);
 
-        let look = current_look(intent, params, body_tf);
+        let look = look_through(intent, params, Some(body_tf));
         let turn = view_rotation(look, 0.0);
         let right = flat(turn * Vec3::X).try_normalize().unwrap_or(Vec3::X);
         let (grounded, velocity) = motion.map_or((true, Vec3::ZERO), |m| (m.grounded, m.velocity));
