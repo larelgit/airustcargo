@@ -105,6 +105,29 @@ fn ok_look(app: &mut App, args: Value) {
 }
 
 #[test]
+fn a_view_goes_through_any_number_of_bodies_that_take_no_hits() {
+    let mut app = settled();
+    // The dummy's own capsule takes no hits and its parts are lifted clear of the view, so nothing in it stops the ray.
+    let before = ok(&mut app, "content_get", json!({"kind": "parts", "id": "range_dummy"})).result["def"].clone();
+    let mut ghost = before.clone();
+    ghost["body_hurtbox"] = json!(false);
+    for part in ["head", "torso"] {
+        ghost["parts"][part]["at"]["up"] = json!(4.0);
+    }
+    ok(&mut app, "content_apply", json!({"changes": [{"kind": "parts", "id": "range_dummy", "def": ghost, "before": before}]}));
+    let viewer = spawn(&mut app, "viewer", 0.0, 12.0);
+    // More of them in a row than any limit on how many a view passes through would allow.
+    for i in 0..12 {
+        spawn(&mut app, "range_dummy", 0.0, 10.0 - 1.2 * i as f32);
+    }
+    play_as(&mut app, &viewer);
+    step(&mut app, 3);
+    ok_look(&mut app, json!({"yaw": 0, "pitch": 0}));
+    let line = aim(&mut app);
+    assert!(line.starts_with("AIM wall 3"), "twelve bodies that take no hits are looked through to the wall beyond: {line}");
+}
+
+#[test]
 fn a_body_that_faces_its_look_turns_at_once_and_walks_the_worlds_directions() {
     let mut app = settled();
     let viewer = spawn(&mut app, "viewer", 0.0, 12.0);

@@ -649,7 +649,7 @@ content: 222 definitions in 68 files
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 214 definitions in 64
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 222 definitions in 68
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 

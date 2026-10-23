@@ -29,9 +29,6 @@ use crate::parts::{body_hurtbox, body_of, part_of, parts_of, Part, SpawnedParts}
 /// How far the `AIM` line looks (m).
 pub const AIM_RANGE: f32 = 100.0;
 
-/// The most bodies a view looks through (a body whose capsule takes no hits does not stop it).
-const MAX_PASSED: usize = 8;
-
 pub(crate) fn plugin(app: &mut App) {
     app.add_ai_tool("look", Scope::Player, look_tool)
         .add_ai_tool_guard("look", dead_refusal)
@@ -79,7 +76,9 @@ pub fn view_hit(world: &World, viewer: Entity, range: f32) -> Option<ViewHit> {
     }
     let made = |entity, part, hit: shards_motion::RayHit| ViewHit { entity, part, distance: hit.distance, point: hit.point, normal: hit.normal };
     let mut hit = physics.raycast(eye, dir, range, &filter)?;
-    for _ in 0..MAX_PASSED {
+    // Each turn either returns or leaves one more body out of the filter (a body whose capsule takes no
+    // hits does not stop the view), so it ends after at most as many turns as there are bodies in range.
+    loop {
         if world.get::<Part>(hit.entity).is_some() {
             return Some(made(body_of(world, hit.entity), Some(hit.entity), hit));
         }
@@ -100,7 +99,6 @@ pub fn view_hit(world: &World, viewer: Entity, range: f32) -> Option<ViewHit> {
         filter = inside;
         hit = past?;
     }
-    Some(made(hit.entity, None, hit))
 }
 
 /// What a hit is called in the `AIM` line: `e7 Dummy head` for a body (through a part), `e3 Pillar`
