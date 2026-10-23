@@ -80,9 +80,12 @@ impl Usable {
         if self.prompt.is_empty() { &self.name } else { &self.prompt }
     }
 
-    /// How far this one can be used from, for a body that reaches `body` metres.
+    /// How far this one can be used from, for a body that reaches `body` metres: its own `use_range`, else the
+    /// body's, held to what the probe looks for ([`PROBE_RANGE`]). A reach that is not above 0 (or not a number) is
+    /// no reach at all, never the farthest one.
     pub fn reach(&self, body: f32) -> f32 {
-        self.use_range.unwrap_or(body).min(PROBE_RANGE)
+        let reach = self.use_range.unwrap_or(body);
+        if reach > 0.0 { reach.min(PROBE_RANGE) } else { 0.0 }
     }
 }
 
@@ -102,7 +105,7 @@ pub struct UseHit {
 impl UseHit {
     /// Whether it is within reach.
     pub fn reached(&self) -> bool {
-        self.distance <= self.range
+        self.range > 0.0 && self.distance <= self.range
     }
 }
 
@@ -291,6 +294,10 @@ mod tests {
     fn a_marker_can_reach_further_or_less_than_the_body() {
         let (mut app, user) = room();
         assert_eq!(Usable::default().reaching(500.0).reach(2.0), PROBE_RANGE, "no reach is past what the probe looks for");
+        for bad in [f32::NAN, -1.0, 0.0] {
+            assert_eq!(Usable::default().reaching(bad).reach(2.0), 0.0, "{bad} is no reach, not the farthest");
+            assert_eq!(Usable::default().reach(bad), 0.0, "nor is a body's {bad}");
+        }
         let far = area(&mut app, "console", Vec3::new(0.0, 1.6, -4.0), Vec3::splat(0.2), Usable::default().reaching(5.0));
         assert_eq!(target(&mut app, user).map(|t| (t.entity, t.range)), Some((far, 5.0)));
         app.world_mut().despawn(far);
