@@ -85,7 +85,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 230 definitions in 70 files
+cargo shards content check                 # ok: 234 definitions in 73 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -108,7 +108,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 230 definitions in 70 files
+# ok: 234 definitions in 73 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -598,7 +598,7 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 230 definitions in 70 files
+content: 234 definitions in 73 files
   action  74
   animset  1
   attack_plan  3
@@ -621,7 +621,7 @@ content: 230 definitions in 70 files
   level  2
   locale  2
   lock_on  1
-  locomotion  4
+  locomotion  5
   look  15
   mover  4
   moveset  15
@@ -629,11 +629,11 @@ content: 230 definitions in 70 files
   nav  1
   net  0
   npc_tuning  0
-  parts  1
+  parts  2
   perception  3
   perf  2
   poi  4
-  prefab  16
+  prefab  18
   prop  1
   region  3
   room  0
@@ -653,7 +653,7 @@ content: 230 definitions in 70 files
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 230 definitions in 70
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 234 definitions in 73
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -1214,6 +1214,7 @@ lock pick and the flick read the camera's `Transform`, so with a tilt they measu
 | `move_to` | walk to an entity or to a point `{x, z}`; `within`, `queue`; `path=true` follows the route from `path_to` |
 | `move`, `stop` | walk N metres by compass (N = −Z, E = +X); stop. `move`, `move_to`, `stop`, `jump`, `sprint` and `glide` refuse a dead body with the text every action tool gives (`you are dead; a dev agent can `heal` you`), and a death drops the orders the body held (`Intent.orders`, and the `move_dir` they set; a body with no orders keeps its `Intent`, which its keyboard or brain rewrites every tick), so nothing runs after a `heal`; a downed body (B5) is refused them with its own words (`you are down: ...`) and drops its orders when it goes down, so nothing runs after a revive |
 | `jump`, `sprint`, `glide` | jump (out of water, onto the shore); sprint and glide as a state that is on (`on=false` turns it off) |
+| `look` | where you look (F1a, "Look as input"): `yaw=` and/or `pitch=` in degrees, `at=eN [part=NAME]`, `clear=true`; `observe` then has an `AIM` line |
 | `clearance` | query: how far in the eight directions, and what will stop you |
 | `move_info` | query: what modifies a character's movement (slow, caps, root, stance, rates, sprint cost), the walk, run, sprint and swim speeds they leave, and the wading depth |
 | `path_to` | query: the route over what can be walked, swum and climbed |
@@ -1248,6 +1249,62 @@ $ shards act path_to target=e12              # e12 — the landmark "Cliff"
 - `clearance` and `path_to` take two floors within 1 mm of each other for one floor (`FLOOR_NOISE`), upward and downward: a body with `step_height: 0` (no auto step) or a `safe_drop` under 1 mm reads flat floor as free, not as a ledge or a cliff of 0.0 m.
 - `path_to` asks the same route planner as `move_to path=true`, and names it in the field `provider`. In a loaded region the navmesh answers (`"provider": "navmesh"`; the length is not limited unless `max` is set; its refusal is `navmesh: …`). Everywhere else it is a local grid A* (`"provider": "local grid"`): cells of 0.5 m, a search in a limited area around the start and the goal (`max` is the limit in metres, 80 by default; anything over that is an error with the hint `raise max, or go in stages`). The grid moves over what the controller can do: walk, swim (twice the cost), climb (costs more), descend to a safe height, and jump into water from above. The result is the same on any machine (whole-number costs, order by index).
 - `shards act move_to target=e12 path=true` follows exactly this route; the same `plan_path` function serves the grid, the tool and the tests. `nav_path` also shows the route over the navmesh, with the tiles it goes through (see "Navigation and NPCs (E6)").
+
+### Look as input (F1a)
+
+Where a character looks is input like where it walks. `Intent.look: Option<Gaze>` (`shards::core::Gaze { yaw, pitch }`, radians) is written
+between ticks by whatever looks: an agent's `look` tool, and the first-person camera of a game (F1b writes it, as the third-person camera
+writes `Intent.target`). The simulation reads only `Intent`: the eye, the ray and the body's heading below come from it, never from a camera, so a
+headless run, a replay and a window agree. `None` (the default) is a character that does not look: every body before this, and every third-person one.
+
+- **The angles.** The engine's own: **yaw 0 looks along -Z** (north; the turn of `Quat::from_rotation_y(yaw)`, which already turns the move axes by a
+  camera yaw), a positive yaw turns left (90 degrees is west), **pitch 0 is level and a positive pitch looks up**. `Gaze::dir()` is the unit vector
+  (`bevy::math::ops`), `Gaze::flat_dir()` the heading alone, `Gaze::toward(from, to)` the angles from one point to another (the inverse of `dir`; straight
+  up or down it gives yaw 0 and a pitch of a quarter turn, never NaN), `with_pitch_between(min, max)`, `from_degrees`. The type is named `Gaze`, not
+  `Look`: `shards_look::Look` is a component prefabs and levels name by its short name, and a second reflected type of that name would make
+  `"Look": ("player")` ambiguous.
+- **What it costs a run that never looks: nothing.** `look` is left out of `Intent`'s serialized form while it is `None`, in serde (the recorded inputs) and in
+  the reflection form (`#[reflect(Serialize, Deserialize)]` on `Intent`: replay checks, snapshots, `inspect`), so a replay check, a snapshot or an input event
+  of such a run is byte for byte what it was. The nineteen reference replays recorded before it verify unchanged (`snapshot.json` loads a snapshot written before the field), and
+  `core.intent_sane` names a `look` that is not finite. The co-op wire mirror `IntentState` (`shards_net::inputs`) carries it the same way (left out
+  when `None`; the host drops angles that are not finite, as it does a bad `aim`).
+- **`locomotion` options** (`CharacterParams`, all left out of the written form at their defaults, so no content hash moves):
+
+  | field | default | what |
+  |---|---|---|
+  | `face` | `Move` | `Move`: the body turns toward where it walks, its lock-on, its aim point or its action, at its turn rates, as always. `Look`: its yaw is the look's yaw **every tick, with no turn rate**, whatever it walks, climbs or runs (an action included) |
+  | `pitch_limits_deg` | `(-89, 89)` | `(lowest, highest)`, within -90..90; readers of the look hold the pitch between them (`look_dir`, the `look` tool) |
+  | `eye_height` | 0.9 of `height` | metres from the feet to the eye (the lock-on's own `eye_height` fraction); checked: above 0 and at most `height` |
+
+  A `Look` body without an `Intent.look` turns as a `Move` one does. **Movement input is relative to the look, not to a camera**: the keyboard and the stick
+  (the input map, `ControlSystems::Read`) turn their axes by the yaw of the local player's look when its body faces its look, by the third-person camera's yaw
+  otherwise, so W walks along the view and a turn of the view turns the walk with no key changing. `Intent.move_dir` itself stays a vector in the world's
+  directions, which is what the `move` tool and the orders write (by compass: an agent's `move dir=N` does not turn with its view): looking west while an order walks
+  north is a sidestep of the body that faces west.
+- **Actions go where the body looks.** For a body with `face: Look` and a look, an aiming action (`steer: Aim`) starts along the look's heading, before the
+  lock-on, the aim point and the movement input (a press that names a direction, a dodge's, still wins); a run that tracks (`track_until`, `turn` spans) tracks it,
+  and a backstep goes back from it. The machine, a client's prediction and the leap search all ask the same helper (`machine::looked_at`). Every body
+  without `face: Look` steers exactly as before.
+- **The eye and the ray, for every system that needs them** (`shards::motion`): `eye_of(world, body)` (the feet plus `eye_height`; `None` for an entity with no character
+  controller), `look_dir(world, body)` (the unit vector of `Intent.look` held to the body's pitch limits, else the way the body faces, level), `aim_point_of(world,
+  entity)` (the lock-on's aim point, 0.6 of the collider's height by default, or the middle of a lock point) and `params_of`. Hitscan (F3), use-by-looking
+  (F5), turrets (F11) and the audio listener build on them. `eye_height` is per `locomotion` definition: a stance that changes the body's height (the crouch of F2)
+  changes the eye with it. `shards::action::view_hit(world, viewer, range)` is the ray the `AIM` line is made of.
+- **For the AI.** The player tool **`look`**: `look yaw=90 pitch=-10` (degrees; give one to keep the other), `look at=e7` (yaw and pitch from the eye to that
+  entity's aim point), `look at=e7 part=head` (to the centre of one of its body parts, R1), `look clear=true` (stop looking). It acts through `Intent`, so it is
+  recorded as an input like a key; a dead body is refused. Answers: `ok: looking N (yaw 0.0°, pitch 0.0°)`, `ok: looking at e7 head, 8.0m N (yaw 0.0°, pitch
+  0.0°)`; a pitch outside the limits is held and says so; errors say what to give (`nothing to do: give yaw= and/or pitch= (degrees), or at=eN [part=NAME], or
+  clear=true`, `e7 has no part `tail`; its parts: head, torso`). While the subject has a look, **`observe`** adds a line under `YOU`: what the centre of its view meets
+  within 100 m, against the world, the bodies' colliders and hurtboxes (its own left out): `AIM e7 Dummy head 14.2m` (a ray that goes through a body's part names it;
+  a body whose capsule takes no hits, `body_hurtbox: false`, is looked through), `AIM e3 Pillar 7.4m` (anything the AI sees), `AIM wall 3.1m` (`floor` and `ceiling` by
+  the way the surface faces), `AIM nothing within 100m`. The body's line carries `look W yaw 90.0° pitch 10.0°`.
+- **In the sandbox**: the locomotion `viewer` (`characters/viewer.locomotion.ron`: the player's numbers, `face: Look`, pitch -85..85, eye 1.6 m), the prefabs `viewer`
+  (a fighter with the player's moves; drive it with `session --subject eN`) and `range_dummy` (`characters/look.prefab.ron`; a body with a head and a torso,
+  `combat/dummy.parts.ron`), the scenario `look.scenario` (the tool, its errors, the `AIM` line on a skeleton, a pillar, a wall, the floor and the sky, a body that
+  faces its movement and one that faces its look), and `tests/sandbox/look.rs`: the part a view passes through, a body that turns at once and walks the world's
+  directions, a swing that goes where the body looks (and, as the control, one that goes where it walks), a run with looks that plays back identically and
+  from every 30th tick's snapshot (`--heavy 30`), a client's look reaching the host in co-op. Not in F1a: the first-person camera, the hidden own body and the view
+  model (F1b).
 
 ## Actions and combat (E3)
 
@@ -3647,7 +3704,7 @@ A tool is an argument struct (serde + schemars) and an ordinary Bevy system, `In
 
 | scope | tools |
 |---|---|
-| **Player** (plays fair, only through `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; movement: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; combat: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack, combat_objects, reload, weapon (F4); world: region_info, level_info, nav_path, npc_state; settings: settings, settings_set (like the settings menu for a human); sound: audio; Steam (feature `steam`): steam, steam_invite |
+| **Player** (plays fair, only through `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; movement: move_to (`path=true`), move, stop, jump, sprint, glide, look, clearance, path_to, input_bindings; combat: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack, combat_objects, reload, weapon (F4); world: region_info, level_info, nav_path, npc_state; settings: settings, settings_set (like the settings menu for a human); sound: audio; Steam (feature `steam`): steam, steam_invite |
 | **Dev** (everything, including time) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, give_weapon, take_weapon, give_ammo (F4), content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset, motion_bake, animation; world: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, level_despawn, mover_go, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; sound: sound_play, music_set; mesh looks: looks, look_outlines; foliage: scatter, scatter_set; effects: effects, effect_play, telegraph_decals; Steam (feature `steam`): steam_host, steam_join, achievement_unlock; developer menu and console: dev_menu, console |
 
 The game adds its own (in the template, `taunt` and the conditions `arena_cleared`, `foe_near`, `in_fight`; in the sandbox, the conditions `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`). Modules add conditions for `step --until named:…`: `near_poi` (world, appears with the first region), `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_avoiding`, `npc_engaged`, `npc_near` (NPC), `objects_live`, `projectile_flying` (combat objects), `mover_arrived` (movers, F6). Each
@@ -4428,7 +4485,7 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | rule | holds when |
 |---|---|
 | `ai.index_consistent` | the `AiIndex` and the `AiId` components agree both ways (every entity with an id is in the index under it, every entry points at an entity that carries it) and the counts match, so no id is used twice. Tombstones are history and are not looked at. Catches an id written in place, which skips the hooks |
-| `core.intent_sane` | every `Intent` has a finite `move_dir` of length at most 1 (+ 1e-4) and a finite `aim`. The movement code survives garbage, so the rule names the writer that forgot to clamp. The host cleans a network client's input before it reaches `Intent`, so a bad frame cannot stop the host |
+| `core.intent_sane` | every `Intent` has a finite `move_dir` of length at most 1 (+ 1e-4), a finite `aim` and a finite `look`. The movement code survives garbage, so the rule names the writer that forgot to clamp. The host cleans a network client's input before it reaches `Intent`, so a bad frame cannot stop the host |
 | `motion.finite` | every `AiVisible` entity has a finite `Transform` translation and a finite rotation of length 1 ± 1e-3, and a finite `MotionState` (velocity, ground normal, timers, mantle, fall height, water surface, updraft, placed position). Scale is not judged |
 | `voxel.body_in_solid` | no character has its capsule centre in a solid cell of a voxel field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). On by default since the fuzz runs on the voxel arena (see "Voxel fields") |
 | `motion.mover_sane` | every `MoverState` (F6) has a finite `t` in `0..1` (0 at rest), goes between neighbouring keys, holds finite `wait` and `blocked` times `>= 0` and a finite origin, and names no key past its definition's last (a mover whose definition content does not have is not judged by keys). The movers' step keeps all of it, so a violation names a writer that set the state by hand |
@@ -4894,7 +4951,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify -
 # replay finished at tick 1010: identical to the recording (17 checks) [1010 ticks in 3.00s, 22 frames]
 ```
 
-**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`), the voxel arena (`voxel_arena`) and its navmesh (`voxel_nav`), the timeline (`timeline`), the context and paired actions (`context`), the body replays (`body_motion`, `body_state`), the encounter (`encounter`), the spawned combat objects (`objects`), the downed state and the revive (`downed`), the boss scheduler (`boss_schedule`), the body parts (`parts`), the weapons (`weapons`) and the movers' room (`movers`): 21 files, each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
+**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`), the voxel arena (`voxel_arena`) and its navmesh (`voxel_nav`), the timeline (`timeline`), the context and paired actions (`context`), the body replays (`body_motion`, `body_state`), the encounter (`encounter`), the spawned combat objects (`objects`), the downed state and the revive (`downed`), the boss scheduler (`boss_schedule`), the body parts (`parts`), a first-person look (`look`), the weapons (`weapons`) and the movers' room (`movers`): 22 files, each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
 (for the template: `cargo test --test game record_reference_replays -- --ignored`).
 
 - Game data follows the same rule as `inspect`: everything except the `bevy_*` types and the internal markers of `ai_core`, plus `Transform` and `Name`. So components that only the window adds (`Visibility`, `GlobalTransform`, meshes) do not change the hash, and an `Entity` inside a component is hashed as its `AiId`. Labels and describe fragments are text for the AI and are not part of the hash: a new wording or a new describer does not break old replays.
@@ -7134,6 +7191,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 | `combat/body.action.ron`, `combat/body.moveset.ron` | body and motion (B2c): `spar_leap` (a landing search toward the lock-on target, no landing in water over 1 m), `spar_spin` (walks while it spins), `burrow` (intangible, a ghost), `spar_stroke` (`afloat`), the movesets `mover` and `burrower`; net ids 126-129 |
 | `combat/objects.prefab.ron`, `combat/objects.action.ron`, `combat/caster.moveset.ron` | spawned combat objects (B4): the prefabs `bolt`, `bolt_homing` (`Projectile`) and `zone`; the `caster` moveset's volley (three bolts in a fan at the lock-on target, the middle one homing; each bursts where it stops and lays a chilling puddle that hits every 0.8 s), line (six zones ahead, landing one after another) and rings (eight lines of four zones, turned at random, landing from the inside out); net ids 170-185 |
 | `characters/colossus.prefab.ron`, `combat/colossus.parts.ron` | body parts (R1): the prefab `colossus` (6 m tall, 1200 health, no brain, the locomotion `colossus`) and its five parts (two legs that double poise, a hand with 60 health that passes half a hit on, a horn out of reach, a core that starts closed and triples a hit), all five lock points (R3) and the body none; only `parts.scenario` spawns it |
+| `characters/viewer.locomotion.ron`, `characters/look.prefab.ron`, `combat/dummy.parts.ron` | look as input (F1a): the locomotion `viewer` (the player's numbers with `face: Look`, pitch -85..85, eye 1.6 m), the prefabs `viewer` (a fighter with the player's moves that faces its look) and `range_dummy` (no brain; a `head` and a `torso` part inside a 1.8 m capsule); spawned by `tests/sandbox/look.rs`, never by the arena |
 | `combat/camera.camera.ron` | the camera's numbers (C7): the code defaults, and the fit (R4) that keeps a high lock point on the colossus in frame with the player |
 | `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters; for the action timeline (B2a), `spar_heavy` (charges into `spar_heavy_full` when held 0.25 s; a light or a dodge pressed in its windup waits for its recovery), `spar_lunge` and `spar_lunge_far` (one `lunge` cooldown slot; the lunge turns at 360°/s within 45°, at most 0.4 m closer for the turning and not toward a target behind a wall, recovers 0.6 s longer on a whiff and keeps 40% of its cooldown when cut in its windup), `spar_channel` (`while_held`), `spar_roll_keep` (`face: Keep`), and the moveset `timeline` (a single slot by priority), which `timeline.scenario` lends to the player; for body state (B2b), `spar_ward` (a barrier of half the caster's health for 8 s), `spar_frost` and `spar_zap` (jabs that carry a full bar of chill or jolt), the moveset `bodystate`, and in `combat/sparring.status.ron` the statuses `spar_chill` (a 2 s proc gate, no cooling and a restart while active, a refused proc empties the bar) and `spar_jolt` (an instant status outside the cap), which `body_state.scenario` lends to the player |
 | `combat/weapons.action.ron`, `combat/weapons.moveset.ron`, `combat/weapons.prefab.ron` | the neutral test weapons of F4 (net ids 4410 to 4413): the movesets `test_sidearm` (six rounds, a reserve of 24 at most and 12 to begin with, `arm_sidearm_shot` takes a round, `arm_sidearm_reload` moves the rounds at 0.8 s, both let a weapon switch through a cancel window) and `test_blaster` (three rounds, nine in the reserve, `auto_reload`), and the prefab `armed` that carries both in an `Arsenal`; `weapons.scenario` gives them to the player (`give_weapon`) and plays them through the player's tools |
@@ -7193,6 +7251,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 - `locale.scenario` (E9.4) — `locale` and `text`: plural forms by language, a phrase inside a phrase, a hint for a typo;
   the menu's "Language" tab switches it to Russian while the menu is open, what is missing in Russian is taken from English, and a language that does not exist is refused; at the start and at the end the game language is the starting one and the menus are closed;
 - `audio.scenario` (E9.5) — the arena music follows the game: in the canyon, far from the monsters, it is `explore`; near the guard, `tension`; when the guard fights, `combat` at once; when it calms down, `tension` again after five seconds; `music_set` holds a layer and teaches from errors; 25 sounds on 24 voices: a loud sound takes the voice of a quiet one, and the voices are freed; a sound beyond `far` does not start; the player's volume applies to what is playing; healing and the menus play through the mixer's sounds;
+- `look.scenario` (F1a, a reference replay) — look as input: on a player that faces its movement, `look yaw=-90` shows `look E yaw -90.0° pitch 0.0°` and `AIM e7 Skeleton 5.…m` (the body goes on facing north), `look at=e7` turns toward the skeleton (`ok: looking at e7, 6.0m E (yaw -90.0°, pitch -5.1°)`) and `look at=e3` a pillar (`AIM e3 Pillar 7.…m`); the refusals (`nothing to do: give yaw= and/or pitch= …`, `that is you`, `e7 has no parts`, `not both`, `takes no other argument`, `give at= too`); the world the view meets (`AIM wall 8.0m` south, `AIM floor 1.6m` straight down with the pitch held to 89, `AIM nothing within 100m` into the sky); clearing the look; then the same player given the locomotion `viewer` (`set … params`) faces west and east within a tick of each look, holds the pitch to 85, and walks north while it faces east. Parts and swings need a spawned id, so `tests/sandbox/look.rs` has them;
 - `looks.scenario` (E10.1) — without a picture, `looks` says there is nothing to draw and lists the looks with their presets (`extends`);
   `content_get` of a look, the bodies' `Look` in `inspect`, `look_outlines` and the developer menu's toggle (at the end the outlines are on), and a look with an error is refused by `content_apply`;
 - `scatter.scenario` (E10.2) — without a picture, `scatter` says that nothing is scattered and lists the wilds' definitions;
@@ -7208,8 +7267,8 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
   generated`), the hash is `7bbfdc3b62623fbc` again, and `save_check` agrees.
 
 The scenarios start with `heal`/`teleport`/`set`/`npc_set_state … calm`, so they run on a fresh game and after other scenarios, in any order:
-CI runs them forward and then backward in one game. Sessions of twenty-one of them are recorded as reference replays in `tests/replays/`
-(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`, `parts`, `weapons`, `movers`; see "Replays").
+CI runs them forward and then backward in one game. Sessions of twenty-two of them are recorded as reference replays in `tests/replays/`
+(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`, `parts`, `look`, `weapons`, `movers`; see "Replays").
 
 ## Tests and CI
 

@@ -23,6 +23,7 @@ mod hitstop;
 mod heavy_saves;
 mod engine_rules;
 mod invariants;
+mod look;
 mod movers;
 mod net;
 mod net_coop;

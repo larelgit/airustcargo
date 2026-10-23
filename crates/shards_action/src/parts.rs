@@ -425,7 +425,7 @@ pub(crate) fn hit_bodies(world: &World, overlapping: Vec<Entity>, near: Vec3, pr
 }
 
 /// Whether `body`'s own collider takes hits: always, unless its parts definition says no.
-fn body_hurtbox(world: &World, db: Option<&ContentDb>, body: Entity) -> bool {
+pub(crate) fn body_hurtbox(world: &World, db: Option<&ContentDb>, body: Entity) -> bool {
     let def = world.get::<BodyParts>(body).zip(db).and_then(|(p, db)| db.get::<PartsDef>(&p.0));
     def.is_none_or(|d| d.body_hurtbox)
 }

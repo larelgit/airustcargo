@@ -161,6 +161,41 @@ fn the_move_axis_is_turned_by_the_stored_yaw_not_by_a_shake() {
 }
 
 #[test]
+fn a_body_that_faces_its_look_walks_relative_to_the_look_not_the_camera() {
+    use shards_core::Gaze;
+    use std::f32::consts::{FRAC_PI_2, PI};
+    let mut app = input_app();
+    let e = local_player(&mut app);
+    app.world_mut().spawn(ThirdPersonCamera { yaw: FRAC_PI_2, ..default() });
+    press(&mut app, KeyCode::KeyW);
+    let walk = |app: &mut App| {
+        frame(app);
+        intent(app, e).move_dir
+    };
+    let near = |a: Vec3, b: Vec3| (a - b).length() < 1e-5;
+    // A body that faces its movement ignores a look it was given: the camera turns the walk, as ever.
+    app.world_mut().get_mut::<Intent>(e).unwrap().look = Some(Gaze::new(PI, 0.0));
+    let dir = walk(&mut app);
+    assert!(near(dir, Vec3::NEG_X), "{dir}");
+    // One that faces its look walks along it (south here), whatever the camera says...
+    app.world_mut().entity_mut(e).insert(CharacterParams { face: Facing::Look, ..default() });
+    let dir = walk(&mut app);
+    assert!(near(dir, Vec3::Z), "forward is where the look points: {dir}");
+    // ...turns with the view while the key stays down (and the pitch does not shorten the step)...
+    app.world_mut().get_mut::<Intent>(e).unwrap().look = Some(Gaze::from_degrees(-90.0, 60.0));
+    let dir = walk(&mut app);
+    assert!(near(dir, Vec3::X), "looking east: {dir}");
+    release(&mut app, KeyCode::KeyW);
+    press(&mut app, KeyCode::KeyD);
+    let dir = walk(&mut app);
+    assert!(near(dir, Vec3::Z), "right of east is south: {dir}");
+    // ...and, with no look to follow, goes back to the camera.
+    app.world_mut().get_mut::<Intent>(e).unwrap().look = None;
+    let dir = walk(&mut app);
+    assert!(near(dir, Quat::from_rotation_y(FRAC_PI_2) * Vec3::X), "{dir}");
+}
+
+#[test]
 fn keys_held_before_the_player_exists_reach_it_when_it_appears() {
     let mut app = input_app();
     press(&mut app, KeyCode::KeyW);

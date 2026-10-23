@@ -395,6 +395,8 @@ pub(crate) fn predict_actions(
     }
     let here = b.transform.translation;
     let forward = *b.transform.forward();
+    // Where a body that faces its look aims its actions, as the host's machine has it.
+    let look = crate::machine::looked_at(b.body, &db, b.intent);
     let locked = b.intent.target.and_then(|id| index.get(id)).and_then(|e| positions.get(e).ok().map(|p| (e, p)));
     let target_body = crate::machine::leap_target(b.intent.target, &index, &parts, &positions);
     // A running paired action aims at its victim, lock-on or not, as the host's machine does (and, as there, not at one
@@ -454,7 +456,7 @@ pub(crate) fn predict_actions(
             let total = def.displacement_at(def.length());
             if total > EPS { p.distance / total } else { 1.0 }
         });
-        let facing = plan.map_or_else(|| start_facing(def, choice.dir, b.intent, here, forward, target), |p| p.dir);
+        let facing = plan.map_or_else(|| start_facing(def, choice.dir, b.intent, look, here, forward, target), |p| p.dir);
         let run = Running::new(&choice.start.action, def, instance, facing, choice.dir, Some(choice.input.clone()));
         // A guard that needs a fresh press takes the press now, as the host's machine does.
         if let Some(press) = def.guard.as_ref().and_then(|g| g.perfect_needs_press.as_ref()) {
@@ -512,7 +514,7 @@ pub(crate) fn predict_actions(
                 }
                 let aimed = tracked(def, b.intent, target, sees);
                 let spans;
-                (spans, external) = step_run(&mut s.run, def, s.extras.as_mut(), s.leap.map_or(1.0, |l| l.scale), b.intent, here, aimed, dt);
+                (spans, external) = step_run(&mut s.run, def, s.extras.as_mut(), s.leap.map_or(1.0, |l| l.scale), b.intent, look, here, aimed, dt);
                 if b.halted.is_some_and(|h| h.instance == s.run.instance) {
                     external = Vec3::ZERO;
                 }

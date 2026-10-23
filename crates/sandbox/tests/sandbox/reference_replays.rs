@@ -24,7 +24,7 @@ use shards::ai_core::scenario::run_file;
 use crate::scenario_files::scenario;
 
 /// The scenarios recorded as reference replays, by the replay's file name.
-const RECORDED: [(&str, &str); 21] = [
+const RECORDED: [(&str, &str); 22] = [
     ("obstacle_course.json", "obstacle_course.scenario"),
     ("combat_prototype.json", "combat_prototype.scenario"),
     ("npc_director.json", "npc_director.scenario"),
@@ -45,6 +45,7 @@ const RECORDED: [(&str, &str); 21] = [
     ("boss_schedule.json", "boss_schedule.scenario"),
     ("parts.json", "parts.scenario"),
     ("movers.json", "movers.scenario"),
+    ("look.json", "look.scenario"),
     ("weapons.json", "weapons.scenario"),
 ];
 

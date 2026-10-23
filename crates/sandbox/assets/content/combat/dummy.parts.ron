@@ -1,0 +1,12 @@
+// The parts of the look test's target (`characters/look.prefab.ron`, `range_dummy`; the manual's
+// "Body parts (R1)" and "Look as input"): a head that takes double damage and a torso, inside the
+// body's own 1.8 m capsule, which still takes hits where no part is (the legs). A view that passes
+// through a part names it: `AIM e7 Dummy head 14.2m`.
+{
+    "range_dummy": (
+        parts: {
+            "head": (shape: Sphere(radius: 0.22), at: (up: 1.6), damage: 2.0, tags: ["head"]),
+            "torso": (shape: Capsule(half_height: 0.35, radius: 0.3), at: (up: 1.0)),
+        },
+    ),
+}
