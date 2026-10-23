@@ -234,7 +234,7 @@ fn prefabs_spawn_the_sandbox_characters() {
     assert!(events(&app).iter().any(|l| l.contains("e15 -> e5 claw")), "{:?}", events(&app));
     let refused = act(&mut app, "spawn_prefab", json!({"id": "lich", "x": 0, "z": 0}));
     assert!(
-        text(&refused).starts_with("unknown prefab `lich`; known: armed, audio_hum, audio_pane, audio_wall, bolt, bolt_homing, camp_skeleton, colossus, den_guard, frost_warden, pillar, player, range_dummy, skeleton"),
+        text(&refused).starts_with("unknown prefab `lich`; known: armed, audio_hum, audio_pane, audio_wall, bolt, bolt_homing, camp_skeleton, colossus, den_guard, frost_warden, pillar, player, range_dummy, ranged_bystander, ranged_gunner, ranged_post, ranged_strafer, ranged_turret, ranged_wall, skeleton"),
         "{}",
         text(&refused)
     );

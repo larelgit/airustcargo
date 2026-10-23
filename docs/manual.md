@@ -381,11 +381,11 @@ FixedUpdate
                    CoreSystems::FollowOrders     Order::MoveTo → Intent
                    ActionSystems::Orders         Order::Attack → Intent (after FollowOrders)
                    NpcSystems::Sense             who is active; sight, hearing, memory (after Orders and Zones)
-                   NpcSystems::Decide            behaviour state machine: transitions, state hook
+                   NpcSystems::Decide            behaviour state machine: transitions, state hook; then the ranged NPCs' line of fire (F11)
                    NpcSystems::Direct            attack tokens, roles of the waiting ones
                    NpcSystems::Plan              planner: pick an attack, approach, press
                    NpcSystems::Navigate          routes over the navmesh, following, leash → route speed
-                   NpcSystems::Drive             avoiding bodies, then what the NPC decided → Intent
+                   NpcSystems::Drive             avoiding bodies, then what the NPC decided → Intent, then the turrets' look and fire (F11)
   SimSet::Think    game brains: decide what to do and write to Intent (they see NpcBrain and may add to it)
   SimSet::Act      MotionSystems::Intent         Intent → LocomotionInput
                    ActionSystems::Machine        input buffer, start and run of actions (offset, i-frames, block)
@@ -522,7 +522,7 @@ The game's numbers and definitions live in files, not in code: attacks, prefabs,
 - An id is a non-empty string without spaces or control characters; it is unique within its content kind across all files.
 - The engine registers its own content kinds: `prefab`, `locomotion`, `action`, `moveset`, `status`, `combat_tuning`, `animset`, `prop`,
   `input_map`, the camera `camera`, `lock_on` and `shot` (see "Scene cameras (K3)"), levels `level`, world `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`,
-  voxels `voxel_palette` and `voxel_region`, enemies `behavior`, `perception`, `director`, `attack_plan`, `npc_tuning` and `nav`,
+  voxels `voxel_palette` and `voxel_region`, enemies `behavior`, `perception`, `director`, `attack_plan`, `npc_tuning`, `nav` and `turret`,
   encounters `encounter` and `encounter_rules` (see "Encounters (G9)"), sound `audio`, `sound` and `music`, screens `screen` and `theme`, `locale`, `save`, `net`, `perf`, `devmenu`, mesh looks `look` (see "Stylised materials (E10.1)"),
   foliage `scatter` (see "Foliage and small objects (E10.2)"), effects `effect` and `fx` (see "Effects and decals
   (E10.3)"), hit stop `hitstop` (see "Hit stop (C2)"), rules `rule_set` and `rules` (see "Rules (C3)"), with the `steam` feature, achievements `achievement` (see "Steam (E10.5)"). The game adds its own: the sandbox has `layout` and `bounds`, the template has
@@ -2107,6 +2107,8 @@ Ammo, reloads and switching are F4's (the action's `cost`); a projectile is stil
 | `pierce` | 0 | bodies a ray passes through: 0 stops at the first it hits |
 | `noise` | 0 | the radius (m) NPCs hear the shot within, from where it is fired |
 | `aim_error_deg` | 0 | for a shooter aimed at a target (a body with no look: an NPC), the largest angle the whole shot misses by, drawn per shot, 0 to 90 |
+| `aim_error_moving` | 1 | (F11) the factor `aim_error_deg` grows to at a run: the cone is `1 + (factor - 1) × share` times wider, `share` being the shooter's flat speed over its run speed (at most 1); 1: moving changes nothing; at least 0 |
+| `aim_error_far` | `[]` | (F11) `(metres, factor)` points by the distance to the aim point, distances ascending, factors at least 0, interpolated as `falloff` is: `[(10, 1.0), (30, 2.0)]` doubles the cone from 30 m on; empty: distance changes nothing. The cone after both is held to 90 degrees |
 | `kick` | `(0, 0)` | recoil: `(pitch, yaw)` degrees added to the shooter's look after the shot (up and left positive), held to its pitch limits |
 | `damage`, `poise`, `status`, `flags`, `tags`, `reaction`, `knockback`, `guard_damage` | as a hit window's | one pellet's payload; `knockback` pushes along the pellet's flight |
 
@@ -2164,7 +2166,7 @@ events fire as for a swing), and what the pellets caused (a death, a broken part
 shot's. `step --until "journal:fires"` waits for one.
 
 **Content checks** (file and field named, e.g. ``content/combat/guns.action.ron: action `scatter_shot`: effects[0] Fire pellets must be at
-least 1``): `pellets` 0, `spread_deg` or `aim_error_deg` outside 0..90, a `range` not above 0, a `falloff` whose distances do not ascend or
+least 1``): `pellets` 0, `spread_deg` or `aim_error_deg` outside 0..90, a negative `aim_error_moving`, an `aim_error_far` point with a negative distance or factor or out of order, a `range` not above 0, a `falloff` whose distances do not ascend or
 whose share rises (`falloff is not monotonic: ...`), a negative or non-finite `damage`, `poise`, `noise`, `knockback`, `guard_damage` or
 status amount, a `reaction` above 3, `LineOfSight`, an unknown status; and a spawn's `aim_error_deg` outside 0..90 or without `aim: Look`.
 
@@ -2937,7 +2939,7 @@ The `shards_npc` crate covers the enemies that the game describes with data, and
 - **Navmesh**: tiles are baked in advance, stitched together when a region loads, and routes run over the graph of tiles.
 - **Navigation agents**: following a route, a leash around home, and avoiding bodies (NPCs and players) by picking from a fan of velocities.
 
-An NPC is a fighter (`Fighter`) with the `Npc` component (and the optional `Home` and `Patrol`). The rest comes with it through `#[require]`. In a prefab this is one line, and no game code is needed (`crates/sandbox/assets/content/region/camps.prefab.ron`):
+An NPC is a fighter (`Fighter`) with the `Npc` component (and the optional `Home` and `Patrol`); a non-combatant (F11) can be one without `Fighter`. The rest, its `Intent` included, comes with it through `#[require]`. In a prefab this is one line, and no game code is needed (`crates/sandbox/assets/content/region/camps.prefab.ron`):
 
 ```ron
 "Npc": (behavior: "skeleton", perception: "guard", plan: Some("skeleton"), director: ""),
@@ -2981,10 +2983,14 @@ State: `kind` (the hook; by default, the state's own name), `params` (parameters
 | `attack` | with a token, the planner picks an attack, moves in and presses it; without one, it asks for a token and waits in a role | `speed` |
 | `flee` | runs away from the target | `speed`, `distance` |
 | `investigate` | goes to a sound or a remembered point | `speed`, `within` |
+| `hide` | runs to a place out of the threat's sight and stays there; with none, cowers where it stands (F11, see "Gunfire, hiding, ranged fighters, turrets") | `within` (12), `speed` (1), `every` (0.5 s), `arrive` (0.3) |
+| `cower` | stands where it is, turned toward the threat (the game plays the animation) | |
 
 Engine conditions: `target_known`, `target_seen`, `target_heard`, `target_lost`, `target_within {meters}`, `target_in_leash
 {margin}`, `beyond_leash {margin}`, `at_home {within}`, `arrived`, `has_token`, `attack_done`, `resting`, `busy`, `timer_done`,
-`in_state {secs}`, `health_below {fraction}`, `heard_noise`, `chance {p}` (from `SimRng`), `deciding` (see "Decision cadence").
+`in_state {secs}`, `health_below {fraction}`, `heard_noise`, `chance {p}` (from `SimRng`), `deciding` (see "Decision cadence"),
+`threat_known` (it knows where a body it holds for a threat is; `notice: Threats` only), `no_hiding_spot` (in a `hide` state, its last
+search found no place: it cowers).
 
 **Your own functions in the game**: named functions that the content refers to. A game function with the same name as an engine function replaces it.
 
@@ -3005,7 +3011,7 @@ app.add_npc_condition("low_morale", |c, p| c.health_fraction() < p.num("below", 
 
 ### Perception
 
-The parameters belong to the `perception` kind: `sight_range`, `fov_deg`, `eye_height`, `near`, `line_of_sight`, `hearing`, `memory`, `keep_range`.
+The parameters belong to the `perception` kind: `sight_range`, `fov_deg`, `eye_height`, `near`, `line_of_sight`, `hearing`, `memory`, `keep_range`, `notice`.
 
 ```ron
 // content/npc/monsters.perception.ron
@@ -3018,6 +3024,8 @@ The parameters belong to the `perception` kind: `sight_range`, `fov_deg`, `eye_h
 Sight: a hostile fighter (`Team`) within `sight_range`, in the field of view (or closer than `near`, whichever way it faces), with a clear ray from the eyes to the body through the `WORLD` layer. Hearing: `Noise { position, radius, source, origin }` events (the game fires them itself; the engine makes a noise on every hit and every sprint) reach an NPC within `radius × hearing` of `position` and are kept in its `Perceived`. An NPC that does not see the source learns its place from `origin` (where the source stands; `None` means `position`). A hit's noise sounds where the hit happened, and the attacker is marked where it stands. Memory: what was noticed stays known for `memory` seconds, at the last place. The focus target sticks to the one already known, until another one is much closer. What an NPC knows lies in its components (`Perceived`), and goes into the replay hash and the snapshot in full.
 
 **Keep range.** `keep_range: Some(18.0)` makes `sight_range` govern only what is noticed *anew*: a target that is still known (inside its `memory`) is seen, and its place refreshed, up to `keep_range` metres, with the same field of view and a clear ray. Without it, a target between `sight_range` and where the NPC's chase should end is "lost" at once and chased to a stale point until the memory runs out. `keep_range` must be at least `sight_range` (a content error otherwise). Hearing and the focus rule are unchanged. `keep_range` does not drop the target: beyond it the target is merely not seen and stays known for `memory` seconds. To give up the chase at a distance, add a transition on `!target_within N` to a return or wander state. A target known only from a noise or a hit is kept out to `keep_range` too; set `hearing: 0` where that is unwanted. `npc_state` shows `perception.keep_range` and marks a target seen beyond `sight_range` as `kept`; `npc_overlay` says `keeps e5 17.2m N`.
+
+**What it notices (F11).** `notice: Hostile` (the default, left out when written) notices hostile fighters as above. `notice: Threats` is a non-combatant's: it notices only the bodies it holds for a threat, whatever their team, and no hostile team as such. A threat is a body it saw attack while armed (an action of its own that fires a shot, or one with hit windows while it holds a weapon, `Arsenal::in_hands`; seen as above) or heard fire a shot (a `ShotFired` within the shot's `noise` × its `hearing`); it stays one for `memory` seconds after the last such sight or sound. Such an NPC carries `NpcThreats { known: [{id, age}] }` (by id, in replays and snapshots; inserted on its first active tick, so a shot in the very tick it is spawned is heard as a noise only). See "Gunfire, hiding, ranged fighters, turrets".
 
 ### Combat director and tokens
 
@@ -3109,9 +3117,10 @@ Whether an option of a plan may be chosen now is decided by one function, shared
 9. `ForbidAfter { tag, after }`: the newest past attack, `after`, carries `tag`, one of the option's `forbid_after` tags;
 10. `Banned { after, ban }`: the plan ban `bans[ban]` forbids it after the past attack `after`;
 11. `Machine { reason }`: the action machine would start it neither now nor by waiting. A busy fighter, missing stamina or an action's own cooldown only delay it while the machine gives a time it would start by; with none (a held action with no end, stamina that never regenerates to the cost) it refuses. Death, an input or an action the moveset or content lacks, no charges, the mode gate (`only_in`), a leap off the ground and no landing for a leap refuse it too;
-12. `Budget { left, cost }`: it costs more than is left of the target's collision budget;
-13. `Overlap { by, with }`: the director's `allowed` does not let it overlap with an attack in flight on the target (`by` is the NPC that holds that attack, `with` its tags);
-14. `Spacing { by, ticks }`: NPC `by` of its director began a strike less than `min_spacing` ago, `ticks` ticks are left (never for a plan that `ignores_spacing`).
+12. `LineOfFire { by }` (F11): it fires a shot, its plan keeps a range (`keep_range`), and the ally `by` (or, with `by: None`, a wall) stands between the NPC and its target's aim point, as traced this tick (`npc_schedule` says `no line of fire: e9 in the way`; see "Gunfire, hiding, ranged fighters, turrets");
+13. `Budget { left, cost }`: it costs more than is left of the target's collision budget;
+14. `Overlap { by, with }`: the director's `allowed` does not let it overlap with an attack in flight on the target (`by` is the NPC that holds that attack, `with` its tags);
+15. `Spacing { by, ticks }`: NPC `by` of its director began a strike less than `min_spacing` ago, `ticks` ticks are left (never for a plan that `ignores_spacing`).
 
 The distance window is not one of these rules: the planner prefers the options whose window holds the distance and, with `in_range_only`, chooses only among them. Every rule reads the world as the system sees it and draws no random number, so the order only names the rule; it never changes whether an option passes, and plans choose exactly as before. The action machine's rule is also asked where it was asked before this order existed (after the weight, the cooldown and the bans, of a closed option too), because it reads definitions no other rule reads (the action a running action's cancel window or a context binding routes the input to), and the replay's `content` check records what a session read: a session reads the same definitions as before, so a recording made before verifies unchanged. For the same reason the live tags are read only for a plan with an option that forbids one. A new rule takes its place in the order as a new `Refusal` variant (`Refusal` is `#[non_exhaustive]`: a game's `match` keeps a `_` arm). The players the director counts for its token limit (bodies with `PlayerId` that stand, neither `Dead` nor `Downed`) are counted by one function, which the director and the engine rule `npc.tokens_within_limit` share.
 
@@ -3212,11 +3221,61 @@ The verdicts are the game's. Whether a short gap is unavoidable depends on the z
 
 **`npc.plan_sequence`** (engine rule, with a control test): no NPC presses an attack that the plan which chose it refuses by `max_repeats` or `forbid_after` against the history before it. It is judged at the press, not at the start (`audit_presses` runs right after `plan_attacks`, only with engine invariants on, and keeps the text in the resource `PlanAudit`, which is not simulation state), because between the press and the start the game may swap the plan; it uses its own short code for the two rules instead of `refusal()`, so a planner path that skipped `refusal()` would be caught. Only the planner's presses are judged (`Grant::pressed`); a combo continuation or a state hook's press is not a plan choice.
 
+### Gunfire, hiding, ranged fighters, turrets (F11)
+
+Four pieces for the NPCs of a game with guns, each off until content asks for it: what a non-combatant fears, where it hides, a fighter that keeps its distance and fires only along a clear line, and turrets. Who panics, what a guard carries and every number are the game's content; the sandbox's neutral example is `content/**/ranged.*.ron`, played by `scenarios/npc_ranged.scenario` (reference replay `npc_ranged.json`) and checked by `tests/sandbox/npc_ranged.rs`.
+
+**Threats.** `notice: Threats` on a perception (see "Perception"): the NPC notices only what it holds for a threat, a body it saw attack while armed or heard fire a shot, of any team (a guard of its own side who opens fire is one; the unarmed player of another team is none). The condition `threat_known` holds while it knows where one is. `npc_state` shows `threats: [{id, since}]` and `perception.notice`.
+
+**Hiding.** `shards::npc::hiding_spot(world, npc, threat_eye, within) -> Option<Vec3>` is where NPC `npc` can be out of sight of a threat whose eye is at `threat_eye`; `hiding_search` answers the same with what it cost (`nodes`, `rays`) and why it found none. The search, pure and drawing nothing:
+
+- the navmesh nodes of the body class that serves the NPC, reached from where it stands by a breadth-first walk over the navmesh's moves (in the bake's order), each within `within` metres of the NPC and inside its leash (half a metre in);
+- one node per metre (the nodes of every other column each way), farthest from the threat first, ties by node id;
+- the first one the threat cannot see is the spot. Seen: a clear ray through the `WORLD` layer from the threat's eye to the NPC's eye standing there, or to the middle of its body (a wall lower than the eye hides nothing);
+- at most `HIDE_NODES` (4096) nodes walked and `HIDE_RAYS` (96) rays cast; with no spot in that budget, or off the navmesh (no region, outside it, no class serves the body), there is none.
+
+The hook `hide` looks for a spot within `within` metres (default 12), runs to it (`speed`, default 1: it runs) and stays there, turned toward the threat. Every tick it checks with two rays that the threat still cannot see the spot, and searches again (at most every `every` seconds, default 0.5) when it can (the threat moved) or when the last search found nothing; meanwhile it stands where it is: it cowers. The threat is the nearest body it holds for one and knows the place of, else its target, else the noise it heard; with none it keeps to its spot. The state keeps the spot in `NpcBrain::point` and whether it found one in `NpcBrain::step` (1 hiding, 2 cowering), so it is in replays and snapshots like any state's. The hook `cower` stands, turned toward the threat (the game plays the animation), and the condition `no_hiding_spot` holds in a `hide` state whose last search found nothing:
+
+```ron
+// content/npc/ranged.behavior.ron
+"ranged_bystander": (
+    initial: "idle",
+    states: {
+        "idle": (transitions: [(to: "hide", when: ["threat_known"])]),
+        "hide": (kind: "hide", params: {"within": 14.0}, transitions: [(to: "cower", when: ["no_hiding_spot"])]),
+        "cower": (kind: "cower", transitions: [(to: "hide", when: [("in_state", {"secs": 2.0})])]),
+    },
+),
+```
+
+`npc_state` shows `hiding: {spot, where, cowering, from}`; the describer adds `hiding`, `cowering` or `looking for cover`; `step --until named:npc_hidden` waits for an NPC to reach its spot.
+
+**Ranged fighters.** `keep_range: Some((8.0, 14.0))` on an attack plan makes its NPC keep that band from its target instead of closing in: nearer than `min` it backs off to `min` + 0.3 m, farther than `max` it closes in (to three quarters of the band out from `min`), and inside the band it holds its ground, or moves in its plan's `wait` role (a strafe, a circle) at the role's distance held inside the band. It does so while it waits for a token (it takes no slot of the director's waiting roles), between choices, in its window, and while its attack is in flight: an action with `move_speed` lets the body walk as it fires. An option that fires a shot (`Effect::Fire`) has the band as its default window (without a band, the shortest `range` of its shots); the option's own `min` and `max` still win when set. A plan without `keep_range` reads, stores and decides nothing new.
+
+**The line of fire.** Every tick, after the brains decide and before the director grants, every active NPC whose plan keeps a range traces the ray its shot would fly to its target (its grant's, else its brain's): from its eye to the target's aim point, as `shot_aim` aims an NPC's shot, through the world as the tick found it (`shards::action::line_of_fire`: the target first is clear; a living body of the shooter's side, neither dead, downed nor intangible, is an ally in the way; a `WORLD` collider that is no body is a wall; other bodies are passed). The answer is `NpcFireLine { target, blocked: None | Ally(eN) | Wall }`, on such NPCs only, in replays and snapshots. While it is blocked, the plan's options that fire a shot are refused (`Refusal::LineOfFire { by }`, after `Machine`): the director grants no token for them and the planner neither chooses nor presses them. One trace per NPC per tick: `npc_schedule` reads this tick's (`line_of_fire: "clear"`, `"e9 in the way"` or `"a wall in the way"`, and the option's `refused: "no line of fire: e9 in the way"`), and says `not traced to this target yet` for another target. `npc_state` shows `range: {keep, line_of_fire: {target, blocked}}`; the describer adds `keeping range 8–14m · no line of fire: e9 in the way` while it fights; `step --until named:npc_line_blocked` waits for a blocked line.
+
+**Accuracy and bursts.** A shot's `aim_error_deg` (F3) grows while the shooter moves (`aim_error_moving`) and with the distance to its aim (`aim_error_far`); see "Shooting: hitscan and 3D aim (F3)". The sandbox's gunner hits with every burst standing and with about a third of its shots strafing (`ranged_burst`: 1.5 degrees, four times that at a run). A burst is an action with several `Fire` effects: one press, so the token, the plan's history and the line of fire judge the burst, not each shot.
+
+**Turrets.** A turret is an NPC (its perception finds the target; its behaviour can be one `idle` state) with a `Turret { def, active, rest }` naming its `turret` definition, and a body whose `locomotion` cannot walk (no speeds; with `face: Look` the whole body turns with its look):
+
+| `turret` field | default | what |
+|---|---|---|
+| `turn_rate_deg` | 90 | how fast its look turns, degrees per second, on each axis; above 0 |
+| `yaw_deg` | 180 | how far its look turns either way of its rest, 0 to 180 (180: all round, the short way) |
+| `pitch_deg` | `(-30, 45)` | its lowest and highest pitch, within -90..90 |
+| `input` | `"light"` | the moveset input it fires with |
+| `on_target_deg` | 2 | it fires only while its look is within this many degrees of its target's aim point |
+| `range` | 40 | it fires at a target within this many metres; farther, it tracks and holds fire |
+
+Every tick, after the NPCs' intents (`NpcSystems::Drive`), every turret in `AiId` order aims at its focus (the aim point while it sees it, the last known place while it remembers it, else its rest), holds the aim inside its limits, and turns its look (`Intent::look`) toward it by at most `turn_rate_deg` a second. Its rest is the way its body faced the first tick it ran, kept in `Turret::rest`. It fires (presses `input`) when it is on, sees its target within `range`, its look is within `on_target_deg` of the aim point and the aim needed no holding, the line of fire along its look meets the target first, and it runs no action and has no press of that input waiting; its shots fly along its look (no aim error). Off, it turns back to its rest and holds fire; dead, downed or dormant, it does nothing. The game switches it with `set_turret_active(world, entity, on)` where the simulation runs (journal `e9 turret on`, event `TurretSwitched`); the dev tool `turret_active [id=eN] on=true|false` does the same (every turret without an id). The describer says `turret tracking e5 (yaw 12°/60°)`, `turret tracking e5 (yaw -60°/60°, at its limit)`, `turret idle` or `turret off`; `npc_state` shows `turret: {def, active, line}`.
+
+**Not built**: guards that move between cover points (F11's fifth item, waiting for a design that asks for it); hiding off the navmesh (such an NPC cowers); a turret has no invariant of its own (a kick may push its look past its limits for a tick).
+
 ### Leash, home and zones
 
 `Home { pos, leash }`: where the NPC's home is and how far it can go from it, in metres. The NPC's targets stay inside the leash, with a 0.5 m margin for the body. When that margin pulls an attack's approach goal short of the target (a target at the leash's edge), the planner walks that much nearer the goal, so the NPC still stops inside the window it walks to (`planner::reach`; at least 0.3 m from the goal: a target too far beyond is faced from the edge). The conditions `target_in_leash`, `beyond_leash` and `at_home` let the behaviour turn the NPC back home. The arena skeletons in the sandbox have a 30 m leash, the guard 26 m, the camp skeletons in the wilds 12 m, and the lair's guard 10 m. An NPC in `Dormant` (farther than the active radius from every player, see "World and generation (E5)") does not think or move. It wakes up on the tick a player comes close. A group of enemies spawned by an encounter ("Encounters (G9)") goes back to its home the same way when the players leave or are wiped: the encounter's `pull_back` heals the survivors of a placed wave and forces the behaviour state it names, and the NPC condition `encounter_returning` is true until they are home.
 
-Conditions for `step --until`: `named:npc_attacking` (someone's attack is under way), `named:npcs_calm` (no one has a target), `named:npc_beyond_leash` (an active NPC is a metre beyond its leash; the step meant to keep the NPC in its zone must not stop on this), `named:npc_detour` (the NPC walks a route of several legs because the target is out of sight), `named:npc_avoiding` (an active NPC leaves its route to go around another body; see "Avoiding bodies"), `named:npc_engaged` (an active NPC with a target in one of the states `chase`, `attack` or `wait_token` is fighting; a calm NPC that sees someone is not), `named:npc_near` (a living player is closer than one and a half times the active NPC's sight range: the NPC is about to notice them). The last two are what the music listens for (see "Audio").
+Conditions for `step --until`: `named:npc_hidden` (F11: an active NPC in a `hide` state stands within 0.6 m of the hiding spot it found), `named:npc_line_blocked` (F11: an active NPC whose plan keeps a range has an ally or a wall in its line of fire), `named:npc_attacking` (someone's attack is under way), `named:npcs_calm` (no one has a target), `named:npc_beyond_leash` (an active NPC is a metre beyond its leash; the step meant to keep the NPC in its zone must not stop on this), `named:npc_detour` (the NPC walks a route of several legs because the target is out of sight), `named:npc_avoiding` (an active NPC leaves its route to go around another body; see "Avoiding bodies"), `named:npc_engaged` (an active NPC with a target in one of the states `chase`, `attack` or `wait_token` is fighting; a calm NPC that sees someone is not), `named:npc_near` (a living player is closer than one and a half times the active NPC's sight range: the NPC is about to notice them). The last two are what the music listens for (see "Audio").
 
 ### Navmesh
 
@@ -3373,7 +3432,7 @@ The content check names the field and its bounds (`avoidance.horizon must be in 
 
 ### NPCs as the AI sees them
 
-In `observe`, each NPC has a state line (`chase e5 · token · leash 12/20m`, `attack e5 · circle`, `idle (dormant)`). The journal shows the transitions and the tokens:
+In `observe`, each NPC has a state line (`chase e5 · token · leash 12/20m`, `attack e5 · circle`, `idle (dormant)`), and F11's parts after it (`hiding`, `cowering`, `keeping range 8–14m · no line of fire: e9 in the way`, `turret tracking e5 (yaw 12°/60°)`; the describer `npc_ranged`, also in `npc_overlay`'s lines). The journal shows the transitions and the tokens:
 
 ```text
   2 e25 idle → fight e5

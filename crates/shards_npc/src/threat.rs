@@ -12,6 +12,8 @@
 //! - **Seen**: in the perception pass ([`perceive`](crate::perception)), a body the NPC sees (its
 //!   sight range, field of view and clear ray) that runs such an action now is marked.
 //! - **Heard**: [`shot_threat`] marks the shooter when the shot is fired, where the simulation runs.
+//!   The NPC's [`NpcThreats`] comes with its first active perception tick: a shot fired before that
+//!   (in the tick it is spawned) is heard as a noise only.
 //! - **Order**: marks are kept by `AiId`, so the order NPCs or shots come in changes nothing.
 
 use ai_core::AiId;

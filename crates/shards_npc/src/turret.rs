@@ -118,7 +118,8 @@ pub struct TurretSwitched {
 }
 
 /// Switches turret `entity` on or off; journaled (`e9 turret on`). `Err` for an entity with no
-/// [`Turret`].
+/// [`Turret`]. Gameplay: call it where the simulation runs (the host; [`TurretSwitched`] is no net
+/// event, a co-op client gets the component in the host's state).
 pub fn set_turret_active(world: &mut World, entity: Entity, on: bool) -> Result<String, String> {
     let mut turret = world.get_mut::<Turret>(entity).ok_or("not a turret (it has no Turret component)")?;
     let was = turret.active;
