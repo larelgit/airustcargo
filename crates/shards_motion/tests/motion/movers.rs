@@ -346,6 +346,7 @@ fn a_bad_mover_definition_is_an_error_naming_its_file_and_field() {
             "open": (keys: [(), (turn: (0.0, 90.0, 0.0))], turn_speed: 30.0, loop: Cycle),
             "first": (keys: [(time: 1.0), (at: (1.0, 0.0, 0.0))], speed: 1.0),
             "hurt": (keys: [(), (at: (1.0, 0.0, 0.0))], speed: 1.0, blocked: Crush(damage: 0.0)),
+            "quick": (keys: [(), (at: (0.0, 1.0, 0.0), time: 0.001)]),
         }"#,
     );
     let errors = errors(&app);
@@ -356,6 +357,7 @@ fn a_bad_mover_definition_is_an_error_naming_its_file_and_field() {
         "loop: Cycle goes from the last key back to key 0 at once, so keys[1] must be where key 0 is",
         "keys[0].time",
         "Crush damage must be above 0",
+        "keys[1]: the way from key 0 takes 0.001 s, under the shortest a way may take (0.01 s)",
     ] {
         assert!(errors.iter().any(|e| e.contains("content/test.mover.ron") && e.contains(needle)), "{needle}: {errors:?}");
     }

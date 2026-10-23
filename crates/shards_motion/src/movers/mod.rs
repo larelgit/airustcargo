@@ -54,7 +54,7 @@ use shards_content::{ContentAppExt, ContentDb};
 use shards_core::{EngineAppExt, NetRole, NetSet};
 
 pub use ai::mover_sane;
-pub use def::{Blocked, MoverDef, MoverKey, MoverLoop, MAX_KEYS};
+pub use def::{Blocked, MoverDef, MoverKey, MoverLoop, MAX_KEYS, MIN_WAY};
 
 use crate::controller::ControllerSystems;
 

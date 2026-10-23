@@ -8,6 +8,10 @@ use shards_content::{ContentDef, Refs};
 /// At most this many keys in one mover.
 pub const MAX_KEYS: usize = 64;
 
+/// The shortest a way between two keys may take (s). A mover then passes a bounded number of keys
+/// in a step, so a step runs all of its time (`run::advance`).
+pub const MIN_WAY: f32 = 0.01;
+
 /// How far apart two poses may be and still be one (m, and the quaternion dot below 1).
 const SAME_POSE: f32 = 1e-4;
 
@@ -163,6 +167,11 @@ impl MoverDef {
         by_move.max(by_turn)
     }
 
+    /// Seconds the shortest way between neighbouring keys takes (infinite with fewer than 2 keys).
+    pub fn shortest_way(&self) -> f32 {
+        (1..self.len()).map(|i| self.duration(i - 1, i)).fold(f32::INFINITY, f32::min)
+    }
+
     /// The pose between keys `from` and `to`, `t` of the way (0: at `from`), relative to the mover's
     /// origin: a place and a rotation.
     pub fn local(&self, from: u32, to: u32, t: f32) -> (Vec3, Quat) {
@@ -177,8 +186,15 @@ impl MoverDef {
 
 /// The problems with one way between keys: none, or what to add.
 fn way_problem(def: &MoverDef, i: usize) -> Option<String> {
-    if def.duration(i as u32 - 1, i as u32) > 0.0 {
+    let duration = def.duration(i as u32 - 1, i as u32);
+    if duration >= MIN_WAY {
         return None;
+    }
+    if duration > 0.0 {
+        return Some(format!(
+            "keys[{i}]: the way from key {} takes {duration} s, under the shortest a way may take ({MIN_WAY} s): give key {i} a longer `time`, or the mover a lower speed",
+            i - 1
+        ));
     }
     let (a, b) = (&def.keys[i - 1], &def.keys[i]);
     let distance = a.at.distance(b.at);

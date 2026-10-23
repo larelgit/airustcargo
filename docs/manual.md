@@ -850,7 +850,9 @@ it: the node in the level's scene with the same whole path below the scene's own
   holds, and the body takes `damage` when the hold begins and every `every` seconds, 1 by default, while it lasts).
 - The content check names the file and the field (`content/world/movers.mover.ron: lift: keys[1]: the way from key 0 takes no
   time; it moves 4.00 m: give the mover a speed`, `loop: Cycle goes from the last key back to key 0 at once, so keys[1] must be
-  where key 0 is`, `blocked: Crush damage must be above 0`), and a level node that names a mover content does not have (``node `Lifts/Lift`: `mover`:
+  where key 0 is`, `blocked: Crush damage must be above 0`, and a way shorter than `MIN_WAY`, 0.01 s: `keys[1]: the way from key 0 takes 0.001 s, under
+  the shortest a way may take (0.01 s)`; a step then passes a bounded number of keys, and a long one runs all of its time as short
+  ones would), and a level node that names a mover content does not have (``node `Lifts/Lift`: `mover`:
   no mover definition `lfit` (did you mean `lift`?); movers: lift, slide``). Movers do not nest.
 
 *The tick.* `MoverSystems::Step` runs in `SimSet::Move` before the controller. Each character on the ground is asked what it

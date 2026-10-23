@@ -4,7 +4,7 @@
 
 use bevy::prelude::*;
 
-use super::def::{MoverDef, MoverLoop};
+use super::def::{MoverDef, MoverLoop, MIN_WAY};
 use super::MoverState;
 
 /// What happened to a mover in a step.
@@ -59,8 +59,12 @@ pub(crate) fn advance(def: &MoverDef, s: &mut MoverState, dt: f32, notes: &mut V
         return;
     }
     let mut left = dt;
-    // Each pass rests out a wait, starts a way or ends one: bounded by the keys.
-    for _ in 0..(4 * n + 8) {
+    // Each pass rests out a wait and starts a way, or ends a way: two passes a way at most, and
+    // `dt` holds no more ways than it holds shortest ways, and the two it ends and starts in.
+    // Twice that runs all of `dt`, whatever the tick; the check keeps every way at `MIN_WAY` or
+    // more, which keeps the count small.
+    let ways = (dt / def.shortest_way().max(MIN_WAY)) as usize + 2;
+    for _ in 0..(4 * ways + 4 * n as usize + 8) {
         if s.from == s.to {
             if s.wait > 0.0 {
                 if left < s.wait {
@@ -258,6 +262,31 @@ mod tests {
         let notes = run(&def, &mut s, 60);
         let starts: Vec<Note> = notes.into_iter().filter(|n| matches!(n, Note::Started { .. })).collect();
         assert_eq!(starts, [Note::Started { from: 0, to: 1 }, Note::Started { from: 1, to: 2 }, Note::Started { from: 0, to: 1 }]);
+    }
+
+    #[test]
+    fn a_long_step_runs_all_its_ways_as_short_steps_do() {
+        // Ways and rests of 1/64 s (above `MIN_WAY`, and exact in binary): half a second holds
+        // sixteen ways, many more than the keys.
+        let def = MoverDef {
+            keys: vec![key(0.0), MoverKey { at: Vec3::Y, time: Some(1.0 / 64.0), ..default() }],
+            speed: None,
+            turn_speed: None,
+            wait: 1.0 / 64.0,
+            looping: MoverLoop::PingPong,
+            blocked: default(),
+        };
+        let (mut long, mut short) = (MoverState::default(), MoverState::default());
+        let mut long_notes = Vec::new();
+        advance(&def, &mut long, 0.5, &mut long_notes);
+        let mut short_notes = Vec::new();
+        for _ in 0..32 {
+            advance(&def, &mut short, 1.0 / 64.0, &mut short_notes);
+        }
+        let arrivals = long_notes.iter().filter(|n| matches!(n, Note::Arrived { .. })).count();
+        assert_eq!(arrivals, 16, "{long_notes:?}");
+        assert_eq!(long_notes, short_notes);
+        assert_eq!((long.from, long.to, long.t, long.wait, long.up), (short.from, short.to, short.t, short.wait, short.up));
     }
 
     #[test]
