@@ -1,0 +1,91 @@
+// The bodies of the F11 scene (`scenarios/npc_ranged.scenario`, `tests/sandbox/npc_ranged.rs`): a bystander
+// that hides from gunfire, gunners that keep their distance, a body that only stands (in a gunner's line of
+// fire), a turret, and a wall to hide behind. None is in the arena; `spawn_prefab` brings them.
+{
+    // A non-combatant (no `Fighter`: nobody fights it, and it fights nobody): it hears a shot, or sees an
+    // armed body attack, and runs out of its sight (`ranged_bystander`).
+    "ranged_bystander": (
+        components: {
+            "Name": "Bystander",
+            "AiKind": ("Bystander"),
+            "AiImportance": (1.0),
+            "Team": ("bystanders"),
+            "Health": (current: 50.0, max: 50.0),
+            "CharacterController": (params: "skeleton"),
+            "Look": ("player"),
+            "Npc": (behavior: "ranged_bystander", perception: "ranged_bystander", plan: None, director: ""),
+            "Home": (pos: None, leash: 30.0),
+        },
+    ),
+    // A gunner: holds 8-14 m from its target and fires bursts when its line is clear.
+    "ranged_gunner": (
+        components: {
+            "Name": "Gunner",
+            "AiKind": ("Gunner"),
+            "AiImportance": (1.0),
+            "Team": ("monsters"),
+            "Fighter": (moveset: "ranged_gunner"),
+            "Health": (current: 60.0, max: 60.0),
+            "Poise": (current: 30.0, max: 30.0, regen: 10.0, delay: 2.0, since_hit: 2.0, broken: 0.0),
+            "CharacterController": (params: "skeleton"),
+            "Look": ("skeleton"),
+            "Npc": (behavior: "ranged_gunner", perception: "ranged_gunner", plan: Some("ranged_gunner"), director: ""),
+            "Home": (pos: None, leash: 30.0),
+            "LockOnTarget": (),
+        },
+    ),
+    // The same, strafing along its band as it fires.
+    "ranged_strafer": (
+        extends: "ranged_gunner",
+        components: {
+            "Name": "Strafer",
+            "Npc": (behavior: "ranged_gunner", perception: "ranged_gunner", plan: Some("ranged_strafer"), director: ""),
+        },
+    ),
+    // A body of the gunners' side that stands where it is put: in a gunner's line of fire, it holds the
+    // gunner's fire.
+    "ranged_post": (
+        components: {
+            "Name": "Post",
+            "AiKind": ("Post"),
+            "AiImportance": (1.0),
+            "Team": ("monsters"),
+            "Fighter": (moveset: "skeleton"),
+            "Health": (current: 60.0, max: 60.0),
+            "CharacterController": (params: "skeleton"),
+            "Look": ("skeleton"),
+            "Npc": (behavior: "ranged_post", perception: "skeleton", plan: None, director: ""),
+        },
+    ),
+    // A turret (`npc/ranged.turret.ron`): it does not walk; it turns its look toward what it sees within its
+    // limits, measured from the way it faces when placed, and fires when its look is on it.
+    "ranged_turret": (
+        components: {
+            "Name": "Turret",
+            "AiKind": ("Turret"),
+            "AiImportance": (1.0),
+            "Team": ("monsters"),
+            "Fighter": (moveset: "ranged_turret"),
+            "Health": (current: 80.0, max: 80.0),
+            "CharacterController": (params: "turret"),
+            "Look": ("stone"),
+            "Npc": (behavior: "ranged_turret", perception: "ranged_turret", plan: None, director: ""),
+            "Turret": (def: "sentry", active: true, rest: None),
+            "LockOnTarget": (),
+        },
+    ),
+    // A wall 6 m long (along z), 2.5 m high and 0.4 m thick, standing on its origin: blocks movement and sight.
+    "ranged_wall": (
+        components: {
+            "Name": "Wall",
+            "AiKind": ("Wall"),
+            "AiLandmark": (),
+            "Look": ("wall"),
+            "Collider": (
+                shape: Cuboid(half: (0.2, 1.25, 3.0)),
+                offset: (0.0, 1.25, 0.0),
+                layers: (memberships: (1), filters: (4294967295)),
+            ),
+        },
+    ),
+}

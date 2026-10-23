@@ -102,14 +102,18 @@ pub mod chain;
 mod coverage;
 pub mod def;
 pub mod director;
+pub mod hide;
 mod invariants;
 pub mod memory;
 pub mod nav;
 pub mod overlay;
 pub mod perception;
 pub mod planner;
+pub mod ranged;
 pub mod schedule;
 pub mod strike;
+pub mod threat;
+pub mod turret;
 
 use ai_core::{AiAppExt, SimSet};
 use bevy::prelude::*;
@@ -127,9 +131,13 @@ pub use brain::{
 };
 pub use def::{
     ChainDef,
-    AttackOption, AttackPlanDef, AvoidanceDef, BehaviorDef, Cond, DirectorDef, NpcTuning, Param, Params, PerceptionDef, Role,
+    AttackOption, AttackPlanDef, AvoidanceDef, BehaviorDef, Cond, DirectorDef, Notice, NpcTuning, Param, Params, PerceptionDef, Role,
     SequenceBan, StateDef, TransitionDef, WaitRole,
 };
+pub use hide::{hiding_search, hiding_spot, hide_status, threat_eye, HideSearch, HIDE_NODES, HIDE_RAYS};
+pub use ranged::{band_text, fire_line_to, LineBlock, NpcFireLine};
+pub use threat::{known_threats, NpcThreats, Threat};
+pub use turret::{set_turret_active, turret_line, Turret, TurretDef, TurretSwitched};
 pub use chain::{ChainPressed, ChainRefused, NpcChain};
 pub use director::{AttackToken, Grant, TokenGranted, TokenReturned};
 pub use audit::{follow_pairs, may_follow, plan_hits, FollowPair, PlanHit};
@@ -221,7 +229,10 @@ impl Plugin for NpcPlugin {
             .register_type::<NpcThink>()
             .register_type::<NpcStrike>()
             .register_type::<NpcOptions>()
-            .register_type::<NpcChain>();
+            .register_type::<NpcChain>()
+            .register_type::<NpcThreats>()
+            .register_type::<NpcFireLine>()
+            .register_type::<Turret>();
         // Known to the world from the start, so `&World` queries (tools) work before the
         // first NPC.
         let world = app.world_mut();
@@ -245,6 +256,7 @@ impl Plugin for NpcPlugin {
             .add_content::<AttackPlanDef>()
             .add_content::<NpcTuning>()
             .add_content::<NavSettingsDef>()
+            .add_content::<TurretDef>()
             .init_resource::<NavPaths>()
             .init_resource::<NpcActivity>()
             .init_resource::<nav::NavBakes>()
@@ -275,16 +287,18 @@ impl Plugin for NpcPlugin {
                 FixedUpdate,
                 (
                     (brain::update_activity, perception::perceive).chain().in_set(NpcSystems::Sense),
-                    brain::decide.in_set(NpcSystems::Decide),
+                    (brain::decide, ranged::fire_lines).chain().in_set(NpcSystems::Decide),
                     director::direct.in_set(NpcSystems::Direct),
                     (chain::chain_press, planner::plan_attacks).chain().in_set(NpcSystems::Plan),
                     (nav::nav_paths, nav::nav_steer).chain().in_set(NpcSystems::Navigate),
-                    (nav::nav_avoid, nav::drive_intents).chain().in_set(NpcSystems::Drive),
+                    (nav::nav_avoid, nav::drive_intents, turret::turrets).chain().in_set(NpcSystems::Drive),
                 ),
             )
             .add_observer(perception::hear_noise)
             .add_observer(perception::hit_noise)
             .add_observer(perception::shot_noise)
+            .add_observer(threat::shot_threat)
+
             .add_observer(strike::action_started);
         // The token rule judges the director's books right after it closed them; the sequence rule
         // judges the planner's presses right after it made them.

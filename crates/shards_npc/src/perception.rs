@@ -14,6 +14,10 @@
 //! - **Keep range** ([`PerceptionDef::keep_range`]): a target that is still known stays seen
 //!   (its place refreshed) up to this far, with the same field of view and a clear ray;
 //!   `sight_range` only decides what is noticed anew.
+//! - **Threats** ([`PerceptionDef::notice`], F11): an NPC that notices threats (a non-combatant)
+//!   notices, by sight and by sound, only the bodies it holds for one
+//!   ([`NpcThreats`](crate::threat::NpcThreats)), whatever their team: one it saw attack while
+//!   armed or heard fire a shot. A hostile team alone is no threat to it.
 //!
 //! The **focus** (the NPC's target) sticks to what it has while it is known, unless another
 //! target is seen much closer; else the nearest seen, else the most recently sensed.
@@ -24,13 +28,14 @@
 use ai_core::AiId;
 use bevy::prelude::*;
 use shards_action::fighter::hostile;
-use shards_action::{state_intangible, ActionState, Damaged, Fighter, ShotFired, Standing, Team};
+use shards_action::{state_intangible, ActionState, Arsenal, Damaged, Fighter, ShotFired, Standing, Team};
 use shards_content::ContentDb;
 use shards_core::{flat, NetRole};
 use shards_motion::{LayerMask, MotionState, PhysicsWorld, QueryFilter};
 
 use crate::brain::{Npc, NpcBrain};
-use crate::def::{NpcTuning, PerceptionDef};
+use crate::def::{Notice, NpcTuning, PerceptionDef};
+use crate::threat::{attacks_armed, NpcThreats};
 
 /// A sound in the world, heard by NPCs within `radius` (times their hearing).
 ///
@@ -168,7 +173,9 @@ pub(crate) fn perceive(
     db: Res<ContentDb>,
     physics: Res<PhysicsWorld>,
     bodies: Query<(Entity, &AiId, &Transform, Option<&Team>, Option<&MotionState>, Option<&ActionState>), (With<Fighter>, Standing)>,
-    mut npcs: Query<(Entity, &AiId, &Npc, &NpcBrain, &Transform, Option<&Team>, &mut Perceived)>,
+    armed: Query<(Option<&ActionState>, Option<&Arsenal>)>,
+    mut npcs: Query<(Entity, &AiId, &Npc, &NpcBrain, &Transform, Option<&Team>, &mut Perceived, Option<&mut NpcThreats>)>,
+    mut commands: Commands,
 ) {
     let dt = time.delta_secs();
     let tuning = NpcTuning::of(&db);
@@ -187,20 +194,89 @@ pub(crate) fn perceive(
     candidates.sort_by_key(|c| c.id);
     let mut order: Vec<(AiId, Entity)> = npcs.iter().map(|(e, id, ..)| (*id, e)).collect();
     order.sort();
+    // Which candidates attack while armed: worked out for the first NPC that notices threats (the
+    // reads are content reads, made only where such an NPC is).
+    let mut attacking: Option<Vec<bool>> = None;
     for (id, entity) in order {
-        let Ok((_, _, npc, brain, tf, team, mut perceived)) = npcs.get_mut(entity) else { continue };
+        let Ok((_, _, npc, brain, tf, team, mut perceived, threats)) = npcs.get_mut(entity) else { continue };
         if !brain.active {
             if *perceived != Perceived::default() {
                 *perceived = Perceived::default();
             }
+            if let Some(mut threats) = threats
+                && !threats.known.is_empty()
+            {
+                threats.known.clear();
+            }
             continue;
         }
         let def = db.get::<PerceptionDef>(&npc.perception).cloned().unwrap_or_default();
-        let next = sense(&def, &tuning, &physics, &candidates, id, entity, tf, team, &perceived, dt);
+        let marks = match def.notice {
+            Notice::Hostile => {
+                if threats.is_some() {
+                    commands.entity(entity).remove::<NpcThreats>();
+                }
+                Vec::new()
+            }
+            Notice::Threats => {
+                let attacking = attacking.get_or_insert_with(|| {
+                    candidates
+                        .iter()
+                        .map(|c| armed.get(c.entity).is_ok_and(|(state, arsenal)| attacks_armed(&db, state, arsenal)))
+                        .collect()
+                });
+                let next = threats_seen(&def, &physics, &candidates, attacking, (id, entity), tf, threats.as_deref(), dt);
+                let marks = next.ids();
+                match threats {
+                    Some(mut threats) => {
+                        if *threats != next {
+                            *threats = next;
+                        }
+                    }
+                    None => {
+                        commands.entity(entity).insert(next);
+                    }
+                }
+                marks
+            }
+        };
+        let threats_only = (def.notice == Notice::Threats).then_some(marks.as_slice());
+        let next = sense(&def, &tuning, &physics, &candidates, id, entity, tf, team, &perceived, dt, threats_only);
         if *perceived != next {
             *perceived = next;
         }
     }
+}
+
+/// What an NPC that notices threats holds for one after this tick ([`NpcThreats`]): the marks it had,
+/// a tick older, and every body it sees attack while armed now (`attacking`, by candidate), marked
+/// anew; forgotten after its `memory`, and when they are no candidates any more (dead or gone).
+#[allow(clippy::too_many_arguments, reason = "everything one NPC senses with")]
+fn threats_seen(
+    def: &PerceptionDef,
+    physics: &PhysicsWorld,
+    candidates: &[Candidate],
+    attacking: &[bool],
+    (me, entity): (AiId, Entity),
+    tf: &Transform,
+    before: Option<&NpcThreats>,
+    dt: f32,
+) -> NpcThreats {
+    let mut next = before.cloned().unwrap_or_default();
+    for t in &mut next.known {
+        t.age += dt;
+    }
+    let (feet, facing) = (tf.translation, *tf.forward());
+    for (c, attacks) in candidates.iter().zip(attacking) {
+        if !*attacks || c.entity == entity || c.id == me || c.intangible {
+            continue;
+        }
+        if sees_within(physics, def, def.sight_range, feet, facing, c.feet, c.point) {
+            next.mark(c.id);
+        }
+    }
+    next.known.retain(|t| t.age <= def.memory + 1e-4 && candidates.iter().any(|c| c.id == t.id));
+    next
 }
 
 /// One NPC's perception after this tick.
@@ -216,6 +292,7 @@ fn sense(
     team: Option<&Team>,
     before: &Perceived,
     dt: f32,
+    threats: Option<&[AiId]>,
 ) -> Perceived {
     let feet = tf.translation;
     let facing = *tf.forward();
@@ -238,8 +315,13 @@ fn sense(
             Err(i) => known.insert(i, Sensed { id, pos, seen, heard, age: 0.0 }),
         }
     };
-    // A burrowed body is not perceived; it is still there, so the memory below keeps it.
-    let hostiles = candidates.iter().filter(|c| c.entity != entity && c.id != me && !c.intangible && hostile(team, c.team.as_ref()));
+    // A burrowed body is not perceived; it is still there, so the memory below keeps it. An NPC
+    // that notices threats (`threats` is some) notices what it holds for one, the others hostiles.
+    let noticed = |c: &&Candidate| match threats {
+        Some(threats) => threats.binary_search(&c.id).is_ok(),
+        None => hostile(team, c.team.as_ref()),
+    };
+    let hostiles = candidates.iter().filter(|c| c.entity != entity && c.id != me && !c.intangible).filter(noticed);
     for c in hostiles.clone() {
         // A target still known is kept in sight farther out than a new one is noticed.
         let range = match def.keep_range {
