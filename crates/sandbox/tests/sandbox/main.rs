@@ -21,6 +21,7 @@ mod gltf;
 mod heavy;
 mod hitstop;
 mod heavy_saves;
+mod hitscan;
 mod engine_rules;
 mod invariants;
 mod look;

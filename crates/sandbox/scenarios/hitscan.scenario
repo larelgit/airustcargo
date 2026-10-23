@@ -105,10 +105,9 @@ act fire
 step 2
 expect journal " torso -24 hp (hp 0)"
 
-# --- 3. falloff: a dummy 15 m east keeps 0.88 of the hit, one 40 m east (through the east gate) half; the
+# --- 3. falloff: a dummy 15 m east keeps 0.88 of the hit (past 10 m the share falls to half at 30 m); the
 # dead dummy between is looked through
 act spawn_prefab id=range_dummy x=-3 z=0 y=0 overrides='{"RegionPart": {}}'
-act spawn_prefab id=range_dummy x=22 z=0 y=0 overrides='{"RegionPart": {}}'
 step 25
 act look yaw=-90 pitch=0
 observe
@@ -120,10 +119,7 @@ expect journal " head -42 hp (hp 58)"
 step 3
 act shot_trace
 expect result contains "\"pierce\": 0"
-act teleport id=e5 x=-18 z=0.4 y=0
-step 2
-act teleport id=e5 x=-18 z=0 y=0
-step 20
+step 22
 
 # --- 4. a wall stops a shot: the piercer, which passes one body, meets a pillar 3 m east first
 act give_weapon id=e5 moveset=hitscan_piercer

@@ -85,7 +85,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 229 definitions in 71 files
+cargo shards content check                 # ok: 237 definitions in 73 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -108,7 +108,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 229 definitions in 71 files
+# ok: 237 definitions in 73 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -598,7 +598,7 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 229 definitions in 71 files
+content: 237 definitions in 73 files
   action  74
   animset  1
   attack_plan  3
@@ -652,7 +652,7 @@ content: 229 definitions in 71 files
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 222 definitions in 68
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 237 definitions in 73
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -1210,7 +1210,8 @@ headless run, a replay and a window agree. `None` (the default) is a character t
   controller), `look_dir(world, body)` (the unit vector of `Intent.look` held to the body's pitch limits, else the way the body faces, level), `aim_point_of(world,
   entity)` (the lock-on's aim point, 0.6 of the collider's height by default, or the middle of a lock point) and `params_of`. Hitscan (F3), use-by-looking
   (F5), turrets (F11) and the audio listener build on them. `eye_height` is per `locomotion` definition: a stance that changes the body's height (the crouch of F2)
-  changes the eye with it. `shards::action::view_hit(world, viewer, range)` is the ray the `AIM` line is made of.
+  changes the eye with it. `shards::action::view_hit(world, viewer, range)` is the ray the `AIM` line is made of; `shards::action::shot_ray(world,
+  shooter)` (F3) is the one a shot flies along, from the same eye, and the two share one walk through bodies and their parts.
 - **For the AI.** The player tool **`look`**: `look yaw=90 pitch=-10` (degrees; give one to keep the other), `look at=e7` (yaw and pitch from the eye to that
   entity's aim point), `look at=e7 part=head` (to the centre of one of its body parts, R1), `look clear=true` (stop looking). It acts through `Intent`, so it is
   recorded as an input like a key; a dead body is refused. Answers: `ok: looking N (yaw 0.0°, pitch 0.0°)`, `ok: looking at e7 head, 8.0m N (yaw 0.0°, pitch
@@ -1267,7 +1268,7 @@ The `shards_action` crate. An attack, a block, a parry, a roll and a flask are a
 - *Backstep, turning speed and regeneration holds (C4).* `steer: MoveOrBack` is `Move` that goes **backward**, away from where the body faces, when no direction is pressed and nothing is held (a pressed direction or the stick still wins); the `dodge` tool names it (`ok: roll (back)`, read from the moveset's plain `dodge` input). With `face: Keep` (see the action timeline) the backstep hops back and the body keeps looking where it looked, its gameplay facing included, so a second standing backstep goes the same way again; with `face: Run` (the default) the body turns around to face the way it goes, and the next one goes back the other way. An action with `turn` spans starts from the body's facing whatever its `steer`, so the content check refuses spans on a `MoveOrBack` action (the backstep would go forward). A `turn_speed_deg` of 0 means "turns at once", as in the locomotion params. `turn_speed_deg` on an action is the body's turning speed while it runs (a raised guard; see "Controller options", C4), and `regen_hold` (seconds) keeps the stamina from regenerating while the action runs and for that long after it ends: a guard with `regen_hold: 1.3` holds the regeneration while it is up and 1.3 s after it is let go. A hold is the longer of two waits: it moves `Stamina::since_use` back so that `secs` remain (`Stamina::hold_regen`), so it never shortens the delay a spend left. A paid spend sets the delay (`Stamina::delay`). `CombatTuning::free_sprint_regen_hold` (seconds; `None`: today's behaviour) makes a sprint that costs nothing (`MoveModifiers::sprint_cost` 0, or a fast swim without drain) hold the regeneration for that time instead of restarting the whole delay (0.3 s next to a delay of 0.65 s). Tests: `crates/shards_action/tests/combat/parity.rs`.
 
 - A window is a `Span`: a phase (`Phase("active")`), from one phase to another (`Phases("raise", "hold")`), or seconds (`Secs(0.3, 0.45)`).
-  A timeline can hold: hit windows (shape: `Sphere`, `Capsule`, `Cone`, `Box`, `Circle`, `Line` — a line along the ground; damage, poise damage, status build-up, the flags `Unblockable`/`GuardBreak`/`NoParry`, tags for the game's hooks), invulnerability (`iframes`), a block and a perfect block (`guard`), hyper armour (`hyper_armor`), cancels (combos — a chain of transitions `Combo`, `Input`, `Any`), hold (`hold`: the block stays up while the input is held), timed effects (`Heal`, `RestoreStamina`, `Status`, `Sound` — a sound from the body, `Custom` — a game hook), a telegraph (`telegraph`).
+  A timeline can hold: hit windows (shape: `Sphere`, `Capsule`, `Cone`, `Box`, `Circle`, `Line` — a line along the ground; damage, poise damage, status build-up, the flags `Unblockable`/`GuardBreak`/`NoParry`, tags for the game's hooks), invulnerability (`iframes`), a block and a perfect block (`guard`), hyper armour (`hyper_armor`), cancels (combos — a chain of transitions `Combo`, `Input`, `Any`), hold (`hold`: the block stays up while the input is held), timed effects (`Heal`, `RestoreStamina`, `Status`, `Sound` — a sound from the body, `Spawn` — combat objects (B4), `Fire` — a hitscan shot (F3), `Custom` — a game hook), a telegraph (`telegraph`).
 - The tick in which an action ends is still part of it: hit and guard windows see it. Validation rejects a guard window that starts before a hold span and ends inside it: it would open on every cycle.
 - An action hands its displacement (`displacement`) to the controller through `LocomotionInput::external`: only the controller moves the body, so a lunge stops at a wall. You do not have to write it by hand: it can be baked from a clip (`bake`, see "Displacement from a clip" below).
 - Animation and sound are names only: `anim: "light_1"` (a clip; if the game has clip sets, the content check requires one of them to play it), `telegraph.sound` (a sound from `*.sound.ron`: the audio module plays it where the hit lands), and the effect `Sound("whoosh")` (it is played from the body at its moment, for example a swing: `effects: [(at: 0.2, effect: Sound("whoosh"))]`), see "Audio".
@@ -2077,6 +2078,104 @@ the sidearm dry and reads the refusal, reloads, switches to the blaster and back
 with a switch (nothing loaded), then is put back as it was. Not built: saving an arsenal with a character (the `vitals` section keeps the
 charges) and a draw time of its own (a game can start an action from `WeaponSwitched`).
 
+### Shooting: hitscan and 3D aim (F3)
+
+A gun's shot is an action effect, `Effect::Fire(FireDef)`: at its moment the action fires one or more **pellets**, each an instant ray
+from the shooter's eye along its look (pitch included), that stops at the first wall and hits up to `pierce + 1` bodies on the way
+through the damage pipeline of a swing: the credit (a combat object's owner), body parts and their factors, the game's hooks, guards,
+parries, i-frames, armour, the rules, reactions, poise and statuses all behave as for a hit window. Nothing is spawned and nothing flies.
+Ammo, reloads and switching are F4's (the action's `cost`); a projectile is still a `Spawn` (B4), and `SpawnAim::Look` aims it the same way.
+
+```ron
+// content/combat/guns.action.ron
+{
+    "rifle_shot": (net_id: 60, phases: [("fire", 0.05), ("recover", 0.3)], cost: (charge: "rifle"),
+        effects: [(at: 0.0, effect: Fire((damage: 24, falloff: [(10, 1.0), (30, 0.5)], noise: 30, kick: (0.5, 0))))]),
+    "scatter_shot": (net_id: 61, phases: [("fire", 0.05), ("recover", 0.6)], cost: (charge: "shells"),
+        effects: [(at: 0.0, effect: Fire((pellets: 8, spread_deg: 5, range: 40, falloff: [(8, 1.0), (25, 0.25)], damage: 6, reaction: 1)))]),
+    "rail_shot": (net_id: 62, phases: [("fire", 0.05), ("recover", 0.8)], effects: [(at: 0.0, effect: Fire((pierce: 2, damage: 40)))]),
+}
+```
+
+| field | default | what |
+|---|---|---|
+| `pellets` | 1 | rays per shot, at least 1 |
+| `spread_deg` | 0 | the largest angle a pellet turns from the aim (the cone's half angle), 0 to 90; each pellet is drawn uniformly in that cone |
+| `range` | 100 | how far a ray reaches (m), above 0 |
+| `falloff` | `[]` | `(metres, share)` points, distances ascending, shares never rising: the share of damage and poise a pellet keeps by the distance it flew, interpolated between points, the first's before them, the last's past them; empty: the whole hit at any range |
+| `pierce` | 0 | bodies a ray passes through: 0 stops at the first it hits |
+| `noise` | 0 | the radius (m) NPCs hear the shot within, from where it is fired |
+| `aim_error_deg` | 0 | for a shooter aimed at a target (a body with no look: an NPC), the largest angle the whole shot misses by, drawn per shot, 0 to 90 |
+| `kick` | `(0, 0)` | recoil: `(pitch, yaw)` degrees added to the shooter's look after the shot (up and left positive), held to its pitch limits |
+| `damage`, `poise`, `status`, `flags`, `tags`, `reaction`, `knockback`, `guard_damage` | as a hit window's | one pellet's payload; `knockback` pushes along the pellet's flight |
+
+What a hit window has and a shot does not: `span`, `shape` and `at` (the ray is the shape), `group`, `max_targets` (`pierce` caps a
+ray), `repeat` and the run's "once per action" ledger: each pellet hits a body at most once, but the pellets of one shot, and the shots of a
+burst, each land, so a scatter gun's damage adds up. The flag `LineOfSight` is refused on a shot (a ray always stops at walls). A perfect
+guard parries a pellet and staggers the shooter as it does a swinger (`NoParry` for bullets that cannot be parried); the rest of the
+shot's pellets still resolve. For a game's damage hook, `DamageCtx::shot` is `Some(ShotHit { pellet, distance, share, dir })` (the share is
+already in `damage` and `poise`), `DamageCtx::hit` is `usize::MAX`, and `DamageCtx::guard_damage` carries the payload's (a hit window's too).
+
+- **The ray** (`shards::action::shot_ray(world, shooter) -> Option<(origin, dir)>`, and `shot_aim`, which also says what it followed):
+  from the eye (`eye_of`; anything that is no character from its position) along `look_dir` for a body with a look; for a body without one,
+  toward the aim point of its target (its lock-on, else the brain's `AimTarget`, else the target its projectile flies at; a body part's centre for
+  a part, the lock-on's aim height for a body), else toward `Intent::aim`, else along its facing, level. It is pure: it reads the
+  simulation, never a camera, and draws nothing, so a line-of-fire check (F11) and the shot agree. The aim error and the spread are drawn
+  when the shot fires.
+- **What a ray takes** (`trace_shot(world, shooter, from, dir, range, pierce)`, also pure): it tests the `WORLD` and `HURTBOX` layers and stops
+  at the first collider that is no body (a wall, the floor, a pillar, a voxel field). The shooter, its parts and (for a combat object) its owner are
+  never met. A body part stands for its body and the part a ray goes through first is the part it hits; a body whose own capsule takes no hits
+  (`body_hurtbox: false`) is hit only through a part. Allies (the team rule), the dead, the intangible and a pair's held victim are looked
+  through and do not count; a downed body takes the pellet (it does nothing to it). `view_hit` (the `AIM` line) walks the same way.
+- **Pellets** draw from a keyed stream: the seed, the tick, the shooter's `AiId`, the shot's ordinal among its shots this tick and the pellet's
+  index (the aim error has its own salt). The same inputs give the same pellets, with a window or without one, in a replay and in heavy mode;
+  the cone draw is uniform (the cosine of the angle off the aim uniform in `[cos spread, 1]`, the turn about it uniform), through
+  `bevy::math::ops`. The per-tick ordinals are emptied at the end of every tick (`FixedLast`), so a snapshot needs none of them.
+- **Order.** A shot resolves inside `ActionSystems::Effects` (`SimSet::Act`), where the effects of the fighters run in `AiId` order and then
+  those of the combat objects: the pellets in index order, each traced after the ones before it landed (a body the first pellet killed is
+  looked through by the second), the bodies along a pellet nearest first. The world is as the tick found it: a swing's hits resolve after this
+  tick's movement (`ActionSystems::Hits`), a shot's before it, so `shot_ray` and `shot_trace` between ticks say what a shot fired in the next
+  tick meets. A shot does nothing on a co-op client (the host's comes over), for a dead or downed shooter, or for an object whose owner died.
+- **Events** (both co-op net events, so a client draws the host's): `ShotFired { shooter, action, from, dir, pellets, noise }` before the
+  pellets land (a muzzle flash, a tracer, the sound), and `ShotImpact { shooter, action, pellet, point, normal, target, collider, part }` once
+  per body a pellet hits and once where it stops (decals, sparks, blood). A wall has no `AiId`, so on a client `collider` is a placeholder:
+  pictures read `point` and `normal`. The NPC module makes a `Noise` of `noise` metres at `from`, credited to the shooter, where the
+  simulation runs.
+- **Recoil.** After the shot, `kick` turns the shooter's `Intent.look` (only a body that has one), so the next tick aims where it left it. The
+  replay records only what changes between ticks, so it plays the kick back by firing again; F1b's camera must read the kicked look back
+  rather than overwrite it. Not in this slice: a co-op guest's kick (the host turns its copy of the guest's look and the guest's next input
+  frame replaces it; a client applying its own kick from `ShotFired` is net work for later).
+- **`SpawnAim::Look`** (B4's spawns): the same ray for a projectile: from the eye, `at` in the frame of the ray, flying along it, with
+  `SpawnDef::aim_error_deg` for a target-aimed spawner (see "Spawned combat objects (B4)").
+
+**For agents.** The player tool **`fire`** presses the input its shot is bound to (`light`; `alt=true` the alternative fire, `heavy`;
+`hold=true` keeps the trigger held, `hold=false` lets go) and answers like an attack (`ok: rifle_shot`, `ok: queued, light starts in
+0.10s`, `rifle empty (0/6): reload`); a weapon whose action fires nothing is refused with its name (``your moveset `blade` binds light to
+`swing`, which fires nothing (no Fire or Spawn effect); a swing is light_attack``). The player query **`shot_trace [id=eN] [input=light]`**
+traces the centre of the shot (no spread, no aim error) with the bound `Fire`'s range and pierce, without firing: `from`, `yaw`, `pitch`,
+`aimed` (`look`, `target eN`, `aim point`, `facing`), `hits` (id, part, distance, falloff share, point), `stop` and a `line` like
+`e7 Dummy head 14.8m (x0.88), then stops at wall 38.0m`. While the subject's primary fire is a shot, **`observe`** adds a `SHOT` line under
+`YOU`: `SHOT rifle_shot -> e7 Dummy head 14.8m (x0.88)`, `SHOT rifle_shot -> e31 Pillar 3.0m`, `SHOT rifle_shot -> nothing within 100m`. The
+journal says **one line per shot**: `e5 fires rifle_shot: e7 head -48 hp (hp 52)`, `e5 fires rail_shot: e7 head -40 hp (hp 12), e8 -10 hp
+(hp 90)`, `e5 fires scatter_shot (8 pellets): e7 torso, head -54 hp ×8 (hp 6)`, `e5 fires rifle_shot: wall 20.0m`, `... e7 blocked -2 hp`,
+`... e7 parried`, `... e7 -0 (god mode)`, `nothing within 100m`; the hit, block, parry and evade lines of its pellets are folded into it (their
+events fire as for a swing), and what the pellets caused (a death, a broken part, a stagger, a status) keeps its own line, just before the
+shot's. `step --until "journal:fires"` waits for one.
+
+**Content checks** (file and field named, e.g. ``content/combat/guns.action.ron: action `scatter_shot`: effects[0] Fire pellets must be at
+least 1``): `pellets` 0, `spread_deg` or `aim_error_deg` outside 0..90, a `range` not above 0, a `falloff` whose distances do not ascend or
+whose share rises (`falloff is not monotonic: ...`), a negative or non-finite `damage`, `poise`, `noise`, `knockback`, `guard_damage` or
+status amount, a `reaction` above 3, `LineOfSight`, an unknown status; and a spawn's `aim_error_deg` outside 0..90 or without `aim: Look`.
+
+**The sandbox's test guns** (`content/combat/hitscan.*.ron`, neutral numbers, no ammo): `hitscan_rifle` (24 a hit up to 10 m, half from
+30 m, a half-degree kick), `hitscan_scatter` (eight pellets of 6 in a 5 degree cone, 40 m), `hitscan_piercer` (20, passes one body) and
+`hitscan_launcher` (a `bolt` along the look), and `hitscan.scenario` (also the reference replay `hitscan.json`, checked every 10 ticks by
+heavy mode in `tests/sandbox/hitscan.rs`): from the west side of the arena with the `viewer` locomotion, the rifle kills a range dummy with
+three head shots and another with five torso shots, keeps 0.88 of the hit at 15 m through the dead dummy between, the piercer
+stops at a pillar but passes one dummy into the one behind it, the scatter gun fires its eight pellets and the launcher's bolt leaves the
+eye. Not built: hit markers and tracers in a window (a game draws them from the events), a co-op guest's kick, ballistic drop (a
+projectile, B4).
+
 ### Body parts (R1)
 
 One body hit through several volumes, each with its own numbers and, when it has some, its own health that breaks it: the
@@ -2450,7 +2549,11 @@ action may spawn too: a bolt's impact lays a puddle). `prefab` and `action` are 
 which shot of a volley homes is content (the sandbox homes the middle one). `at` is the pattern's point in the spawner's frame
 (forward along its running facing). `aim`: `Facing` (default), `Target(height)` (toward the spawner's lock-on target, `height`
 above its feet; an object's: the target its projectile flies at), `AtTarget` (the pattern is laid around the target's feet);
-with no target nothing is spawned. `pattern`: `Fan(spread)` (all at `at`, index i turned `spread * (i - (count - 1) / 2)`
+with no target nothing is spawned. `Look` (F3, "Shooting: hitscan and 3D aim") lays the pattern along the spawner's shot ray
+(`shot_ray`): from its eye along its look, pitch included, for a body that looks, toward its target's aim point for one that does not,
+else along its facing; `at` is in the frame of that ray (`forward` along it, `up` tilted with it), a projectile flies along it, and a
+Look spawn is never skipped for want of a target. `aim_error_deg` (0 to 90, only with `Look`; the content check says so) turns a
+target-aimed spawn by up to that many degrees, drawn per spawn from the simulation's keyed stream. `pattern`: `Fan(spread)` (all at `at`, index i turned `spread * (i - (count - 1) / 2)`
 degrees, a positive angle turning left: index 0 is the rightmost), `Line(start, step)` (index i at `start + step * i` metres
 ahead), `Radial(lines, start, step)` (`lines` lines evenly around, line k turned `360 k / lines` degrees left, `count` on each,
 spawned line by line; the index lists and `delay` go by the index on a line). `delay`: index i starts its action `delay * i`
@@ -3624,7 +3727,7 @@ A tool is an argument struct (serde + schemars) and an ordinary Bevy system, `In
 
 | scope | tools |
 |---|---|
-| **Player** (plays fair, only through `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; movement: move_to (`path=true`), move, stop, jump, sprint, glide, look, clearance, path_to, input_bindings; combat: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack, combat_objects, reload, weapon (F4); world: region_info, level_info, nav_path, npc_state; settings: settings, settings_set (like the settings menu for a human); sound: audio; Steam (feature `steam`): steam, steam_invite |
+| **Player** (plays fair, only through `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; movement: move_to (`path=true`), move, stop, jump, sprint, glide, look, clearance, path_to, input_bindings; combat: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack, combat_objects, reload, weapon (F4), fire, shot_trace (F3); world: region_info, level_info, nav_path, npc_state; settings: settings, settings_set (like the settings menu for a human); sound: audio; Steam (feature `steam`): steam, steam_invite |
 | **Dev** (everything, including time) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, give_weapon, take_weapon, give_ammo (F4), content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset, motion_bake, animation; world: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; sound: sound_play, music_set; mesh looks: looks, look_outlines; foliage: scatter, scatter_set; effects: effects, effect_play, telegraph_decals; Steam (feature `steam`): steam_host, steam_join, achievement_unlock; developer menu and console: dev_menu, console |
 
 The game adds its own (in the template, `taunt` and the conditions `arena_cleared`, `foe_near`, `in_fight`; in the sandbox, the conditions `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`). Modules add conditions for `step --until named:…`: `near_poi` (world, appears with the first region), `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_avoiding`, `npc_engaged`, `npc_near` (NPC), `objects_live`, `projectile_flying` (combat objects). Each
@@ -7146,6 +7249,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 - `objects.scenario` (B4) — the skeleton e8 borrows the `caster` moveset and volleys at the player: `e8 spawns 3 x bolt_fly`, `combat_objects` and `observe` show the bolts (`projectile of e8`), a side bolt stops at a pillar and lays a puddle at its foot, the middle one meets the player once (`e8 -> e5 bolt_fly -8`, credited to the caster) and its puddle hits from the next tick and then every 0.8 s, building up `spar_chill`; a roll toward the next volley's bolt evades it and the bolt is spent all the same; the line telegraphs its six zones from 0.35 s to 1.15 s and the rings their 32 from 0.50 s to 1.16 s, and every object is gone once its action is over; `objects.json` is its reference replay, and `stand/objects.scenario` plays the volley in co-op (both clients have the host's bolts, by id, and see the host's hits);
 - `parts.scenario` (R1, R3) — a 6 m colossus spawned with the yard region, hit only through its parts and locked on to only through them: the player locks on (`lock_on` picks a point; nothing in the file names an id), then on the hand by name (`lock_on point=hand`: `(hand of e…)`), the first swing meets it (`light_1 at hand -10 (hp 1190)`: the hand loses 20, the body half), the third breaks it (`hand broken by e5`, and the lock on it is let go of), `lock_on point=hand` is refused as broken, the fourth swing, locked on the left leg, meets it, the core opened by `part name=core op=on` and locked on takes the fifth at three times the damage (`light_1 at core -60`), a flick to the right moves the lock to the left leg, a broken part refuses to come on, `part op=break` breaks the horn (no lock point after), and the `regen` that ends it takes the colossus and its parts away; `parts.json` is its reference replay;
 - `weapons.scenario` (F4) — the player is given the sandbox's two test weapons (`give_weapon`; `content/combat/weapons.*.ron`) and plays them through the player's tools: six shots empty the sidearm (`observe` shows `weapon test_sidearm 0/6 (12)`), `light_attack` answers `sidearm empty (0/6): reload`, `reload` moves the six rounds only when its draw ends (0.8 s, `e5 refilled sidearm +6 (6/6), 6 sidearm.reserve left`) and answers `sidearm is already full (6/6)` after; `weapon slot=2` switches at once (`e5 switches to test_blaster (slot 2, from test_sidearm)`), the blaster reloads itself on the press that would fire it empty (`ok: arm_blaster_reload`), and a switch made inside a reload's draw cuts it: nothing was loaded, the sidearm keeps its rounds, and the reload left to end loads what fits. The weapons are taken at the end and the player gets its moveset and flask back. Its session is the reference replay `weapons.json` (and, in heavy mode, the snapshots restored along it)
+- `hitscan.scenario` (F3) — the player, with the `viewer` locomotion and the sandbox's test guns (`give_weapon`; `content/combat/hitscan.*.ron`), shoots range dummies and a pillar spawned with the yard region (nothing names their ids): `observe` shows `SHOT hitscan_rifle_shot -> e… Dummy head 4.8m (x1.00)` and `shot_trace` the whole ray, three head shots kill one dummy (`e5 fires hitscan_rifle_shot: e… head -48 hp (hp 52)`; the look kicks half a degree up after each) and five torso shots another (`torso -24 hp`), a dummy 15 m away keeps 0.88 of the hit (`head -42 hp`), the piercer stops at a pillar (`e… Pillar 3.0m`) and passes one dummy into the one behind it (`head -40 hp (hp 60), e… head -40 hp (hp 60)`), the scatter gun fires `(8 pellets)` and the launcher's bolt leaves the eye (`bolt_fly at` a part); then the guns are taken and the yard takes the targets;
 - `boss_schedule.scenario` (N8a2, N8b) — the warden on two plans with gated options (`angle`, `players`, `max_repeats`, `forbid_after`) that are tokenless and wait in a strafe of their own, on the same director as two skeletons (`sched_arena`: two tokens, strikes 0.7 s apart), all written with `content_apply`; the skeletons take the director's tokens (`e7 takes an attack token on e5`) and the warden none (`!journal "e6 takes an attack token"`), and `npc_state` shows its grant as `"counted": false`: `npc_schedule` explains each refusal (`angle: the target is 10 degrees off the facing; this option needs 95-180`, `players: 1 living, this option needs 2-3`), a 900-tick fight holds every gate under the engine rules (`npc.plan_sequence` among them), and a phase swap keeps the history and the cooldowns the two plans share by name; with N8d a borrowed caster's bolt bursts into a chilling puddle (`chill_puddle`, tagged `capture`) at the player's feet, and the warden's `heavy` (`forbid_while: ["capture"]`) is refused while the puddle is live and open again in its fade; `boss_schedule.json` is its reference replay, and `stand/boss_schedule.scenario` counts the living players in co-op (three, then two when a client's body dies) and shows a client the host's plan history;
 - `boss_fight`, `dodge`, `errors` — the switch to phase 2, a roll to dodge a hit, errors that teach;
 - `npc_director.scenario` (E6) — three skeletons against one player in god mode, 30 s of combat: the sandbox condition `three_attacking`
@@ -7184,8 +7288,8 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
   generated`), the hash is `7bbfdc3b62623fbc` again, and `save_check` agrees.
 
 The scenarios start with `heal`/`teleport`/`set`/`npc_set_state … calm`, so they run on a fresh game and after other scenarios, in any order:
-CI runs them forward and then backward in one game. Sessions of twenty-one of them are recorded as reference replays in `tests/replays/`
-(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`, `parts`, `look`, `weapons`; see "Replays").
+CI runs them forward and then backward in one game. Sessions of twenty-two of them are recorded as reference replays in `tests/replays/`
+(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`, `parts`, `look`, `weapons`, `hitscan`; see "Replays").
 
 ## Tests and CI
 

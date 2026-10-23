@@ -902,7 +902,8 @@ fn shot_trace(In(call): In<Call<ShotTraceArgs>>, world: &World) -> ToolResult<Va
     let fire = bound.and_then(|(_, _, f)| f);
     let (range, pierce) = fire.map_or((DEFAULT_RANGE, 0), |f| (f.range, f.pierce));
     let path = trace_shot(world, shooter, aim.from, aim.dir, range, pierce);
-    let round = |v: f32| (v * 100.0).round() / 100.0;
+    // Rounded as the JSON number it becomes (an f32 widened to f64 would print 14.81999969482422).
+    let round = |v: f32| (f64::from(v) * 100.0).round() / 100.0;
     let gaze = Gaze::toward(Vec3::ZERO, aim.dir).unwrap_or_default();
     let aimed = match aim.by {
         AimedBy::Look => "look".to_owned(),
