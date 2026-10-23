@@ -54,7 +54,7 @@ use serde_json::{json, Value};
 use shards_content::ContentDb;
 use shards_core::input_names::{HEAVY, LIGHT};
 use shards_core::{Gaze, Intent, NetRole};
-use shards_motion::{aim_point_of, eye_of, look_dir, params_of, Collider, LayerMask, PhysicsWorld, QueryFilter, RayHit};
+use shards_motion::{aim_point_of, eye_of, look_dir, params_of, Collider, LayerMask, MotionState, PhysicsWorld, QueryFilter, RayHit};
 
 use crate::combat::{land, Downed, IgnoreReason, Landed, Landing, Outcome, Payload};
 use crate::context::may_hit;
@@ -82,6 +82,14 @@ fn is_one_u8(v: &u8) -> bool {
 
 fn default_range() -> f32 {
     DEFAULT_RANGE
+}
+
+fn one_f32() -> f32 {
+    1.0
+}
+
+fn is_one_f32(v: &f32) -> bool {
+    *v == 1.0
 }
 
 fn is_default_range(v: &f32) -> bool {
@@ -139,6 +147,16 @@ pub struct FireDef {
     /// to 90) the whole shot misses its aim by, drawn per shot. A body that looks aims itself.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub aim_error_deg: f32,
+    /// How much worse `aim_error_deg` is while the shooter moves (F11): the factor at its run speed
+    /// (`locomotion` `run_speed`), from 1 standing still, in step with its ground speed, and no more
+    /// past it. 1 (the default): moving changes nothing.
+    #[serde(default = "one_f32", skip_serializing_if = "is_one_f32")]
+    pub aim_error_moving: f32,
+    /// How much worse `aim_error_deg` is with the distance to the aim point (F11): points `(metres,
+    /// factor)`, distances ascending, read like `falloff` (interpolated between two points, the first's
+    /// before it, the last's past it). Empty (the default): the same error at any distance.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aim_error_far: Vec<(f32, f32)>,
     /// Recoil: `(pitch, yaw)` in degrees added to the shooter's look after the shot (a positive pitch
     /// kicks up, a positive yaw left), held to its pitch limits. A body without a look feels none.
     #[serde(default, skip_serializing_if = "is_no_kick")]
@@ -186,22 +204,24 @@ impl FireDef {
 
     /// The share of the hit a pellet keeps after flying `distance` metres ([`falloff`](Self::falloff)).
     pub fn share_at(&self, distance: f32) -> f32 {
-        let points = &self.falloff;
-        let (Some(first), Some(last)) = (points.first(), points.last()) else { return 1.0 };
-        if distance <= first.0 {
-            return first.1;
+        read_points(&self.falloff, distance)
+    }
+
+    /// The aim error (degrees, the cone's half angle) of a shot aimed at a target ([`aim_error_deg`](Self::aim_error_deg)),
+    /// for a shooter moving at `speed_share` of its run speed with its aim point `distance` metres away:
+    /// `aim_error_deg` times the factor of [`aim_error_moving`](Self::aim_error_moving) and that of
+    /// [`aim_error_far`](Self::aim_error_far), at most 90. Exactly `aim_error_deg` when both are at
+    /// their defaults.
+    pub fn aim_error_at(&self, speed_share: f32, distance: f32) -> f32 {
+        let mut deg = self.aim_error_deg;
+        if self.aim_error_moving != 1.0 {
+            let share = if speed_share.is_finite() { speed_share.clamp(0.0, 1.0) } else { 0.0 };
+            deg *= 1.0 + (self.aim_error_moving - 1.0) * share;
         }
-        if distance >= last.0 {
-            return last.1;
+        if !self.aim_error_far.is_empty() {
+            deg *= read_points(&self.aim_error_far, distance);
         }
-        for pair in points.windows(2) {
-            let ((d0, s0), (d1, s1)) = (pair[0], pair[1]);
-            if distance <= d1 {
-                let span = d1 - d0;
-                return if span > 0.0 { s0 + (s1 - s0) * (distance - d0) / span } else { s1 };
-            }
-        }
-        last.1
+        deg.clamp(0.0, 90.0)
     }
 
     /// What is wrong with the numbers, field by field (`pellets must be at least 1`), for the content check.
@@ -252,6 +272,27 @@ impl FireDef {
         if !(0.0..=90.0).contains(&self.aim_error_deg) {
             out.push(format!("aim_error_deg must be within 0..90 degrees (is {})", self.aim_error_deg));
         }
+        if !(self.aim_error_moving >= 0.0 && self.aim_error_moving.is_finite()) {
+            out.push(format!("aim_error_moving must be a factor >= 0 (is {}); 1 changes nothing", self.aim_error_moving));
+        }
+        for (i, (d, f)) in self.aim_error_far.iter().enumerate() {
+            if !(*d >= 0.0 && d.is_finite()) {
+                out.push(format!("aim_error_far[{i}] distance must be a number of metres >= 0 (is {d})"));
+            }
+            if !(*f >= 0.0 && f.is_finite()) {
+                out.push(format!("aim_error_far[{i}] factor must be a number >= 0 (is {f})"));
+            }
+        }
+        for (i, pair) in self.aim_error_far.windows(2).enumerate() {
+            if pair[1].0 <= pair[0].0 {
+                out.push(format!(
+                    "aim_error_far[{}] at {} m does not come after aim_error_far[{i}] at {} m; give the points by ascending distance",
+                    i + 1,
+                    pair[1].0,
+                    pair[0].0
+                ));
+            }
+        }
         if !(self.kick.0.is_finite() && self.kick.1.is_finite()) {
             out.push(format!("kick must be two numbers of degrees, (pitch, yaw) (is ({}, {}))", self.kick.0, self.kick.1));
         }
@@ -270,6 +311,34 @@ impl FireDef {
         }
         out
     }
+}
+
+/// The value of `points` (`(metres, value)`, distances ascending) at `distance`: interpolated between two
+/// points, the first's before the first, the last's past the last; 1 with no points.
+fn read_points(points: &[(f32, f32)], distance: f32) -> f32 {
+    let (Some(first), Some(last)) = (points.first(), points.last()) else { return 1.0 };
+    if distance <= first.0 {
+        return first.1;
+    }
+    if distance >= last.0 {
+        return last.1;
+    }
+    for pair in points.windows(2) {
+        let ((d0, s0), (d1, s1)) = (pair[0], pair[1]);
+        if distance <= d1 {
+            let span = d1 - d0;
+            return if span > 0.0 { s0 + (s1 - s0) * (distance - d0) / span } else { s1 };
+        }
+    }
+    last.1
+}
+
+/// The `Fire` effects of `def`, in its order: an action with one is a shot.
+pub fn fire_effects(def: &ActionDef) -> impl Iterator<Item = &FireDef> {
+    def.effects.iter().filter_map(|e| match &e.effect {
+        Effect::Fire(fire) => Some(fire),
+        _ => None,
+    })
 }
 
 /// One pellet's hit, on its [`DamageCtx`](crate::DamageCtx): which pellet, how far it flew, the share of the hit it
@@ -525,6 +594,73 @@ pub fn trace_shot(world: &World, shooter: Entity, from: Vec3, dir: Vec3, range: 
     path
 }
 
+/// What decides a line of fire ([`line_of_fire`]): the first thing a shot's ray meets that matters.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FireLine {
+    /// The target (or a part of it), `distance` metres along the ray: the line is clear.
+    Target { distance: f32 },
+    /// A living body of the shooter's side (the team rule: one a shot would look through) stands in the
+    /// way, `distance` metres along: firing would go through a friend.
+    Ally { body: Entity, distance: f32 },
+    /// A `WORLD` collider that is no body (a wall, a pillar, the floor) stops the ray first.
+    Wall { collider: Entity, distance: f32 },
+    /// Nothing that matters within range: the ray misses the target and meets no friend and no wall.
+    Nothing,
+}
+
+impl FireLine {
+    /// Whether firing now reaches the target with no friend and no wall in between.
+    pub fn clear(&self) -> bool {
+        matches!(self, FireLine::Target { .. })
+    }
+}
+
+/// The line of fire of `shooter` from `from` along `dir` toward `target`, within `range` metres (F11):
+/// the ray a shot flies ([`walk_ray`], the rules of [`trace_shot`] for the shooter and its own), told
+/// what it meets first that matters: the target, a living friend (a body with health that is neither
+/// dead nor intangible and that the team rule makes no enemy of the shooter's side), or a wall. A
+/// body that is neither (another enemy, the dead, the intangible, a body without health) is looked
+/// past: a shot would hit an enemy, and pass the others. Reads the world only, as a shot does, so a
+/// check made between ticks says what a shot fired in the next tick meets.
+///
+/// An NPC aims from its eye at its target's aim point: `line_of_fire(world, me, eye, point - eye,
+/// distance + 0.5, target)`; a body that looks fires along its look ([`shot_aim`]).
+pub fn line_of_fire(world: &World, shooter: Entity, from: Vec3, dir: Vec3, range: f32, target: Entity) -> FireLine {
+    let Ok(dir) = Dir3::new(dir) else { return FireLine::Nothing };
+    let owner = world.get::<CombatObject>(shooter).and_then(|o| living_owner(world, o));
+    let mut filter = QueryFilter::new(LayerMask::WORLD | LayerMask::HURTBOX);
+    for own in std::iter::once(shooter).chain(owner) {
+        filter = filter.excluding(own);
+        for part in parts_of(world, own) {
+            filter = filter.excluding(part);
+        }
+    }
+    let team = world.get::<Team>(owner.unwrap_or(shooter));
+    let mut line = FireLine::Nothing;
+    walk_ray(world, from, dir, range, filter, |met, hit| match met {
+        Met::Body { body, .. } if body == target => {
+            line = FireLine::Target { distance: hit.distance };
+            true
+        }
+        Met::Body { body, .. } => {
+            let friend = world.get::<Health>(body).is_some()
+                && world.get::<Dead>(body).is_none()
+                && !intangible(world, body)
+                && !hostile(team, world.get::<Team>(body));
+            if friend {
+                line = FireLine::Ally { body, distance: hit.distance };
+            }
+            friend
+        }
+        Met::Solid => {
+            line = FireLine::Wall { collider: hit.entity, distance: hit.distance };
+            true
+        }
+        Met::Other => false,
+    });
+    line
+}
+
 /// Whether a ray of `shooter` (credited to `team`'s side) takes a hit on `body`, as a swing would: it
 /// has health, is not dead or intangible, is hostile, and no pair holds it for another (a downed body
 /// takes the pellet, which does nothing to it).
@@ -611,6 +747,27 @@ pub(crate) fn aim_error(world: &mut World, id: u32, deg: f32, dir: Vec3) -> Vec3
     cone_dir(dir, deg, &mut stream(world, id, SPAWN_ERROR_SALT, ordinal, 0))
 }
 
+/// The aim error (degrees) of `shooter`'s shot at `target` from `from` ([`FireDef::aim_error_at`]): its
+/// ground speed as a share of its run speed and the distance to the target's aim point, each read only
+/// when the definition asks for it, so a shot with neither draws exactly as before.
+fn aimed_error(world: &World, shooter: Entity, target: Entity, from: Vec3, def: &FireDef) -> f32 {
+    let share = if def.aim_error_moving != 1.0 {
+        let speed = world.get::<MotionState>(shooter).map_or(0.0, |m| Vec2::new(m.velocity.x, m.velocity.z).length());
+        let run = params_of(world, shooter).map_or(0.0, |p| p.run_speed);
+        if run > 0.0 {
+            speed / run
+        } else if speed > 0.0 {
+            1.0
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+    let distance = if def.aim_error_far.is_empty() { 0.0 } else { aim_point(world, target).map_or(0.0, |p| (p - from).length()) };
+    def.aim_error_at(share, distance)
+}
+
 /// How one pellet ended, for the shot's journal line.
 enum End {
     Body { target: Entity, landed: Landed },
@@ -635,7 +792,10 @@ pub fn fire(world: &mut World, shooter: Entity, action: &str, def: &FireDef) {
     let id = world.get::<AiId>(shooter).map_or(u32::MAX, |i| i.0);
     let ordinal = next_ordinal(world, id);
     let axis = match aim.by {
-        AimedBy::Target(_) if def.aim_error_deg > 0.0 => cone_dir(aim.dir, def.aim_error_deg, &mut stream(world, id, ERROR_SALT, ordinal, 0)),
+        AimedBy::Target(target) if def.aim_error_deg > 0.0 => {
+            let deg = aimed_error(world, shooter, target, aim.from, def);
+            cone_dir(aim.dir, deg, &mut stream(world, id, ERROR_SALT, ordinal, 0))
+        }
         _ => aim.dir,
     };
     let dirs: Vec<Vec3> = (0..def.pellets)
@@ -1021,6 +1181,25 @@ mod tests {
         assert!(rising.problems().join(" ").contains("the share rises"), "{:?}", rising.problems());
         let sight = FireDef { flags: vec![HitFlag::LineOfSight], ..fire(&[]) };
         assert!(sight.problems().join(" ").contains("LineOfSight"));
+        let aim = FireDef { aim_error_moving: -1.0, aim_error_far: vec![(20.0, 2.0), (10.0, 1.0)], ..fire(&[]) };
+        let problems = aim.problems().join("\n");
+        assert!(problems.contains("aim_error_moving must be a factor >= 0"), "{problems}");
+        assert!(problems.contains("aim_error_far[1] at 10 m does not come after"), "{problems}");
+    }
+
+    #[test]
+    fn the_aim_error_grows_with_speed_and_distance_only_when_asked() {
+        let plain = FireDef { aim_error_deg: 3.0, ..fire(&[]) };
+        assert_eq!(plain.aim_error_at(1.0, 80.0), 3.0, "no factors: the error as written, moving or far");
+        assert_eq!(serde_json::to_string(&plain).unwrap(), r#"{"aim_error_deg":3.0,"damage":10.0}"#, "the defaults stay out of the written form");
+        let def: FireDef = ron::from_str("(damage: 10, aim_error_deg: 2, aim_error_moving: 3, aim_error_far: [(10, 1.0), (30, 2.0)])").unwrap();
+        assert!(def.problems().is_empty(), "{:?}", def.problems());
+        assert_eq!(def.aim_error_at(0.0, 5.0), 2.0, "standing, near");
+        assert_eq!(def.aim_error_at(1.0, 5.0), 6.0, "at run speed: three times");
+        assert_eq!(def.aim_error_at(0.5, 5.0), 4.0, "half run speed: half way");
+        assert_eq!(def.aim_error_at(2.0, 5.0), 6.0, "past run speed: no worse");
+        assert_eq!(def.aim_error_at(0.0, 20.0), 3.0, "20 m: half way to twice");
+        assert_eq!(def.aim_error_at(1.0, 30.0), 12.0, "both");
     }
 
     #[test]

@@ -85,7 +85,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 242 definitions in 76 files
+cargo shards content check                 # ok: 263 definitions in 84 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -108,7 +108,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 242 definitions in 76 files
+# ok: 263 definitions in 84 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -598,12 +598,12 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 242 definitions in 76 files
-  action  78
+content: 263 definitions in 84 files
+  action  80
   animset  1
-  attack_plan  3
+  attack_plan  5
   audio  1
-  behavior  2
+  behavior  6
   bounds  1
   camera  1
   combat_tuning  1
@@ -621,18 +621,18 @@ content: 242 definitions in 76 files
   level  2
   locale  2
   lock_on  1
-  locomotion  5
+  locomotion  6
   look  15
-  moveset  19
+  moveset  21
   music  1
   nav  1
   net  0
   npc_tuning  0
   parts  2
-  perception  3
+  perception  6
   perf  2
   poi  4
-  prefab  21
+  prefab  27
   prop  1
   region  3
   room  0
@@ -648,11 +648,12 @@ content: 242 definitions in 76 files
   theme  0
   tile  16
   tile_map  1
+  turret  1
   voxel_palette  1
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 242 definitions in 76
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 263 definitions in 84
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -7277,6 +7278,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 - `npc_navmesh.scenario` (E6) — in the wilds the lair's guard sees the player through the colonnade, walks round the columns on the navmesh
   (`npc_detour`; the player's `nav_path` shows the same 16.8 m instead of the straight 10, the player's `path_to` to the lair also goes by the navmesh, and `npc_overlay` shows the guard's line: fight, leash, detour), strikes, and never goes past its leash
   (`npc_beyond_leash`); when the player goes north, it reaches the edge of the zone and returns to the lair;
+- `npc_ranged.scenario` (F11) — in the yard's gate, with the bodies of `content/characters/ranged.prefab.ron` (nothing names their ids): two bystanders (`notice: Threats`) ignore the unarmed player, hear its shot and run behind two walls out of its sight (`idle → hide e5`, `npc_hidden`, the overlay's ` · hiding`) and stay there; a gunner closes in to its band and holds its fire while a body of its own side stands in its line (`npc_line_blocked`, `keeping range 8–14m · no line of fire: e… in the way`), fires its bursts once the player steps aside, and backs off when the player walks up; a turret turns to the player (`turret tracking e5 (yaw 31°/60°)`), stops at its limit and holds its fire (`(yaw -60°/60°, at its limit)`), turns back to its rest when switched off (`turret_active on=false`) and fires again when on; `npc_ranged.json` is its reference replay;
 - `npc_avoidance.scenario` (E6) — three arena skeletons run single file toward the player: the rear ones go round the front ones (`npc_avoiding`,
   `npc_overlay` writes `avoiding e7`), five seconds of combat, and the journal stays silent about the avoidance;
 - `voxel_nav.scenario` (A2e) — the voxel arena's navmesh, baked in memory when the region loads: `nav_info` (`in memory, 16 chunks`), `nav_path` through the cave (37.4 m, a drop at its end, across the seam of two chunks) and up the four steps (mantles), the large body class refused in the tunnel, and a skeleton that chases the player up the steps and through the cave on the navmesh;
@@ -7308,8 +7310,8 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
   generated`), the hash is `7bbfdc3b62623fbc` again, and `save_check` agrees.
 
 The scenarios start with `heal`/`teleport`/`set`/`npc_set_state … calm`, so they run on a fresh game and after other scenarios, in any order:
-CI runs them forward and then backward in one game. Sessions of twenty-two of them are recorded as reference replays in `tests/replays/`
-(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`, `parts`, `look`, `weapons`, `hitscan`; see "Replays").
+CI runs them forward and then backward in one game. Sessions of twenty-three of them are recorded as reference replays in `tests/replays/`
+(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`, `parts`, `look`, `weapons`, `hitscan`, `npc_ranged`; see "Replays").
 
 ## Tests and CI
 

@@ -1,0 +1,5 @@
+// F11's tests: guns that fire on `light`.
+{
+    "silent_gun": (inputs: {"light": "silent_shot"}),
+    "loud_gun": (inputs: {"light": "loud_shot"}),
+}

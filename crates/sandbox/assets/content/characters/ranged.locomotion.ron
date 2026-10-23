@@ -1,0 +1,14 @@
+// A turret's body (F11): it does not walk (no speed), its yaw is its look's (`face: Look`), its eye
+// 1.4 m above its feet.
+{
+    "turret": (
+        radius: 0.5,
+        height: 1.6,
+        walk_speed: 0.0,
+        run_speed: 0.0,
+        sprint_speed: 0.0,
+        jump_height: 0.0,
+        face: Look,
+        eye_height: Some(1.4),
+    ),
+}

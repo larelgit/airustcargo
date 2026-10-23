@@ -1,0 +1,148 @@
+# NPCs and gunfire (F11, the manual's "NPCs: gunfire, hiding, ranged fighters, turrets"), in the yard's gate
+# (it has a navmesh): two bystanders hear the player's shot and run out of its sight, behind two walls, and stay
+# there; a gunner keeps 8-14 m from the player and holds its fire while a body of its own side stands in its
+# line; a turret tracks the player within 60 degrees either way of where it faces and fires when its look is
+# on it, and holds still when switched off. The bodies are `content/characters/ranged.prefab.ron`, spawned as
+# part of the yard (`RegionPart`) so each `regen` takes them away whatever ids they had. Nothing here names
+# them: the ids of spawned bodies depend on what ran before (the id-dependent and tick-dependent checks are
+# `tests/sandbox/npc_ranged.rs`'s). The waits wait on what they mean (`npc_hidden`, `npc_line_blocked`, a
+# journal line), with budgets well above what they take.
+#
+# The gate is the yard's cell (0, 0), x 200..232, z -200..-168; its two pillars stand at (213, -186) and
+# (219, -186).
+
+seed 42
+
+# --- setup (dev): the yard loaded, the player unhurtable in its gate, empty-handed
+act regen region=yard seed=1
+expect result contains "ok: yard seed 1"
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act look clear=true
+act? take_weapon id=e5 slot=1
+act? take_weapon id=e5 slot=2
+act? take_weapon id=e5 slot=3
+act? take_weapon id=e5 slot=4
+act god
+act teleport id=e5 x=206 z=-184 y=0
+step 2
+
+# --- 1. two bystanders, each 3 m from a wall; a non-combatant notices threats only, so the player (unarmed,
+# of another team) is none of theirs
+act spawn_prefab id=ranged_wall x=214 z=-176 y=0 overrides='{"RegionPart": {}}'
+act spawn_prefab id=ranged_bystander x=211 z=-176 y=0 overrides='{"RegionPart": {}}'
+expect result contains "ranged_bystander at (211.0, -176.0)"
+act spawn_prefab id=ranged_wall x=216 z=-193 y=0 overrides='{"RegionPart": {}}'
+act spawn_prefab id=ranged_bystander x=211 z=-192 y=0 overrides='{"RegionPart": {}}'
+step 30
+act npc_overlay
+expect result contains "ranged_bystander: idle"
+expect result !contains "ranged_bystander: hide"
+# the player fires the test rifle into the air: the shot is heard 30 m around, and the shooter is a threat
+act give_weapon id=e5 moveset=hitscan_rifle
+step 3
+act look yaw=90 pitch=20
+mark
+act fire
+expect result contains "ok: hitscan_rifle_shot"
+step 3
+expect journal " idle → hide e5"
+act npc_overlay
+expect result contains "ranged_bystander: hide e5"
+expect result contains " · hiding"
+# they run behind the walls, out of the player's sight, and stay there: no state changes for 10 s
+step 600 --until named:npc_hidden
+expect stopped "npc_hidden"
+step 120
+step 600 --until "journal:hide →"
+expect result contains "no condition met"
+act npc_overlay
+expect result contains "ranged_bystander: hide e5"
+expect result contains " · lost e5 "
+expect result contains " · hiding"
+act take_weapon id=e5 slot=1
+
+# --- 2. a gunner 18 m east of the player, a body of its side halfway between: it closes in to its band, and
+# its line of fire is blocked, so it holds its fire
+act regen region=yard seed=1
+expect result contains "ok: yard seed 1"
+act teleport id=e5 x=206 z=-184 y=0
+act spawn_prefab id=ranged_post x=214 z=-184 y=0 overrides='{"RegionPart": {}}'
+act spawn_prefab id=ranged_gunner x=224 z=-184 y=0 overrides='{"RegionPart": {}}'
+mark
+step 600 --until named:npc_line_blocked
+expect stopped "npc_line_blocked"
+step 240
+expect !journal "fires ranged_burst"
+act npc_overlay
+expect result contains "ranged_gunner: fight e5"
+expect result contains "keeping range 8–14m · no line of fire: e"
+# the player steps 4 m aside: the line is clear, and it fires its bursts
+act teleport id=e5 x=206 z=-180 y=0
+step 600 --until "journal:fires ranged_burst: e5 "
+expect stopped "fires ranged_burst: e5"
+# the player walks up to it: it backs off to its band, and fires on
+act teleport id=e5 x=216 z=-182 y=0
+mark
+step 600 --until "journal:fires ranged_burst: e5 "
+expect stopped "fires ranged_burst: e5"
+act npc_overlay
+expect result contains "ranged_gunner: fight e5"
+expect result contains "keeping range 8–14m"
+
+# --- 3. a turret 10 m north-east of the player, resting north: it turns to the player (31 degrees left) and
+# fires when its look is on it
+act regen region=yard seed=1
+expect result contains "ok: yard seed 1"
+act teleport id=e5 x=210 z=-186 y=0
+act spawn_prefab id=ranged_turret x=216 z=-176 y=0 overrides='{"RegionPart": {}}'
+step 300 --until "journal:fires turret_shot: e5 "
+expect stopped "fires turret_shot: e5"
+# (it fires once its look is within 2 degrees, and turns on to the player)
+step 60
+act npc_overlay
+expect result contains "turret tracking e5 (yaw 31°/60°)"
+# the player 80 degrees to its right: it stops at its limit and holds its fire
+act teleport id=e5 x=228 z=-178 y=0
+step 180
+act npc_overlay
+expect result contains "turret tracking e5 (yaw -60°/60°, at its limit)"
+mark
+step 120
+expect !journal "fires turret_shot"
+# off (every turret: none is named): it turns back to its rest and fires no more, the player in front of it or not
+mark
+act turret_active on=false
+expect result contains " turret off"
+expect journal " turret off"
+act teleport id=e5 x=212 z=-186 y=0
+mark
+step 120
+expect !journal "fires turret_shot"
+act npc_overlay
+expect result contains "turret off"
+act turret_active on=true
+expect result contains " turret on"
+step 300 --until "journal:fires turret_shot: e5 "
+expect stopped "fires turret_shot: e5"
+
+# --- 4. what the tools refuse says what to do
+act? turret_active id=e5 on=true
+expect result contains "e5: not a turret"
+
+# --- the world as it was: the overlay off, the yard again takes the spawned bodies, the player back in the arena
+act npc_overlay on=false
+act look clear=true
+act regen region=yard seed=1
+expect result contains "ok: yard seed 1"
+step 2
+act heal id=e5
+act god on=false
+act teleport id=e5 x=0 z=12 y=0
+step 2
+observe
+expect result !contains "Bystander"
+expect result !contains "Gunner"
+expect result !contains "Turret"

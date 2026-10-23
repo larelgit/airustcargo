@@ -39,6 +39,7 @@ use crate::def::{AttackPlanDef, DirectorDef, Role, WaitRole};
 use crate::perception::Perceived;
 use crate::chain::NpcChain;
 use crate::planner::{feasible, resolve, InFlight, NpcOptions, NpcPlan};
+use crate::ranged::{keep_band, NpcFireLine};
 use crate::schedule::{grant_notes, inputs, living_players, FightCx, LiveZones, Players};
 use crate::strike::{pool, NpcStrike};
 
@@ -160,6 +161,8 @@ pub(crate) struct Fighting {
     pub intent: Option<&'static Intent>,
     /// Its rule class: what the rules make its actions cost ([`npc_rules`]).
     pub class: Option<&'static RuleClass>,
+    /// Its line of fire, traced this tick: only an NPC whose plan keeps a range has one (F11).
+    pub line: Option<&'static NpcFireLine>,
 }
 
 /// The rules in play as an NPC of `class` sees them (`shards_rules`), for its view ([`npc_view`]): an NPC
@@ -466,7 +469,8 @@ pub(crate) fn direct(
     let mut waiters: Vec<(AiId, Entity)> = Vec::new();
     for &(id, entity) in &order {
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
-        let own = plan_wait(&db, f.npc).is_some();
+        // A plan that keeps a range (F11) takes no slot either: it keeps its band.
+        let own = plan_wait(&db, f.npc).is_some() || plan_band(&db, f.npc).is_some();
         let live = f.brain.active && !f.dead && !f.under_orders();
         let waiting = f.drive.waiting && f.token.held.is_none() && live;
         let target = f.brain.target.filter(|t| waiting && target_of(&index, &targets, f.perceived, *t).is_some());
@@ -509,6 +513,12 @@ pub(crate) fn direct(
         let Ok(mut f) = npcs.get_mut(entity) else { continue };
         let Some(target) = f.brain.target else { continue };
         let Some((center, _)) = target_of(&index, &targets, f.perceived, target) else { continue };
+        if let Some(band) = plan_band(&db, f.npc) {
+            let home = f.home.map(|h| (h.pos.unwrap_or(f.transform.translation), h.leash));
+            let role = plan_wait(&db, f.npc);
+            keep_band(&mut f, band, role.as_ref(), center, home, dt);
+            continue;
+        }
         let role = match plan_wait(&db, f.npc) {
             Some(role) => role,
             None => {
@@ -533,6 +543,11 @@ pub(crate) fn direct(
 /// The waiting role an NPC's plan names for itself (`AttackPlanDef::wait`), if it does.
 fn plan_wait(db: &ContentDb, npc: &Npc) -> Option<WaitRole> {
     npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p)).and_then(|p| p.wait.clone())
+}
+
+/// The band an NPC's plan keeps (`AttackPlanDef::keep_range`, F11), if it does.
+fn plan_band(db: &ContentDb, npc: &Npc) -> Option<(f32, f32)> {
+    npc.plan.as_deref().and_then(|p| db.get::<AttackPlanDef>(p)).and_then(|p| p.keep_range)
 }
 
 

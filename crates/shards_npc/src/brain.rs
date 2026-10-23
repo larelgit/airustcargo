@@ -26,7 +26,7 @@ use ai_core::{AiId, AiVisible, DetRng, SimSeed};
 use bevy::prelude::*;
 use shards_action::{ActionState, AimTarget, Dead, Downed, Health};
 use shards_content::ContentDb;
-use shards_core::flat;
+use shards_core::{flat, Intent};
 use shards_world::Dormant;
 
 use crate::def::{AttackPlanDef, BehaviorDef, Cond, DirectorDef, Params, PerceptionDef};
@@ -56,15 +56,16 @@ pub(crate) mod salt {
 }
 
 /// An NPC: the content ids it behaves, senses and attacks by. Its brain, perception, nav
-/// agent, attack token and plan state come with it, and an `AiId` (NPCs think in id order
-/// and the AI sees them).
+/// agent, attack token and plan state come with it, its `Intent` (what its brain drives it
+/// by: a body with no `Fighter`, a non-combatant, gets one too), and an `AiId` (NPCs think in
+/// id order and the AI sees them).
 ///
 /// ```ron
 /// "Npc": (behavior: "grunt", perception: "grunt", plan: Some("grunt")),
 /// ```
 #[derive(Component, Reflect, Clone, Debug, PartialEq, Default)]
 #[reflect(Component, Default)]
-#[require(AiVisible, NpcBrain, NpcDrive, Perceived, NavAgent, AttackToken, NpcPlan, AimTarget)]
+#[require(AiVisible, NpcBrain, NpcDrive, Perceived, NavAgent, AttackToken, NpcPlan, AimTarget, Intent)]
 pub struct Npc {
     /// `behavior` content id: its state machine.
     pub behavior: String,
@@ -906,6 +907,10 @@ pub(crate) fn engine_conditions() -> Vec<(&'static str, NpcCondition)> {
         ("chance", |c, p| c.rng(0).chance(p.num("p", 0.5))),
         // A decision tick of the NPC: always, or once per `think` of its free time.
         ("deciding", |c, _| c.deciding()),
+        // F11: it knows the place of a body it holds for a threat (`notice: Threats` only).
+        ("threat_known", |c, _| !crate::threat::known_threats(c).is_empty()),
+        // F11: in a `hide` state, its last search found no hiding spot (it cowers).
+        ("no_hiding_spot", crate::hide::no_hiding_spot),
     ]
 }
 
@@ -922,6 +927,9 @@ pub(crate) fn engine_states() -> Vec<(&'static str, NpcState)> {
         ("attack", attack),
         ("flee", flee),
         ("investigate", investigate),
+        // F11: out of the threat's sight, or where it stands.
+        ("hide", crate::hide::hide),
+        ("cower", crate::hide::cower),
     ]
 }
 

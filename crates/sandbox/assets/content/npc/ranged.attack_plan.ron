@@ -1,0 +1,11 @@
+// The gunners' plans (F11): a burst when the target is 8-14 m away and the line to it is clear; nearer
+// it backs off, farther it closes in. The strafer moves along its band as it fires (and hits less).
+{
+    "ranged_gunner": (keep_range: Some((8.0, 14.0)), options: [(input: "light")], rest: (0.8, 1.2)),
+    "ranged_strafer": (
+        keep_range: Some((8.0, 14.0)),
+        options: [(input: "light")],
+        rest: (0.8, 1.2),
+        wait: Some((role: Strafe, distance: 11.0, speed: 1.0, orbit: 3.0, period: 2.0)),
+    ),
+}

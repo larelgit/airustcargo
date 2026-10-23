@@ -301,6 +301,31 @@ pub struct PerceptionDef {
     /// within `sight_range` like any other.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keep_range: Option<f32>,
+    /// What it takes notice of (F11): `Hostile` (the default) the fighters of other teams;
+    /// `Threats` those and also any body it holds for a threat, whatever its team: one it saw
+    /// attack while armed or heard fire a shot, for `memory` seconds after (`threat_known`,
+    /// `hide`). A non-combatant notices threats and does not fight them.
+    #[serde(skip_serializing_if = "Notice::is_hostile")]
+    pub notice: Notice,
+}
+
+/// What an NPC takes notice of ([`PerceptionDef::notice`]).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Notice {
+    /// The fighters of other teams (the team rule): what every NPC noticed before F11.
+    #[default]
+    Hostile,
+    /// The hostile fighters, and also every body it holds for a threat, of any team: one it saw
+    /// attack while armed (an action that fires a shot, or one with hit windows while it holds a
+    /// weapon), or heard fire a shot (`ShotFired`, within the shot's noise times its hearing). A
+    /// threat stays one for its `memory` seconds after the last time it saw or heard that.
+    Threats,
+}
+
+impl Notice {
+    fn is_hostile(&self) -> bool {
+        *self == Notice::Hostile
+    }
 }
 
 impl Default for PerceptionDef {
@@ -314,6 +339,7 @@ impl Default for PerceptionDef {
             hearing: 1.0,
             memory: 5.0,
             keep_range: None,
+            notice: Notice::Hostile,
         }
     }
 }
@@ -726,6 +752,15 @@ pub struct AttackPlanDef {
     /// only inside it). The NPC's own combat objects count wherever they are.
     #[serde(skip_serializing_if = "is_zero")]
     pub zone_margin: f32,
+    /// A ranged fighter (F11): `(min, max)` meters it keeps from its target instead of closing in.
+    /// Inside `min` it backs off, beyond `max` it closes in, inside the band it holds its ground
+    /// (or moves in its `wait` role at the distance it stands at: a strafe, a circle) and fires.
+    /// Its options whose action fires a shot (a `Fire` effect) take the band as their window
+    /// unless they give their own `min`/`max`, and are refused while the line of fire to the target
+    /// is not clear (an ally or a wall in the way; `npc_schedule` says which). Options that do not
+    /// fire keep their windows. `None`: no band, no line-of-fire check.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keep_range: Option<(f32, f32)>,
 }
 
 impl Default for AttackPlanDef {
@@ -744,6 +779,7 @@ impl Default for AttackPlanDef {
             tokenless: false,
             wait: None,
             zone_margin: 0.0,
+            keep_range: None,
         }
     }
 }
@@ -840,6 +876,11 @@ impl ContentDef for AttackPlanDef {
             {
                 refs.error(format!("{name} ({lo}, {hi}) must be 0 <= min <= max"));
             }
+        }
+        if let Some((lo, hi)) = self.keep_range
+            && !(lo >= 0.0 && hi > lo && hi.is_finite())
+        {
+            refs.error(format!("keep_range ({lo}, {hi}) must be 0 <= min < max meters; e.g. (8.0, 14.0)"));
         }
         if !(self.zone_margin >= 0.0 && self.zone_margin.is_finite()) {
             refs.error(format!("zone_margin must be >= 0 and finite (is {})", self.zone_margin));
