@@ -15,6 +15,7 @@ use shards_motion::{Collider, Volume};
 use crate::def::LevelDef;
 use crate::library::{held_change, level_asset};
 use crate::marker::{LevelMarker, MarkerKind};
+use crate::placed::PlacedLevels;
 use crate::props::check_level;
 use crate::spawn::{despawn_level, reload_level, spawn_level_as, FromLevel, LevelInstances, SpawnedLevel};
 
@@ -255,10 +256,10 @@ fn level_reload(In(call): In<Call<LevelReloadArgs>>, world: &mut World) -> ToolR
     Ok(text)
 }
 
-/// Take spawned levels away: every entity they spawned (and their pictures) goes, and a level
-/// placed by id is placed no more (a snapshot taken after it does not put it back). Name the
+/// Take levels that `spawn_level` placed away: every entity they spawned (and their pictures) goes,
+/// and they are placed no more (a snapshot taken after it does not put them back). Name the
 /// instance, or a level id for every instance of it. A region's tiles go with the region instead
-/// (`regen`).
+/// (`regen`), and a level the game placed itself is the game's: both are refused.
 #[derive(Deserialize, JsonSchema, Default)]
 pub struct LevelDespawnArgs {
     /// Level id, e.g. "arena": every instance of it.
@@ -285,6 +286,14 @@ fn level_despawn(In(call): In<Call<LevelDespawnArgs>>, world: &mut World) -> Too
             world.get_resource::<LevelInstances>().into_iter().flat_map(|i| i.iter()).map(|i| format!("{} (instance {})", i.label, i.id)).collect();
         let list = if spawned.is_empty() { "no level is spawned (spawn_level)".to_owned() } else { format!("spawned: {}", spawned.join(", ")) };
         return Err(format!("no spawned level matches; {list}"));
+    }
+    // Only what `spawn_level` placed: a region's tiles, and levels the game placed itself, have an
+    // owner that would not know they went.
+    let placed: Vec<u32> = world.get_resource::<PlacedLevels>().into_iter().flat_map(|p| p.levels.iter().map(|l| l.instance)).collect();
+    if let Some((instance, label)) = wanted.iter().find(|(n, _)| !placed.contains(n)) {
+        return Err(format!(
+            "`{label}` (instance {instance}) was not placed by `spawn_level`: a region's tiles go with the region (`regen`), and a level the game placed itself is the game's to take away"
+        ));
     }
     let mut done = Vec::new();
     for (instance, label) in wanted {

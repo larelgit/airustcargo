@@ -159,6 +159,12 @@ fn level_despawn_takes_a_placed_level_away() {
     assert!(err.contains("no spawned level matches; no level is spawned"), "{err}");
     let err = fails(&mut app, "level_despawn", json!({}));
     assert!(err.contains("name what goes"), "{err}");
+
+    // A level the game placed itself (as a region places its tiles) is not the tool's to take.
+    let own = shards_level::spawn_level_file(app.world_mut(), "movers.gltf", Transform::default(), "movers").unwrap();
+    let err = fails(&mut app, "level_despawn", json!({"id": "movers"}));
+    assert!(err.contains(&format!("`movers` (instance {}) was not placed by `spawn_level`", own.instance)), "{err}");
+    assert_eq!(app.world().resource::<shards_level::LevelInstances>().iter().count(), 1, "it stays");
 }
 
 /// The picture (`render`): the mover's node in the level's scene is drawn where the mover stands,
