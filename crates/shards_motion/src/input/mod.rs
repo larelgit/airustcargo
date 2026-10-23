@@ -9,7 +9,7 @@
 //!        │  ButtonInput<KeyCode>, ButtonInput<MouseButton>, Gamepad, mouse motion
 //!        ▼
 //! read_input ──► ControlState   what is down this frame (the camera and UI read it)
-//!        └─────► Intent        move_dir (turned by the camera), held, pressed
+//!        └─────► Intent        move_dir (turned by the camera, or by the look of a body that faces it), held, pressed
 //! ```
 //!
 //! Defaults come from content (`input_map`, id `default`, hot-reloadable) or the built-in
@@ -52,6 +52,7 @@ pub use controls::ControlSync;
 pub use map::{ActionBinding, BindMode, Binding, InputContext, InputMap, RebindError, Stick};
 
 use crate::camera::ThirdPersonCamera;
+use crate::controller::{CharacterController, CharacterParams};
 
 /// The input systems other modules order against.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -462,6 +463,10 @@ fn let_go(intent: &mut Mut<Intent>, applied: &Applied) {
     }
 }
 
+/// The local player's body as the controls see it: its `Intent` to write, and the numbers it moves by
+/// (they say whether it walks relative to its look).
+type LocalBody = (Entity, &'static mut Intent, Option<&'static CharacterController>, Option<&'static CharacterParams>);
+
 /// `PreUpdate`: reads the devices through the top context of the map and writes what
 /// changed into the local player's `Intent`.
 #[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
@@ -477,10 +482,10 @@ fn read_input(
     contexts: Res<InputContexts>,
     accessibility: Option<Res<AccessibilitySettings>>,
     controls: Option<Res<ControlSettings>>,
-    replay: Option<Res<AiReplay>>,
+    (replay, db): (Option<Res<AiReplay>>, Option<Res<ContentDb>>),
     mut state: ResMut<ControlState>,
     mut applied: ResMut<Applied>,
-    mut players: Query<(Entity, &mut Intent), With<LocalPlayer>>,
+    mut players: Query<LocalBody, With<LocalPlayer>>,
     mut others: Query<&mut Intent, Without<LocalPlayer>>,
 ) {
     let hold_to_toggle = accessibility.is_some_and(|a| a.hold_to_toggle);
@@ -623,7 +628,7 @@ fn read_input(
 
     // Nobody to hear it: nothing counts as written, so a body that appears later (or
     // takes over the marker) gets everything that is down.
-    let Ok((player, mut intent)) = players.single_mut() else {
+    let Ok((player, mut intent, controller, own)) = players.single_mut() else {
         return;
     };
     if applied.player != Some(player) {
@@ -639,7 +644,11 @@ fn read_input(
     // Menu closes, an action removed from the map: whatever we held and no longer should.
     let release: Vec<String> = applied.held.difference(&desired_held).cloned().collect();
     let hold: Vec<String> = desired_held.difference(&applied.held).cloned().collect();
-    let yaw = cameras.iter().next().map_or(0.0, |c| c.yaw);
+    // Which way forward is: the yaw of the look for a body that faces its look (F1a: a first-person
+    // body walks relative to its view and has no third-person camera to ask), else the camera's.
+    let yaw = controller
+        .and_then(|c| c.resolve(own, db.as_deref()).bound_look(&intent))
+        .map_or_else(|| cameras.iter().next().map_or(0.0, |c| c.yaw), |gaze| gaze.yaw);
     let world_move = Quat::from_rotation_y(yaw) * Vec3::new(move_axis.x, 0.0, -move_axis.y);
     let moved = world_move != applied.move_dir;
     if !moved && release.is_empty() && hold.is_empty() && presses.is_empty() {
