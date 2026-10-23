@@ -110,6 +110,10 @@ pub struct SpawnDef {
     /// The object stays when its action ends (a summon); by default it is despawned then.
     #[serde(default, skip_serializing_if = "is_false")]
     pub stay: bool,
+    /// With `aim: Look`, for a spawner that aims at a target (a body with no look: an NPC), the largest angle in degrees
+    /// (0 to 90) the spawn misses its aim by, drawn per spawn from the simulation's keyed stream. 0: dead on.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub aim_error_deg: f32,
 }
 
 /// Which way a [`SpawnDef`] points.
@@ -124,6 +128,11 @@ pub enum SpawnAim {
     /// At the target's feet: the pattern is laid around it, turned like the spawner. No target:
     /// nothing is spawned.
     AtTarget,
+    /// Along the spawner's shot ray (F3, [`shot_ray`](crate::shot_ray)): from its eye along its look, pitch included,
+    /// for a body that looks; toward its target's aim point for one that does not (plus
+    /// [`SpawnDef::aim_error_deg`]); else along its facing. `at` is in the frame of that ray (`forward` along it, `up`
+    /// tilted with it), and a projectile flies along it. Never skipped for want of a target.
+    Look,
 }
 
 /// How a [`SpawnDef`] places its objects around its point `at`.
@@ -336,7 +345,7 @@ pub struct AimTarget(pub Option<AiId>);
 /// each only while it stands (B5's [`Standing`](crate::Standing): a dead or downed body is no target). A lock or a brain's
 /// target on a body that fell is let go a tick later (the lock check, the brain's perception); a spawn in between passes
 /// over it to the next one, and with none it is skipped.
-fn target_of(world: &World, spawner: Entity) -> Option<AiId> {
+pub(crate) fn target_of(world: &World, spawner: Entity) -> Option<AiId> {
     // A lock point (a part, R3) stands while its body does.
     let stands = |id: &AiId| {
         let body = world.resource::<AiIndex>().get(*id).map(|e| crate::parts::body_of(world, e));
@@ -380,9 +389,22 @@ pub fn spawn_objects(world: &mut World, spawner: Entity, action: &str, def: &Spa
         debug!("{owner} spawn of {action}: the owner is dead or gone; nothing spawned");
         return Vec::new();
     }
-    let (base, facing) = match origin {
-        Some((point, facing)) => (point, facing),
-        None => {
+    // `Look`: the shot ray (an eye and a 3D direction), with a target-aimed spawner's aim error.
+    let look = (def.aim == SpawnAim::Look).then(|| crate::shot::shot_aim(world, spawner)).flatten().map(|aim| {
+        let dir = match aim.by {
+            crate::shot::AimedBy::Target(_) if def.aim_error_deg > 0.0 => {
+                let id = world.get::<AiId>(spawner).map_or(owner.0, |i| i.0);
+                crate::shot::aim_error(world, id, def.aim_error_deg, aim.dir)
+            }
+            _ => aim.dir,
+        };
+        (aim.from, dir)
+    });
+    let (base, facing) = match (origin, look) {
+        (Some((point, facing)), None) => (point, facing),
+        (Some((point, _)), Some((_, dir))) => (point, dir),
+        (None, Some((eye, dir))) => (eye, dir),
+        (None, None) => {
             let Some(tf) = world.get::<Transform>(spawner) else { return Vec::new() };
             let running = world.get::<ActionState>(spawner).and_then(|s| s.current.as_ref()).map(|r| r.facing);
             (tf.translation, running.unwrap_or(*tf.forward()))
@@ -401,7 +423,7 @@ pub fn spawn_objects(world: &mut World, spawner: Entity, action: &str, def: &Spa
     let fit = (tuning.max_objects as usize).saturating_sub(live).min((tuning.max_objects_per_owner as usize).saturating_sub(mine));
     let mut center = base;
     match def.aim {
-        SpawnAim::Facing => {}
+        SpawnAim::Facing | SpawnAim::Look => {}
         SpawnAim::Target { .. } | SpawnAim::AtTarget if target_feet.is_none() => {
             let text = format!("{owner} spawn of {action} skipped: it aims at a target and there is none (provide a target or lock_on first); nothing spawned");
             journal::emit(world, JournalKind::Event, text);
@@ -421,9 +443,16 @@ pub fn spawn_objects(world: &mut World, spawner: Entity, action: &str, def: &Spa
         let angle = DetRng::from_keys(&[seed, tick, id as u64, TURN_SALT, mine as u64]).range(0.0, 360.0);
         facing = turn(facing, angle);
     }
-    let center = center + yaw(facing) * def.at.to_vec3();
+    // `Look` (unturned): `at` in the frame of the ray, pitch included; otherwise in the facing's.
+    let along_look = look.filter(|_| !def.random_turn).map(|(_, dir)| dir);
+    let frame = match along_look {
+        Some(dir) => Transform::IDENTITY.looking_to(dir, Vec3::Y).rotation,
+        None => yaw(facing),
+    };
+    let center = center + frame * def.at.to_vec3();
     // The 3D direction a projectile of the pattern's axis flies.
     let aim3 = |at: Vec3, axis: Vec3| match (def.aim, target_feet) {
+        (SpawnAim::Look, _) => along_look.unwrap_or(axis),
         (SpawnAim::Target { height }, Some(feet)) => (feet + Vec3::Y * if point { 0.0 } else { height } - at).try_normalize().unwrap_or(axis),
         _ => axis,
     };
@@ -996,6 +1025,7 @@ mod tests {
             random_turn: false,
             ground: None,
             stay: false,
+            aim_error_deg: 0.0,
         };
         assert_eq!(serde_json::to_string(&def).unwrap(), r#"{"prefab":["bolt"],"action":["fly"]}"#);
         assert_eq!(def.total(), 1);

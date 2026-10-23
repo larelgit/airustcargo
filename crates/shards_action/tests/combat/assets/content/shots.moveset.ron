@@ -1,0 +1,11 @@
+// The movesets of `shots.rs`: one per shot of `shots.action.ron`, the primary fire on `light`.
+{
+    "sg_gun": (inputs: {"light": "s_shot", "heavy": "s_pierce"}),
+    "sg_falloff": (inputs: {"light": "s_falloff"}),
+    "sg_scatter": (inputs: {"light": "s_scatter"}),
+    "sg_aimed": (inputs: {"light": "s_aimed"}),
+    "sg_kick": (inputs: {"light": "s_kick"}),
+    "sg_guarded": (inputs: {"light": "s_guarded"}),
+    "sg_launcher": (inputs: {"light": "s_launch", "heavy": "s_launch_err"}),
+    "sg_blade": (inputs: {"light": "s_swing"}),
+}

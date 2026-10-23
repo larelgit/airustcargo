@@ -283,6 +283,22 @@ pub struct HitDef {
     pub repeat: f32,
 }
 
+impl HitDef {
+    /// What a hit of this window carries into the pipeline.
+    pub(crate) fn payload(&self) -> crate::combat::Payload<'_> {
+        crate::combat::Payload {
+            damage: self.damage,
+            poise: self.poise,
+            status: &self.status,
+            flags: &self.flags,
+            tags: &self.tags,
+            reaction: self.reaction,
+            knockback: self.knockback,
+            guard_damage: self.guard_damage,
+        }
+    }
+}
+
 /// A guard (block) window, with an optional perfect-guard (parry) window inside.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -453,6 +469,11 @@ pub enum Effect {
         #[serde(default, skip_serializing_if = "is_false")]
         per_round: bool,
     },
+    /// A hitscan shot (F3): instant rays from the actor's eye along its look (or toward its target) that hit
+    /// bodies through the damage pipeline of a swing and stop at walls:
+    /// `Fire((damage: 25, range: 60, falloff: [(20, 1.0), (60, 0.5)], noise: 40))`
+    /// ([`FireDef`](crate::shot::FireDef)).
+    Fire(crate::shot::FireDef),
 }
 
 /// An [`Effect`] at `at` seconds into the action. Inside a hold loop it fires on every
@@ -1365,6 +1386,14 @@ impl ContentDef for ActionDef {
                     }
                 }
                 Effect::Spawn(spawn) => check.spawn(&format!("effects[{i}] Spawn"), spawn),
+                Effect::Fire(fire) => {
+                    for problem in fire.problems() {
+                        check.refs.error(format!("effects[{i}] Fire {problem}"));
+                    }
+                    for (status, _) in &fire.status {
+                        check.refs.require::<StatusDef>(status, &format!("effects[{i}] Fire status"));
+                    }
+                }
                 // The sound is checked where the mixer is (`AudioDef`), as a telegraph's is.
                 Effect::Sound(_) | Effect::Custom(_) => {}
                 Effect::Refill { charge, from, .. } => {
@@ -1523,6 +1552,11 @@ impl Check<'_, '_, '_> {
             && !(depth > 0.0 && depth.is_finite())
         {
             self.refs.error(format!("{at}.ground must be a number above 0 (is {depth})"));
+        }
+        if !(0.0..=90.0).contains(&def.aim_error_deg) {
+            self.refs.error(format!("{at}.aim_error_deg must be within 0..90 degrees (is {})", def.aim_error_deg));
+        } else if def.aim_error_deg > 0.0 && def.aim != SpawnAim::Look {
+            self.refs.error(format!("{at}.aim_error_deg applies to `aim: Look` only (the aim is {:?}); remove it or aim by Look", def.aim));
         }
         let mut finite = vec![("at.forward", def.at.forward), ("at.up", def.at.up), ("at.right", def.at.right)];
         if let SpawnAim::Target { height } = def.aim {

@@ -1,0 +1,215 @@
+# Hitscan shots (F3, the manual's "Shooting: hitscan and 3D aim"): a `Fire` effect fires rays from the eye
+# along the look, pitch included, through the damage pipeline of a swing, and a wall stops them. The test
+# guns are `content/combat/hitscan.*.ron`: a rifle whose damage falls off past 10 m and that kicks the look
+# up, a scatter gun of eight pellets, a shot that passes one body and a launcher whose bolt flies along the
+# look. The targets are range dummies (`range_dummy`, a head that doubles a hit and a torso inside a 1.8 m
+# body) and a pillar, spawned as part of the yard (`RegionPart`) so the `regen` at the end takes them away
+# whatever ids they had. Nothing here names them: the ids of spawned bodies depend on what ran before (the
+# id-dependent and tick-dependent checks are `tests/sandbox/hitscan.rs`'s), and the angles are worked out
+# from where they stand.
+#
+# The player shoots from the west side of the arena, facing east (yaw -90), with the `viewer` locomotion
+# (an eye 1.6 m up, the body faces its look). The pillars are e1-e4 at x and z of plus or minus 7.
+
+seed 42
+
+# --- setup (dev): the yard loaded (spawned targets belong to it), everyone stands down and away
+act regen region=yard seed=1
+expect result contains "ok: yard seed 1"
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+# (a dead player is brought back first: its own controls refuse a dead body)
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act look clear=true
+act god on=false
+# (weapons a run cut short left in the hands go first)
+act? take_weapon id=e5 slot=1
+act? take_weapon id=e5 slot=2
+act? take_weapon id=e5 slot=3
+act? take_weapon id=e5 slot=4
+act set id=e5 component=CharacterController path=params value='"viewer"'
+step 150
+act heal id=e5
+act heal id=e6
+act heal id=e7
+act set id=e6 component=Boss path=phase value=1
+act teleport id=e5 x=-18 z=0 y=0
+act teleport id=e7 x=-16 z=16 y=0
+act teleport id=e8 x=14 z=16 y=0
+act teleport id=e6 x=14 z=-16 y=0
+act teleport id=e14 x=-16 z=-16 y=0
+step 2
+invariant field e5 Health.current > 0
+
+# --- 1. the rifle, at the head of a dummy 5 m east: `observe` shows where the shot goes (`SHOT`), the
+# `shot_trace` query the whole ray, and a hit through the head doubles 24
+act give_weapon id=e5 moveset=hitscan_rifle
+expect result contains "e5 carries hitscan_rifle in slot 1"
+act spawn_prefab id=range_dummy x=-13 z=0 y=0 overrides='{"RegionPart": {}}'
+expect result contains "range_dummy at (-13.0, 0.0)"
+step 3
+act look yaw=-90 pitch=0
+observe
+expect result contains "SHOT hitscan_rifle_shot -> "
+expect result contains " Dummy head 4.8m (x1.00)"
+act shot_trace
+expect result contains "Dummy head 4.8m (x1.00)"
+expect result contains "\"aimed\": \"look\""
+mark
+act fire
+expect result contains "ok: hitscan_rifle_shot"
+step 2
+expect journal " fires hitscan_rifle_shot: "
+expect journal " head -48 hp (hp 52)"
+# the kick: the look is half a degree higher after the shot
+observe
+expect result contains "pitch 0.5°"
+# three head shots kill it (the agent aims again after each kick)
+act look yaw=-90 pitch=0
+step 25
+act fire
+step 25
+act look yaw=-90 pitch=0
+act fire
+step 2
+expect journal " head -48 hp (hp 4)"
+expect journal "died (killed by e5 with hitscan_rifle_shot)"
+
+# --- 2. a second dummy 5.8 m away (5 m east, 3 m north) takes five shots at its torso: 24 each
+act spawn_prefab id=range_dummy x=-13 z=-3 y=0 overrides='{"RegionPart": {}}'
+step 25
+mark
+act look yaw=-59.04 pitch=-5.88
+act fire
+step 2
+expect journal " torso -24 hp (hp 76)"
+act look yaw=-59.04 pitch=-5.88
+step 25
+act fire
+step 25
+act look yaw=-59.04 pitch=-5.88
+act fire
+step 25
+act look yaw=-59.04 pitch=-5.88
+act fire
+step 2
+expect journal " torso -24 hp (hp 4)"
+step 23
+act look yaw=-59.04 pitch=-5.88
+act fire
+step 2
+expect journal " torso -24 hp (hp 0)"
+
+# --- 3. falloff: a dummy 15 m east keeps 0.88 of the hit, one 40 m east (through the east gate) half; the
+# dead dummy between is looked through
+act spawn_prefab id=range_dummy x=-3 z=0 y=0 overrides='{"RegionPart": {}}'
+act spawn_prefab id=range_dummy x=22 z=0 y=0 overrides='{"RegionPart": {}}'
+step 25
+act look yaw=-90 pitch=0
+observe
+expect result contains " Dummy head 14.8m (x0.88)"
+mark
+act fire
+step 2
+expect journal " head -42 hp (hp 58)"
+step 3
+act shot_trace
+expect result contains "\"pierce\": 0"
+act teleport id=e5 x=-18 z=0.4 y=0
+step 2
+act teleport id=e5 x=-18 z=0 y=0
+step 20
+
+# --- 4. a wall stops a shot: the piercer, which passes one body, meets a pillar 3 m east first
+act give_weapon id=e5 moveset=hitscan_piercer
+expect result contains "e5 carries hitscan_piercer in slot 2"
+act weapon slot=2
+step 30
+act teleport id=e5 x=-18 z=10 y=0
+act spawn_prefab id=pillar x=-14 z=10 y=0 overrides='{"RegionPart": {}}'
+act spawn_prefab id=range_dummy x=-10 z=10 y=0 overrides='{"RegionPart": {}}'
+step 3
+act look yaw=-90 pitch=0
+observe
+expect result contains "SHOT hitscan_piercer_shot -> "
+expect result contains " Pillar 3.0m"
+mark
+act fire
+step 2
+expect journal " fires hitscan_piercer_shot: "
+expect journal " Pillar 3.0m"
+expect !journal " head -40 hp"
+
+# --- 5. pierce: two dummies in a line 5 and 7 m east; the piercer hits both heads, 40 each
+act teleport id=e5 x=-18 z=-4 y=0
+act spawn_prefab id=range_dummy x=-13 z=-4 y=0 overrides='{"RegionPart": {}}'
+act spawn_prefab id=range_dummy x=-11 z=-4 y=0 overrides='{"RegionPart": {}}'
+step 40
+act look yaw=-90 pitch=0
+mark
+act fire
+step 2
+expect journal " head -40 hp (hp 60), "
+expect journal " head -40 hp (hp 60)"
+
+# --- 6. the scatter gun: eight pellets (where each goes is drawn from the tick and the shooter: the
+# same in every run of this file, `tests/sandbox/hitscan.rs` checks them)
+act give_weapon id=e5 moveset=hitscan_scatter
+expect result contains "e5 carries hitscan_scatter in slot 3"
+act weapon slot=3
+step 60
+act look yaw=-90 pitch=-3
+mark
+act fire
+expect result contains "ok: hitscan_scatter_shot"
+step 2
+expect journal " fires hitscan_scatter_shot (8 pellets): "
+
+# --- 7. the launcher: its bolt leaves the eye along the look, so it meets the dummy 15 m east through a
+# part (aimed by the way the body faces, it would leave its feet and meet its legs, where no part is)
+act give_weapon id=e5 moveset=hitscan_launcher
+expect result contains "e5 carries hitscan_launcher in slot 4"
+act weapon slot=4
+act teleport id=e5 x=-18 z=0 y=0
+step 60
+act look yaw=-90 pitch=0
+mark
+act fire
+expect result contains "ok: hitscan_launcher_shot"
+step 70
+expect journal "e5 -> "
+expect journal " bolt_fly at "
+
+# --- 8. what the tools refuse says what to do
+act? shot_trace id=e999
+expect result contains "e999"
+
+# --- the world as it was: the weapons taken, the player's own moveset and locomotion, the yard again
+# takes the dummies and the pillar
+act take_weapon id=e5 slot=4
+act take_weapon id=e5 slot=3
+act take_weapon id=e5 slot=2
+act take_weapon id=e5 slot=1
+expect result contains "e5 no longer carries hitscan_rifle (slot 1)"
+act look clear=true
+act set id=e5 component=CharacterController path=params value='"player"'
+act regen region=yard seed=1
+expect result contains "ok: yard seed 1"
+step 2
+act get id=e5 component=Fighter path=moveset
+expect result contains "player"
+act heal id=e5
+act teleport id=e5 x=0 z=12 y=0
+act teleport id=e7 x=-12 z=2 y=0
+act teleport id=e6 x=0 z=-6 y=0
+act teleport id=e8 x=12 z=-2 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+step 2
+observe
+expect result !contains "Dummy"
+expect result !contains "SHOT"

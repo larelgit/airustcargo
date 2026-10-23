@@ -168,7 +168,7 @@ pub(crate) fn press(world: &mut World, caller: &Caller, input: &str, dir: Option
     press_held(world, caller, input, dir, detail, None)
 }
 
-fn press_held(world: &mut World, caller: &Caller, input: &str, dir: Option<Vec3>, detail: &str, hold: Option<bool>) -> ToolResult {
+pub(crate) fn press_held(world: &mut World, caller: &Caller, input: &str, dir: Option<Vec3>, detail: &str, hold: Option<bool>) -> ToolResult {
     let me = me(world, caller)?;
     if hold == Some(false) {
         world.get_mut::<Intent>(me).ok_or("no Intent")?.set_held(input, false);
