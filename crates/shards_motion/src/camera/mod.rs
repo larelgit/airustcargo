@@ -22,6 +22,7 @@
 //! commands.trigger(AddTrauma(0.4));
 //! ```
 
+pub mod grading;
 pub mod lock;
 pub mod math;
 pub mod picture;
@@ -44,6 +45,9 @@ pub use lock::{
     body_point, in_frustum, lock_candidates, lock_score, pick_lock, signed_bearing, sight_clear, switch_lock, switch_target, LockHooks,
     LockOnDef, LockWeights, Lockable, PickView,
 };
+pub use grading::{picture_clock, Grading, GradingBlend, GradingDef, GradingVolume};
+#[cfg(feature = "render")]
+pub use grading::GradingSet;
 pub use picture::{BloomComposite, BloomTuning, PictureTuning, ToneMapping};
 pub use tuning::{ArmTuning, AutoCentreTuning, CameraOffsets, CameraTuning, FitTuning, FlickTuning, FramingTuning, TraumaTuning};
 pub use shot::{ShotDef, ShotEnded, ShotKey, ShotPoint, ShotStarted, Shots};
@@ -224,6 +228,7 @@ pub(crate) fn plugin(app: &mut App) {
         })
         .add_systems(PreUpdate, (apply_player_settings, resolve_tuning));
     shot::plugin(app);
+    grading::plugin(app);
     #[cfg(feature = "render")]
     systems::plugin(app);
 }

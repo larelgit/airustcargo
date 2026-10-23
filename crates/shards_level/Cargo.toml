@@ -10,13 +10,15 @@ license.workspace = true
 [features]
 # The level's visual scene: the same file through Bevy's glTF loader, under one root entity.
 # Gameplay entities are the same with or without it.
-render = ["ai_core/render", "shards_motion/render", "bevy/bevy_gltf", "bevy/bevy_world_serialization"]
+render = ["ai_core/render", "shards_motion/render", "bevy/bevy_gltf", "bevy/bevy_light", "bevy/bevy_world_serialization"]
 
 [dependencies]
 ai_core.workspace = true
 shards_core.workspace = true
 shards_content.workspace = true
 shards_motion.workspace = true
+# `light=<id>` on a node: the `light` kind it names and the component that places it.
+shards_light.workspace = true
 # A mover's picture follows the interpolation setting (the `render` feature).
 shards_settings.workspace = true
 bevy = { workspace = true, features = ["std", "serialize", "bevy_asset", "bevy_state"] }

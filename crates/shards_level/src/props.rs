@@ -22,14 +22,16 @@ use bevy::reflect::TypeRegistry;
 use serde_json::{json, Map, Value};
 use shards_content::db::closest;
 use shards_content::prefab::{check_prefab, component_from_json, resolve_component};
-use shards_content::ContentDb;
+use shards_content::{ContentDb, ContentDef};
+use shards_light::LightDef;
+use shards_motion::camera::GradingDef;
 use shards_motion::{CollisionLayers, LayerMask, MoverDef, VolumeKind};
 
 use crate::asset::{json_kind, LevelAsset, LevelNode};
 use crate::marker::{MarkerKind, RequiredMarker};
 
 /// The level properties, in documentation order.
-pub const PROPERTIES: [&str; 16] = [
+pub const PROPERTIES: [&str; 18] = [
     "marker",
     "name",
     "socket",
@@ -46,6 +48,8 @@ pub const PROPERTIES: [&str; 16] = [
     "max_speed",
     "prefab",
     "mover",
+    "light",
+    "grading",
 ];
 
 /// Components the file cannot set: the engine owns them.
@@ -130,12 +134,17 @@ pub(crate) struct NodePlan {
     /// `mover=<id>`: the node is a mover (`shards_motion::Mover`) moving by this `mover` definition,
     /// and the nodes below it move with it.
     pub mover: Option<String>,
+    /// `light=<id>`: the node shines by this `light` definition (`shards_light::ContentLight`): a lamp, or an empty.
+    pub light: Option<String>,
+    /// `grading=<id>`: the trigger volume of the node blends the picture toward this `grading` definition
+    /// (`shards_motion::camera::GradingVolume`) while the player is inside.
+    pub grading: Option<String>,
     pub components: Vec<(TypeId, Box<dyn Reflect>)>,
 }
 
 impl NodePlan {
     fn new(node: usize) -> Self {
-        Self { node, marker: None, collider: None, volume: None, prefab: None, mover: None, components: Vec::new() }
+        Self { node, marker: None, collider: None, volume: None, prefab: None, mover: None, light: None, grading: None, components: Vec::new() }
     }
 
     /// Nodes that carry nothing for gameplay (groups, plain meshes) spawn no entity.
@@ -145,6 +154,8 @@ impl NodePlan {
             || self.volume.is_some()
             || self.prefab.is_some()
             || self.mover.is_some()
+            || self.light.is_some()
+            || self.grading.is_some()
             || !self.components.is_empty()
     }
 }
@@ -313,7 +324,7 @@ pub(crate) fn plan_node(node: &LevelNode, position: usize, registry: &TypeRegist
         ));
     }
     // Properties that are always read; the others must be used by something on the node.
-    let mut used: Vec<&'static str> = vec!["marker", "socket", "volume", "collider", "prefab", "mover"];
+    let mut used: Vec<&'static str> = vec!["marker", "socket", "volume", "collider", "prefab", "mover", "light", "grading"];
 
     // Components and unknown keys.
     let mut entries: Vec<(&String, &Value)> = Vec::new();
@@ -445,6 +456,31 @@ pub(crate) fn plan_node(node: &LevelNode, position: usize, registry: &TypeRegist
     match text(props, "mover") {
         Ok(Some("")) => problems.push("`mover` is empty; name a mover definition (`content_list kind=mover`)".into()),
         Ok(Some(id)) => plan.mover = Some(id.to_owned()),
+        Ok(None) => {}
+        Err(e) => problems.push(e),
+    }
+
+    // Light: the node shines by a `light` definition (a lamp's own light is replaced by it in the picture).
+    match text(props, "light") {
+        Ok(Some("")) => problems.push("`light` is empty; name a light definition (`content_list kind=light`)".into()),
+        Ok(Some(id)) => plan.light = Some(id.to_owned()),
+        Ok(None) => {}
+        Err(e) => problems.push(e),
+    }
+
+    // Grading: a trigger volume that blends the picture's colour grade.
+    match text(props, "grading") {
+        Ok(Some("")) => problems.push("`grading` is empty; name a grading definition (`content_list kind=grading`)".into()),
+        Ok(Some(id)) => {
+            if !matches!(plan.volume, Some(VolumeKind::Trigger { .. })) {
+                problems.push(
+                    "`grading` goes on a trigger volume: add `marker` = `trigger` (a collider shapes it, `auto` by default) and the \
+                     picture blends toward the grading while the player is inside"
+                        .into(),
+                );
+            }
+            plan.grading = Some(id.to_owned());
+        }
         Ok(None) => {}
         Err(e) => problems.push(e),
     }
@@ -625,6 +661,16 @@ pub(crate) fn analyze(level: &LevelAsset, registry: &TypeRegistry, db: Option<&C
         {
             problems.push(LevelProblem::at(node, why));
         }
+        if let (Some(db), Some(id)) = (db, &plan.light)
+            && let Some(why) = unknown_definition::<LightDef>(db, id, "light")
+        {
+            problems.push(LevelProblem::at(node, why));
+        }
+        if let (Some(db), Some(id)) = (db, &plan.grading)
+            && let Some(why) = unknown_definition::<GradingDef>(db, id, "grading")
+        {
+            problems.push(LevelProblem::at(node, why));
+        }
         plans.push(plan);
     }
     for plan in plans.iter().filter(|p| p.mover.is_some()) {
@@ -652,6 +698,22 @@ fn unknown_mover(db: &ContentDb, id: &str) -> Option<String> {
     let hint = closest(id, ids.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
     let known = if ids.is_empty() { "there are none: add a content/**/*.mover.ron file".to_owned() } else { format!("movers: {}", ids.join(", ")) };
     Some(format!("`mover`: no mover definition `{id}`{hint}; {known}"))
+}
+
+/// Why `id` names no definition of the picture's kind `T` (`light`, `grading`), or `None` when it does. These kinds are
+/// not the simulation's: the level does not depend on them, so the lookup is no read for the replay check.
+fn unknown_definition<T: ContentDef>(db: &ContentDb, id: &str, property: &str) -> Option<String> {
+    if db.peek::<T>(id).is_some() {
+        return None;
+    }
+    let ids: Vec<&str> = db.peek_ids::<T>().collect();
+    let hint = closest(id, ids.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
+    let known = if ids.is_empty() {
+        format!("there are none: add a content/**/*.{}.ron file", T::KIND)
+    } else {
+        format!("{}s: {}", T::KIND, ids.join(", "))
+    };
+    Some(format!("`{property}`: no {} definition `{id}`{hint}; {known}", T::KIND))
 }
 
 /// The nearest node above the node at `position` (a position in [`LevelAsset::nodes`]) that is a

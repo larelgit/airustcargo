@@ -1,0 +1,19 @@
+// A lamp as a prefab (content kind `prefab`): the component `ContentLight` names the `light` definition
+// (`lights.light.ron`) it shines by, from where `spawn_prefab` puts it. `AiKind` gives it an id, so `despawn`
+// takes it away again. The picture draws it; nothing in a tick reads it.
+{
+    "lit_lamp": (
+        components: {
+            "Name": "Lamp",
+            "AiKind": ("Lamp"),
+            "ContentLight": (id: "lamp"),
+        },
+    ),
+    "lit_flasher": (
+        components: {
+            "Name": "Flasher",
+            "AiKind": ("Lamp"),
+            "ContentLight": (id: "flasher"),
+        },
+    ),
+}

@@ -59,6 +59,8 @@
 //! | `accel`, `max_speed` | numbers | an updraft's pull (m/s²) and top speed (m/s) |
 //! | `prefab` | text | spawn the content prefab with that id at the node; component properties patch it |
 //! | `mover` | text | the node becomes a [`Mover`](shards_motion::Mover) going through the keys of that `mover` definition (F6); the nodes below it move with it as its [`MoverPart`](shards_motion::MoverPart)s, and its picture follows it; movers do not nest |
+//! | `light` | text | the node shines by that `light` definition ([`ContentLight`](shards_light::ContentLight), F13): a Blender lamp, whose own glTF light the picture drops for it, or an empty; a spot points along the node's -Z |
+//! | `grading` | text | on a `marker` = `trigger` node: the picture blends toward that `grading` definition ([`GradingVolume`](shards_motion::camera::GradingVolume)) while the local player is inside |
 //!
 //! Every other key is a **component**: its short name (`Health`) or full type path
 //! (`my_game::combat::Health`), and its value as JSON in the shape `inspect` and the `get`

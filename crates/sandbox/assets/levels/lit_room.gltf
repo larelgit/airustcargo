@@ -1,0 +1,538 @@
+{
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 24,
+      "max": [
+        6.0,
+        0.0,
+        6.0
+      ],
+      "min": [
+        -6.0,
+        -0.20000000298023224,
+        -6.0
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 24,
+      "max": [
+        6.0,
+        4.0,
+        -6.0
+      ],
+      "min": [
+        -6.0,
+        0.0,
+        -6.300000190734863
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 5,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 6,
+      "componentType": 5126,
+      "count": 24,
+      "max": [
+        -6.0,
+        4.0,
+        6.0
+      ],
+      "min": [
+        -6.300000190734863,
+        0.0,
+        -6.0
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 7,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 8,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 9,
+      "componentType": 5126,
+      "count": 24,
+      "max": [
+        6.300000190734863,
+        4.0,
+        6.0
+      ],
+      "min": [
+        6.0,
+        0.0,
+        -6.0
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 10,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 11,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 12,
+      "componentType": 5126,
+      "count": 24,
+      "max": [
+        0.5,
+        3.0,
+        0.5
+      ],
+      "min": [
+        -0.5,
+        0.0,
+        -0.5
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 13,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 14,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR"
+    }
+  ],
+  "asset": {
+    "generator": "shards_level test fixture (stands in for Blender's exporter)",
+    "version": "2.0"
+  },
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 0,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 288,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 72,
+      "byteOffset": 576,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 648,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 936,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 72,
+      "byteOffset": 1224,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 1296,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 1584,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 72,
+      "byteOffset": 1872,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 1944,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 2232,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 72,
+      "byteOffset": 2520,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 2592,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 2880,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 72,
+      "byteOffset": 3168,
+      "target": 34963
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 3240,
+      "uri": "data:application/octet-stream;base64,AADAQM3MTL4AAMDAAADAQAAAAAAAAMDAAADAQAAAAAAAAMBAAADAQM3MTL4AAMBAAADAwM3MTL4AAMDAAADAwM3MTL4AAMBAAADAwAAAAAAAAMBAAADAwAAAAAAAAMDAAADAwAAAAAAAAMDAAADAwAAAAAAAAMBAAADAQAAAAAAAAMBAAADAQAAAAAAAAMDAAADAwM3MTL4AAMDAAADAQM3MTL4AAMDAAADAQM3MTL4AAMBAAADAwM3MTL4AAMBAAADAwM3MTL4AAMBAAADAQM3MTL4AAMBAAADAQAAAAAAAAMBAAADAwAAAAAAAAMBAAADAwM3MTL4AAMDAAADAwAAAAAAAAMDAAADAQAAAAAAAAMDAAADAQM3MTL4AAMDAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcAAADAQAAAAACamcnAAADAQAAAgECamcnAAADAQAAAgEAAAMDAAADAQAAAAAAAAMDAAADAwAAAAACamcnAAADAwAAAAAAAAMDAAADAwAAAgEAAAMDAAADAwAAAgECamcnAAADAwAAAgECamcnAAADAwAAAgEAAAMDAAADAQAAAgEAAAMDAAADAQAAAgECamcnAAADAwAAAAACamcnAAADAQAAAAACamcnAAADAQAAAAAAAAMDAAADAwAAAAAAAAMDAAADAwAAAAAAAAMDAAADAQAAAAAAAAMDAAADAQAAAgEAAAMDAAADAwAAAgEAAAMDAAADAwAAAAACamcnAAADAwAAAgECamcnAAADAQAAAgECamcnAAADAQAAAAACamcnAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcAAADAwAAAAAAAAMDAAADAwAAAgEAAAMDAAADAwAAAgEAAAMBAAADAwAAAAAAAAMBAmpnJwAAAAAAAAMDAmpnJwAAAAAAAAMBAmpnJwAAAgEAAAMBAmpnJwAAAgEAAAMDAmpnJwAAAgEAAAMDAmpnJwAAAgEAAAMBAAADAwAAAgEAAAMBAAADAwAAAgEAAAMDAmpnJwAAAAAAAAMDAAADAwAAAAAAAAMDAAADAwAAAAAAAAMBAmpnJwAAAAAAAAMBAmpnJwAAAAAAAAMBAAADAwAAAAAAAAMBAAADAwAAAgEAAAMBAmpnJwAAAgEAAAMBAmpnJwAAAAAAAAMDAmpnJwAAAgEAAAMDAAADAwAAAgEAAAMDAAADAwAAAAAAAAMDAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcAmpnJQAAAAAAAAMDAmpnJQAAAgEAAAMDAmpnJQAAAgEAAAMBAmpnJQAAAAAAAAMBAAADAQAAAAAAAAMDAAADAQAAAAAAAAMBAAADAQAAAgEAAAMBAAADAQAAAgEAAAMDAAADAQAAAgEAAAMDAAADAQAAAgEAAAMBAmpnJQAAAgEAAAMBAmpnJQAAAgEAAAMDAAADAQAAAAAAAAMDAmpnJQAAAAAAAAMDAmpnJQAAAAAAAAMBAAADAQAAAAAAAAMBAAADAQAAAAAAAAMBAmpnJQAAAAAAAAMBAmpnJQAAAgEAAAMBAAADAQAAAgEAAAMBAAADAQAAAAAAAAMDAAADAQAAAgEAAAMDAmpnJQAAAgEAAAMDAmpnJQAAAAAAAAMDAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcAAAAAPwAAAAAAAAC/AAAAPwAAQEAAAAC/AAAAPwAAQEAAAAA/AAAAPwAAAAAAAAA/AAAAvwAAAAAAAAC/AAAAvwAAAAAAAAA/AAAAvwAAQEAAAAA/AAAAvwAAQEAAAAC/AAAAvwAAQEAAAAC/AAAAvwAAQEAAAAA/AAAAPwAAQEAAAAA/AAAAPwAAQEAAAAC/AAAAvwAAAAAAAAC/AAAAPwAAAAAAAAC/AAAAPwAAAAAAAAA/AAAAvwAAAAAAAAA/AAAAvwAAAAAAAAA/AAAAPwAAAAAAAAA/AAAAPwAAQEAAAAA/AAAAvwAAQEAAAAA/AAAAvwAAAAAAAAC/AAAAvwAAQEAAAAC/AAAAPwAAQEAAAAC/AAAAPwAAAAAAAAC/AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcA"
+    }
+  ],
+  "extensions": {
+    "KHR_lights_punctual": {
+      "lights": [
+        {
+          "color": [
+            1.0,
+            0.9,
+            0.7
+          ],
+          "intensity": 300.0,
+          "name": "Steady",
+          "type": "point"
+        },
+        {
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "intensity": 900.0,
+          "name": "Flash",
+          "type": "point"
+        },
+        {
+          "color": [
+            1.0,
+            0.7,
+            0.3
+          ],
+          "intensity": 300.0,
+          "name": "Sodium",
+          "type": "point"
+        },
+        {
+          "color": [
+            0.9,
+            0.95,
+            1.0
+          ],
+          "intensity": 600.0,
+          "name": "Torch",
+          "spot": {
+            "innerConeAngle": 0.2,
+            "outerConeAngle": 0.4
+          },
+          "type": "spot"
+        }
+      ]
+    }
+  },
+  "extensionsUsed": [
+    "KHR_lights_punctual"
+  ],
+  "meshes": [
+    {
+      "name": "Floor",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 1,
+            "POSITION": 0
+          },
+          "indices": 2
+        }
+      ]
+    },
+    {
+      "name": "Back",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 4,
+            "POSITION": 3
+          },
+          "indices": 5
+        }
+      ]
+    },
+    {
+      "name": "Left",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 7,
+            "POSITION": 6
+          },
+          "indices": 8
+        }
+      ]
+    },
+    {
+      "name": "Right",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 10,
+            "POSITION": 9
+          },
+          "indices": 11
+        }
+      ]
+    },
+    {
+      "name": "Pillar",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 13,
+            "POSITION": 12
+          },
+          "indices": 14
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "extras": {
+        "collider": "auto"
+      },
+      "mesh": 0,
+      "name": "Floor"
+    },
+    {
+      "mesh": 1,
+      "name": "Back"
+    },
+    {
+      "mesh": 2,
+      "name": "Left"
+    },
+    {
+      "mesh": 3,
+      "name": "Right"
+    },
+    {
+      "extras": {
+        "collider": "auto"
+      },
+      "mesh": 4,
+      "name": "Pillar",
+      "translation": [
+        1.5,
+        0.0,
+        -2.0
+      ]
+    },
+    {
+      "extras": {
+        "marker": "spawn",
+        "name": "door"
+      },
+      "name": "Door",
+      "translation": [
+        0.0,
+        0.0,
+        6.0
+      ]
+    },
+    {
+      "extensions": {
+        "KHR_lights_punctual": {
+          "light": 0
+        }
+      },
+      "extras": {
+        "light": "lamp"
+      },
+      "name": "Lamp.Steady",
+      "translation": [
+        -3.0,
+        3.0,
+        0.0
+      ]
+    },
+    {
+      "extensions": {
+        "KHR_lights_punctual": {
+          "light": 1
+        }
+      },
+      "extras": {
+        "light": "flasher"
+      },
+      "name": "Lamp.Flash",
+      "translation": [
+        0.0,
+        3.0,
+        -4.0
+      ]
+    },
+    {
+      "extensions": {
+        "KHR_lights_punctual": {
+          "light": 2
+        }
+      },
+      "extras": {
+        "light": "sodium"
+      },
+      "name": "Lamp.Sodium",
+      "translation": [
+        -5.0,
+        3.0,
+        -2.0
+      ]
+    },
+    {
+      "extras": {
+        "light": "tube"
+      },
+      "name": "Lamp.Tube",
+      "translation": [
+        3.0,
+        3.5,
+        -4.0
+      ]
+    },
+    {
+      "extras": {
+        "light": "dimmer"
+      },
+      "name": "Lamp.Dim",
+      "translation": [
+        5.0,
+        3.0,
+        2.0
+      ]
+    },
+    {
+      "extensions": {
+        "KHR_lights_punctual": {
+          "light": 3
+        }
+      },
+      "extras": {
+        "light": "torch"
+      },
+      "name": "Spot.Torch",
+      "rotation": [
+        -0.2500495910644531,
+        0.20837466418743136,
+        0.0,
+        0.945544958114624
+      ],
+      "translation": [
+        4.0,
+        3.5,
+        3.0
+      ]
+    },
+    {
+      "extras": {
+        "collider": "box",
+        "grading": "rust",
+        "marker": "trigger",
+        "name": "rust_zone",
+        "size": [
+          6.0,
+          4.0,
+          12.0
+        ]
+      },
+      "name": "Zone.Rust",
+      "translation": [
+        3.0,
+        2.0,
+        0.0
+      ]
+    }
+  ],
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Scene",
+      "nodes": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12
+      ]
+    }
+  ]
+}

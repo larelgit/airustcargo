@@ -164,7 +164,7 @@ cargo shards observe                       # a text snapshot of the world + the 
 cargo shards tools                         # what can be done (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 272 definitions in 90 files
+cargo shards content check                 # ok: 283 definitions in 94 files
 cargo shards save-replay                   # the session from tick 0 → replays/tick<T>.json
 kill 4242                                  # the pid from `wait`; not kill -9: the game removes its token and port file
 
@@ -258,6 +258,7 @@ The rules that keep a game deterministic (gameplay in `FixedUpdate`, randomness 
 | `shards_scatter` | Foliage and small props strewn over region tiles from content, with levels of detail |
 | `shards_fx` | Particle effects from pools, and attack telegraphs as ground decals |
 | `shards_hitstop` | Hit stop: a brief hold of the picture (and of the real-time clock when playing alone) when a blow lands, from a table in content |
+| `shards_light` | Lights as content: point and spot lights with colour or temperature, flicker (letter patterns, noise) and a shadow budget; colour grading volumes live in the camera |
 | `shards_rules` | Rule sets as content: the mode a world plays (difficulty), by class of body and by session size, changed only by the host and out of combat |
 | `shards_dev` | The in-game developer menu and console |
 | `ai_core` | The AI layer: ids, the world as text, the journal, tools, time control, replays, snapshots, invariants |
