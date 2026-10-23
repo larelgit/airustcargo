@@ -1,0 +1,4 @@
+// A door for `navmesh.rs`: closed at key 0, lifted 3 m out of the way at key 1 (F6).
+{
+    "door": (keys: [(), (at: (0.0, 3.0, 0.0))], speed: 3.0),
+}

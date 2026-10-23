@@ -85,7 +85,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 244 definitions in 78 files
+cargo shards content check                 # ok: 249 definitions in 80 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -108,7 +108,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 244 definitions in 78 files
+# ok: 249 definitions in 80 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -598,7 +598,7 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 244 definitions in 78 files
+content: 249 definitions in 80 files
   action  78
   animset  2
   attack_plan  3
@@ -618,11 +618,12 @@ content: 244 definitions in 78 files
   hitstop  1
   input_map  0
   layout  3
-  level  2
+  level  3
   locale  2
   lock_on  1
   locomotion  5
   look  15
+  mover  4
   moveset  19
   music  1
   nav  1
@@ -653,7 +654,7 @@ content: 244 definitions in 78 files
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 242 definitions in 76
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 247 definitions in 78
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -796,8 +797,8 @@ up to `mantle_height` along a path checked in advance. Characters do not block e
 fall_height }`, plus `Jumped`, `Mantled`, `ModeChanged`. The `Transform` position is the feet; writing to it from outside (`teleport`, respawn) places the character again, with no speed and no fall.
 
 **Ground laid in the middle of play (R2).** The controller stands on, and is stopped by, every `WORLD` collider that is not a
-volume, `Body::Static` and `Body::Kinematic` alike. A kinematic collider does not carry what stands on it: there is no platform
-motion, and a body on one that moves is left behind. So a game makes temporary ground (a toppled giant to walk along to its core)
+volume, `Body::Static` and `Body::Kinematic` alike. A plain kinematic collider does not carry what stands on it: a body on one that
+moves is left behind (a mover does carry it: see "Movers (F6)" below). So a game makes temporary ground (a toppled giant to walk along to its core)
 with no engine code. While the body lies still, the game spawns static colliders shaped to the lying pose; when it rises, the
 game despawns them. The rules:
 
@@ -823,6 +824,87 @@ Tests:
   leaves the body where it stood.
 - The sandbox's `snapshots.rs` and `net.rs`: the same slab with `AiKind` survives a load and reaches a client, and its removal
   reaches both.
+
+**Movers (F6): doors, lifts, platforms.** A mover is an entity with `Mover { def }` that goes through the keys of a `mover`
+definition (content kind `mover`, `*.mover.ron`), carries the characters that stand on it and pushes the ones in its way.
+A level node with `mover=<id>` makes one (its children in the file move with it, as its `MoverPart`s, and its picture follows
+it: the node in the level's scene with the same whole path below the scene's own root); so does a prefab or a spawn with the `Mover` component and a `Collider`.
+
+```ron
+// assets/content/world/movers.mover.ron
+{
+    "lift": (keys: [(), (at: (0.0, 4.0, 0.0))], speed: 1.2),
+    "gate": (keys: [(), (at: (-3.0, 0.0, 0.0))], speed: 1.5, blocked: Reverse),
+    "crusher": (keys: [(), (at: (0.0, -2.6, 0.0))], speed: 1.0, blocked: Crush(damage: 10.0)),
+    "turntable": (keys: [(), (turn: (0.0, 360.0, 0.0), time: 8.0)], loop: Cycle),
+}
+```
+
+- *Keys* (2 to 64) are poses relative to where the mover was placed, in its frame (a gate turned in the level slides along its
+  own axis): `at` (metres), `turn` (degrees about X, Y, Z), `time` (seconds from the key before; without it the way takes its
+  length over `speed` m/s or its turn over `turn_speed` °/s, whichever is slower), `wait` (seconds it rests there; the definition's
+  `wait` by default). It starts at key 0.
+- *`loop`*: `Off` (by default: it goes only where it is sent, and stops at that key), `PingPong` (up the keys and back, resting
+  `wait` at each end), `Cycle` (up the keys, then from the last straight on to key 0, which must be the same pose).
+- *`blocked`*, when a body is in its way and cannot be pushed out (against a wall, pinned under it): `Stop` (by default: it waits
+  where it is and goes on once the body has gone), `Reverse` (it turns back to the key it came from), `Crush(damage, every)` (it
+  holds, and the body takes `damage` when the hold begins and every `every` seconds, 1 by default, while it lasts).
+- The content check names the file and the field (`content/world/movers.mover.ron: lift: keys[1]: the way from key 0 takes no
+  time; it moves 4.00 m: give the mover a speed`, `loop: Cycle goes from the last key back to key 0 at once, so keys[1] must be
+  where key 0 is`, `blocked: Crush damage must be above 0`, and a way shorter than `MIN_WAY`, 0.01 s: `keys[1]: the way from key 0 takes 0.001 s, under
+  the shortest a way may take (0.01 s)`; a step then passes a bounded number of keys, and a long one runs all of its time as short
+  ones would), and a level node that names a mover content does not have (``node `Lifts/Lift`: `mover`:
+  no mover definition `lfit` (did you mean `lift`?); movers: lift, slide``). Movers do not nest.
+
+*The tick.* `MoverSystems::Step` runs in `SimSet::Move` before the controller. Each character on the ground is asked what it
+stands on (the controller's ground probe). Then each mover, in `AiId` order, runs its state on and puts its colliders where it
+would stand. A body that stood on it is carried by the mover's motion this tick: its translation, and for a turning mover the
+turn about the mover's pivot, with the body's yaw turned along. A body it now sinks into (a closing door, a lift from below) is
+pushed out the shortest way, sliding against the world. A body that cannot be pushed out blocks the step: the mover stays where
+it was, and its `blocked` rule acts. Otherwise the pose, the bodies and the state are written. A body keeps only its own velocity:
+stepping or jumping off a mover, it takes none of the mover's along. Movers push characters only (players and NPCs); they pass
+through static geometry, other movers and props. A plain kinematic collider without `Mover` still carries and pushes nothing (R2).
+
+*Its bodies.* At rest a mover's colliders are `Body::Static`, so a closed door is cut out of the navmesh at its next refresh like
+any laid solid (and an open one where it rests); while it moves they are `Body::Kinematic`, which the navmesh leaves out. NPCs walk
+around a closed door and through an open one. They do not ride lifts: a lift as a navigation link is later work.
+
+*API.* `mover_go(world, mover, key)` sends a mover to a key and returns a `MoverInfo`; it is an `Err` with the reason on a machine
+that does not simulate, for what is no mover, and for a key the definition lacks (``no key 4: `lift` has keys 0..=1``).
+`mover_state(world, mover)` reads one: key, next key, progress, goal, velocity, turn rate, wait, hold, the seconds to the goal.
+Events: `MoverStarted { mover, from, to }`, `MoverArrived { mover, key }`, `MoverBlocked { mover, body, damage }`. A crushing
+mover's `MoverBlocked` carries its damage, and the action module deals it through `deal_damage` on the machine that simulates:
+no credit (the crusher is the world, not a fighter), and not scaled by the rules. The state (`MoverState` on the mover) is in
+snapshots, the replay hash and co-op; the engine rule `motion.mover_sane` holds it to its definition.
+
+*For an agent.* `observe` describes a mover as `e14 Mover "Lift"  key 0→1, moving up 1.2m/s` (or `at key 1`; then `, turning 45°/s`,
+`, leaves in 0.5s`, `, to key 2` when it goes on past the next key, `, held 1.0s`). The dev tool `mover_go id=eN key=K` (or `name=Lift`; a typo gets ``no mover named `lfit`
+(did you mean `Lift`?); movers: e14 Lift, e15 Gate``) answers `ok: e14 Lift goes to key 1 (3.3s)`. The condition
+`step --until named:mover_arrived` holds on the tick a mover stops at a key; a looping mover with no `wait` never stops, so it never
+arrives. The journal says when a mover that goes only where it is sent leaves and arrives (`e14 Lift leaves key 0 for key 1`,
+`e14 Lift at key 1`) and what holds it (`e16 Crusher crushes e5 Player (10)`, `e15 Gate held by e5 Player`); a looping mover's
+rounds stay out of it.
+
+*Co-op.* The host moves movers. A client never writes their state, which is replicated (the desync hash compares it). A client
+predicts its own body on a mover against the mover where it will be at the predicted tick (`MoverSystems::Predict`, in
+`NetSet::Predict` before the predicted move): it runs the replicated state on by the ticks between the host's tick and its own (at
+most two seconds' worth), puts the mover's colliders there in its own physics world only, and carries and pushes its own body as
+the host does. The host stays authoritative, and the usual correction mends what the client did not know yet. That is a mover's
+start: a call reaches the host at a tick the client does not predict, so for about a round trip the client has its body standing
+still. In the sandbox's test, with 150 ms each way, the error peaks under 0.5 m and the correction takes it back, with no snap and no
+desync. It is also a block the client did not foresee. A level mover's picture on a client follows the host's poses as they come
+(it is not blended between ticks as on a machine that simulates), so a predicted body on it can look a little off until the next
+state.
+
+Tests: `shards_motion` `tests/motion/movers.rs` (a body rides a lift up and down and keeps its feet; a jump on a rising lift; a
+turntable carries a body and turns it; a door pushes a body; `Stop`, `Reverse` and `Crush`; ping-pong and cycle; a snapshot taken
+mid-ride plays on the same; the describer, the tool, the condition; bad definitions); `shards_level` `tests/level/movers.rs` (a node
+and its children move together, in the frame they were put in; a snapshot keeps the parts; an unknown and a nested mover;
+`level_despawn`; the picture follows, with `render`, and two movers whose paths end alike, `A/Mover` and `B/A/Mover`, each
+find their own node); `shards_action` `tests/combat/crush.rs`; `shards_npc` `tests/npc/navmesh.rs`
+(a closed door is carved, an open one where it rests); the sandbox's `movers.rs` (the room's file, each mover's picture on its own node of the scene Bevy
+loads, its scenario on a fresh game leaving nothing behind, a client riding a lift the host moves), `engine_rules.rs` (`motion.mover_sane` fires), the scenario
+`movers.scenario` and its reference replay `movers.json`.
 
 **Parameters are content.** Content kind `locomotion`, a map from id to numbers; missing fields take default values, a typo is an error with its line.
 They are read every tick, so an edit to the file changes the next step.
@@ -2375,6 +2457,7 @@ Blender (.blend) ── export glTF ──► tiles/ruin.gltf ──► LevelAss
 | `layers`, `collides_with` | `world`, `character`, `volume`, `game0`…`game15` (a name or a list) | the collider's layers |
 | `volume` | `water`, `updraft`, `trigger` | a `Volume` sensor with the `collider` shape (default `auto`); `accel` and `max_speed` are for the flow |
 | `prefab` | text | spawns a prefab from the content at the node; component properties edit its fields |
+| `mover` | text | the node is a mover (F6) that goes through the keys of that `mover` definition, and the nodes below it move with it (see "Movers (F6)") |
 
 Any other key is a **component**: a short name (`Health`) or the full type path. The value is JSON in the form that `inspect` and `get` show:
 
@@ -2451,7 +2534,7 @@ content/region/ruin.level.ron: level `ruin`: required marker missing: `camp` nam
 
 The loading gate holds the simulation until the files are loaded (`LevelLibrary`).
 
-**Tools.** The player: `level_info`; the developer: `spawn_level`, `level_reload`.
+**Tools.** The player: `level_info`; the developer: `spawn_level`, `level_reload`, `level_despawn` (`id=movers` takes away every instance of that level, `instance=N` that one; their entities go, and the record of the levels placed by id with them: `ok: level taken away: movers (instance 1, 8 entities)`; a region's tiles and a level the game placed itself are refused).
 
 ```text
 $ shards act level_info id=ruin
@@ -3774,9 +3857,9 @@ A tool is an argument struct (serde + schemars) and an ordinary Bevy system, `In
 | scope | tools |
 |---|---|
 | **Player** (plays fair, only through `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; movement: move_to (`path=true`), move, stop, jump, sprint, glide, look, clearance, path_to, input_bindings; combat: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack, combat_objects, reload, weapon (F4), fire, shot_trace (F3); world: region_info, level_info, nav_path, npc_state; settings: settings, settings_set (like the settings menu for a human); sound: audio; Steam (feature `steam`): steam, steam_invite |
-| **Dev** (everything, including time) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, give_weapon, take_weapon, give_ammo (F4), content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset, motion_bake, animation; world: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; sound: sound_play, music_set, emitter_play, emitter_stop; mesh looks: looks, look_outlines; foliage: scatter, scatter_set; effects: effects, effect_play, telegraph_decals; Steam (feature `steam`): steam_host, steam_join, achievement_unlock; developer menu and console: dev_menu, console |
+| **Dev** (everything, including time) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, give_weapon, take_weapon, give_ammo (F4), content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset, motion_bake, animation; world: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, level_despawn, mover_go, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; sound: sound_play, music_set, emitter_play, emitter_stop; mesh looks: looks, look_outlines; foliage: scatter, scatter_set; effects: effects, effect_play, telegraph_decals; Steam (feature `steam`): steam_host, steam_join, achievement_unlock; developer menu and console: dev_menu, console |
 
-The game adds its own (in the template, `taunt` and the conditions `arena_cleared`, `foe_near`, `in_fight`; in the sandbox, the conditions `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`). Modules add conditions for `step --until named:…`: `near_poi` (world, appears with the first region), `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_avoiding`, `npc_engaged`, `npc_near` (NPC), `objects_live`, `projectile_flying` (combat objects). Each
+The game adds its own (in the template, `taunt` and the conditions `arena_cleared`, `foe_near`, `in_fight`; in the sandbox, the conditions `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`). Modules add conditions for `step --until named:…`: `near_poi` (world, appears with the first region), `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_avoiding`, `npc_engaged`, `npc_near` (NPC), `objects_live`, `projectile_flying` (combat objects), `mover_arrived` (movers, F6). Each
 tool has a kind (`kind` in `shards tools`):
 
 - `query` only reads the world: no journal entry and no diff;
@@ -4557,6 +4640,7 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `core.intent_sane` | every `Intent` has a finite `move_dir` of length at most 1 (+ 1e-4), a finite `aim` and a finite `look`. The movement code survives garbage, so the rule names the writer that forgot to clamp. The host cleans a network client's input before it reaches `Intent`, so a bad frame cannot stop the host |
 | `motion.finite` | every `AiVisible` entity has a finite `Transform` translation and a finite rotation of length 1 ± 1e-3, and a finite `MotionState` (velocity, ground normal, timers, mantle, fall height, water surface, updraft, placed position). Scale is not judged |
 | `voxel.body_in_solid` | no character has its capsule centre in a solid cell of a voxel field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). On by default since the fuzz runs on the voxel arena (see "Voxel fields") |
+| `motion.mover_sane` | every `MoverState` (F6) has a finite `t` in `0..1` (0 at rest), goes between neighbouring keys, holds finite `wait` and `blocked` times `>= 0` and a finite origin, and names no key past its definition's last (a mover whose definition content does not have is not judged by keys). The movers' step keeps all of it, so a violation names a writer that set the state by hand |
 | `rules.mode_known` | while `ActiveRules` exists, its `mode` is empty (neutral) or names a rule set that is in `rules/default` `modes` and in content: `ActiveRules plays \`nope\`, which content does not have`. A content change that takes the mode away falls back to `start` inside the call, so a violation names a writer that set the mode by hand (see "Rules (C3)") |
 | `action.resources_in_range` | `Health`, `Stamina` and `Poise` are finite with `max > 0` and `0 <= current <= max`. Dead bodies are checked too (`current` is 0). A game that wants a buff above `max` raises `max` with it |
 | `action.running_sane` | a running action of a fighter or a combat object (B4) exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. The length is the run's own when that is longer than the definition's (miss recovery and `extend_recovery` lengthen a run, B2a). Without a content database the rule passes |
@@ -4603,12 +4687,13 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-36 rules, checked after every tick
+37 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
   motion.launch_sane  engine rule  armed
   voxel.body_in_solid  engine rule  armed
+  motion.mover_sane  engine rule  armed
   rules.mode_known  engine rule  armed
   action.resources_in_range  engine rule  armed
   action.running_sane  engine rule  armed
@@ -5018,7 +5103,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify -
 # replay finished at tick 1010: identical to the recording (17 checks) [1010 ticks in 3.00s, 22 frames]
 ```
 
-**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`), the voxel arena (`voxel_arena`) and its navmesh (`voxel_nav`), the timeline (`timeline`), the context and paired actions (`context`), the body replays (`body_motion`, `body_state`), the encounter (`encounter`), the spawned combat objects (`objects`), the downed state and the revive (`downed`), the boss scheduler (`boss_schedule`), the body parts (`parts`), a first-person look (`look`) and the weapons (`weapons`): 21 files, each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
+**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`), the voxel arena (`voxel_arena`) and its navmesh (`voxel_nav`), the timeline (`timeline`), the context and paired actions (`context`), the body replays (`body_motion`, `body_state`), the encounter (`encounter`), the spawned combat objects (`objects`), the downed state and the revive (`downed`), the boss scheduler (`boss_schedule`), the body parts (`parts`), a first-person look (`look`), the weapons (`weapons`), the movers' room (`movers`) and the hitscan shots (`hitscan`): 23 files, each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
 (for the template: `cargo test --test game record_reference_replays -- --ignored`).
 
 - Game data follows the same rule as `inspect`: everything except the `bevy_*` types and the internal markers of `ai_core`, plus `Transform` and `Name`. So components that only the window adds (`Visibility`, `GlobalTransform`, meshes) do not change the hash, and an `Entity` inside a component is hashed as its `AiId`. Labels and describe fragments are text for the AI and are not part of the hash: a new wording or a new describer does not break old replays.
@@ -7315,6 +7400,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 - `body_state.scenario` (B2b) — the player borrows the `bodystate` moveset and the skeleton the `sparring` one: a ward gives the player `barrier 50 (7.…)` and journals `e5 barrier 50 for 8.0s`; three slams of 15 come out of it (`e7 -> e5 spar_slam -15 (hp 100) [barrier -15]`, health whole, `barrier 35`, `20`, `5`) and the fourth hurts for 10 (`(hp 90) [barrier -5]`, no `Barrier` left); `damage_taken id=e7 key=core mult=2 seconds=1` doubles a jab (`-12`) and the next one a second later is `-6` again with no `DamageTaken`; a jab that chills procs `spar_chill`, shows `proc gate spar_chill`, a second inside 2 s is swallowed and empties the bar (`Statuses.0[0].buildup == 0`, the chill not restarted), one past the gate restarts it, and a jolt procs and expires in a tick with no slot. At the end both have their own movesets and no barrier, multiplier, proc gate or chill;
 - `objects.scenario` (B4) — the skeleton e8 borrows the `caster` moveset and volleys at the player: `e8 spawns 3 x bolt_fly`, `combat_objects` and `observe` show the bolts (`projectile of e8`), a side bolt stops at a pillar and lays a puddle at its foot, the middle one meets the player once (`e8 -> e5 bolt_fly -8`, credited to the caster) and its puddle hits from the next tick and then every 0.8 s, building up `spar_chill`; a roll toward the next volley's bolt evades it and the bolt is spent all the same; the line telegraphs its six zones from 0.35 s to 1.15 s and the rings their 32 from 0.50 s to 1.16 s, and every object is gone once its action is over; `objects.json` is its reference replay, and `stand/objects.scenario` plays the volley in co-op (both clients have the host's bolts, by id, and see the host's hits);
 - `parts.scenario` (R1, R3) — a 6 m colossus spawned with the yard region, hit only through its parts and locked on to only through them: the player locks on (`lock_on` picks a point; nothing in the file names an id), then on the hand by name (`lock_on point=hand`: `(hand of e…)`), the first swing meets it (`light_1 at hand -10 (hp 1190)`: the hand loses 20, the body half), the third breaks it (`hand broken by e5`, and the lock on it is let go of), `lock_on point=hand` is refused as broken, the fourth swing, locked on the left leg, meets it, the core opened by `part name=core op=on` and locked on takes the fifth at three times the damage (`light_1 at core -60`), a flick to the right moves the lock to the left leg, a broken part refuses to come on, `part op=break` breaks the horn (no lock point after), and the `regen` that ends it takes the colossus and its parts away; `parts.json` is its reference replay;
+- `movers.scenario` (F6) — the test room `movers` (`levels/movers.gltf`, `world/movers.*.ron`) laid on the canyon floor by `spawn_level` (its movers called by name: their ids depend on what was spawned before): the player rides the lift 4 m up to the deck (`Lift goes to key 1 (3.3s)`, `step --until named:mover_arrived`, `Lift at key 1`, the feet 4 m higher and not moved sideways) and back down, the gate sliding shut pushes it ahead to where the gate stops, the crusher pins it and hurts it (`Crusher crushes e5`), the turntable carries it half a turn round its middle, and `level_despawn id=movers` takes the room away; `movers.json` is its reference replay;
 - `weapons.scenario` (F4) — the player is given the sandbox's two test weapons (`give_weapon`; `content/combat/weapons.*.ron`) and plays them through the player's tools: six shots empty the sidearm (`observe` shows `weapon test_sidearm 0/6 (12)`), `light_attack` answers `sidearm empty (0/6): reload`, `reload` moves the six rounds only when its draw ends (0.8 s, `e5 refilled sidearm +6 (6/6), 6 sidearm.reserve left`) and answers `sidearm is already full (6/6)` after; `weapon slot=2` switches at once (`e5 switches to test_blaster (slot 2, from test_sidearm)`), the blaster reloads itself on the press that would fire it empty (`ok: arm_blaster_reload`), and a switch made inside a reload's draw cuts it: nothing was loaded, the sidearm keeps its rounds, and the reload left to end loads what fits. The weapons are taken at the end and the player gets its moveset and flask back. Its session is the reference replay `weapons.json` (and, in heavy mode, the snapshots restored along it)
 - `hitscan.scenario` (F3) — the player, with the `viewer` locomotion and the sandbox's test guns (`give_weapon`; `content/combat/hitscan.*.ron`), shoots range dummies and a pillar spawned with the yard region (nothing names their ids): `observe` shows `SHOT hitscan_rifle_shot -> e… Dummy head 4.8m (x1.00)` and `shot_trace` the whole ray, three head shots kill one dummy (`e5 fires hitscan_rifle_shot: e… head -48 hp (hp 52)`; the look kicks half a degree up after each) and five torso shots another (`torso -24 hp`), a dummy 15 m away keeps 0.88 of the hit (`head -42 hp`), the piercer stops at a pillar (`e… Pillar 3.0m`) and passes one dummy into the one behind it (`head -40 hp (hp 60), e… head -40 hp (hp 60)`), the scatter gun fires `(8 pellets)` and the launcher's bolt leaves the eye (`bolt_fly at` a part); then the guns are taken and the yard takes the targets;
 - `boss_schedule.scenario` (N8a2, N8b) — the warden on two plans with gated options (`angle`, `players`, `max_repeats`, `forbid_after`) that are tokenless and wait in a strafe of their own, on the same director as two skeletons (`sched_arena`: two tokens, strikes 0.7 s apart), all written with `content_apply`; the skeletons take the director's tokens (`e7 takes an attack token on e5`) and the warden none (`!journal "e6 takes an attack token"`), and `npc_state` shows its grant as `"counted": false`: `npc_schedule` explains each refusal (`angle: the target is 10 degrees off the facing; this option needs 95-180`, `players: 1 living, this option needs 2-3`), a 900-tick fight holds every gate under the engine rules (`npc.plan_sequence` among them), and a phase swap keeps the history and the cooldowns the two plans share by name; with N8d a borrowed caster's bolt bursts into a chilling puddle (`chill_puddle`, tagged `capture`) at the player's feet, and the warden's `heavy` (`forbid_while: ["capture"]`) is refused while the puddle is live and open again in its fade; `boss_schedule.json` is its reference replay, and `stand/boss_schedule.scenario` counts the living players in co-op (three, then two when a client's body dies) and shows a client the host's plan history;
@@ -7356,8 +7442,8 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
   generated`), the hash is `7bbfdc3b62623fbc` again, and `save_check` agrees.
 
 The scenarios start with `heal`/`teleport`/`set`/`npc_set_state … calm`, so they run on a fresh game and after other scenarios, in any order:
-CI runs them forward and then backward in one game. Sessions of twenty-two of them are recorded as reference replays in `tests/replays/`
-(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`, `parts`, `look`, `weapons`, `hitscan`; see "Replays").
+CI runs them forward and then backward in one game. Sessions of twenty-three of them are recorded as reference replays in `tests/replays/`
+(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`, `parts`, `look`, `weapons`, `movers`, `hitscan`; see "Replays").
 
 ## Tests and CI
 

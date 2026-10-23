@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 use shards_content::ContentDb;
 use shards_core::{flat, Intent, NetRole};
 use shards_motion::{
-    Collider, ColliderId, LayerMask, MotionState, PhysicsWorld, QueryFilter, Shape,
+    Collider, ColliderId, LayerMask, MotionState, MoverBlocked, PhysicsWorld, QueryFilter, Shape,
 };
 
 use crate::context::{held_by, in_victim_action, may_hit, strike as pair_strike, Pairing, Strike};
@@ -1146,6 +1146,20 @@ pub fn deal_damage(world: &mut World, target: Entity, amount: f32, credit: Optio
         return world.get::<Health>(target).map_or(0.0, |h| h.current);
     }
     hp_left
+}
+
+/// A mover that crushes (`shards_motion::Blocked::Crush`, F6) hurts the body it holds by its `damage` when
+/// the hold begins and every `every` seconds after: [`deal_damage`], so never scaled by the rules, and
+/// only on a machine that simulates (the movers' step runs there alone). The mover is not the credit:
+/// a crusher is the world, not a fighter.
+pub(crate) fn crush(e: On<MoverBlocked>, role: Option<Res<NetRole>>, mut commands: Commands) {
+    let MoverBlocked { body, damage, .. } = *e.event();
+    if damage <= 0.0 || role.is_some_and(|r| !r.simulates()) {
+        return;
+    }
+    commands.queue(move |world: &mut World| {
+        deal_damage(world, body, damage, None);
+    });
 }
 
 /// [`deal_damage`] with `amount` times the target's incoming factor from the rules in play

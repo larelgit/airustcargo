@@ -755,3 +755,34 @@ fn a_ledge_on_a_tile_edge_is_climbed_and_dropped_across_it() {
     assert!(down.legs.iter().any(|l| l.kind == StepKind::Drop), "{}", down.to_plan().summary());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A door (a mover, F6) that rests closed is carved like any laid solid; while it moves it is
+/// not (a kinematic collider), and once it rests open the ground it held is walkable again.
+#[test]
+fn a_closed_door_is_carved_and_an_open_one_is_not() {
+    let rows = ["floor floor floor"];
+    let closed = (Vec3::new(11.0, 0.0, 2.0), Vec3::new(12.0, 2.5, 6.0));
+    let mut app = app();
+    load_region(&mut app, &rows);
+    let half = (closed.1 - closed.0) * 0.5;
+    let door = app
+        .world_mut()
+        .spawn((
+            Name::new("Door"),
+            shards_motion::Mover { def: "door".into() },
+            shards_motion::Collider::new(shards_motion::Shape::cuboid(half)),
+            Transform::from_translation(closed.0 + half),
+        ))
+        .id();
+    step(&mut app, 2);
+    assert_eq!(disabled(&app), fresh_disabled(&rows, &[closed]), "closed, it is carved");
+    let (from, to) = (Vec3::new(10.0, 0.0, 4.0), Vec3::new(14.0, 0.0, 4.0));
+    assert!(route(&app, from, to).unwrap().length > 4.5, "around the closed door");
+    shards_motion::mover_go(app.world_mut(), door, 1).unwrap();
+    step(&mut app, 2);
+    assert_eq!(disabled(&app), Vec::<u32>::new(), "moving, it is not");
+    step(&mut app, 70);
+    let lifted = (closed.0 + Vec3::Y * 3.0, closed.1 + Vec3::Y * 3.0);
+    assert_eq!(disabled(&app), fresh_disabled(&rows, &[lifted]), "open, it is carved where it rests");
+    assert!(route(&app, from, to).unwrap().length < 4.01, "straight through");
+}
