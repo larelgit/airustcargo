@@ -79,7 +79,8 @@
 //!                  ActionSystems::Context   guard presses (GuardArm), context bindings (ContextInputs)
 //!                  ActionSystems::Machine   presses → buffer → start/advance → LocomotionInput
 //!                  ActionSystems::Objects   combat objects: delayed starts, their runs step (effects, telegraphs)
-//!                  ActionSystems::Effects   pairs start (start_pairs), heal, stamina, statuses, sounds, spawns, game effects
+//!                  ActionSystems::Effects   pairs start (start_pairs), heal, stamina, statuses, sounds, spawns, game effects;
+//!                                           shots (shot): their pellets through the damage pipeline at once
 //! SimSet::Move     (controller)             integrates LocomotionInput, external included; then projectiles fly;
 //!                                           then body parts spawn (a body's first tick) and follow their bodies
 //! SimSet::Resolve  ActionSystems::Hits      overlaps (a projectile sweeps its flight) → damage pipeline → events;
@@ -93,8 +94,8 @@
 //!
 //! Tools: `light_attack`, `heavy_attack`, `block`, `parry`, `dodge`, `use_technique`,
 //! `use_item`, `lock_on`, `attack`, `interact`, `reload`, `weapon` (player); `god`, `heal`, `stagger`, `react`, `remember`, `down`, `part`, `motion_bake`,
-//! `give_weapon`, `take_weapon`, `give_ammo` (dev);
-//! `combat_overlay` (dev, with the `render` feature). Queries: `combat_objects` (player).
+//! `give_weapon`, `take_weapon`, `give_ammo` (dev); `fire` (player, F3);
+//! `combat_overlay` (dev, with the `render` feature). Queries: `combat_objects`, `shot_trace` (player).
 //!
 //! ## The render feature
 //!
@@ -138,6 +139,7 @@ pub mod parts;
 mod predict;
 #[cfg(feature = "render")]
 pub mod render;
+pub mod shot;
 pub mod stance;
 pub mod status;
 mod tools;
@@ -212,6 +214,7 @@ pub use parts::{
     PartHit, PartTurn, PartsDef, SpawnedParts,
 };
 pub use look::{view_hit, ViewHit, AIM_RANGE};
+pub use shot::{cone_dir, fire, shot_aim, shot_ray, trace_shot, AimedBy, FireDef, ShotAim, ShotFired, ShotHit, ShotImpact, ShotPath};
 pub use zone::{action_zones, hit_zones, threat_indicators, HitZone, Indicator, WorldShape};
 
 /// Version of the action module.
@@ -527,6 +530,7 @@ impl Plugin for ActionPlugin {
         objects::plugin(app);
         parts::plugin(app);
         arsenal::plugin(app);
+        shot::plugin(app);
         #[cfg(feature = "render")]
         render::plugin(app);
     }

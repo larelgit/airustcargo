@@ -1,0 +1,31 @@
+// Hitscan shots (F3) on neutral numbers, for `hitscan.scenario` and `tests/sandbox/hitscan.rs`: a rifle whose
+// damage falls off past 10 m and that kicks the look up, a scatter gun of eight pellets, a shot that passes one
+// body, and a launcher whose bolt flies along the look, pitch included (`objects.*.ron`). Each fires at the
+// start of its run. Net ids 4460 to 4469 are this file's.
+{
+    // 24 a hit up to 10 m, half of it from 30 m on; heard 30 m around; kicks the look half a degree up.
+    "hitscan_rifle_shot": (
+        net_id: 4460,
+        phases: [("fire", 0.05), ("recover", 0.3)],
+        effects: [(at: 0.0, effect: Fire((range: 100, falloff: [(10, 1.0), (30, 0.5)], noise: 30, kick: (0.5, 0), damage: 24)))],
+    ),
+    // Eight pellets in a 5 degree cone, 6 each up to 8 m, a quarter of that from 25 m on, none past 40 m.
+    "hitscan_scatter_shot": (
+        net_id: 4461,
+        phases: [("fire", 0.05), ("recover", 0.6)],
+        effects: [(at: 0.0, effect: Fire((pellets: 8, spread_deg: 5, range: 40, falloff: [(8, 1.0), (25, 0.25)], noise: 40,
+                   damage: 6, reaction: 1)))],
+    ),
+    // Through the first body into the one behind it; walls still stop it.
+    "hitscan_piercer_shot": (
+        net_id: 4462,
+        phases: [("fire", 0.05), ("recover", 0.5)],
+        effects: [(at: 0.0, effect: Fire((pierce: 1, noise: 30, damage: 20)))],
+    ),
+    // A bolt from the eye, 0.5 m along the look.
+    "hitscan_launcher_shot": (
+        net_id: 4463,
+        phases: [("fire", 0.05), ("recover", 0.6)],
+        effects: [(at: 0.0, effect: Spawn((prefab: ["bolt"], action: ["bolt_fly"], aim: Look, at: (forward: 0.5))))],
+    ),
+}

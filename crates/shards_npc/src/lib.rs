@@ -284,6 +284,7 @@ impl Plugin for NpcPlugin {
             )
             .add_observer(perception::hear_noise)
             .add_observer(perception::hit_noise)
+            .add_observer(perception::shot_noise)
             .add_observer(strike::action_started);
         // The token rule judges the director's books right after it closed them; the sequence rule
         // judges the planner's presses right after it made them.

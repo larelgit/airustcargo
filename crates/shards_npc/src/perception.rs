@@ -24,9 +24,9 @@
 use ai_core::AiId;
 use bevy::prelude::*;
 use shards_action::fighter::hostile;
-use shards_action::{state_intangible, ActionState, Damaged, Fighter, Standing, Team};
+use shards_action::{state_intangible, ActionState, Damaged, Fighter, ShotFired, Standing, Team};
 use shards_content::ContentDb;
-use shards_core::flat;
+use shards_core::{flat, NetRole};
 use shards_motion::{LayerMask, MotionState, PhysicsWorld, QueryFilter};
 
 use crate::brain::{Npc, NpcBrain};
@@ -335,6 +335,16 @@ pub(crate) fn hit_noise(hit: On<Damaged>, db: Res<ContentDb>, positions: Query<&
     let Ok(at) = positions.get(hit.target) else { return };
     let origin = positions.get(hit.attacker).ok().map(|t| t.translation);
     commands.trigger(Noise { position: at.translation, radius, source: Some(hit.attacker), origin });
+}
+
+/// A shot is as loud as its `noise` ([`ShotFired`], F3): a noise of that radius where it is fired, made by
+/// the shooter. Only where the simulation runs (a co-op client sees the host's shot, its NPCs think on the host).
+pub(crate) fn shot_noise(shot: On<ShotFired>, role: Option<Res<NetRole>>, mut commands: Commands) {
+    let shot = shot.event();
+    if !shards_core::simulates(role) || shot.noise <= 0.0 {
+        return;
+    }
+    commands.trigger(Noise { position: shot.from, radius: shot.noise, source: Some(shot.shooter), origin: None });
 }
 
 #[cfg(test)]

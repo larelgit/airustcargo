@@ -1,0 +1,10 @@
+// The shots' target (tests/combat/shots.rs): a head that doubles a hit and a torso, inside the body's own
+// capsule, which still takes hits where no part is.
+{
+    "headed": (
+        parts: {
+            "head": (shape: Sphere(radius: 0.22), at: (up: 1.6), damage: 2.0, tags: ["head"]),
+            "torso": (shape: Capsule(half_height: 0.35, radius: 0.3), at: (up: 1.0)),
+        },
+    ),
+}

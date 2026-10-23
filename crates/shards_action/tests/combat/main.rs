@@ -18,6 +18,7 @@ mod outcome;
 mod parity;
 mod parts;
 mod reactions;
+mod shots;
 mod timeline;
 mod weapons;
 mod replay;
