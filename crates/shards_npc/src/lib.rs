@@ -158,7 +158,7 @@ pub use perception::{sees, sees_within, sight_clear, HeardAt, Noise, Perceived, 
 pub use planner::{banned, choose, pick_weighted, resolve, NpcOptions, NpcPlan, PastAttack, PlanCooldown, Resolved};
 pub use schedule::{schedule_report, target_angle, LiveZones, OptionReport, PickReport, Refusal, ScheduleParams, ScheduleReport, WhatIf};
 pub use sequence::{
-    condition_holds, marker_names, marker_point, play_sequence, stop_sequence, FaceTarget, Facing, Run, SequenceDef, SequenceEnded, SequenceHold,
+    condition_holds, marker_names, marker_point, play_sequence, sequence_hash, stop_sequence, FaceTarget, Facing, Run, SequenceDef, SequenceEnded, SequenceHold,
     SequenceId, SequenceSignal, SequenceStarted, SequenceStep, Sequences, Step,
 };
 pub use strike::{spacing_ticks, wait_of, NpcStrike};

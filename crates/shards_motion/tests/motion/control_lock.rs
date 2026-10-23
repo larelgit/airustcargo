@@ -253,3 +253,25 @@ fn a_lock_needs_a_reason_a_body_with_controls_and_a_cone_that_means_something() 
     lock(&mut app, me, "x", ControlLock::LOOKING_ONLY);
     assert_eq!(journal(&app).len(), lines);
 }
+
+#[test]
+fn a_glide_the_tool_latched_that_ends_under_the_lock_is_not_given_back() {
+    use shards_core::input_names::GLIDE;
+    let (mut app, me) = arena();
+    app.world_mut().get_mut::<Transform>(me).unwrap().translation.y = 6.0;
+    ok(&mut app, "glide", json!({}));
+    assert!(intent(&app, me).is_held(GLIDE) && app.world().get::<GlideUntilLanded>(me).is_some(), "latched");
+    step(&mut app, 5);
+    lock(&mut app, me, "scene", ControlLock { movement: true, ..default() });
+    // The body is let down by the glide it no longer asks for, lands, and the latch is gone with the hold.
+    step(&mut app, 240);
+    assert!(feet(&app, me).y < 0.1, "landed: {}", feet(&app, me));
+    assert!(app.world().get::<GlideUntilLanded>(me).is_none(), "the latch ended with the landing");
+    assert!(!intent(&app, me).is_held(GLIDE), "and the glide it ended is not put back: {:?}", intent(&app, me).held);
+    // An ordinary hold (a key) comes back as it always does.
+    unlock_controls(app.world_mut(), me, "scene");
+    edit_intent(&mut app, me, |i| i.set_held(GLIDE, true));
+    lock(&mut app, me, "scene", ControlLock { movement: true, ..default() });
+    step(&mut app, 3);
+    assert!(intent(&app, me).is_held(GLIDE), "a held key survives the lock");
+}

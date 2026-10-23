@@ -553,3 +553,24 @@ fn a_run_an_observer_stops_while_it_is_being_stepped_does_nothing_more() {
     assert_eq!(log(&app).steps.len(), 1, "and no step began after it");
     assert!(app.world().resource::<Sequences>().runs.is_empty());
 }
+
+#[test]
+fn a_host_keeps_an_empty_resource_for_a_snapshot_without_one_and_the_replay_check_counts_it_as_none() {
+    let mut app = scene_app();
+    app.world_mut().insert_resource(shards_core::NetRole::Host);
+    let (actor, listener) = stage(&mut app);
+    step(&mut app, 3);
+    let before = snapshot::capture(app.world()).unwrap();
+    play_sequence(app.world_mut(), "scene", &[("actor", actor), ("listener", listener)]).unwrap();
+    step(&mut app, 30);
+    let report = snapshot::restore(app.world_mut(), &before, false).unwrap();
+    assert!(report.exact(), "{:?}", report.differences);
+    // A removal does not replicate, so a host keeps the resource, empty; the replay check must not tell it from none.
+    assert_eq!(app.world().get_resource::<Sequences>(), Some(&Sequences::default()));
+    let hash = |app: &App| shards_npc::sequence_hash(app.world());
+    assert_eq!(hash(&app), None, "an empty resource hashes as none");
+    // One that has been used is state: its counter is hashed.
+    play_sequence(app.world_mut(), "tell", &[]).unwrap();
+    step(&mut app, 2);
+    assert!(hash(&app).is_some(), "a resource that played one is hashed even with no run");
+}

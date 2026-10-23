@@ -45,7 +45,7 @@ use shards_core::{EngineAppExt, Gaze, Intent, Target};
 mod tools;
 
 use crate::eye::{aim_point_of, eye_of};
-use crate::intent::MotionSystems;
+use crate::intent::{GlideUntilLanded, MotionSystems};
 
 /// Where the look may go while a lock holds it.
 #[derive(Reflect, Clone, Copy, Debug, PartialEq, Default)]
@@ -248,6 +248,9 @@ struct Taken {
     entity: Entity,
     move_dir: Option<Vec3>,
     held: Vec<String>,
+    /// The body held a glide the `glide` tool latched (`GlideUntilLanded`) when it was taken: if the latch is gone by the
+    /// end of the tick (it landed), that glide is over and is not given back.
+    glide_latched: bool,
 }
 
 /// The masks of the tick under way: filled by [`mask`], emptied by [`restore`], so empty between
@@ -314,8 +317,9 @@ pub(crate) fn mask(world: &mut World) {
         if !movement && !actions {
             continue;
         }
+        let glide_latched = world.get::<GlideUntilLanded>(entity).is_some();
         let Some(mut intent) = world.get_mut::<Intent>(entity) else { continue };
-        let mut taken = Taken { entity, move_dir: None, held: Vec::new() };
+        let mut taken = Taken { entity, move_dir: None, held: Vec::new(), glide_latched };
         if movement && intent.move_dir != Vec3::ZERO {
             taken.move_dir = Some(intent.move_dir);
             intent.move_dir = Vec3::ZERO;
@@ -345,6 +349,9 @@ pub(crate) fn mask(world: &mut World) {
 pub(crate) fn restore(world: &mut World) {
     let stash = std::mem::take(&mut world.resource_mut::<LockStash>().0);
     for taken in stash {
+        // A latched glide that ended in this tick (the body landed: `intent_to_locomotion` let go of it and took the latch
+        // away, on the masked copy) must not come back as a hold nobody asked for.
+        let glide_over = taken.glide_latched && world.get::<GlideUntilLanded>(taken.entity).is_none();
         let Some(mut intent) = world.get_mut::<Intent>(taken.entity) else { continue };
         if let Some(dir) = taken.move_dir
             && intent.move_dir == Vec3::ZERO
@@ -352,6 +359,9 @@ pub(crate) fn restore(world: &mut World) {
             intent.move_dir = dir;
         }
         for input in &taken.held {
+            if glide_over && input == GLIDE {
+                continue;
+            }
             if !intent.is_held(input) {
                 intent.set_held(input, true);
             }

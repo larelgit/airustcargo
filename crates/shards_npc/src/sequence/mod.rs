@@ -61,6 +61,11 @@ pub use step::{condition_holds, marker_names, marker_point};
 pub(crate) use step::run_sequences;
 pub(crate) use tools::state_of;
 
+/// The value of the replay check `sequences`: `None` while nothing was ever played (the resource absent or empty).
+pub fn sequence_hash(world: &World) -> Option<u64> {
+    tools::runs_hash(world)
+}
+
 use crate::brain::{Npc, NpcBrain, NpcDrive};
 
 /// Plays sequence `id` with `roles` bound to bodies (`("guard", e7)`): every role the definition

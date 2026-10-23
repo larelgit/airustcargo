@@ -248,6 +248,10 @@ pub(crate) fn state_of(world: &World, entity: Entity) -> Option<Value> {
 /// that never plays a sequence has the replay hashes it had before the module.
 pub(super) fn runs_hash(world: &World) -> Option<u64> {
     let sequences = world.get_resource::<Sequences>()?;
+    // The empty resource a load leaves on a host (a removal does not replicate) counts as none, as the snapshot without it does.
+    if sequences == &Sequences::default() {
+        return None;
+    }
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut eat = |bytes: &[u8]| {
         for b in bytes {
