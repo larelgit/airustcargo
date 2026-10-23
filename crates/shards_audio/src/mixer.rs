@@ -12,7 +12,9 @@ use shards_content::ContentDb;
 use shards_settings::AudioSettings;
 
 use crate::def::{AudioDef, Bus, Falloff, SoundDef, DEFAULT_VOICES};
+use crate::emitter;
 use crate::length::file_seconds;
+use crate::occlusion::{self, Occluded};
 use crate::subtitles::{self, Subtitles};
 
 /// Where a sound is heard from.
@@ -73,13 +75,21 @@ pub struct Voice {
     pub volume: f32,
     /// When it started, on its clock (the simulation's; real time on the `Ui` bus).
     pub started: f64,
-    /// Seconds it plays.
+    /// Seconds it plays (a looped sound's file: how long one round takes).
     pub length: f64,
-    /// How loud it is heard now: its volume × the bus's × distance (0 out of earshot).
+    /// How loud it is heard now: its volume × the bus's × distance × what gets through the colliders
+    /// in the way (0 out of earshot).
     pub gain: f32,
     pub distance: Option<f32>,
     /// Where it comes from, seen from the listener (−z ahead, +x right): what playback pans by.
     pub direction: Option<Vec3>,
+    /// A looped sound's voice: it never plays out, its emitter keeps it or lets it go.
+    pub looped: bool,
+    /// The [`SoundEmitter`](crate::SoundEmitter) that holds this voice; `None` for a one-shot.
+    pub emitter: Option<Entity>,
+    /// What stands between the ears and the source: clear unless the mixer has `occlusion` and the voice
+    /// is spatial.
+    pub occlusion: Occluded,
 }
 
 /// A sound that was not heard, and why.
@@ -106,7 +116,7 @@ const DROPS_KEPT: usize = 16;
 /// The mixer's state: the voices playing and the ear.
 #[derive(Resource, Default)]
 pub struct Mixer {
-    voices: Vec<Voice>,
+    pub(crate) voices: Vec<Voice>,
     next_id: u64,
     /// Which of a sound's files plays next.
     turns: BTreeMap<String, usize>,
@@ -120,8 +130,9 @@ pub struct Mixer {
     real_seconds: f64,
     /// Sound files' lengths, read once.
     lengths: BTreeMap<String, f64>,
-    /// Sounds named but not defined, journaled once each.
-    unknown: BTreeSet<String>,
+    /// Sounds named but not defined, journaled once each (and the emitters' mistakes, with the
+    /// emitter in the key).
+    pub(crate) unknown: BTreeSet<String>,
 }
 
 impl Mixer {
@@ -192,8 +203,31 @@ pub fn play_scaled(world: &mut World, sound: &str, at: SoundAt, gain: f32) -> Re
     if def.files.is_empty() {
         return Err(format!("sound `{sound}` names no file"));
     }
+    if def.looped {
+        return Err(format!(
+            "sound `{sound}` loops, so it plays only from a `SoundEmitter` (a level node's `SoundEmitter = {{\"sound\": \"{sound}\"}}`), not as a one-shot"
+        ));
+    }
     if gain == 0.0 {
         return Ok(Played::Dropped(format!("its gain is 0 (`{sound}` would be silent)")));
+    }
+    start(world, sound, &def, at, gain, None)
+}
+
+/// Gives sound `def` (called `sound`) a voice from `at`: [`play_scaled`]'s one-shots and the emitters'
+/// loops (`emitter` holds the voice) both come here, under the same rules for the limit, `max_instances`
+/// and priority. An emitter's refusals are not counted as drops: it asks again at every refresh, and
+/// `audio` says why it waits.
+pub(crate) fn start(
+    world: &mut World,
+    sound: &str,
+    def: &SoundDef,
+    at: SoundAt,
+    gain: f32,
+    emitter: Option<Entity>,
+) -> Result<Played, String> {
+    if def.files.is_empty() {
+        return Err(format!("sound `{sound}` names no file"));
     }
     refresh_listener(world);
     let limit = voice_limit(world) as usize;
@@ -220,16 +254,21 @@ pub fn play_scaled(world: &mut World, sound: &str, at: SoundAt, gain: f32) -> Re
         gain: 0.0,
         distance: None,
         direction: None,
+        looped: def.looped,
+        emitter,
+        occlusion: Occluded::CLEAR,
     };
     let bus = bus_volume(world, def.bus);
     let listener = world.resource::<Mixer>().listener;
     hear(&mut voice, listener, bus);
+    occlude(world, &mut voice, listener);
     let root = shards_content::load::asset_root(world);
     let mut mixer = world.resource_mut::<Mixer>();
+    let drop = |mixer: &mut Mixer, reason: String| if emitter.is_some() { Played::Dropped(reason) } else { mixer.drop_sound(sound, reason) };
     if let (Some(distance), Some(falloff)) = (voice.distance, voice.falloff)
         && distance >= falloff.far
     {
-        return Ok(mixer.drop_sound(sound, format!("out of earshot: {distance:.1} m, heard to {:.0} m", falloff.far)));
+        return Ok(drop(&mut mixer, format!("out of earshot: {distance:.1} m, heard to {:.0} m", falloff.far)));
     }
     let (mut stole, mut taken) = (None, None);
     if let Some(max) = def.max_instances {
@@ -255,7 +294,7 @@ pub fn play_scaled(world: &mut World, sound: &str, at: SoundAt, gain: f32) -> Re
                 stole = Some(format!("{name} #{id} (voice limit {limit})"));
             }
             _ => {
-                return Ok(mixer.drop_sound(sound, format!("all {limit} voices play sounds as strong or stronger")));
+                return Ok(drop(&mut mixer, format!("all {limit} voices play sounds as strong or stronger")));
             }
         }
     }
@@ -279,8 +318,22 @@ pub fn play_scaled(world: &mut World, sound: &str, at: SoundAt, gain: f32) -> Re
     if let Some(taken) = taken {
         subtitles::cut(world, taken);
     }
-    subtitles::start(world, sound, &def, id, length);
+    subtitles::start(world, sound, def, id, length);
     Ok(Played::Started { id, stole })
+}
+
+/// What stands between the ears and `voice`, when the mixer has `occlusion` and the voice has a place:
+/// the colliders on the way take their share of its gain.
+fn occlude(world: &World, voice: &mut Voice, listener: Option<Listener>) {
+    voice.occlusion = Occluded::CLEAR;
+    let (Some(def), Some(ear), Some(at)) = (audio_def(world).and_then(|d| d.occlusion), listener, voice.position) else { return };
+    if voice.gain <= 0.0 {
+        return;
+    }
+    let skip: Vec<Entity> = ear.body.into_iter().chain(voice.source).collect();
+    let occluded = occlusion::measure(world, ear.position, at, &skip, def.gain);
+    voice.gain *= occluded.passes;
+    voice.occlusion = occluded;
 }
 
 /// [`play`] for what the engine hears (a cue, an event): an unknown sound is journaled once and
@@ -342,29 +395,30 @@ pub(crate) fn real_clock(mut mixer: ResMut<Mixer>, time: Res<Time<Real>>) {
     mixer.real_seconds = time.elapsed_secs_f64();
 }
 
-/// Voices that played out are over; the others follow their sources and are heard again from
-/// where the ear is now, through the buses' volumes now.
+/// Voices that played out are over (a looped one never plays out: its emitter lets it go); the others
+/// follow their sources and are heard again from where the ear is now, through the buses' volumes now
+/// and what stands in the way. Emitters first take voices in earshot and let go of the ones out of it
+/// ([`emitter::sync`]), so calling this again with nothing changed starts nothing.
 pub fn refresh(world: &mut World) {
     refresh_listener(world);
-    let follow: Vec<(u64, Vec3)> = world
-        .resource::<Mixer>()
-        .voices
-        .iter()
-        .filter_map(|v| Some((v.id, world.get::<Transform>(v.source?)?.translation)))
-        .collect();
+    let (sim, real) = world.resource::<Mixer>().clocks();
+    world.resource_mut::<Mixer>().voices.retain(|v| v.looped || (if v.bus == Bus::Ui { real } else { sim }) - v.started < v.length);
+    emitter::sync(world);
     let buses: BTreeMap<Bus, f32> = Bus::ALL.iter().map(|b| (*b, bus_volume(world, *b))).collect();
-    let mut mixer = world.resource_mut::<Mixer>();
-    let (sim, real) = (mixer.sim_seconds, mixer.real_seconds);
-    mixer.voices.retain(|v| (if v.bus == Bus::Ui { real } else { sim }) - v.started < v.length);
-    let listener = mixer.listener;
-    for voice in &mut mixer.voices {
-        if let Some((_, at)) = follow.iter().find(|(id, _)| *id == voice.id)
-            && voice.position.is_some()
+    // The voices are taken out while they are heard, so the world can be read for what they follow and
+    // what stands in their way.
+    let mut voices = std::mem::take(&mut world.resource_mut::<Mixer>().voices);
+    let listener = world.resource::<Mixer>().listener;
+    for voice in &mut voices {
+        if voice.position.is_some()
+            && let Some(at) = voice.source.and_then(|e| world.get::<Transform>(e))
         {
-            voice.position = Some(*at);
+            voice.position = Some(at.translation);
         }
         hear(voice, listener, buses[&voice.bus]);
+        occlude(world, voice, listener);
     }
+    world.resource_mut::<Mixer>().voices = voices;
     if let Some(mut lines) = world.get_resource_mut::<Subtitles>() {
         subtitles::expire(&mut lines, sim, real);
     }
@@ -397,6 +451,9 @@ mod tests {
             gain: 0.0,
             distance: None,
             direction: None,
+            looped: false,
+            emitter: None,
+            occlusion: Occluded::CLEAR,
         }
     }
 

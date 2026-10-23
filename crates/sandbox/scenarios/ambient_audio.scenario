@@ -1,0 +1,106 @@
+# Placed sounds and walls (F10): a looped sound plays only from a `SoundEmitter` (`room_hum`,
+# `content/audio/ambient.sound.ron`, `looped: true`), which the mixer holds a voice for while the hero is
+# within the sound's `far` (18 m) and lets go of beyond it. When the mixer asks for it (`occlusion`), a wall
+# between the hero and a sound takes its share (0.3), a pane of glass with a `SoundTransmission` of 0.6 lets
+# more through, and colliders in a row multiply. All of it is this machine's and decided on the simulation's
+# clock, so `audio` says it headless: the emitters (where, heard or not) and each voice's occlusion.
+#
+# The room is built here from the prefabs of `audio_room.prefab.ron` in the canyon (the hero stands at
+# (110, -10, 8); the level file `audio_room.level.ron` places the same room from Blender's side and is
+# spawned by a test, since a level has no tool to take it away). Its pieces are `RegionPart`s, so the
+# `regen` that ends the scenario takes them away, whatever ids they had: nothing here names an id.
+
+seed 42
+
+# --- setup (dev): the yard loaded, everyone stands down, the volumes as shipped
+act regen region=yard seed=1
+expect result contains "ok: yard seed 1"
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+act heal id=e5
+act stop
+act god on=false
+act? ui_close screen=confirm_quit
+act? ui_close screen=settings
+act? ui_close screen=pause
+act settings_set group=audio reset=true
+
+# the room: a wall 3 m north of the hero, a pane 3 m east, a hum behind each and one in the open to the
+# west (6 m from the hero), and one 30 m east of the hero's place, far beyond 18 m
+act teleport id=e5 x=110 y=-9 z=8
+act spawn_prefab id=audio_wall x=110 y=-10 z=5 overrides='{"RegionPart": {}}'
+act spawn_prefab id=audio_pane x=113 y=-10 z=8 overrides='{"RegionPart": {}}'
+act spawn_prefab id=audio_hum x=110 y=-9 z=2 overrides='{"RegionPart": {}, "Name": "Hum.Wall"}'
+act spawn_prefab id=audio_hum x=116 y=-9 z=8 overrides='{"RegionPart": {}, "Name": "Hum.Glass"}'
+act spawn_prefab id=audio_hum x=104 y=-9 z=8 overrides='{"RegionPart": {}, "Name": "Hum.Open"}'
+act spawn_prefab id=audio_hum x=140 y=-9 z=8 overrides='{"RegionPart": {}, "Name": "Hum.Far"}'
+step 60
+
+# --- 1. three hums are in earshot, the fourth is not; the mixer has no `occlusion`, so the walls change
+# nothing: every hum at 6.1 m is as loud as the one in the open
+act audio
+expect result contains "emitters 4 (3 heard)"
+expect result contains "Hum.Far"
+expect result contains "room_hum 30.0m out of earshot, heard to 18 m"
+expect result contains "room_hum sfx"
+expect result contains "(loop)"
+expect result !contains "occluded"
+expect result !contains "gain 0.10"
+expect result !contains "gain 0.20"
+act? sound_play sound=room_hum
+expect result contains "sound `room_hum` loops, so it plays only from a `SoundEmitter`"
+
+# --- 2. the mixer asks for occlusion (0.3 behind an ordinary collider): the hum behind the wall is a third
+# as loud (0.33 → 0.10), the one behind the glass is between (0.6 of it: 0.20), the one in the open the same
+act content_apply changes='[{"kind":"audio","id":"mixer","before":{"music":"arena","sounds":{"blocked":"block","damaged":"hit","died":"death","evaded":"whoosh","guard_broken":"guard_break","healed":"heal","parried":"parry","ui_changed":"ui_tick","ui_closed":"ui_close","ui_moved":"ui_move","ui_opened":"ui_open","ui_pressed":"ui_press"},"voices":24},"def":{"music":"arena","occlusion":{"gain":0.3},"sounds":{"blocked":"block","damaged":"hit","died":"death","evaded":"whoosh","guard_broken":"guard_break","healed":"heal","parried":"parry","ui_changed":"ui_tick","ui_closed":"ui_close","ui_moved":"ui_move","ui_opened":"ui_open","ui_pressed":"ui_press"},"voices":24}}]'
+step 2
+act audio
+expect result contains "gain 0.10 prio 40 (loop) (occluded: Wall e"
+expect result contains "gain 0.20 prio 40 (loop) (occluded: Glass e"
+expect result contains "gain 0.33 prio 40 (loop)"
+expect result contains "gain 0.10 (occluded: Wall e"
+expect result contains "gain 0.20 (occluded: Glass e"
+act sound_play point='[110.0, -9.0, 3.0]' sound=hit
+expect result contains "(occluded: Wall e"
+
+# --- 3. an emitter starts and stops by name, and says what it does
+act emitter_stop emitter=Hum.Wall
+expect result contains "room_hum 6.1m stopped"
+act audio
+expect result contains "emitters 4 (2 heard)"
+act emitter_play emitter=Hum.Wall
+expect result contains "room_hum 6.1m heard #"
+expect result contains "(occluded: Wall e"
+act? emitter_play emitter=Hum.Wal
+expect result contains "no emitter `Hum.Wal`; emitters: Hum.Far"
+
+# --- 4. out of earshot a hum is let go, and in earshot again it takes a voice and starts over: the hero
+# walks 26 m east, to 4 m from the far hum, which is the only one it hears; the glass hum is 20 m away
+mark
+act teleport id=e5 x=136 y=-9 z=8
+step 3
+act audio
+expect result contains "emitters 4 (1 heard)"
+expect result contains "Hum.Far"
+expect result contains "room_hum 4.0m heard #"
+expect journal "(room_hum) out of earshot"
+expect journal "(room_hum) in earshot: voice #"
+mark
+act teleport id=e5 x=110 y=-9 z=8
+step 3
+act audio
+expect result contains "emitters 4 (3 heard)"
+expect result contains "room_hum 30.0m out of earshot"
+expect journal "(room_hum) out of earshot"
+expect journal "(room_hum) in earshot: voice #"
+
+# --- 5. the mixer as shipped again, the hero home, the room gone with the `regen`
+act content_apply changes='[{"kind":"audio","id":"mixer","before":{"music":"arena","occlusion":{"gain":0.3},"sounds":{"blocked":"block","damaged":"hit","died":"death","evaded":"whoosh","guard_broken":"guard_break","healed":"heal","parried":"parry","ui_changed":"ui_tick","ui_closed":"ui_close","ui_moved":"ui_move","ui_opened":"ui_open","ui_pressed":"ui_press"},"voices":24},"def":{"music":"arena","sounds":{"blocked":"block","damaged":"hit","died":"death","evaded":"whoosh","guard_broken":"guard_break","healed":"heal","parried":"parry","ui_changed":"ui_tick","ui_closed":"ui_close","ui_moved":"ui_move","ui_opened":"ui_open","ui_pressed":"ui_press"},"voices":24}}]'
+act regen region=yard seed=1
+expect result contains "ok: yard seed 1"
+act teleport id=e5 x=0 y=0 z=0
+step 2
+act audio
+expect result !contains "emitters"

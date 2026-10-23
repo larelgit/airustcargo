@@ -85,7 +85,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 229 definitions in 71 files
+cargo shards content check                 # ok: 234 definitions in 74 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -108,7 +108,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 229 definitions in 71 files
+# ok: 234 definitions in 74 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -326,7 +326,7 @@ and it calls their tools by name. `shards_look` (how meshes are drawn) knows onl
 | `crates/shards_settings` | player settings (E8.6): groups for graphics, audio, controls and accessibility, built on Bevy's settings (`bevy_settings`), `settings.toml`, the `settings`/`settings_set` tools, a window for the graphics settings |
 | `crates/shards_ui` | UI (E9): screens and themes in the content (`screen`, `theme`), the screen stack, focus and navigation, value sources and button actions, the `ui_*` tools, the `UI` section in `observe`, the main menu (`main_menu`); with the `render` feature, drawing on Bevy UI with AccessKit labels and the loading image |
 | `crates/shards_locale` | localization (E9.4): languages in the content (`locale`), texts in Fluent (`assets/locale/<language>/*.ftl`) with parameters and plural forms, a fallback language, the `locale.language` setting and switching the language on the fly, the `locale` and `text` tools, hot reload of the files |
-| `crates/shards_audio` | audio (E9.5): sounds, music and the mixer in the content (`sound`, `music`, `audio`), buses with the volume from the settings, voices with priority and a limit, spatial sounds, music in layers by the game's conditions, telegraph and event sounds, the `audio`, `sound_play` and `music_set` tools, the `MUSIC` line in `observe`; with the umbrella crate's `audio` feature, playback through Bevy audio |
+| `crates/shards_audio` | audio (E9.5): sounds, music and the mixer in the content (`sound`, `music`, `audio`), buses with the volume from the settings, voices with priority and a limit, spatial sounds, music in layers by the game's conditions, telegraph and event sounds, looped sounds played from emitters placed in a level or a prefab, walls that muffle a sound (the mixer's `occlusion`), the `audio`, `sound_play`, `music_set`, `emitter_play` and `emitter_stop` tools, the `MUSIC` line in `observe`; with the umbrella crate's `audio` feature, playback through Bevy audio |
 | `crates/shards_look` | mesh looks (E10.1): looks in the content (`look`, `*.look.ron`): colour, banded light (`Toon`), `Matte`, `Unlit`, `Lit`, flat faces, an outline of a fixed width in pixels, glow, glTF materials; the `Look` component, the material and the shaders in WESL, the `looks` and `look_outlines` tools, the `looks` field in `ai/status`, two developer menu items; with the `render` feature, mesh styling (window or `--offscreen`) |
 | `crates/shards_scatter` | foliage and small objects (E10.2): the `scatter` content kind (`*.scatter.ron`): what to scatter over the tiles of which regions, how densely, on which ground, with which looks, which meshes up close and far away; the layout follows the region's seed (the same in every run), primitive meshes (a grass tuft, a cone, a rock, a box) or glTF, levels of detail through `VisibilityRange`, the `graphics.foliage` setting, the `scatter` and `scatter_set` tools, the `scatter` field in `ai/status`, two developer menu items; with the `render` feature, instances under the tiles (window or `--offscreen`) |
 | `crates/shards_voxel` | voxel terrain (G1): the core (A2b: `VoxelVolume` with the chunk size a parameter, edits for generation, the FNV hash, the `voxel_palette` content kind, deterministic noise, the registry of generation steps and checks with versions, `generate`, the stock steps `noise_hills` and `fill_water`, the merged boxes `column_boxes` and `water_boxes`) and the voxel region kind (A2c: the `voxel_region` content kind, generation with attempts and a fallback seed, the build of the terrain field, water, sea and current, the rebuild cache, `voxel.volume`, hot reload, `sea_current_at`, `voxel_info`, `in_current`, `near_grid_edge`); no meshing yet (its navigation is baked in memory by `shards_npc` since A2e, see "Navigation") |
@@ -598,7 +598,7 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 229 definitions in 71 files
+content: 234 definitions in 74 files
   action  74
   animset  1
   attack_plan  3
@@ -618,7 +618,7 @@ content: 229 definitions in 71 files
   hitstop  1
   input_map  0
   layout  3
-  level  1
+  level  2
   locale  2
   lock_on  1
   locomotion  5
@@ -632,7 +632,7 @@ content: 229 definitions in 71 files
   perception  3
   perf  2
   poi  4
-  prefab  18
+  prefab  21
   prop  1
   region  3
   room  0
@@ -643,7 +643,7 @@ content: 229 definitions in 71 files
   screen  3
   shot  0
   socket_rules  1
-  sound  16
+  sound  17
   status  2
   theme  0
   tile  16
@@ -3625,7 +3625,7 @@ A tool is an argument struct (serde + schemars) and an ordinary Bevy system, `In
 | scope | tools |
 |---|---|
 | **Player** (plays fair, only through `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; movement: move_to (`path=true`), move, stop, jump, sprint, glide, look, clearance, path_to, input_bindings; combat: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack, combat_objects, reload, weapon (F4); world: region_info, level_info, nav_path, npc_state; settings: settings, settings_set (like the settings menu for a human); sound: audio; Steam (feature `steam`): steam, steam_invite |
-| **Dev** (everything, including time) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, give_weapon, take_weapon, give_ammo (F4), content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset, motion_bake, animation; world: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; sound: sound_play, music_set; mesh looks: looks, look_outlines; foliage: scatter, scatter_set; effects: effects, effect_play, telegraph_decals; Steam (feature `steam`): steam_host, steam_join, achievement_unlock; developer menu and console: dev_menu, console |
+| **Dev** (everything, including time) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, give_weapon, take_weapon, give_ammo (F4), content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset, motion_bake, animation; world: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; sound: sound_play, music_set, emitter_play, emitter_stop; mesh looks: looks, look_outlines; foliage: scatter, scatter_set; effects: effects, effect_play, telegraph_decals; Steam (feature `steam`): steam_host, steam_join, achievement_unlock; developer menu and console: dev_menu, console |
 
 The game adds its own (in the template, `taunt` and the conditions `arena_cleared`, `foe_near`, `in_fight`; in the sandbox, the conditions `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`). Modules add conditions for `step --until named:…`: `near_poi` (world, appears with the first region), `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_avoiding`, `npc_engaged`, `npc_near` (NPC), `objects_live`, `projectile_flying` (combat objects). Each
 tool has a kind (`kind` in `shards tools`):
@@ -3633,7 +3633,7 @@ tool has a kind (`kind` in `shards tools`):
 - `query` only reads the world: no journal entry and no diff;
 - `action` changes the world: it writes to the journal, returns `CHANGES` and goes into the replay;
 - `control` manages time or the session (pause, resume, speed, step, possess, content_reload, rebind, settings_set,
-  snapshot_save, snapshot_load, nav_bake, motion_bake, sound_play, music_set): journal and diff as for action, but it does not go into the replay. It changes *when* something happens, not *what*.
+  snapshot_save, snapshot_load, nav_bake, motion_bake, sound_play, music_set, emitter_play, emitter_stop): journal and diff as for action, but it does not go into the replay. It changes *when* something happens, not *what*.
   The exception is rules (`assert_add`, `assert_remove`, `assert_reset`): they do not change the world, but they decide where the game stops, so the replay records them as separate events.
 
 - **An action returns its changes.** Each action tool compares a slice of the world before and after the call, and returns `CHANGES` and `JOURNAL`. The agent does not need a second `observe` to learn what happened.
@@ -5870,7 +5870,20 @@ Three kinds of content set how the game sounds. The `shards_audio` module decide
 
 **Subtitles** (U4). A sound with a `subtitle` has a line: a voice's words, as text or a message `@id`, with an optional `speaker` before it (`Warden: The gate holds.`). When the mixer starts the sound (heard: not dropped and not out of earshot), the line shows for the sound's length plus 0.75 s, and at least 2 s, on the voice's clock: `step` moves it, and pause holds it (a `Ui` sound's line goes by real time). The game's UI shows the lines through the source `subtitles`: `Hint(id: "subtitles", bind: "subtitles", text: "")` shows the newest two, oldest first, one per line; `subtitles:3` shows three (at most 8 are kept). Messages are resolved when the line is read, so a language switched to in the menu applies to the lines on screen, and a line can carry font spans (`[font=symbols]…[/font]`, see "Font spans (U1)"). The same line said twice while it shows (two guards bark it) shows once, moved up to the newest, while either voice has time left (each by its own length and clock). A voice taken by a stronger sound takes its line, and its time, with it: the line stays only while another voice that says it has time left, and stopping every voice takes them all: a line is what is heard. The player's `accessibility.subtitles` (on by default) turns the source empty. Agents read each line as it starts in the journal, whatever the setting (`[local] subtitle: Warden: The gate holds.`), and the lines on screen in `audio` (`subtitles (shown): "Warden: The gate holds." 1.4s more`). The mixer, its lines and the setting belong to this machine: nothing of them is in a snapshot or the replay hash.
 
-**For agents.** `audio` (query, scope Player) shows what this machine hears: the track, the layer and how long it has lasted, which calmer layer is waiting for its `hold`, the stems with their volume, the buses, the voices (sound, source, distance, volume, priority, length), and the latest sounds that were not heard, with the reason, and where the listener is:
+**Looped sounds and emitters (F10).** A sound with `looped: true` plays over and over, and only from a **`SoundEmitter`**: a component `SoundEmitter { sound, playing }` on an entity, heard from where the entity's `Transform` is (top-level, like a physics collider). The mixer keeps one voice for it while the listener is within the sound's `far` and `playing` is on, lets the voice go beyond `far` (or when the emitter stops or its entity goes), and takes a voice again when the listener is back in earshot (the loop starts over). A looped sound with no `spatial` is heard everywhere while its emitter plays (rain). A looped sound is refused as a one-shot everywhere else: a `Sound` effect, a telegraph or a mixer event that names one is a content error (``action `bite` warns with sound `hum`, which loops; only a `SoundEmitter` plays a looped sound``), and `sound_play`, `PlaySound` and a clip's cue are refused at run time with the same words (a cue or an event says it once in the journal). A looped sound takes no `subtitle`, no `speaker` and no `max_instances` (its voices belong to its emitters, and a limit would have them take each other's every tick).
+
+```ron
+// content/audio/ambient.sound.ron
+{ "vent_hum": (files: ["sounds/vent_hum.wav"], volume: 0.6, priority: 40, spatial: (near: 2.0, far: 18.0), looped: true) }
+```
+
+An emitter is placed like any component. In a **level file** (Blender), an empty with the custom property `SoundEmitter` = `{"sound": "vent_hum"}` (`"playing": false` for one that starts off; `playing` is on when left out) spawns an emitter where the empty is, named after the node (`Vent.North`). A `sound=<id>` level property would have made `shards_level` know about audio: level properties are that module's own words, and any registered component is already a node property, so the emitter is a component. In a **prefab**, `"SoundEmitter": (sound: "vent_hum")`. In **code**, `commands.spawn((SoundEmitter::new("vent_hum"), Transform::from_xyz(4.0, 1.0, -2.0)))`; `shards::audio::emitter_play(world, e)` and `emitter_stop(world, e)` set `playing` (so does writing the field), and the dev tools `emitter_play emitter=Vent.North` and `emitter_stop emitter=…` do the same by name (a `Name`, an id `e20` if it has one, or the sound when only one emitter plays it) and answer with what the emitter does now. The content check reads the emitters of prefabs and of level files: a sound that does not exist or does not loop is an error naming the node (``node `Typo`: SoundEmitter.sound -> unknown sound `hom` (did you mean `hum`?)``). An emitter that cannot play at run time (the same mistakes, made from code) is said once in the journal as a warning and in `audio`.
+
+Emitters take their voices under the rules every sound follows: a free voice if there is one, else the weakest voice by priority and then loudness, if the emitter is stronger. So **a one-shot of a lower priority never takes a loop's voice**, and a stronger one does: the emitter waits (`audio` says `waiting for a voice`, and it is not counted as a dropped sound) and takes a voice again when one is free or weaker. Give ambient loops a low `priority` (40 against the 100 of a sound that names none) and they are the first to give way. Among emitters in earshot, the order they ask in is priority, then loudness, then name (never the `Entity`, which a window shifts). The mixer asks at every refresh and starts nothing when nothing changed.
+
+**Walls between the ears and a sound (occlusion, F10).** Off unless the mixer asks: `occlusion: Some((gain: 0.3))` in the `*.audio.ron`. A game that does not ask hears every sound as before (the sandbox's mixer does not). When it asks, each spatial voice gets a ray from the listener to its source through the physics world's `WORLD` colliders (read only), and each collider on the way lets a share of the sound through: its `SoundTransmission` if it carries one (a component on the collider's entity: `SoundTransmission(0.6)` for glass, 0.1 for a slab, 1 for a curtain you hear through; kept between 0 and 1), else the mixer's `occlusion.gain`. Colliders in a row multiply (two ordinary walls: 0.3 × 0.3). A level file sets it on a collider's node: `collider = box`, `size = [8, 4, 0.2]`, `SoundTransmission = 0.6`. The listener's own body and the source's entity are left out of the ray; so are characters and sensors (only the `WORLD` layer counts); a collider the ray meets within 5 cm of the ears (the floor under the feet) is what the listener stands on, not a wall; the last 10 cm before the source are not tested (a vent set into a wall's face); at most 8 colliders count. The share is a factor on the voice's gain (`Voice::occlusion`, `Voice::gain`), so it applies to one-shots and loops alike and a collider that goes (a door that opens, a mover) gives the sound back at the next refresh. `audio`, `sound_play` and the emitter tools name what is in the way.
+
+**For agents.** `audio` (query, scope Player) shows what this machine hears: the track, the layer and how long it has lasted, which calmer layer is waiting for its `hold`, the stems with their volume, the buses, the voices (sound, source, distance, volume, priority, length or `loop`, and for a muffled voice what stands in the way), the emitters (where each is and whether it is heard, waiting for a voice, out of earshot or stopped), and the latest sounds that were not heard, with the reason, and where the listener is:
 
 ```text
 $ shards act audio
@@ -5879,10 +5892,14 @@ music arena: combat for 10.9s
   music/arena_pulse.wav [arena] 1.00
   music/arena_drums.wav [arena] 1.00
 buses (with master): music 0.80 · sfx 1.00 · ui 1.00 · voice 1.00
-voices 2/24 (started 29, dropped 1)
+voices 3/24 (started 30, dropped 1)
   #27 parry sfx e6 1.2m gain 1.00 prio 160 (0.80s)
   #29 warden_slash sfx e6 0.3m gain 1.00 prio 180 (0.32s)
+  #30 vent_hum sfx e20 4.1m gain 0.10 prio 40 (loop) (occluded: Wall e15 Ã0.30)
   dropped whoosh at 10.3s: out of earshot: 32.5 m, heard to 20 m
+emitters 2 (1 heard)
+  Vent.North e20 vent_hum 4.1m heard #30 gain 0.10 (occluded: Wall e15 Ã0.30)
+  Drip e21 drip 31.0m out of earshot, heard to 10 m
 listener e5 at (0.0, 0.0, -2.6)
 $ shards act sound_play sound=parry at=e6
 playing parry #27: sounds/parry.wav at 1.2 m, gain 1.00, 0.80s
@@ -5892,23 +5909,26 @@ $ shards act music_set layer=explore
 arena keeps to explore until `music_set layer=auto`
 ```
 
-`observe` writes a `MUSIC  arena: combat for 10.3s` line, and `ai/status` has an `audio` field (`track`, `layer`, `voices`, `limit`). `sound_play` (`sound`, `at=eN` or `point=[x,y,z]`, `times` up to 64) and `music_set` are Dev tools of the control kind. The errors name what exists: ``no sound `warden_slom` (did you mean `warden_slam`?)``, ``arena has no layer `fight`; layers: explore,
+`observe` writes a `MUSIC  arena: combat for 10.3s` line, and `ai/status` has an `audio` field (`track`, `layer`, `voices`, `limit`). `sound_play` (`sound`, `at=eN` or `point=[x,y,z]`, `times` up to 64) and `music_set` are Dev tools of the control kind, and so are `emitter_play` and `emitter_stop` (`emitter=<name, id or sound>`; local, like the rest of sound: they do not go into the replay). The errors name what exists: ``no sound `warden_slom` (did you mean `warden_slam`?)``, ``arena has no layer `fight`; layers: explore,
 tension, combat``.
 
 **Clock.** The mixer and the music run in `FixedPostUpdate` after each tick (`AudioSystems::Mix`): `step` moves them, and pause stops them. Menu sounds run in real time and are heard during pause, while effect voices freeze during pause.
 
-**Outside the simulation.** Sound belongs to this machine. Conditions and events are only read, nothing about sound enters the replay hash, and the music lines in the journal are of kind `local` (they are not game events, and the host does not send them to clients). A co-op client hears its own copy of the fight (the sound of a `Sound` effect reaches it as an event from the host). The music state (`Music`: track, layer, how long it has lasted, stems) is part of the snapshot, so a loaded session hears the same music; the voices are not.
+**Outside the simulation.** Sound belongs to this machine. Conditions and events are only read, nothing about sound enters the replay hash, and the music lines in the journal are of kind `local` (they are not game events, and the host does not send them to clients). A co-op client hears its own copy of the fight (the sound of a `Sound` effect reaches it as an event from the host). The music state (`Music`: track, layer, how long it has lasted, stems) is part of the snapshot, so a loaded session hears the same music; the voices are not. Placed sound is the same: emitters are not `AiId` state (a level's are level content, the same on every machine without being hashed), `SoundEmitter` and `SoundTransmission` are left out of the replay hash (`replay_ignore`; on a prefab body with an id they still travel to co-op clients like any component), the emitter lines in the journal are `local`, and `playing` is not in a snapshot for an emitter without an id: a game that stops an emitter as part of its story sets `playing` again from its own state after a load.
 
-**Playback.** The `audio` feature of the `shards` crate (enabled in the sandbox and the template) plays the mixer's decisions through Bevy audio: WAV and Ogg Vorbis. On Linux it needs `libasound2-dev` (it is already in the list of packages). Without an output device nothing sounds, but the mixer decides the same way. Each voice is a sink for its own file, with the volume from the mixer. A spatial voice stands one metre from the ears, on the side the sound comes from.
+**Playback.** The `audio` feature of the `shards` crate (enabled in the sandbox and the template) plays the mixer's decisions through Bevy audio: WAV and Ogg Vorbis. On Linux it needs `libasound2-dev` (it is already in the list of packages). Without an output device nothing sounds, but the mixer decides the same way. Each voice is a sink for its own file, with the volume from the mixer. A spatial voice stands one metre from the ears, on the side the sound comes from. A looped voice (an emitter's) is a looping sink that plays until the mixer lets it go (the sink is taken away when the emitter's voice goes, and a new one starts when it comes back).
 
-**Content check.** `--check-content` and `content_check` find: a file that is missing or is not a WAV or Ogg Vorbis; stems of different lengths (``stems loop together, so they need one length: `music/calm.wav` plays 2.00 s, `sounds/beep.wav` 0.50 s``); a layer without stems; a first layer with `when` and the next one without it; a stem's layer that the track does not have (with a hint); a sound on the `Music` bus; `far` closer than `near`; `max_instances: 0`; a mixer event that the engine does not have (``no engine event `damagd` (did you
+**Content check.** `--check-content` and `content_check` find: a file that is missing or is not a WAV or Ogg Vorbis; stems of different lengths (``stems loop together, so they need one length: `music/calm.wav` plays 2.00 s, `sounds/beep.wav` 0.50 s``); a layer without stems; a first layer with `when` and the next one without it; a stem's layer that the track does not have (with a hint); a sound on the `Music` bus; `far` closer than `near`; `max_instances: 0`; a looped sound with a `subtitle`, a `speaker` or `max_instances`; a mixer event, a telegraph or a `Sound` effect that names a looped sound; a mixer `occlusion.gain` outside 0 to 1; a `SoundEmitter` in a prefab or a level node that names a sound that does not exist or does not loop; a mixer event that the engine does not have (``no engine event `damagd` (did you
 mean `damaged`?)``); a second mixer; an empty `subtitle`, a `speaker` without one, and a `subtitle` or `speaker` message (`@id`) that a language lacks; and an attack whose telegraph names a sound that does not exist (``action `bite` warns with sound `boon`,
 which no `*.sound.ron` defines (did you mean `boom`?)``) or plays it with a `Sound` effect (``action `swing` effects[0] plays sound
 `bom`, which no `*.sound.ron` defines (did you mean `boom`?)``). The journal names a layer condition that the game did not register, once, when the track plays.
 
 **Sandbox and template files** are synthesised; there are no recordings in the repository. `cargo run -p sandbox --example make_sounds` writes them again (16-bit mono WAV, noise with a seed: the same bytes on every run).
 
-Tests: `crates/shards_audio` (unit tests: WAV and Ogg lengths, falloff with distance, buses from the settings, voices and voice stealing; `tests/audio/`: the voice limit and `max_instances`, distance and source, the simulation clock, the player's volume, events, telegraphs, the `Sound` action effect and the menu, tools, music layers and `hold`, `music_set`, `local` lines, the snapshot, the content check; `tests/audio/subtitles.rs`: a played voice's line and its time, the same line once, a taken voice's line, the setting, the language, the check), the scenario `crates/sandbox/scenarios/audio.scenario`, and in the template `tests/game/audio.rs` (the music switches to `combat` when the hero approaches the ground; the hero's swing sounds without a model).
+**What is missing.** A muffled voice is quieter, not duller: Bevy 0.20's sinks (`AudioSink`, `SpatialAudioSink`) take a volume, a speed, a pause and a mute, and no filter, so there is no per-voice low-pass. A custom `Decodable` that wraps the decoder with a one-pole low-pass, whose cutoff the mixer sets from the voice's `occlusion`, would do it with no new crate (`bevy_audio` re-exports rodio's `Source`), but it cannot be checked without an output device, so it is not built; the mixer already holds what it needs (`Voice::occlusion`). The listener is the body's `Transform` (at its feet, turned like the camera), as before; when the first-person camera lands (F1b) the ears move to the eye, and the ray, the ear clearance of 5 cm and the distance to the emitters all start from there. One ray from the ears to the source's centre is all the occlusion there is: no sound bends round a doorframe, no reverb, no thickness (a thick wall is one collider and counts once, however deep). The floor under the listener's feet is skipped (a ray from a point on its surface starts inside it), so a sound from a floor below is not muffled by that floor until the ears move to the eye. A loop that comes back into earshot starts from its beginning, not from where it would be. A level has no tool to take it away again (`despawn_level` is code), so the scenario builds its room from prefabs; the level file `audio_room.level.ron` is checked by a test that spawns it.
+
+
+Tests: `crates/shards_audio` (unit tests: WAV and Ogg lengths, falloff with distance, buses from the settings, voices and voice stealing, the share a transmission gives; `tests/audio/`: the voice limit and `max_instances`, distance and source, the simulation clock, the player's volume, events, telegraphs, the `Sound` action effect and the menu, tools, music layers and `hold`, `music_set`, `local` lines, the snapshot, the content check; `tests/audio/subtitles.rs`: a played voice's line and its time, the same line once, a taken voice's line, the setting, the language, the check), `tests/audio/ambient.rs` (F10: an emitter's voice held in earshot, let go beyond `far` and taken again, refreshing twice starts nothing, start and stop by flag, API and tools and with the entity, loops against one-shots of lower and higher priority, a sound with no place, an emitter that cannot play said once (an unknown sound, one that does not loop, one with no file), a looped sound refused as a one-shot, nothing of it in the replay hash, a wall and a pane and walls in a row and a door that goes, the listener's floor and the source's own collider and bodies and sensors not counting, a mixer without occlusion unchanged, the transmission's clamp, the content check of a bad loop and of an emitter in a level or a prefab, a level file that places an emitter and a pane), the sandbox test `tests/sandbox/ambient.rs` (the level file `audio_room.level.ron`), the scenarios `crates/sandbox/scenarios/audio.scenario` and `ambient_audio.scenario` (hums in a canyon room: three in earshot and one not, a wall and a pane muffling them once the mixer asks, an emitter stopped and started by name, out of earshot and back), and in the template `tests/game/audio.rs` (the music switches to `combat` when the hero approaches the ground; the hero's swing sounds without a model).
 
 ## Stylised materials (E10.1)
 

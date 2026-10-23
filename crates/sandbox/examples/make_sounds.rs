@@ -25,6 +25,7 @@ fn main() {
     let template = root.parent().and_then(Path::parent).expect("crates/sandbox is two folders down").join("template/assets");
     effects(&sandbox, &[("warden_slash", slash), ("warden_slam", slam), ("warden_sweep", sweep), ("warden_shockwave", shockwave)]);
     effects(&template, &[("grunt_swipe", slash), ("grunt_slam", slam)]);
+    ambient(&sandbox.join("sounds"));
     music(&sandbox.join("music"), "arena", &ARENA);
     music(&template.join("music"), "yard", &YARD);
 }
@@ -201,6 +202,24 @@ fn glide(from: f32, to: f32, seconds: f32) -> Vec<f32> {
             ops::sin(phase) * ops::sin(PI * x)
         })
         .collect()
+}
+
+// --- placed sounds -----------------------------------------------------------------------
+
+/// The sandbox's placed sounds (a looped sound plays from an emitter): `room_hum`, a mains hum. It is a loop,
+/// so every partial and the slow swell make whole cycles in its length and the end meets the start with
+/// no click; there is no noise in it for the same reason.
+fn ambient(dir: &Path) {
+    let count = len(2.0, SFX_RATE);
+    let partials = [(50.0, 1.0), (100.0, 0.6), (150.0, 0.35), (250.0, 0.12)];
+    let hum: Vec<f32> = (0..count)
+        .map(|i| {
+            let t = time(i);
+            let swell = 0.85 + 0.15 * ops::sin(TAU * 0.5 * t);
+            partials.iter().map(|(f, a)| a * ops::sin(TAU * f * t)).sum::<f32>() * swell
+        })
+        .collect();
+    write(&dir.join("room_hum.wav"), SFX_RATE, &hum, 0.5);
 }
 
 // --- music -----------------------------------------------------------------------------------

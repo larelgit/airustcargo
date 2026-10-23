@@ -1,0 +1,7 @@
+// The sandbox's placed sounds (content kind `sound`, `looped: true`): a loop plays only from a
+// `SoundEmitter` (a level node's `SoundEmitter = {"sound": "room_hum"}`, see `audio_room.level.ron`), held
+// while the hero is within `far` of it and let go beyond. The file is written by
+// `cargo run -p sandbox --example make_sounds`, a hum that loops without a click.
+{
+    "room_hum": (files: ["sounds/room_hum.wav"], volume: 0.6, priority: 40, spatial: (near: 2.0, far: 18.0), looped: true),
+}
