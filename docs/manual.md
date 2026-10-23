@@ -85,7 +85,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 223 definitions in 67 files
+cargo shards content check                 # ok: 230 definitions in 70 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -108,7 +108,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 223 definitions in 67 files
+# ok: 230 definitions in 70 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -598,8 +598,8 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 223 definitions in 67 files
-  action  70
+content: 230 definitions in 70 files
+  action  74
   animset  1
   attack_plan  3
   audio  1
@@ -622,7 +622,7 @@ content: 223 definitions in 67 files
   lock_on  1
   locomotion  3
   look  15
-  moveset  13
+  moveset  15
   music  1
   nav  1
   net  0
@@ -630,7 +630,7 @@ content: 223 definitions in 67 files
   perception  3
   perf  2
   poi  4
-  prefab  14
+  prefab  16
   prop  1
   region  3
   room  0
@@ -1311,7 +1311,7 @@ The `shards_action` crate. An attack, a block, a parry, a roll and a flask are a
   **Sockets, props and clip families (D1.1).** A character can carry things: a sword in the hand, a flask on the hip. All of it is content and picture only; no new component is simulation state, so replays, snapshots and the co-op handshake do not see it (every new field is left out of a set's JSON at its default, so a set that does not use them keeps its hash).
   - A **socket** is a place on a bone: `sockets: {"hand_r": (bone: "hand.R"), "hip": (bone: "hips", offset: (0.1, 0.0, 0.0), turn: (0.0, 90.0, 0.0))}` (`offset` in the rig's units at model scale 1, `turn` in degrees, composed as Bevy's `EulerRot::XYZ`). A **prop** is the thing: the content kind `prop` (`*.prop.ron`, not a simulation kind): `size` (a box, drawn as a mesh with a `StandardMaterial`, so `shards_look` styles it like any mesh) or `model` (a glTF scene; exactly one of the two), `look`, `grip` (where it sits from its socket, moved in the socket's axes), `turn`, `scale`.
   - `carry: {"player": [(prop: "sword", socket: "hand_r")], "*": []}` says what a moveset carries (`Fighter::moveset`; `"*"` is any moveset not listed). The engine spawns the prop entities under the socket's bone, without `AiId` and not reflected (`PropOf { body, prop }`), so a model spawned again takes its props with it and the bridge spawns them again. A prop is never a direct child of the body, so the render interpolation never adopts it a second time: it rides the model child's blended pose with the bones. A glTF prop is not a rig: it gets no `AnimationPlayer`, and every by-name walk of the skeleton (the player, the layer masks, the root bone, the sockets) leaves the subtrees below a prop out.
-  - `mounts` says where a carried prop goes. A mount is a state, not an edge: it is read every frame from the action's time, so it is right after a join, a snapshot load or a hold. Keyed by an action (its id, its `anim` or one of its tags, in that order): `"drink": (moves: [(prop: "sword", to: Some("hip"), span: Secs(0.1, 0.9))], on_cut: {"sword": 0.05})`. A move puts the prop in a socket (`to: None` hides it) while its `span` (`Secs`, `Phase`, `Phases`, as an action's windows) is open; the last open move wins. `on_cut`: when a whole-body action (a roll, a reaction, a stagger, a death) cuts a run, each listed prop that sat away from its carry socket stays where it was for these seconds of the new action. The key `"@moveset"` holds the rules for the seconds after a weapon switch (the body's `Fighter::moveset` changed as the bridge saw it; a body that is spawned, joined or loaded with its moveset shows no equip): `previous: Some(Secs(0.0, 0.112))` shows the old moveset's props meanwhile, `moves` take `Secs` counted from the switch, and the equip ends when its last span ends, when a whole-body action starts (`ActionClip::ends_equip`: true for a whole-body mapping, false for a layered one; written only when it differs) or when an engine event of `ended_by` names the body (`blocked`, `parried`, `damaged`, `reacted`, `guard_broken`, `staggered`, `evaded`, `perfect_evaded`, `pair_started`, `pair_ended`, `landed`). An action's own `previous` span, when its rules have one, decides over the weapon switch's (the action's, else `@moveset`'s); the first moveset a body shows is its baseline, however late it appears; a prop's `model` is a path inside the assets folder (no `..`). When several moves for a prop are open, the last listed wins. The `animation` tool prints the places the bridge computed (a cut hold and the previous props included). The decision is the pure `mount_places`; the bridge applies it by re-parenting only when the parent differs. The clocks are the simulation's (`Time<Fixed>` plus the overstep): a pause freezes them, a `step` moves them, and a co-op picture hold (hit stop) shifts them by the time held.
+  - `mounts` says where a carried prop goes. A mount is a state, not an edge: it is read every frame from the action's time, so it is right after a join, a snapshot load or a hold. Keyed by an action (its id, its `anim` or one of its tags, in that order): `"drink": (moves: [(prop: "sword", to: Some("hip"), span: Secs(0.1, 0.9))], on_cut: {"sword": 0.05})`. A move puts the prop in a socket (`to: None` hides it) while its `span` (`Secs`, `Phase`, `Phases`, as an action's windows) is open; the last open move wins. `on_cut`: when a whole-body action (a roll, a reaction, a stagger, a death) cuts a run, each listed prop that sat away from its carry socket stays where it was for these seconds of the new action. The key `"@moveset"` holds the rules for the seconds after a weapon switch (the body's `Fighter::moveset` changed as the bridge saw it, which an arsenal's switch does, "Weapons: slots, switching, ammo, reload (F4)"; a body that is spawned, joined or loaded with its moveset shows no equip): `previous: Some(Secs(0.0, 0.112))` shows the old moveset's props meanwhile, `moves` take `Secs` counted from the switch, and the equip ends when its last span ends, when a whole-body action starts (`ActionClip::ends_equip`: true for a whole-body mapping, false for a layered one; written only when it differs) or when an engine event of `ended_by` names the body (`blocked`, `parried`, `damaged`, `reacted`, `guard_broken`, `staggered`, `evaded`, `perfect_evaded`, `pair_started`, `pair_ended`, `landed`). An action's own `previous` span, when its rules have one, decides over the weapon switch's (the action's, else `@moveset`'s); the first moveset a body shows is its baseline, however late it appears; a prop's `model` is a path inside the assets folder (no `..`). When several moves for a prop are open, the last listed wins. The `animation` tool prints the places the bridge computed (a cut hold and the previous props included). The decision is the pure `mount_places`; the bridge applies it by re-parenting only when the parent differs. The clocks are the simulation's (`Time<Fixed>` plus the overstep): a pause freezes them, a `step` moves them, and a co-op picture hold (hit stop) shifts them by the time held.
   - **Motion modes (D1.2).** Mode names are `MotionMode`'s in snake case: `ground`, `air`, `water`, `glide`, `mantle`. Two more `mounts` keys, with their rules read every frame like the others, and a drop. `"@mode:water": (moves: [(prop: "sword", to: Some("back"), span: Secs(0.0, 3600.0))], yield_after: 1.2)` holds while the drawn mode (`MotionState::mode`) is water; its `Secs` count from the moment the rules begin to apply (so a stay that has no end is a long span). With `yield_after` above 0 the rules step aside while an action runs in the mode and for that many seconds after it ends (a blade swung afloat stays in the hand 1.2 s); 0 means they never step aside. When the rules apply they end a weapon switch's equip, as a whole-body action does. `"@left:water": (moves: [(prop: "sword", to: Some("back"), span: Secs(0.0, 0.18))], wait: 1.0)` holds after the body left the mode: for up to `wait` seconds after it left, or until its fade out of its clip is done (the blend of a clip change since it left; without one the wait is the whole `wait`), whichever is first, the moves are read at time 0 (the sword stays where the water had it); then the wait ends, the event `ModeLeft { entity, mode }` fires once (`left:water`, the name the overlays of a later slice will answer to) and the moves run from 0 until they have ended. It is skipped when the body left while the mode's rules stepped aside (the blade is in the hand already, nothing to draw), a whole-body action during the wait or the draw ends it as it ends an equip, and so does going back into the mode or into one whose `@mode` rules apply (water into the climb-out). Rules of the running action, then `@mode`, then `@left`, then `@moveset`, then the carry socket: the first that has an open move for a prop decides. `layers: {"upper": (root: "spine", off_in: ["water"])}`: nothing plays on that layer while the drawn mode is one of those (a play under way fades out over the locomotion clip's blend); `drops: {"water": (down: 0.15, seconds: 0.22)}` lowers the model by `down` metres, at a constant rate that reaches it in `seconds`, while an action runs in that mode, and raises it the same way when the action ends or the mode changes. The drop is written in `PostUpdate` by the new stage `AnimSystems::Model` (after `AnimationSystems`, the render interpolation and `AnimSystems::Root`, which is `hold_root_motion`; before transforms propagate) onto the `root_motion` bone, in the bone's parent space so a model scaled to its body drops by metres; never on the model child that carries the interpolation. Its clocks are the simulation's, and a hit-stop hold shifts them. The sandbox: the `mover` moveset (the body-motion scenario's) swims in the pool with the sword on its back, its stroke (`spar_stroke`, the one action that starts in water) keeps it in the hand and lowers the model, and the arms' layer is off.
   - `by_moveset: {"greatsword": {"idle": "greatsword_idle", "light_1": "greatsword_light_1"}}` is a clip family: for a body of that moveset every clip the bridge picks (locomotion, an action's clip, a layer play) goes through the table (a rename to a clip the set lacks is ignored; the content check reports it). It is a rename, not a second library: the graph has every clip's node already, so a weapon switch rebuilds and rebinds nothing.
   - `PropSwaps(BTreeMap<prop, variant>)` on a body shows another `prop` in place of a carried one (a gilded sword); like `Animated`, a game inserts it only where something is drawn (it is reflected, `replay_ignore` and `net_ignore`). The read-only `Sockets` system parameter gives a game's own attachments the place: `bone(body, socket) -> Option<(Entity, Transform)>` (the bone and the socket's offset: parent to it, and parent again when the entity changes after a model respawn) and `world(body, socket) -> Option<GlobalTransform>`.
@@ -1476,7 +1476,7 @@ turns into `into` on the first tick with `after <= t <= until` (`until` defaults
 first hit window, else the end of the first phase). The turn keeps the run: the same `instance`, the same clock `t`, the same
 hit ledger (a target the first action already hit is not hit again by the same hit group), and the same input. It costs what
 `into` costs beyond the start: the difference of the two actions' stamina under `into`'s `stamina_mode`, one of `into`'s
-charges when it uses another charge than the action it turns from, and `into`'s cooldown, whose slot must be ready unless it
+charges (`cost.charge_count`) when it uses another charge than the action it turns from, or the difference of the counts when it uses the same one, and `into`'s cooldown, whose slot must be ready unless it
 is the slot of the action it turns from (this run started that one). When something is not there, nothing is paid and it is
 tried again on the next tick, until `until` (no event: the client cannot see a refusal, see prediction below). It triggers
 `ActionEnded { end: Branched }`, then `ActionStarted { action: into }`; the effects and the telegraph `into` has before the
@@ -1993,6 +1993,107 @@ time is the downed pose's length, read from content. (8) The timers end within h
 drifted past `EPS` and lasted a tick longer). (9) `lethal` and `resume_stagger` are public. (10) The test
 `loaded_zero_health_body_stays_dead` is in the sandbox's `saves.rs`, where the save files are. (11) The encounter module
 registers the `downed` out rule itself (G9), and its tests' stand-in became a game's own rule, `benched`.
+
+### Weapons: slots, switching, ammo, reload (F4)
+
+A weapon is a moveset; ammo is the body's named consumables, `Charges`. A magazine and its reserve are two charges (`pistol` and
+`pistol.reserve`), a shot costs one of the first, a reload moves rounds from the second into the first when it ends, and a body
+carries its weapons in an `Arsenal`. Nothing here is a new kind of pool: the flask of `cost: (charge: "flask")` is the same machine,
+and every existing action and moveset behaves, serializes and hashes as before (each new field is left out at its default).
+
+```ron
+// content/combat/pistol.action.ron
+{
+    "pistol_shot": (net_id: 40, phases: [("fire", 0.1), ("recover", 0.25)], cost: (charge: "pistol"),
+        cancels: [(span: Phase("recover"), into: [Input("weapon")])]),     // a weapon switch may cut the recovery
+    "pistol_reload": (net_id: 41, phases: [("draw", 0.8), ("seat", 0.3)],
+        effects: [(at: 0.8, effect: Refill(charge: "pistol", from: "pistol.reserve"))],
+        cancels: [(span: Phase("draw"), into: [Input("weapon")])]),
+    "shotgun_shot": (net_id: 42, phases: [("fire", 0.3)], cost: (charge: "shells", charge_count: 2)),   // two shells a shot
+}
+// content/combat/pistol.moveset.ron
+{
+    "pistol": (
+        inputs: {"light": "pistol_shot", "reload": "pistol_reload"},
+        auto_reload: "pistol_reload",                    // optional: the press that would fire it empty reloads instead
+        weapon: (
+            name: "@weapon-pistol",                      // what a HUD shows (`you.weapon`): a Fluent id or plain text
+            magazine: "pistol", reserve: "pistol.reserve",
+            charges: {"pistol": (max: 6), "pistol.reserve": (max: 36, start: 12)},   // what a body gets with the weapon
+        ),
+    ),
+}
+// content/combat/hero.prefab.ron: a body that starts armed
+"Arsenal": (slots: [(slot: 1, moveset: "pistol"), (slot: 2, moveset: "shotgun")], current: Some(1), pending: None, bare: None),
+```
+
+**Costs.** `Cost::charge_count` (default 1, left out of the file and of the hash at 1) is how many of `cost.charge` a run takes; all
+of them must be there to start (a shotgun's two shells), and a charge turn (`charge: (after, into)`) pays the difference when both
+actions take the same charge. A press that cannot pay is refused by the one start rule (`can_start`: the machine, the tools and a
+client's prediction all ask it), and the refusal says the way out: with a moveset input whose action has a `Refill` into the
+charge, `pistol empty: reload` (the journal line of a press that ran out of buffer, `e5 light rejected: pistol empty: reload`; the
+tool's answer is `pistol empty (0/6): reload`), and with nothing to reload from, `pistol empty: no pistol.reserve left`. A charge with
+no refill action in the moveset keeps the old text: `no flask charges left (0/3)`. None of these waits: `ready_in` is `None`.
+
+**Refill.** `Effect::Refill(charge, from, per_round)` moves, at its moment, up to the room `charge` has (`max - current`) and what `from`
+holds, and says it (`Refilled`, the journal line `e5 refilled pistol +6 (6/6), 6 pistol.reserve left`). A run cut before the moment
+moves nothing: that is all a "cut reload gives nothing" is (a stagger, a death, a switch through a cancel window). `per_round: true`
+moves one: a shell-by-shell reload is one `Refill` at each moment, or one in a `hold` loop (an effect inside a loop fires on every
+pass), and a run cut after the second keeps two. A reload (an action with `Refill` effects and nothing else but sounds) whose `Refill`s would all move nothing (the magazine is full, the
+reserve is empty) does not start: `reload` answers `pistol is already full (6/6)` or `no pistol.reserve left to refill pistol with; find more`.
+
+**Auto reload.** `MovesetDef::auto_reload: "action"` makes the press that cannot pay start that action instead, in the same
+decision (`can_start` answers with the reload, so the tool says `ok: pistol_reload` and a prediction follows), when the reload would
+move something; otherwise the press is refused as above. The reload is judged as an action of its own (mode gate, cooldown, cost).
+
+**The arsenal.** `Arsenal { slots: [(slot, moveset)], current, pending, bare }` is a reflected component on an `AiId` body, in
+snapshots and the replay hash: up to nine weapons by slot number (1 to 9, ascending, one weapon each), the slot in the hands, a switch
+asked for that waits, and the moveset the body had before its first weapon (`bare`, put back when it holds none). A weapon in the hands is
+the body's `Fighter::moveset`, set the way any moveset change is, so the animation bridge's `@moveset` equip rules (draw and holster
+pictures, "Props and clip families (D1.1)") see a switch like another. `ActionSystems::Weapons` (first in `SimSet::Act`, before the
+context and the machine) gives a body whose arsenal changed the charges its weapons bring (`weapon.charges`, those it lacks, sorted by
+name; `start` defaults to full) and the moveset of the weapon in its hands, and takes the `weapon.*` presses of every body with an
+arsenal in `AiId` order.
+
+- **Inputs** (`shards_core::input_names`): `weapon.slot.N` (like `technique.N`), `weapon.next`, `weapon.prev`; `reload` is an
+  ordinary moveset input. The standard input map binds the number keys to `technique.N` and the mouse wheel to `lock_switch`, and
+  this slice leaves it alone: a game with weapons binds `weapon.slot.N` to keys and, when it has no lock-on, the wheel to
+  `weapon.next`/`weapon.prev` in its own `input_map` content. A press of `weapon.next` while a switch waits goes on from the switch asked for.
+- **A switch waits** until nothing runs, or the running action has a cancel window open (read as a press reads it) that names the input
+  `weapon` (`Input("weapon")`, or `Any`), or until the action ends if no such window comes first. Then it cuts the action
+  (`ActionEnded` `Interrupted`, with the cooldown share a cut windup keeps), sets the moveset, drops the presses that waited for the old
+  weapon and says `e5 switches to blaster (slot 2, from pistol)` (`WeaponSwitched`). A dead or downed body switches nothing. A
+  slot nobody holds is refused like any input (`e5 weapon.slot.7 rejected: no weapon in slot 7; you carry: 1 pistol, 2 blaster`).
+- **The calls a pickup makes**, on the host (they refuse or do nothing on a co-op client): `grant_weapon(world, body, slot, moveset)`
+  (`Added`, `Replaced(old)`, `AlreadyHeld`: the same weapon again changes nothing and the pickup gives ammo instead; a body that held
+  nothing takes it into its hands, a weapon that replaces the one in the hands replaces it in the hands; the body gets the charges the weapon
+  brings), `take_weapon` (the lowest slot left comes up, `WeaponSwitched::from` naming the weapon that left; the last weapon restores `bare` and removes the arsenal, and a body that started armed from a prefab has a `bare` only if the prefab gives one; the rounds stay),
+  `select_slot` (asks for a switch), `add_to_charge(world, body, name, n)` (returns how many it took: a full reserve takes 0, so the pickup stays on the floor)
+  and `refill` (what the effect calls). `weapon_in_hands` reads the weapon, magazine and reserve for a picture.
+
+**For agents.** The player tools `reload` (presses `reload`, answers like an attack) and `weapon slot=N|next|prev` (`ok: switches to 2
+(blaster)`, or `ok: switches to 2 (blaster) in 0.20s, when a cancel window of pistol_shot opens`, or `... when pistol_shot ends`, or the
+refusal with what the body carries); the dev tools `give_weapon moveset=ID [slot=N] [id=eN]`, `take_weapon slot=N [id=eN]` and
+`give_ammo charge=NAME n=N [id=eN]` (what a pickup does, for scenarios); the body's line `weapon pistol 6/6 (24) · slots 1 pistol,
+2 blaster · switching to 2`; the journal lines above. For a HUD, the UI sources `you.ammo` (the magazine as a bar), `you.reserve` (the
+reserve's rounds, a number) and `you.weapon` (`weapon.name`, a Fluent `@id` resolved in the language played, else the moveset's id),
+without a value for a body that holds no weapon. The engine rule `action.arsenal_sane` (slots ascending in 1 to 9, `current` and
+`pending` among them, no charge above its maximum on a body with an arsenal).
+
+**Content checks** (file and field named): `cost.charge_count` below 1 or without a `cost.charge`; a `Refill` with an empty name or the
+same charge on both sides; `auto_reload` naming no action or an action with no `Refill`; and for a moveset with a `weapon` block, a
+`weapon.magazine`/`reserve`, a `cost.charge` or a `Refill` of one of its input actions on a charge that neither `weapon.charges` nor a
+prefab's `Charges` declares (`` inputs.light -> action `shoot` costs the charge `pistol`, which this weapon does not have: declare it in
+weapon.charges, or in a prefab's Charges (...) ``), a `start` above `max`, a `max` of 0, and two weapons that declare one shared charge with
+different maxima; for a prefab, an `Arsenal` whose slots are outside 1 to 9, repeated or name no moveset, or whose `current` or `pending` names an empty slot.
+A moveset with no `weapon` block is not checked (a game may give its charges in code).
+
+**The sandbox's test weapons** (`content/combat/weapons.*.ron`, neutral numbers): `test_sidearm` (six rounds, 24 in the reserve at most,
+12 to begin with, reloaded by hand in 1.1 s, the rounds moving at 0.8 s) and `test_blaster` (three rounds, nine in the reserve, reloading
+itself), the prefab `armed` that carries both in an arsenal, and `weapons.scenario`: the player is given both (`give_weapon`), fires
+the sidearm dry and reads the refusal, reloads, switches to the blaster and back, lets the blaster reload itself, and cuts a reload
+with a switch (nothing loaded), then is put back as it was. Not built: saving an arsenal with a character (the `vitals` section keeps the
+charges) and a draw time of its own (a game can start an action from `WeaponSwitched`).
 
 ### Body parts (R1)
 
@@ -3542,8 +3643,8 @@ A tool is an argument struct (serde + schemars) and an ordinary Bevy system, `In
 
 | scope | tools |
 |---|---|
-| **Player** (plays fair, only through `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; movement: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; combat: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack, combat_objects; world: region_info, level_info, nav_path, npc_state; settings: settings, settings_set (like the settings menu for a human); sound: audio; Steam (feature `steam`): steam, steam_invite |
-| **Dev** (everything, including time) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset, motion_bake, animation; world: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, level_despawn, mover_go, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; sound: sound_play, music_set; mesh looks: looks, look_outlines; foliage: scatter, scatter_set; effects: effects, effect_play, telegraph_decals; Steam (feature `steam`): steam_host, steam_join, achievement_unlock; developer menu and console: dev_menu, console |
+| **Player** (plays fair, only through `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; movement: move_to (`path=true`), move, stop, jump, sprint, glide, clearance, path_to, input_bindings; combat: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack, combat_objects, reload, weapon (F4); world: region_info, level_info, nav_path, npc_state; settings: settings, settings_set (like the settings menu for a human); sound: audio; Steam (feature `steam`): steam, steam_invite |
+| **Dev** (everything, including time) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, give_weapon, take_weapon, give_ammo (F4), content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset, motion_bake, animation; world: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, level_despawn, mover_go, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; sound: sound_play, music_set; mesh looks: looks, look_outlines; foliage: scatter, scatter_set; effects: effects, effect_play, telegraph_decals; Steam (feature `steam`): steam_host, steam_join, achievement_unlock; developer menu and console: dev_menu, console |
 
 The game adds its own (in the template, `taunt` and the conditions `arena_cleared`, `foe_near`, `in_fight`; in the sandbox, the conditions `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`). Modules add conditions for `step --until named:…`: `near_poi` (world, appears with the first region), `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_avoiding`, `npc_engaged`, `npc_near` (NPC), `objects_live`, `projectile_flying` (combat objects), `mover_arrived` (movers, F6). Each
 tool has a kind (`kind` in `shards tools`):
@@ -4343,6 +4444,7 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `action.downed_sane` | every `Downed` body (B5) is not dead too, has no health left (`Health.current` is 0) and a bleed-out that is none or a finite time `>= 0`. `go_down` puts all three in, a revive or a death takes the mark off with them, so a violation names a writer that laid a body down by hand (a downed body with health would stand and take no hits for ever) |
 | `action.grace_sane` | every `Grace` (the hits ignored after a survive or a revive, B5) holds a finite `left >= 0`. `grant_grace` takes only finite times above 0 and the countdown floors at 0, so a NaN or an infinity names a writer that put it there by hand: it would shield its body for ever |
 | `action.parts_sane` | every body part (R1) belongs to a body that is in the world and lists it in `SpawnedParts` (a body that went this tick takes its parts on the next), a broken part is off, and a `PartHealth` is finite with `0 <= current <= max` and `max > 0`. The engine spawns, places, breaks and despawns parts so that this holds; a part that breaks it was written by hand |
+| `action.arsenal_sane` | every `Arsenal` (the weapons a body carries, F4) holds its weapons by slot, ascending and without repeats, in 1 to 9; its `current` and `pending` name one of them; and every charge of a body with an arsenal holds between 0 and its maximum. `grant_weapon`, `take_weapon`, `select_slot` and the switch keep all of it; a violation names a writer that put the state there by hand (`set`, a prefab, a game system) |
 | `action.lock_on_valid` | with a `lock_on` definition, no body's `Intent.target` names an entity that no longer exists or is dead: the lock-on check (`LockSystems::Check`, after `CoreSystems::ClearPresses`) lets go of such a lock at the end of every tick, after the deaths and the engine's despawns of that tick, so a violation names a lock set later in the tick or a body taken away after the check (a game system in `SimSet::Cleanup` after the check: it belongs before it). Without a definition locks are not checked and the rule passes (C6) |
 | `action.pairs_match` | a `Pairing` (a paired action's hold, B3) belongs to the run its fighter is running (the same action and `instance`), its victim (when it still exists) carries `Paired` by that fighter, and every `Paired` whose holder still exists is named by the holder's `Pairing`. The two marks are put in and taken out together (`release_pair`), so one alone is a pair a system broke behind the engine's back |
 | `action.memory_sane` | every `Memory` (what a fighter remembers for a while, B3) is not empty, holds finite times above 0 and keys sorted and unique, and every `GuardArm`'s press is not after the current tick |
@@ -4372,7 +4474,7 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-36 rules, checked after every tick
+37 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
@@ -4396,6 +4498,7 @@ $ shards assert list
   action.downed_sane  engine rule  armed
   action.grace_sane  engine rule  armed
   action.parts_sane  engine rule  armed
+  action.arsenal_sane  engine rule  armed
   action.lock_on_valid  engine rule  armed
   npc.state_known  engine rule  armed
   npc.strike_spacing  engine rule  armed
@@ -4787,7 +4890,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify -
 # replay finished at tick 1010: identical to the recording (17 checks) [1010 ticks in 3.00s, 22 frames]
 ```
 
-**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`), the voxel arena (`voxel_arena`) and its navmesh (`voxel_nav`), the timeline (`timeline`), the context and paired actions (`context`), the body replays (`body_motion`, `body_state`), the encounter (`encounter`), the spawned combat objects (`objects`), the downed state and the revive (`downed`), the boss scheduler (`boss_schedule`), the body parts (`parts`) and the movers' room (`movers`): 20 files, each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
+**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`), the voxel arena (`voxel_arena`) and its navmesh (`voxel_nav`), the timeline (`timeline`), the context and paired actions (`context`), the body replays (`body_motion`, `body_state`), the encounter (`encounter`), the spawned combat objects (`objects`), the downed state and the revive (`downed`), the boss scheduler (`boss_schedule`), the body parts (`parts`), the weapons (`weapons`) and the movers' room (`movers`): 21 files, each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
 (for the template: `cargo test --test game record_reference_replays -- --ignored`).
 
 - Game data follows the same rule as `inspect`: everything except the `bevy_*` types and the internal markers of `ai_core`, plus `Transform` and `Name`. So components that only the window adds (`Visibility`, `GlobalTransform`, meshes) do not change the hash, and an `Entity` inside a component is hashed as its `AiId`. Labels and describe fragments are text for the AI and are not part of the hash: a new wording or a new describer does not break old replays.
@@ -5465,7 +5568,7 @@ app.add_ui_action("give_up", |world, press| {          // press: widget, screen,
 ```
 
 Engine sources (`shards`): `you.health`, `you.stamina`, `you.poise` (a bar), `you.charges:<charge>`, `you.cooldown:<action>`,
-`you.heading` (the compass), `you.nearest:<category>` (how far the nearest landmark of a category is, m; no value without one), `allies`, `input.bindings:<context>.<action>` (the inputs of an action in the input map, as the `controls`
+`you.ammo` (the magazine of the weapon in the hands, a bar), `you.reserve` (the rounds in its reserve, a number), `you.weapon` (its `weapon.name`, a Fluent `@id` resolved in the language played; none of the three for a body that holds no weapon, F4), `you.heading` (the compass), `you.nearest:<category>` (how far the nearest landmark of a category is, m; no value without one), `allies`, `input.bindings:<context>.<action>` (the inputs of an action in the input map, as the `controls`
 settings make it at that moment; `Binding` reads it). The audio module adds `subtitles` and `subtitles:<lines>` (the lines of voices playing; see "Audio", "Subtitles"). "You" is the body this machine controls (`LocalPlayer`), otherwise the body
 the agent plays (`AiPlayer`). An unknown source writes one warning to the journal, and the widget stays empty.
 
@@ -7029,6 +7132,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 | `characters/colossus.prefab.ron`, `combat/colossus.parts.ron` | body parts (R1): the prefab `colossus` (6 m tall, 1200 health, no brain, the locomotion `colossus`) and its five parts (two legs that double poise, a hand with 60 health that passes half a hit on, a horn out of reach, a core that starts closed and triples a hit), all five lock points (R3) and the body none; only `parts.scenario` spawns it |
 | `combat/camera.camera.ron` | the camera's numbers (C7): the code defaults, and the fit (R4) that keeps a high lock point on the colossus in frame with the player |
 | `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters; for the action timeline (B2a), `spar_heavy` (charges into `spar_heavy_full` when held 0.25 s; a light or a dodge pressed in its windup waits for its recovery), `spar_lunge` and `spar_lunge_far` (one `lunge` cooldown slot; the lunge turns at 360°/s within 45°, at most 0.4 m closer for the turning and not toward a target behind a wall, recovers 0.6 s longer on a whiff and keeps 40% of its cooldown when cut in its windup), `spar_channel` (`while_held`), `spar_roll_keep` (`face: Keep`), and the moveset `timeline` (a single slot by priority), which `timeline.scenario` lends to the player; for body state (B2b), `spar_ward` (a barrier of half the caster's health for 8 s), `spar_frost` and `spar_zap` (jabs that carry a full bar of chill or jolt), the moveset `bodystate`, and in `combat/sparring.status.ron` the statuses `spar_chill` (a 2 s proc gate, no cooling and a restart while active, a refused proc empties the bar) and `spar_jolt` (an instant status outside the cap), which `body_state.scenario` lends to the player |
+| `combat/weapons.action.ron`, `combat/weapons.moveset.ron`, `combat/weapons.prefab.ron` | the neutral test weapons of F4 (net ids 4410 to 4413): the movesets `test_sidearm` (six rounds, a reserve of 24 at most and 12 to begin with, `arm_sidearm_shot` takes a round, `arm_sidearm_reload` moves the rounds at 0.8 s, both let a weapon switch through a cancel window) and `test_blaster` (three rounds, nine in the reserve, `auto_reload`), and the prefab `armed` that carries both in an `Arsenal`; `weapons.scenario` gives them to the player (`give_weapon`) and plays them through the player's tools |
 | `combat/skeleton.action.ron`, `combat/fighters.moveset.ron`, `combat/tuning.combat_tuning.ron` | the skeleton's claw, the movesets, the input buffer |
 | `npc/monsters.behavior.ron`, `monsters.perception.ron`, `monsters.director.ron`, `monsters.attack_plan.ron` | how the monsters think: the `skeleton` and `warden` state machines (with a `calm` state that the scenarios do not let the monster leave), sight, the `default` director (two tokens for one player) and the `boss` director (the guard strikes on its own), the guard's attack plans |
 | `region/wilds.*.ron` | the wilds: tiles, socket rules, points of interest, the region, a fallback map, navmesh settings |
@@ -7062,6 +7166,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 - `objects.scenario` (B4) — the skeleton e8 borrows the `caster` moveset and volleys at the player: `e8 spawns 3 x bolt_fly`, `combat_objects` and `observe` show the bolts (`projectile of e8`), a side bolt stops at a pillar and lays a puddle at its foot, the middle one meets the player once (`e8 -> e5 bolt_fly -8`, credited to the caster) and its puddle hits from the next tick and then every 0.8 s, building up `spar_chill`; a roll toward the next volley's bolt evades it and the bolt is spent all the same; the line telegraphs its six zones from 0.35 s to 1.15 s and the rings their 32 from 0.50 s to 1.16 s, and every object is gone once its action is over; `objects.json` is its reference replay, and `stand/objects.scenario` plays the volley in co-op (both clients have the host's bolts, by id, and see the host's hits);
 - `parts.scenario` (R1, R3) — a 6 m colossus spawned with the yard region, hit only through its parts and locked on to only through them: the player locks on (`lock_on` picks a point; nothing in the file names an id), then on the hand by name (`lock_on point=hand`: `(hand of e…)`), the first swing meets it (`light_1 at hand -10 (hp 1190)`: the hand loses 20, the body half), the third breaks it (`hand broken by e5`, and the lock on it is let go of), `lock_on point=hand` is refused as broken, the fourth swing, locked on the left leg, meets it, the core opened by `part name=core op=on` and locked on takes the fifth at three times the damage (`light_1 at core -60`), a flick to the right moves the lock to the left leg, a broken part refuses to come on, `part op=break` breaks the horn (no lock point after), and the `regen` that ends it takes the colossus and its parts away; `parts.json` is its reference replay;
 - `movers.scenario` (F6) — the test room `movers` (`levels/movers.gltf`, `world/movers.*.ron`) laid on the canyon floor by `spawn_level` (its movers called by name: their ids depend on what was spawned before): the player rides the lift 4 m up to the deck (`Lift goes to key 1 (3.3s)`, `step --until named:mover_arrived`, `Lift at key 1`, the feet 4 m higher and not moved sideways) and back down, the gate sliding shut pushes it ahead to where the gate stops, the crusher pins it and hurts it (`Crusher crushes e5`), the turntable carries it half a turn round its middle, and `level_despawn id=movers` takes the room away; `movers.json` is its reference replay;
+- `weapons.scenario` (F4) — the player is given the sandbox's two test weapons (`give_weapon`; `content/combat/weapons.*.ron`) and plays them through the player's tools: six shots empty the sidearm (`observe` shows `weapon test_sidearm 0/6 (12)`), `light_attack` answers `sidearm empty (0/6): reload`, `reload` moves the six rounds only when its draw ends (0.8 s, `e5 refilled sidearm +6 (6/6), 6 sidearm.reserve left`) and answers `sidearm is already full (6/6)` after; `weapon slot=2` switches at once (`e5 switches to test_blaster (slot 2, from test_sidearm)`), the blaster reloads itself on the press that would fire it empty (`ok: arm_blaster_reload`), and a switch made inside a reload's draw cuts it: nothing was loaded, the sidearm keeps its rounds, and the reload left to end loads what fits. The weapons are taken at the end and the player gets its moveset and flask back. Its session is the reference replay `weapons.json` (and, in heavy mode, the snapshots restored along it)
 - `boss_schedule.scenario` (N8a2, N8b) — the warden on two plans with gated options (`angle`, `players`, `max_repeats`, `forbid_after`) that are tokenless and wait in a strafe of their own, on the same director as two skeletons (`sched_arena`: two tokens, strikes 0.7 s apart), all written with `content_apply`; the skeletons take the director's tokens (`e7 takes an attack token on e5`) and the warden none (`!journal "e6 takes an attack token"`), and `npc_state` shows its grant as `"counted": false`: `npc_schedule` explains each refusal (`angle: the target is 10 degrees off the facing; this option needs 95-180`, `players: 1 living, this option needs 2-3`), a 900-tick fight holds every gate under the engine rules (`npc.plan_sequence` among them), and a phase swap keeps the history and the cooldowns the two plans share by name; with N8d a borrowed caster's bolt bursts into a chilling puddle (`chill_puddle`, tagged `capture`) at the player's feet, and the warden's `heavy` (`forbid_while: ["capture"]`) is refused while the puddle is live and open again in its fade; `boss_schedule.json` is its reference replay, and `stand/boss_schedule.scenario` counts the living players in co-op (three, then two when a client's body dies) and shows a client the host's plan history;
 - `boss_fight`, `dodge`, `errors` — the switch to phase 2, a roll to dodge a hit, errors that teach;
 - `npc_director.scenario` (E6) — three skeletons against one player in god mode, 30 s of combat: the sandbox condition `three_attacking`
@@ -7099,8 +7204,8 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
   generated`), the hash is `7bbfdc3b62623fbc` again, and `save_check` agrees.
 
 The scenarios start with `heal`/`teleport`/`set`/`npc_set_state … calm`, so they run on a fresh game and after other scenarios, in any order:
-CI runs them forward and then backward in one game. Sessions of twenty of them are recorded as reference replays in `tests/replays/`
-(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`, `parts`, `movers`; see "Replays").
+CI runs them forward and then backward in one game. Sessions of twenty-one of them are recorded as reference replays in `tests/replays/`
+(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`, `parts`, `weapons`, `movers`; see "Replays").
 
 ## Tests and CI
 

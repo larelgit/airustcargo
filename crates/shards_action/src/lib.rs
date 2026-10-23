@@ -18,6 +18,9 @@
 //! - **Fighter resources** ([`fighter`]): [`Health`], [`Stamina`] (regenerates after a
 //!   delay; sprinting drains it), [`Poise`] (breaks into a stagger), [`Armor`],
 //!   [`Team`], [`Charges`], [`Dead`].
+//! - **Weapons** ([`arsenal`]): an [`Arsenal`] of movesets by slot on a body, switches that wait for a cancel window, and the
+//!   calls a pickup makes ([`grant_weapon`], [`add_to_charge`]); ammo is the body's [`Charges`] (`Cost::charge_count`,
+//!   `Effect::Refill`, `MovesetDef::auto_reload`).
 //! - **Statuses** ([`status`]): buildup to a threshold, a timed effect the game
 //!   implements as hooks ([`ActionAppExt::add_status_effect`]).
 //! - **Telegraphs and zones** ([`zone`]): enemies' warnings ([`Telegraph`] events with a
@@ -72,7 +75,8 @@
 //!
 //! ```text
 //! SimSet::Input    ActionSystems::Orders    Order::Attack → Intent (after core's follow_orders)
-//! SimSet::Act      ActionSystems::Context   guard presses (GuardArm), context bindings (ContextInputs)
+//! SimSet::Act      ActionSystems::Weapons   weapon switches: the arsenal's charges and moveset, `weapon.*` presses (arsenal)
+//!                  ActionSystems::Context   guard presses (GuardArm), context bindings (ContextInputs)
 //!                  ActionSystems::Machine   presses → buffer → start/advance → LocomotionInput
 //!                  ActionSystems::Objects   combat objects: delayed starts, their runs step (effects, telegraphs)
 //!                  ActionSystems::Effects   pairs start (start_pairs), heal, stamina, statuses, sounds, spawns, game effects
@@ -88,7 +92,8 @@
 //! ```
 //!
 //! Tools: `light_attack`, `heavy_attack`, `block`, `parry`, `dodge`, `use_technique`,
-//! `use_item`, `lock_on`, `attack`, `interact` (player); `god`, `heal`, `stagger`, `react`, `remember`, `down`, `part`, `motion_bake` (dev);
+//! `use_item`, `lock_on`, `attack`, `interact`, `reload`, `weapon` (player); `god`, `heal`, `stagger`, `react`, `remember`, `down`, `part`, `motion_bake`,
+//! `give_weapon`, `take_weapon`, `give_ammo` (dev);
 //! `combat_overlay` (dev, with the `render` feature). Queries: `combat_objects` (player).
 //!
 //! ## The render feature
@@ -110,6 +115,7 @@
 
 pub mod ai;
 pub mod anim;
+pub mod arsenal;
 mod animtool;
 mod coverage;
 pub mod bake;
@@ -170,7 +176,7 @@ pub use cue::{ActionSound, SoundCue};
 pub use def::{
     ActionDef, AssistDef, BindingDef, BufferMode, CancelDef, ChargeDef, CombatTuning, Cost, Effect, Forget, GuardDef, GuardPress, HitDef, HitFlag,
     HitShape, HoldDef, LeapDef, LeapSearch, Local, MemoryDef, MotionBake, PairAngle, PairDef, PairSelect, PairState, PairTeam, ReactionDef, Recall, StaminaMode, When,
-    Face, MovesetDef, Phase, Span, Steer, TelegraphDef, TimedEffect, Transition,
+    Face, MovesetDef, Phase, Span, Steer, Stock, TelegraphDef, TimedEffect, Transition, WeaponDef,
 };
 pub use fighter::{
     grant_protection, set_reaction_immunity, Armor, Charge, Charges, Cooldown, Cooldowns, Dead, Fighter, Health, Invulnerable, Knockback, Poise,
@@ -181,7 +187,12 @@ pub use machine::{
     action_progress, apply_effect, can_start, extend_recovery, force_action, press_life, ActionEffect, ActionEffects, ActionEnd, ActionEnded,
     ActionMissed, ActionRejected,
     ActionStarted,
-    intangible, off_ground, stamina_cost, state_intangible, ActionState, Blocker, FighterView, Healed, InputBuffer, LeapRun, Queued, RunExtras, Running, Start, Telegraph,
+    intangible, off_ground, refill, stamina_cost, state_intangible, ActionState, Blocker, FighterView, Healed, InputBuffer, LeapRun, Queued, Refilled, RunExtras, Running,
+    Start, Telegraph,
+};
+pub use arsenal::{
+    add_to_charge, grant_weapon, select_slot, switch_target, take_weapon, weapon_in_hands, Arsenal, Grant, Held, Switch, WeaponSwitched, WeaponView,
+    MAX_SLOTS,
 };
 pub use lock::{LockLoss, LockLost, LockReleased, LockSight, LockSwitched, LockSystems};
 pub use predict::{shown_queue, shown_state, ActionPredictor, PredictedAction, CONFIRM_SLACK};
@@ -217,6 +228,9 @@ pub mod prelude {
 pub enum ActionSystems {
     /// `SimSet::Input`, after `CoreSystems::FollowOrders`: `Order::Attack`.
     Orders,
+    /// `SimSet::Act`, first: weapon switches ([`arsenal`]). The `weapon.*` presses ask for them and the
+    /// running action's cancel windows let them through; the context and the machine already see the new moveset.
+    Weapons,
     /// `SimSet::Act`, before the machine: guard presses arm, and every fighter's context
     /// bindings are resolved ([`ContextInputs`]).
     Context,
@@ -428,7 +442,8 @@ impl Plugin for ActionPlugin {
             .add_engine_invariant("action.objects_capped", invariants::objects_capped)
             .add_engine_invariant("action.downed_sane", invariants::downed_sane)
             .add_engine_invariant("action.grace_sane", invariants::grace_sane)
-            .add_engine_invariant("action.parts_sane", invariants::parts_sane);
+            .add_engine_invariant("action.parts_sane", invariants::parts_sane)
+            .add_engine_invariant("action.arsenal_sane", arsenal::arsenal_sane);
         coverage::plugin(app);
         app
             // The machine runs after motion's `Intent → LocomotionInput` step: it
@@ -438,7 +453,14 @@ impl Plugin for ActionPlugin {
                 (
                     ActionSystems::Orders.in_set(SimSet::Input).after(CoreSystems::FollowOrders).after(MotionSystems::StallOrders),
                     ModifierSystems::Reset.after(ActionSystems::Orders),
-                    (ActionSystems::Context, ActionSystems::Machine, ActionSystems::Objects, ActionSystems::Effects, ActionSystems::Push)
+                    (
+                        ActionSystems::Weapons,
+                        ActionSystems::Context,
+                        ActionSystems::Machine,
+                        ActionSystems::Objects,
+                        ActionSystems::Effects,
+                        ActionSystems::Push,
+                    )
                         .chain()
                         .in_set(SimSet::Act)
                         .after(MotionSystems::Intent),
@@ -505,6 +527,7 @@ impl Plugin for ActionPlugin {
         cue::plugin(app);
         objects::plugin(app);
         parts::plugin(app);
+        arsenal::plugin(app);
         #[cfg(feature = "render")]
         render::plugin(app);
     }

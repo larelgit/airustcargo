@@ -62,7 +62,7 @@ Run `shards` from the game's folder or below it (the token lives in `.shards/`),
 | If your change touches | Read |
 |---|---|
 | Running, driving or debugging a live game; the `shards` CLI, tool catalogue, exit codes, asserts, fuzz, parallel games, `step --until` conditions | [docs/agents/watching-and-driving.md](docs/agents/watching-and-driving.md) |
-| Combat tools, enemy warnings, dodge/block/attack calls | [docs/agents/combat.md](docs/agents/combat.md) |
+| Combat tools, enemy warnings, dodge/block/attack calls, weapons, ammo, reload | [docs/agents/combat.md](docs/agents/combat.md) |
 | Systems, spawn order, maths, randomness, event observers, snapshots, replay checks, tick time | [docs/agents/determinism.md](docs/agents/determinism.md) |
 | A new tool, an invariant, `AiVisible` describers, `AiId` | [docs/agents/tools-and-invariants.md](docs/agents/tools-and-invariants.md) |
 | Content definitions, a new content kind, Fluent text | [docs/agents/content.md](docs/agents/content.md) |

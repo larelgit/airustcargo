@@ -1,0 +1,32 @@
+// Weapons (F4) on neutral numbers, for `weapons.scenario` and the weapon tests: ammo as named charges (a magazine and
+// a reserve are two of them), a cost per shot, a reload that moves the rounds when it ends, a switch that waits for
+// a cancel window. Net ids 4410 to 4419 are this file's.
+{
+    // A shot takes a round. Its recover phase lets a weapon switch through (`Input("weapon")`).
+    "arm_sidearm_shot": (
+        net_id: 4410,
+        phases: [("fire", 0.1), ("recover", 0.25)],
+        cost: (charge: "sidearm"),
+        cancels: [(span: Phase("recover"), into: [Input("weapon")])],
+    ),
+    // The rounds move at 0.8 s, when the draw ends. A switch may cut the draw: a reload cut so gives nothing.
+    "arm_sidearm_reload": (
+        net_id: 4411,
+        phases: [("draw", 0.8), ("seat", 0.3)],
+        effects: [(at: 0.8, effect: Refill(charge: "sidearm", from: "sidearm.reserve"))],
+        cancels: [(span: Phase("draw"), into: [Input("weapon")])],
+    ),
+    // The second weapon: three rounds, and it reloads itself on the press that would fire it empty.
+    "arm_blaster_shot": (
+        net_id: 4412,
+        phases: [("fire", 0.15), ("recover", 0.2)],
+        cost: (charge: "blaster"),
+        cancels: [(span: Phase("recover"), into: [Input("weapon")])],
+    ),
+    "arm_blaster_reload": (
+        net_id: 4413,
+        phases: [("draw", 0.5), ("seat", 0.2)],
+        effects: [(at: 0.5, effect: Refill(charge: "blaster", from: "blaster.reserve"))],
+        cancels: [(span: Phase("draw"), into: [Input("weapon")])],
+    ),
+}

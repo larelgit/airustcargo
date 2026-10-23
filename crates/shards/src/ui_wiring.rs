@@ -19,6 +19,7 @@ use ai_core::{AiId, AiLandmark, LandmarkCategory};
 use bevy::prelude::*;
 use serde_json::json;
 use shards_action::fighter::{Charges, Cooldowns, Dead, Health, Poise, Stamina};
+use shards_action::weapon_in_hands;
 use shards_content::ContentDb;
 use shards_core::{EngineState, PlayerId};
 use shards_motion::input::InputDefaults;
@@ -60,6 +61,17 @@ impl Plugin for EngineUiPlugin {
             .add_ui_source("rules.name", |w, mode| rules_set(w, mode).and_then(|set| rules_text(w, &set.name)))
             .add_ui_source("rules.summary", |w, mode| rules_set(w, mode).and_then(|set| rules_text(w, &set.summary)))
             .add_ui_source("rules.blocked", rules_blocked)
+            // The weapon in the viewer's hands (the action module's `Arsenal`): its magazine as a bar,
+            // the rounds in its reserve, and its name. No value for a body that holds no weapon.
+            .add_ui_source("you.ammo", |w, _| {
+                viewer(w).and_then(|e| weapon_in_hands(w, e)).and_then(|v| v.magazine).map(|(cur, max)| ratio(cur as f32, max as f32))
+            })
+            .add_ui_source("you.reserve", |w, _| {
+                viewer(w).and_then(|e| weapon_in_hands(w, e)).and_then(|v| v.reserve).map(|rounds| UiValue::Number(rounds as f32))
+            })
+            .add_ui_source("you.weapon", |w, _| {
+                viewer(w).and_then(|e| weapon_in_hands(w, e)).and_then(|v| rules_text(w, &v.name))
+            })
             .add_ui_source("you.heading", heading)
             .add_ui_source("you.nearest", nearest)
             .add_ui_source("allies", allies)
