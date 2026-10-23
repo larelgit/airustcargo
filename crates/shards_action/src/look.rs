@@ -19,12 +19,12 @@ use ai_core::{AiAppExt, AiId};
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use shards_content::ContentDb;
 use shards_core::{Gaze, Intent};
 use shards_motion::{aim_point_of, eye_of, look_dir, params_of, LayerMask, PhysicsWorld, QueryFilter};
 
 use crate::fighter::Dead;
-use crate::parts::{body_hurtbox, body_of, part_of, parts_of, Part, SpawnedParts};
+use crate::parts::{body_of, part_of, parts_of, Part};
+use crate::shot::{walk_ray, Met};
 
 /// How far the `AIM` line looks (m).
 pub const AIM_RANGE: f32 = 100.0;
@@ -67,38 +67,24 @@ pub struct ViewHit {
 /// `None`: nothing in range, or `viewer` is no character with a position (no eye). Computed from the
 /// simulation, so a headless run, a replay and a window agree.
 pub fn view_hit(world: &World, viewer: Entity, range: f32) -> Option<ViewHit> {
-    let physics = world.get_resource::<PhysicsWorld>()?;
+    world.get_resource::<PhysicsWorld>()?;
     let eye = eye_of(world, viewer)?;
     let dir = Dir3::new(look_dir(world, viewer)?).ok()?;
     let mut filter = QueryFilter::new(LayerMask::WORLD | LayerMask::HURTBOX | LayerMask::CHARACTER).excluding(viewer);
     for part in parts_of(world, viewer) {
         filter = filter.excluding(part);
     }
-    let made = |entity, part, hit: shards_motion::RayHit| ViewHit { entity, part, distance: hit.distance, point: hit.point, normal: hit.normal };
-    let mut hit = physics.raycast(eye, dir, range, &filter)?;
-    // Each turn either returns or leaves one more body out of the filter (a body whose capsule takes no
-    // hits does not stop the view), so it ends after at most as many turns as there are bodies in range.
-    loop {
-        if world.get::<Part>(hit.entity).is_some() {
-            return Some(made(body_of(world, hit.entity), Some(hit.entity), hit));
-        }
-        if world.get::<SpawnedParts>(hit.entity).is_none() {
-            return Some(made(hit.entity, None, hit));
-        }
-        // A body with parts: its parts lie inside its capsule, so look again past the capsule.
-        let body = hit.entity;
-        let inside = filter.clone().excluding(body);
-        let past = physics.raycast(eye, dir, range, &inside);
-        if let Some(part) = past.filter(|h| world.get::<Part>(h.entity).is_some() && body_of(world, h.entity) == body) {
-            return Some(made(body, Some(part.entity), part));
-        }
-        if body_hurtbox(world, world.get_resource::<ContentDb>(), body) {
-            return Some(made(body, None, hit));
-        }
-        // The capsule takes no hits and no part was met: the view goes on past the body.
-        filter = inside;
-        hit = past?;
-    }
+    // The first thing met: a body (through a part, named so), else whatever collider it is.
+    let mut seen = None;
+    walk_ray(world, eye, dir, range, filter, |met, hit| {
+        let (entity, part) = match met {
+            Met::Body { body, part } => (body, part),
+            Met::Solid | Met::Other => (hit.entity, None),
+        };
+        seen = Some(ViewHit { entity, part, distance: hit.distance, point: hit.point, normal: hit.normal });
+        true
+    });
+    seen
 }
 
 /// What a hit is called in the `AIM` line: `e7 Dummy head` for a body (through a part), `e3 Pillar`
@@ -117,7 +103,7 @@ fn hit_name(world: &World, hit: &ViewHit) -> String {
 }
 
 /// `floor`, `ceiling` or `wall`, by which way a surface faces.
-fn surface(normal: Vec3) -> &'static str {
+pub(crate) fn surface(normal: Vec3) -> &'static str {
     match normal {
         n if n.y > 0.7 => "floor",
         n if n.y < -0.7 => "ceiling",
@@ -238,7 +224,7 @@ fn current(world: &World, me: Entity) -> Gaze {
 }
 
 /// A yaw in radians brought into (-π, π].
-fn wrap(yaw: f32) -> f32 {
+pub(crate) fn wrap(yaw: f32) -> f32 {
     if yaw > -std::f32::consts::PI && yaw <= std::f32::consts::PI {
         return yaw;
     }

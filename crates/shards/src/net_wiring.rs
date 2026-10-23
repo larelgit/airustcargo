@@ -9,7 +9,7 @@ use shards_action::combat::{
     Blocked, Damaged, Died, Evaded, GuardBroken, Parried, PerfectEvaded, Reacted, Revived, Staggered, Survived, WentDown,
 };
 use shards_action::machine::{ActionRejected, ActionStarted, Healed, Telegraph};
-use shards_action::{ActionSound, BarrierGranted, PairEnded, PairStarted};
+use shards_action::{ActionSound, BarrierGranted, PairEnded, PairStarted, ShotFired, ShotImpact};
 use shards_net::{hooks::NetLeft, NetEventAppExt, NetHooks};
 use shards_npc::{AttackToken, NavAgent, NpcDrive, Perceived};
 use shards_rules::{RulesChanged, SessionFilter};
@@ -49,6 +49,9 @@ impl Plugin for EngineNetPlugin {
             // An action's `Sound` effect runs on the host only (a client's prediction starts no effects):
             // the client plays the host's sound, like the host's hit sparks.
             .net_event::<ActionSound>()
+            // A shot resolves on the host (F3): a client draws the host's muzzle flashes, tracers and impacts.
+            .net_event::<ShotFired>()
+            .net_event::<ShotImpact>()
             // The rules changed on the host: a guest's HUD shows the banner too (`shards_rules` does not see the net).
             .net_event::<RulesChanged>();
         // Who counts toward the session size: a player whose body waits for a rejoin (`NetLeft`) does not.

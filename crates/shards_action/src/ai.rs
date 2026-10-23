@@ -70,6 +70,10 @@ pub(crate) fn register(app: &mut App) {
             Some(format!("{} winds up {} ({:.2}s) {}{zone}", label(w, e.attacker), e.action, e.lands_in, e.symbol))
         })
         .journal_event::<Damaged>(|e, w| {
+            // A shot's pellets say one line for the whole shot (`crate::shot`).
+            if crate::shot::resolving(w) {
+                return None;
+            }
             let (a, t) = (label(w, e.attacker), label(w, e.target));
             // Through a body part: `e5 -> e12 light_1 at arm -20 (hp 80)`.
             let at = e.part.and_then(|p| w.get::<crate::parts::Part>(p)).map_or_else(String::new, |p| format!(" at {}", p.id));
@@ -79,6 +83,9 @@ pub(crate) fn register(app: &mut App) {
             })
         })
         .journal_event::<Blocked>(|e, w| {
+            if crate::shot::resolving(w) {
+                return None;
+            }
             Some(format!(
                 "{} blocked {} {}: -{:.0} hp, -{:.0} stamina (hp {:.0}){}",
                 label(w, e.defender),
@@ -92,10 +99,16 @@ pub(crate) fn register(app: &mut App) {
             ))
         })
         .journal_event::<Parried>(|e, w| {
+            if crate::shot::resolving(w) {
+                return None;
+            }
             let cost = if e.stamina > 0.0 { format!(", -{:.0} stamina", e.stamina) } else { String::new() };
             Some(format!("{} parried {} {}{cost}", label(w, e.defender), label(w, e.attacker), e.action))
         })
         .journal_event::<PerfectEvaded>(|e, w| {
+            if crate::shot::resolving(w) {
+                return None;
+            }
             Some(format!("{} perfectly evaded {} {}", label(w, e.defender), label(w, e.attacker), e.action))
         })
         .journal_event::<Reacted>(|e, w| {
@@ -108,9 +121,15 @@ pub(crate) fn register(app: &mut App) {
             Some(format!("{} reacts {tier}{by}", label(w, e.entity)))
         })
         .journal_event::<Evaded>(|e, w| {
+            if crate::shot::resolving(w) {
+                return None;
+            }
             Some(format!("{} evaded {} {}", label(w, e.defender), label(w, e.attacker), e.action))
         })
         .journal_event::<GuardBroken>(|e, w| {
+            if crate::shot::resolving(w) {
+                return None;
+            }
             Some(format!(
                 "{} broke {}'s guard with {} -{:.0} (hp {:.0}){}",
                 label(w, e.attacker),
