@@ -1,0 +1,22 @@
+// A body that carries the two test weapons (`weapons.moveset.ron`) in an arsenal: the sidearm in slot 1, in the
+// hands, the blaster in slot 2. The arsenal gives it the charges the weapons bring (`sidearm`, `sidearm.reserve`,
+// `blaster`, `blaster.reserve`) on its first tick. It stands still; `shards act spawn_prefab id=armed x=3 z=3`.
+{
+    "armed": (
+        components: {
+            "Name": "Armed",
+            "AiKind": ("Armed"),
+            "Team": ("heroes"),
+            "Fighter": (moveset: "test_sidearm"),
+            "Health": (current: 100.0, max: 100.0),
+            "Stamina": (current: 100.0, max: 100.0, regen: 45.0, delay: 0.5, since_use: 0.5),
+            "CharacterController": (params: "player"),
+            "Arsenal": (
+                slots: [(slot: 1, moveset: "test_sidearm"), (slot: 2, moveset: "test_blaster")],
+                current: Some(1),
+                pending: None,
+                bare: None,
+            ),
+        },
+    ),
+}

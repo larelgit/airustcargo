@@ -50,6 +50,20 @@ pub mod input_names {
     /// Held: the attack assist is off (an action with an `assist` does not track the lock-on target).
     /// The controls hold it while the player has turned the assist off (`controls.attack_assist`).
     pub const ASSIST_OFF: &str = "assist_off";
+    /// Press: reload the weapon in hand. An ordinary moveset input (`"reload": "pistol_reload"`): the
+    /// moveset names the action, the `reload` tool presses it.
+    pub const RELOAD: &str = "reload";
+    /// Pressed with a slot suffix: `weapon.slot.1`, `weapon.slot.2`, ...: switch to the weapon in that
+    /// slot of the body's `Arsenal` (the action module's weapon rules). Like `technique.N`.
+    pub const WEAPON_SLOT: &str = "weapon.slot";
+    /// Press: switch to the next weapon of the `Arsenal` (slot order, wrapping round). A game without
+    /// lock-on binds the mouse wheel to this and [`WEAPON_PREV`]; the standard map binds it to `lock_switch`.
+    pub const WEAPON_NEXT: &str = "weapon.next";
+    /// Press: switch to the previous weapon of the `Arsenal`.
+    pub const WEAPON_PREV: &str = "weapon.prev";
+    /// The input a cancel window names to let a weapon switch through: `cancels: [(span: ..., into:
+    /// [Input("weapon")])]` (or `Any`). A switch waits for such a window, or for the action to end.
+    pub const WEAPON: &str = "weapon";
 }
 
 /// Where a character looks (F1a): a yaw and a pitch, in radians. It is the view of a character

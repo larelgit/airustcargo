@@ -86,7 +86,7 @@ fn dead_refusal(world: &World, caller: &Caller) -> Result<(), String> {
 }
 
 /// Your body, if it is a fighter you can control.
-fn me(world: &World, caller: &Caller) -> Result<Entity, String> {
+pub(crate) fn me(world: &World, caller: &Caller) -> Result<Entity, String> {
     let me = caller.require_subject()?;
     if world.get::<Fighter>(me).is_none() {
         return Err("your body cannot fight (it has no Fighter component)".into());
@@ -164,7 +164,7 @@ fn waiting(world: &World, me: Entity, view: &FighterView) -> Vec<Queued> {
 /// Presses `input` (towards `dir`) when the rule says it will start. `detail` follows the
 /// answer (a dodge's direction). `hold`: `Some(true)` presses and keeps the input held (a
 /// charge, an action that goes on while held), `Some(false)` lets go of it without a press.
-fn press(world: &mut World, caller: &Caller, input: &str, dir: Option<Vec3>, detail: &str) -> ToolResult {
+pub(crate) fn press(world: &mut World, caller: &Caller, input: &str, dir: Option<Vec3>, detail: &str) -> ToolResult {
     press_held(world, caller, input, dir, detail, None)
 }
 

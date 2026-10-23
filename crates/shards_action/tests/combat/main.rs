@@ -19,6 +19,7 @@ mod parity;
 mod parts;
 mod reactions;
 mod timeline;
+mod weapons;
 mod replay;
 mod rules_costs;
 mod rules_damage;
