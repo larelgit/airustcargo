@@ -1981,6 +1981,13 @@ pub struct MovesetDef {
     /// the reserve ([`WeaponDef`]). `None`: not a weapon (or one the game wires by hand).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weapon: Option<WeaponDef>,
+    /// The view model (content kind `view_model`) a first-person camera draws while a body holds this
+    /// moveset: the arms and the weapon in front of the camera, picked by the weapon in hand, so an
+    /// `Arsenal` switch changes it. `None`: the camera content's `first_person.view_model`, else nothing.
+    /// Only the id is simulation content (the moveset is read by the simulation); the model, its animset and
+    /// its numbers are the `view_model` definition's, which is a picture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view_model: Option<String>,
 }
 
 /// A moveset as a weapon ([`MovesetDef::weapon`]): what its `Arsenal` slot brings and shows.
@@ -2170,6 +2177,9 @@ impl ContentDef for MovesetDef {
     const KIND: &'static str = "moveset";
 
     fn validate(&self, _: &str, refs: &mut Refs) {
+        if let Some(view_model) = &self.view_model {
+            refs.require::<crate::view_model::ViewModelDef>(view_model, "view_model");
+        }
         for (input, action) in &self.inputs {
             if input.is_empty() || input.contains(char::is_whitespace) {
                 refs.error(format!("input `{input}` must be a name without spaces, e.g. `light`"));

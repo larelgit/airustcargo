@@ -53,7 +53,7 @@ fn an_offscreen_game_takes_shots_without_a_window() {
     let _ = std::fs::remove_file(ticket["legend_path"].as_str().unwrap());
 }
 
-fn offscreen_app() -> App {
+pub(crate) fn offscreen_app() -> App {
     shards::testing::test_app(
         |config| (config.headless, config.offscreen) = (false, true),
         |app| {
@@ -63,14 +63,14 @@ fn offscreen_app() -> App {
 }
 
 /// Frames drawn, so pipelines compile and the follow camera settles.
-fn settle(app: &mut App, frames: u32) {
+pub(crate) fn settle(app: &mut App, frames: u32) {
     for _ in 0..frames {
         app.update();
     }
 }
 
 /// `image` as the GPU drew it, read back.
-fn capture(app: &mut App, image: Handle<Image>) -> Image {
+pub(crate) fn capture(app: &mut App, image: Handle<Image>) -> Image {
     let slot: Arc<Mutex<Option<Image>>> = Arc::default();
     let into = slot.clone();
     app.world_mut().spawn(Screenshot::image(image)).observe(move |captured: On<ScreenshotCaptured>| {
@@ -88,7 +88,7 @@ fn capture(app: &mut App, image: Handle<Image>) -> Image {
 
 /// [`capture`] until two captures in a row are alike: pipelines compile a few frames in (and, in a
 /// debug build, many), and a picture taken before they are ready is not the world's.
-fn capture_stable(app: &mut App, image: &Handle<Image>) -> Image {
+pub(crate) fn capture_stable(app: &mut App, image: &Handle<Image>) -> Image {
     let started = Instant::now();
     let mut before = capture(app, image.clone());
     loop {
@@ -102,14 +102,14 @@ fn capture_stable(app: &mut App, image: &Handle<Image>) -> Image {
 }
 
 /// The picture's colour bytes (RGBA, row by row).
-fn bytes(image: &Image) -> &[u8] {
+pub(crate) fn bytes(image: &Image) -> &[u8] {
     image.data.as_deref().expect("a captured image has its data")
 }
 
 /// The mean absolute difference between two pictures of one size, per colour byte (0 to 255). The
 /// alpha byte is left out: a screenshot drops it, and what the camera leaves in it is no part of
 /// the picture.
-fn mean_difference(a: &Image, b: &Image) -> f64 {
+pub(crate) fn mean_difference(a: &Image, b: &Image) -> f64 {
     assert_eq!(a.size(), b.size());
     let (a, b) = (bytes(a).as_chunks::<4>().0, bytes(b).as_chunks::<4>().0);
     let sum: u64 = a.iter().zip(b).flat_map(|(x, y)| (0..3).map(move |c| u64::from(x[c].abs_diff(y[c])))).sum();
@@ -117,7 +117,7 @@ fn mean_difference(a: &Image, b: &Image) -> f64 {
 }
 
 /// The mean RGB of the `w` x `h` block at (`x`, `y`).
-fn block(image: &Image, x: u32, y: u32, w: u32, h: u32) -> [f64; 3] {
+pub(crate) fn block(image: &Image, x: u32, y: u32, w: u32, h: u32) -> [f64; 3] {
     let (data, width) = (bytes(image), image.width() as usize);
     let mut sum = [0u64; 3];
     for row in y..y + h {

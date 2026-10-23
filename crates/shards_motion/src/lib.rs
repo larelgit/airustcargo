@@ -11,7 +11,8 @@
 //! - [`input`]: the input action map: keyboard, mouse and gamepad become `Intent`;
 //!   contexts, press/hold/toggle, rebinding kept in the `controls` settings (`shards_settings`).
 //! - [`camera`]: the third-person camera (orbit, wall collision, lock-on, aim assist,
-//!   shake) — presentation only; its field of view, shake and look speed follow the player's
+//!   shake) and the first-person one (at the eye of a body that looks, `Intent::look`, F1b) —
+//!   presentation only; its field of view, shake and look speed follow the player's
 //!   accessibility and control settings.
 //! - AI tools for agents: `move_to` (with `path`), `move`, `stop`, `jump`, `sprint`,
 //!   `glide`, and the perception queries `clearance` and `path_to` ([`perception`]);
@@ -69,7 +70,7 @@ use shards_core::EngineAppExt;
 pub use invariants::{body_in_solid, launch_sane, motion_finite, BODY_IN_SOLID};
 
 pub use ai::{describe_motion, physics_line_of_sight, MotionAi};
-pub use camera::{CameraSettings, LockHooks, LockOnDef, LockOnTarget, LockPoint, ThirdPersonCamera};
+pub use camera::{CameraSettings, FirstPersonCamera, LockHooks, LockOnDef, LockOnTarget, LockPoint, ThirdPersonCamera};
 pub use eye::{aim_point_of, eye_of, look_dir, params_of};
 pub use controller::{
     character, CharacterController, CharacterParams, ControllerPlugin, ControllerSystems, Facing, Ghost, Jumped, JumpedFlight, Landed,
@@ -96,7 +97,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod prelude {
     pub use crate::{
         character, CameraSettings, CharacterController, CharacterParams, Collider, CollisionLayers, ControlState,
-        InputContexts, InputMap, LayerMask, LocomotionInput, LockOnTarget, MotionAi, MotionMode, MotionPlugin,
+        FirstPersonCamera, InputContexts, InputMap, LayerMask, LocomotionInput, LockOnTarget, MotionAi, MotionMode, MotionPlugin,
         MotionState, MotionSystems, PhysicsWorld, QueryFilter, SpatialQuery, ThirdPersonCamera,
     };
 }

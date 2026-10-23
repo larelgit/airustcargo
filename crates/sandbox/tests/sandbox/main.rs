@@ -33,6 +33,8 @@ mod net_predict;
 mod net_sync;
 mod net_seams;
 #[cfg(feature = "render")]
+mod first_person;
+#[cfg(feature = "render")]
 mod offscreen;
 mod reference_replays;
 mod replays;

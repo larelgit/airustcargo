@@ -140,7 +140,7 @@ mod render {
     use bevy::render::view::Tonemapping;
 
     use super::{BloomComposite, BloomTuning, ToneMapping};
-    use crate::camera::{CameraTuning, ThirdPersonCamera};
+    use crate::camera::{CameraTuning, FirstPersonCamera, ThirdPersonCamera};
 
     impl ToneMapping {
         pub fn bevy(self) -> Tonemapping {
@@ -188,19 +188,22 @@ mod render {
         hdr_added: bool,
     }
 
+    /// The cameras that appeared since the last frame.
+    type NewCameras<'w, 's> = Query<'w, 's, (), Or<(Added<ThirdPersonCamera>, Added<FirstPersonCamera>)>>;
+
     /// The cameras a picture applies to, with what they have now.
     type Cameras<'w, 's> = Query<
         'w,
         's,
         (Entity, Option<&'static Tonemapping>, Option<&'static Bloom>, Has<Hdr>, Option<&'static PictureSet>),
-        (With<Camera3d>, With<ThirdPersonCamera>),
+        (With<Camera3d>, Or<(With<ThirdPersonCamera>, With<FirstPersonCamera>)>),
     >;
 
     /// `Update`: the `picture` of the camera tuning onto every 3D camera with a
-    /// [`ThirdPersonCamera`], when the tuning changes and when such a camera appears.
+    /// [`ThirdPersonCamera`] or [`FirstPersonCamera`], when the tuning changes and when such a camera appears.
     pub fn apply_picture(
         tuning: Res<CameraTuning>,
-        added: Query<(), Added<ThirdPersonCamera>>,
+        added: NewCameras,
         cameras: Cameras,
         mut commands: Commands,
     ) {

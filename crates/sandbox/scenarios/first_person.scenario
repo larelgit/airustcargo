@@ -1,0 +1,86 @@
+# The first-person view (F1b, the manual's "The first-person camera and the view model"): what can be
+# checked without a window. The camera, the hidden own body and the view model are pictures (a window or
+# `--offscreen`; `tests/sandbox/first_person.rs` and `crates/shards/tests/action_render/view_model.rs`
+# look at them); the rest is a tool, content and the ears, which a headless game has too.
+#
+# - `camera_mode` chooses the camera for the session: first person (every orbit camera also looks
+#   through the eye of the body it follows) or third, or leaves it to the `camera` content.
+# - the sandbox's view model is content: the model `arms` (a glTF made by `make_view_model`), the
+#   animset that moves it, and the camera content that names it for a body whose moveset names none.
+# - the animset shows the arms from the body's actions: `animation animset=arms` says which clip.
+# - the ears of a body that faces its look are at its eye (the F10 audio listener), those of any other
+#   body at its feet.
+#
+# The player is put 13 m south of the middle, as `look.scenario` does.
+
+seed 42
+
+# --- the arena as the game spawns it, whatever was played in it before
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act look clear=true
+act set id=e5 component=CharacterController path=params value='"player"'
+step 30
+act heal id=e5
+act teleport id=e5 x=0 z=13 y=0
+act teleport id=e7 x=6 z=12 y=0
+act teleport id=e6 x=-18 z=-18 y=0
+act teleport id=e8 x=18 z=-18 y=0
+act teleport id=e14 x=-18 z=18 y=0
+step 2
+invariant field e5 Health.current > 0
+
+# --- 1. the camera mode is a tool away, and its errors say what to give
+act camera_mode
+expect result contains "camera mode: third person (the camera content; the content says third person); 0 first-person cameras now"
+act camera_mode mode=first
+expect result contains "camera mode: first person (this session's choice; the content says third person)"
+act camera_mode
+expect result contains "first person (this session's choice"
+act? camera_mode mode=orbit
+expect result contains "no mode `orbit`: say `first`, `third` or `content`"
+act camera_mode mode=content
+expect result contains "third person (the camera content; the content says third person)"
+
+# --- 2. the view model is content, checked with the rest
+act content_check
+expect result contains "ok:"
+act content_get kind=view_model id=arms
+expect result contains "\"model\": \"models/view_model.glb\""
+expect result contains "\"animset\": \"arms\""
+
+act content_get kind=camera id=default
+expect result contains "\"view_model\": \"arms\""
+act? content_get kind=view_model id=legs
+expect result contains "legs"
+
+# --- 3. the arms follow the body: which clip the animset shows for what the player does
+act animation id=e5 animset=arms
+expect result contains "body: idle looping"
+act? animation id=e5 animset=arms_not_a_set
+expect result contains "arms_not_a_set"
+
+# --- 4. the ears: at the feet of a body that faces its movement, at the eye of one that faces its look
+act audio
+expect result contains "listener e5 at (0.0, 0.0, 13.0)"
+act set id=e5 component=CharacterController path=params value='"viewer"'
+step 2
+act audio
+expect result contains "listener e5 at (0.0, 1.6, 13.0)"
+act set id=e5 component=CharacterController path=params value='"player"'
+step 2
+act audio
+expect result contains "listener e5 at (0.0, 0.0, 13.0)"
+
+# --- back as it was found
+act look clear=true
+act camera_mode mode=content
+act stop
+act teleport id=e6 x=0 z=-6 y=0
+step 2

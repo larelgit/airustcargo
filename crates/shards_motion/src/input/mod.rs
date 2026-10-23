@@ -51,7 +51,7 @@ use shards_settings::{AccessibilitySettings, ControlSettings, SettingsAppExt, Se
 pub use controls::ControlSync;
 pub use map::{ActionBinding, BindMode, Binding, InputContext, InputMap, RebindError, Stick};
 
-use crate::camera::ThirdPersonCamera;
+use crate::camera::{FirstPersonCamera, ThirdPersonCamera};
 use crate::controller::{CharacterController, CharacterParams};
 
 /// The input systems other modules order against.
@@ -467,6 +467,9 @@ fn let_go(intent: &mut Mut<Intent>, applied: &Applied) {
 /// (they say whether it walks relative to its look).
 type LocalBody = (Entity, &'static mut Intent, Option<&'static CharacterController>, Option<&'static CharacterParams>);
 
+/// The first-person cameras there are (the walk is then turned by the look).
+type FirstPersonCameras<'w, 's> = Query<'w, 's, (), With<FirstPersonCamera>>;
+
 /// `PreUpdate`: reads the devices through the top context of the map and writes what
 /// changed into the local player's `Intent`.
 #[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
@@ -482,7 +485,7 @@ fn read_input(
     contexts: Res<InputContexts>,
     accessibility: Option<Res<AccessibilitySettings>>,
     controls: Option<Res<ControlSettings>>,
-    (replay, db): (Option<Res<AiReplay>>, Option<Res<ContentDb>>),
+    (replay, db, first_person): (Option<Res<AiReplay>>, Option<Res<ContentDb>>, FirstPersonCameras),
     mut state: ResMut<ControlState>,
     mut applied: ResMut<Applied>,
     mut players: Query<LocalBody, With<LocalPlayer>>,
@@ -648,6 +651,12 @@ fn read_input(
     // body walks relative to its view and has no third-person camera to ask), else the camera's.
     let yaw = controller
         .and_then(|c| c.resolve(own, db.as_deref()).bound_look(&intent))
+        .or_else(|| {
+            // A first-person camera (F1b) looks through a body whatever it faces: forward is the way the
+            // view points. The look is the last frame's here (the camera turns it after this system), the
+            // same one frame behind the third-person camera's yaw is.
+            (!first_person.is_empty()).then(|| intent.look.filter(|l| l.is_finite())).flatten()
+        })
         .map_or_else(|| cameras.iter().next().map_or(0.0, |c| c.yaw), |gaze| gaze.yaw);
     let world_move = Quat::from_rotation_y(yaw) * Vec3::new(move_axis.x, 0.0, -move_axis.y);
     let moved = world_move != applied.move_dir;
