@@ -1,0 +1,4 @@
+// A press for `crush.rs`: it comes down 2.6 m and crushes what it pins (F6).
+{
+    "press": (keys: [(), (at: (0.0, -2.6, 0.0))], speed: 1.0, blocked: Crush(damage: 10.0)),
+}

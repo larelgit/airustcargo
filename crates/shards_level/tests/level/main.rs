@@ -14,6 +14,7 @@ mod from_blender;
 use bevy::math::ops;
 mod gltf;
 mod markers;
+mod movers;
 mod props;
 mod replay;
 #[cfg(feature = "render")]

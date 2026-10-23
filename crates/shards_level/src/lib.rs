@@ -58,6 +58,7 @@
 //! | `volume` | `water`, `updraft`, `trigger` | a sensor [`Volume`](shards_motion::Volume), shaped by `collider` (default `auto`) |
 //! | `accel`, `max_speed` | numbers | an updraft's pull (m/s²) and top speed (m/s) |
 //! | `prefab` | text | spawn the content prefab with that id at the node; component properties patch it |
+//! | `mover` | text | the node becomes a [`Mover`](shards_motion::Mover) going through the keys of that `mover` definition (F6); the nodes below it move with it as its [`MoverPart`](shards_motion::MoverPart)s, and its picture follows it; movers do not nest |
 //!
 //! Every other key is a **component**: its short name (`Health`) or full type path
 //! (`my_game::combat::Health`), and its value as JSON in the shape `inspect` and the `get`
@@ -113,7 +114,7 @@
 //! - [`check_level`]: everything wrong with a file, as `node `Props/Crate.003`: unknown
 //!   component `Helth` (did you mean `Health`?)`. `content check` runs it for every level.
 //! - Tools: `level_info` (levels, markers, checks), `spawn_level` (`id`, `x`, `y`, `z`),
-//!   `level_reload`.
+//!   `level_reload`, `level_despawn` (`id` or `instance`: a placed level taken away).
 //!
 //! ## Many levels (tiles, regions)
 //!
@@ -172,11 +173,13 @@ pub use marker::{LevelMarker, MarkerKind, RequiredMarker};
 pub use placed::{PlacedLevel, PlacedLevels};
 pub use props::{check_level, LevelProblem, PROPERTIES};
 pub use render::LevelVisual;
+#[cfg(feature = "render")]
+pub use render::MoverPicture;
 pub use spawn::{
     despawn_level, reload_level, spawn_level, spawn_level_as, FromLevel, LevelCounter, LevelInstance, LevelInstances,
     SpawnedLevel,
 };
-pub use tools::{spawn_level_by_id, spawn_level_file, LevelInfoArgs, LevelReloadArgs, SpawnLevelArgs};
+pub use tools::{spawn_level_by_id, spawn_level_file, LevelDespawnArgs, LevelInfoArgs, LevelReloadArgs, SpawnLevelArgs};
 
 /// Version of the engine crates (they share one).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -236,6 +239,8 @@ impl Plugin for LevelPlugin {
                 Update,
                 (library::request_levels, library::collect_changed, library::apply_changed).chain(),
             );
+        #[cfg(feature = "render")]
+        render::plugin(app);
         tools::register(app.world_mut());
     }
 }

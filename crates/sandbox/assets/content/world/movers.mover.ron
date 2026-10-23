@@ -1,0 +1,10 @@
+// The movers of the test room `movers` (F6; `movers.level.ron`): a lift up to a deck 4 m higher, a
+// gate that slides shut and turns back from a body in its way, a crusher that comes down and hurts
+// what it pins, and a turntable that turns by itself, once every 8 s. Keys are relative to where a
+// mover is placed, in its frame.
+{
+    "lift": (keys: [(), (at: (0.0, 4.0, 0.0))], speed: 1.2),
+    "gate": (keys: [(), (at: (-3.0, 0.0, 0.0))], speed: 1.5, blocked: Reverse),
+    "crusher": (keys: [(), (at: (0.0, -2.6, 0.0))], speed: 1.0, blocked: Crush(damage: 10.0)),
+    "turntable": (keys: [(), (turn: (0.0, 360.0, 0.0), time: 8.0)], loop: Cycle),
+}

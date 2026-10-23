@@ -23,13 +23,13 @@ use serde_json::{json, Map, Value};
 use shards_content::db::closest;
 use shards_content::prefab::{check_prefab, component_from_json, resolve_component};
 use shards_content::ContentDb;
-use shards_motion::{CollisionLayers, LayerMask, VolumeKind};
+use shards_motion::{CollisionLayers, LayerMask, MoverDef, VolumeKind};
 
 use crate::asset::{json_kind, LevelAsset, LevelNode};
 use crate::marker::{MarkerKind, RequiredMarker};
 
 /// The level properties, in documentation order.
-pub const PROPERTIES: [&str; 15] = [
+pub const PROPERTIES: [&str; 16] = [
     "marker",
     "name",
     "socket",
@@ -45,6 +45,7 @@ pub const PROPERTIES: [&str; 15] = [
     "accel",
     "max_speed",
     "prefab",
+    "mover",
 ];
 
 /// Components the file cannot set: the engine owns them.
@@ -126,12 +127,15 @@ pub(crate) struct NodePlan {
     pub collider: Option<ColliderSpec>,
     pub volume: Option<VolumeKind>,
     pub prefab: Option<PrefabUse>,
+    /// `mover=<id>`: the node is a mover (`shards_motion::Mover`) moving by this `mover` definition,
+    /// and the nodes below it move with it.
+    pub mover: Option<String>,
     pub components: Vec<(TypeId, Box<dyn Reflect>)>,
 }
 
 impl NodePlan {
     fn new(node: usize) -> Self {
-        Self { node, marker: None, collider: None, volume: None, prefab: None, components: Vec::new() }
+        Self { node, marker: None, collider: None, volume: None, prefab: None, mover: None, components: Vec::new() }
     }
 
     /// Nodes that carry nothing for gameplay (groups, plain meshes) spawn no entity.
@@ -140,6 +144,7 @@ impl NodePlan {
             || self.collider.is_some()
             || self.volume.is_some()
             || self.prefab.is_some()
+            || self.mover.is_some()
             || !self.components.is_empty()
     }
 }
@@ -308,7 +313,7 @@ pub(crate) fn plan_node(node: &LevelNode, position: usize, registry: &TypeRegist
         ));
     }
     // Properties that are always read; the others must be used by something on the node.
-    let mut used: Vec<&'static str> = vec!["marker", "socket", "volume", "collider", "prefab"];
+    let mut used: Vec<&'static str> = vec!["marker", "socket", "volume", "collider", "prefab", "mover"];
 
     // Components and unknown keys.
     let mut entries: Vec<(&String, &Value)> = Vec::new();
@@ -433,6 +438,14 @@ pub(crate) fn plan_node(node: &LevelNode, position: usize, registry: &TypeRegist
                 }
             }
         }
+        Err(e) => problems.push(e),
+    }
+
+    // Mover: the node and the nodes below it move together.
+    match text(props, "mover") {
+        Ok(Some("")) => problems.push("`mover` is empty; name a mover definition (`content_list kind=mover`)".into()),
+        Ok(Some(id)) => plan.mover = Some(id.to_owned()),
+        Ok(None) => {}
         Err(e) => problems.push(e),
     }
 
@@ -607,9 +620,53 @@ pub(crate) fn analyze(level: &LevelAsset, registry: &TypeRegistry, db: Option<&C
             let hint = closest(target, names.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
             problems.push(LevelProblem::at(node, format!("navlink `to` names no node: `{target}`{hint}")));
         }
+        if let (Some(db), Some(id)) = (db, &plan.mover)
+            && let Some(why) = unknown_mover(db, id)
+        {
+            problems.push(LevelProblem::at(node, why));
+        }
         plans.push(plan);
     }
+    for plan in plans.iter().filter(|p| p.mover.is_some()) {
+        if let Some(outer) = mover_above(level, &plans, plan.node) {
+            let node = &level.nodes[plan.node];
+            problems.push(LevelProblem::at(
+                node,
+                format!(
+                    "a mover inside the mover `{}`: movers do not nest (the nodes below a mover move with it); take `mover` off one of them",
+                    level.nodes[outer].path
+                ),
+            ));
+        }
+    }
     (plans, problems)
+}
+
+/// Why `id` names no `mover` definition of the content, or `None` when it does.
+fn unknown_mover(db: &ContentDb, id: &str) -> Option<String> {
+    if db.get::<MoverDef>(id).is_some() {
+        return None;
+    }
+    // A hint does not make the level depend on every mover: `peek_ids` is no read.
+    let ids: Vec<&str> = db.peek_ids::<MoverDef>().collect();
+    let hint = closest(id, ids.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
+    let known = if ids.is_empty() { "there are none: add a content/**/*.mover.ron file".to_owned() } else { format!("movers: {}", ids.join(", ")) };
+    Some(format!("`mover`: no mover definition `{id}`{hint}; {known}"))
+}
+
+/// The nearest node above the node at `position` (a position in [`LevelAsset::nodes`]) that is a
+/// mover, as a position, if any.
+pub(crate) fn mover_above(level: &LevelAsset, plans: &[NodePlan], position: usize) -> Option<usize> {
+    let mut parent = level.nodes[position].parent;
+    // A file's hierarchy is a tree; the bound only guards against a malformed one.
+    for _ in 0..level.nodes.len() {
+        let at = level.nodes.iter().position(|n| Some(n.index) == parent)?;
+        if plans.get(at).is_some_and(|p| p.mover.is_some()) {
+            return Some(at);
+        }
+        parent = level.nodes[at].parent;
+    }
+    None
 }
 
 /// Everything wrong with a level file: properties that do not parse, components that

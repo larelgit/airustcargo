@@ -45,3 +45,9 @@ Read this when you touch regions, tiles, levels, the generator, the navmesh or t
   what is built from the saved data (the region from its manifest, the navmesh) goes in `add_snapshot_prepare` / `add_snapshot_rebuild`; what
   the world is built around goes in `add_snapshot_check`. Cover it with a test modelled on `crates/sandbox/tests/sandbox/snapshots.rs`
   and `crates/shards_world/tests/world/regions.rs` (a snapshot taken in a region, loaded into a game that does not have it).
+- **Movers in levels (F6).** A node with `mover=<id>` becomes a `Mover` (content kind `mover`) and the nodes below it its `MoverPart`s; the
+  step lives in `shards_motion::movers`, the property and the parts in `shards_level` (`props.rs`, `spawn.rs`), the picture in
+  `shards_level::render`. A mover's colliders are static at rest and kinematic while it moves, so the navmesh carves a closed door at its
+  next refresh and leaves a moving one out; NPCs do not ride lifts (no navlink yet). A scenario that lays a level takes it away again
+  (`level_despawn id=…`): the scenarios share one game. The sandbox's test room is `levels/movers.gltf`, written by
+  `crates/sandbox/tests/sandbox/movers.rs` (regenerate with `SHARDS_UPDATE_FIXTURES=1`).

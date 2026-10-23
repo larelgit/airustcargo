@@ -55,6 +55,7 @@ mod intent;
 mod interp;
 mod invariants;
 mod modifiers;
+pub mod movers;
 mod orders;
 #[cfg(feature = "render")]
 mod overlay;
@@ -80,6 +81,10 @@ pub use input::{BindMode, Binding, ControlState, ControlSystems, InputContext, I
 pub use intent::{intent_to_locomotion, GlideUntilLanded, MotionSystems};
 pub use interp::{adopt_visuals, shown_translation, InterpSystems, Interpolated, NotInterpolated, Pose, visual_offset};
 pub use modifiers::{ModifierSystems, MoveModifiers, StanceSpeed};
+pub use movers::{
+    mover_go, mover_state, Blocked, Mover, MoverArrived, MoverBlocked, MoverDef, MoverInfo, MoverKey, MoverLoop, MoverPart, MoverStarted, MoverState,
+    MoverSystems, MOVER_SANE,
+};
 pub use orders::{end_stalled_orders, OrderEnd, OrderEnded, OrderProgress, STALL_PROGRESS, STALL_SECONDS};
 pub use physics::{
     current_at, edge_distance, Body, Collider, ColliderId, ColliderIds, ColliderInfo, CollisionLayers, Current, LayerMask, Penetration, PhysicsPlugin,
@@ -125,6 +130,7 @@ impl Plugin for MotionPlugin {
         // On since the fuzz runs on the voxel arena (A2c; see its doc comment).
         app.add_engine_invariant(BODY_IN_SOLID, body_in_solid);
         ai::plugin(app);
+        movers::plugin(app);
         coverage::plugin(app);
         intent::plugin(app);
         orders::plugin(app);

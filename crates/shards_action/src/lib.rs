@@ -149,7 +149,7 @@ use ai_core::{AiAppExt, SimSet};
 use bevy::prelude::*;
 use shards_content::ContentAppExt;
 use shards_core::{CoreSystems, EngineAppExt, NetSet, Predicted};
-use shards_motion::{ControllerSystems, ModifierSystems, MotionPlugin, MotionSystems};
+use shards_motion::{ControllerSystems, ModifierSystems, MotionPlugin, MotionSystems, MoverSystems};
 use shards_rules::RulesPlugin;
 
 pub use anim::{
@@ -483,6 +483,9 @@ impl Plugin for ActionPlugin {
                         .in_set(NetSet::Predict)
                         .after(MotionSystems::PredictIntent)
                         .before(ControllerSystems::PredictMove),
+                    // A client carries its body on movers after its actions start, as the host steps movers
+                    // (`SimSet::Move`) after its machines (`SimSet::Act`).
+                    MoverSystems::Predict.after(ActionSystems::Predict),
                 ),
             )
             .add_systems(
@@ -514,6 +517,7 @@ impl Plugin for ActionPlugin {
             )
             .add_observer(fighter::hurtbox_on_collider)
             .add_observer(fighter::protect_after_reaction)
+            .add_observer(combat::crush)
             // Cosmetic: a game may add it in a window only, and replays must not care.
             .register_type::<AimTarget>()
             .replay_ignore::<Animated>()
