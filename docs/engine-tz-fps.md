@@ -2,19 +2,19 @@
 
 23 Oct 2026 · written for coding agents · status: **building** (the owner's go, 23 Oct 2026; decisions under "Decisions and open questions")
 
-This spec turns the game's GDD into engine work. The GDD is in Russian, so its section headings are cited as written: 1 Осмотр (overview),
-2 Основной геймплей (core gameplay), 3 Системы (systems), 4 Контент (content). Each slice F1–F14 below says what is missing in the engine today, what to build, where the
+This spec turns the game's GDD into engine work. The GDD is in Russian; its section headings are cited here in English:
+1 Overview, 2 Core gameplay, 3 Systems, 4 Content. Each slice F1–F14 below says what is missing in the engine today, what to build, where the
 boundary with the game is, what the AI sees, and when the slice is done. It follows the shape of [engine-tz.md](engine-tz.md), so an agent
 that knows that file knows how to read this one. Progress goes into [engine-progress.md](engine-progress.md) as slices merge.
 
 ## Source and scope
 
-- **Source.** The GDD on GitBook: site "Larel Docs", space "Imported content", page "GDD" ("ГДД: мясной шутер от первого лица"), merged
-  on 23 Oct 2026. It is marked **"Черновик"** (draft). It ends at the heading "#3 Уровень 1 (Туториал + Первое задание)": Level 1 itself, Acts 2
-  and 3, the weapons list, the enemies list and the bosses are not written yet. GDD references below use its headings ("GDD 3, Движение").
+- **Source.** The GDD on GitBook: site "Larel Docs", space "Imported content", page "GDD" (its title translates as "GDD: a first-person meat shooter"), merged
+  on 23 Oct 2026. It is marked **a draft**. It ends at the heading "#3 Level 1 (tutorial and first mission)": Level 1 itself, Acts 2
+  and 3, the weapons list, the enemies list and the bosses are not written yet. GDD references below use its headings ("GDD 3, Movement").
 - **A different game.** [engine-tz.md](engine-tz.md) and the hand-off notes (`E:\handoff\engine.md` §4, requests R1–R4) were written for a
   third-person action game. This GDD is a **solo first-person shooter** in the pace of *Half-Life 1* and *Doom*, set indoors in a research
-  complex, built on Shards ("Платформа: ПК, Shards Engine"). Nothing in those earlier plans carries over by default. What was built for them
+  complex, built on Shards ("Platform: PC, Shards Engine"). Nothing in those earlier plans carries over by default. What was built for them
   and helps here is listed under "What the engine already gives".
 - **The owner's go (23 Oct 2026):** build the engine part now, as many slices at once as the machine allows. The earlier rule "the engine
   changes only when the game hits a need" does not hold this round. F8 waits for a real blockout; F14 and guards that move between cover stay
@@ -24,17 +24,17 @@ that knows that file knows how to read this one. Progress goes into [engine-prog
 
 | GDD section | What it asks |
 |---|---|
-| 1, Основное; 2, Игровые режимы | FPS, PC, single player, one difficulty |
-| 1, Столпы дизайна | fast, ruthless combat in the style of *Half-Life 1*; brutality and gore ("мясной шутер"); story told through contrast and silence |
-| 2, Управление | WASD; mouse look and aim; LMB fire; RMB alternative fire; Space jump; Ctrl crouch; E interact; R reload; 1–4 or the wheel to switch weapons; F melee; Esc pause |
-| 3, Движение | fast, sharp, responsive; strafing and jumps "in the style of *Half-Life*"; jump and crouch; no slide; running is the default speed, with slower walking only in the complex scenes of Act 1 |
-| 3, Боевая система | melee and firearms; weapons look like work tools or monster parts; the player takes parts of some killed monsters and uses them as weapons; monsters and humans; separate bosses |
-| 3, Прогрессия; Экономика | new weapons appear through the levels; ammo, health, shield (armour), weapons |
-| 3, ИИ | monsters attack; guards grow from light fighters to shields, rifles, armour and turrets (Acts 2–3); staff do not fight: they panic, run and hide |
-| 3, Сложность | the player kills fast and dies fast; enemies die from a few accurate shots, the number depends on the weapon; bosses take longer |
-| 4, Локации | indoor sectors: rusty industrial (dim sodium lamps, deep shadows, humming pipes), sterile science sector (bright humming fluorescent tubes, glass partitions); a two-level workshop; airlocks; a cargo platform down to Level 2; key-card doors; a hub the player returns to between missions |
-| 4, Нарратив | late-90s look: concrete, fluorescent lamps, CRT monitors, freight lifts, heavy blast doors; staff speak a foreign language shown as unreadable symbols and sounds with a few words understood; HL1-style scenes where **the camera stays with the player but movement and actions can be taken away**; a silent hero whose state shows in sound and body animation |
-| 4, Сюжет (scenes #1, #2) | a tablet with a notification and a messenger; free roaming between scenes; an operator who talks through armoured glass while muffled lo-fi music from her cassette player comes through it; ambient hum of ventilation, dripping water; the player takes a cutter from a stand and enters an airlock that unlocks with a heavy click |
+| 1, Basics; 2, Game modes | FPS, PC, single player, one difficulty |
+| 1, Design pillars | fast, ruthless combat in the style of *Half-Life 1*; brutality and gore ("meat shooter"); story told through contrast and silence |
+| 2, Controls | WASD; mouse look and aim; LMB fire; RMB alternative fire; Space jump; Ctrl crouch; E interact; R reload; 1–4 or the wheel to switch weapons; F melee; Esc pause |
+| 3, Movement | fast, sharp, responsive; strafing and jumps "in the style of *Half-Life*"; jump and crouch; no slide; running is the default speed, with slower walking only in the complex scenes of Act 1 |
+| 3, Combat | melee and firearms; weapons look like work tools or monster parts; the player takes parts of some killed monsters and uses them as weapons; monsters and humans; separate bosses |
+| 3, Progression; Economy | new weapons appear through the levels; ammo, health, shield (armour), weapons |
+| 3, AI | monsters attack; guards grow from light fighters to shields, rifles, armour and turrets (Acts 2–3); staff do not fight: they panic, run and hide |
+| 3, Difficulty | the player kills fast and dies fast; enemies die from a few accurate shots, the number depends on the weapon; bosses take longer |
+| 4, Locations | indoor sectors: rusty industrial (dim sodium lamps, deep shadows, humming pipes), sterile science sector (bright humming fluorescent tubes, glass partitions); a two-level workshop; airlocks; a cargo platform down to Level 2; key-card doors; a hub the player returns to between missions |
+| 4, Narrative | late-90s look: concrete, fluorescent lamps, CRT monitors, freight lifts, heavy blast doors; staff speak a foreign language shown as unreadable symbols and sounds with a few words understood; HL1-style scenes where **the camera stays with the player but movement and actions can be taken away**; a silent hero whose state shows in sound and body animation |
+| 4, Story (scenes #1, #2) | a tablet with a notification and a messenger; free roaming between scenes; an operator who talks through armoured glass while muffled lo-fi music from her cassette player comes through it; ambient hum of ventilation, dripping water; the player takes a cutter from a stand and enters an airlock that unlocks with a heavy click |
 
 ## How to work on a slice
 
@@ -44,8 +44,9 @@ that knows that file knows how to read this one. Progress goes into [engine-prog
 - **One slice is one PR**, branch `claude/<id>-<name>` (for example `claude/f1-first-person`). Each slice brings unit tests, neutral sandbox
   content, a scenario, a reference replay when gameplay changes, and updates to `docs/manual.md`, `docs/engine-progress.md` and `CHANGELOG.md`
   (`Unreleased`).
-- **The boundary.** The engine gets mechanisms, the game gets the "what". No names from this GDD in engine code, content or docs: no
-  "liquidator", "operator", "cutter", "biomass", "complex". A weapon, an enemy, a number, a line of dialogue is game content.
+- **The boundary.** The engine gets mechanisms, the game gets the "what". No names from this GDD in engine code, sandbox content, tests,
+  the manual or other engine docs: no "liquidator", "operator", "cutter", "biomass", "complex". This spec is the one exception: it quotes the
+  GDD to say where each need comes from. A weapon, an enemy, a number, a line of dialogue is game content.
 - **Determinism.** Gameplay in `FixedUpdate` in a `SimSet`; randomness from `SimRng`; maths through `bevy::math::ops`; order by `AiId` or
   `ColliderId`. A new input field goes into `Intent` (already `replay_input`), with a serde default and `skip_serializing_if`, so old replays and
   content hashes stay valid. The camera and every picture-only part never feed the simulation.
@@ -64,7 +65,7 @@ that knows that file knows how to read this one. Progress goes into [engine-prog
 | Projectiles: bolts, grenades, slow plasma, impacts that lay zones | B4 spawned combat objects (`Projectile`, `impact`, `Spawn` patterns); the aim is new, see F4 |
 | Headshots and parts that break off a monster | R1 body parts (`parts` content, part health, multipliers, `PartBroken`) on the `HURTBOX` layer |
 | Picking up a monster part as a weapon | `PartBroken` / `Died` events plus a game pickup; granting the weapon is F4 |
-| Armour that absorbs damage ("Щит") | `Armor` (`crates/shards_action/src/fighter.rs:194`) and the game's damage hooks; a pool that absorbs a share of each hit is a game hook plus a component (`Barrier` is timed and absorbs 100 %, so it is not that) |
+| Armour that absorbs damage ("shield") | `Armor` (`crates/shards_action/src/fighter.rs:194`) and the game's damage hooks; a pool that absorbs a share of each hit is a game hook plus a component (`Barrier` is timed and absorbs 100 %, so it is not that) |
 | Enemy reactions, stagger, death clips | B1 reactions, poise, death actions |
 | Guards with frontal shields | B1 guard arcs and protection |
 | Bosses | N8 attack scheduler, R1 parts, B4 objects |
@@ -96,19 +97,19 @@ Overview, grouped by area; the Phase column gives the order to build in. "Size" 
 | F0 | A first-person test room in the sandbox | every slice needs one place to test | S | folded: each slice brings its own small test room |
 | F1a | Look as input: `Intent.look`, the body follows it, eye and look direction, the `look` tool, the `AIM` line (F1 items 1–3 and "For the AI") | the whole game | M | 1, first |
 | F1b | The first-person camera, the hidden own body, the view model, the view from a bone (F1 items 4–8) | the whole game | L | 1, after F1a |
-| F2 | Crouch | 2, Управление; 3, Движение | M | 1 |
-| F3 | Shooting: hitscan and 3D aim | 2, Управление; 3, Боевая система | M | 1 |
-| F4 | Weapons: slots, switching, ammo, reload | 2, Управление; 3, Экономика | M | 1 |
-| F5 | Use by looking at a thing | 2, Управление (E); scenes #1, #2 | S | 1 |
-| F6 | Movers: doors, lifts, platforms | 4, Локации and Нарратив | M | 1 |
-| F7 | Air movement in the style of *Half-Life* | 3, Движение | S | 2 |
+| F2 | Crouch | 2, Controls; 3, Movement | M | 1 |
+| F3 | Shooting: hitscan and 3D aim | 2, Controls; 3, Combat | M | 1 |
+| F4 | Weapons: slots, switching, ammo, reload | 2, Controls; 3, Economy | M | 1 |
+| F5 | Use by looking at a thing | 2, Controls (E); scenes #1, #2 | S | 1 |
+| F6 | Movers: doors, lifts, platforms | 4, Locations and Narrative | M | 1 |
+| F7 | Air movement in the style of *Half-Life* | 3, Movement | S | 2 |
 | F8 | Mesh colliders from Blender | indoor levels | L | waits for a real blockout (the owner) |
-| F9 | Gore: decals on any surface and lasting debris | 1, Столпы дизайна | M | 2 |
+| F9 | Gore: decals on any surface and lasting debris | 1, Design pillars | M | 2 |
 | F10 | Ambient emitters and occlusion in audio | scenes #1, #2 | M | 2 |
-| F11 | NPCs: gunfire, hiding, ranged fighters, turrets | 3, ИИ | L | 3 (humans arrive at the end of Act 1) |
-| F12 | Scenes that keep the player's camera; NPC sequences | 4, Нарратив; scenes #1, #2 | M | 1 (the opening needs it) |
-| F13 | Lights from content: types, flicker, colour grading | 4, Локации | M | 2 |
-| F14 | Screens in the world (render to texture) | 4, Нарратив (CRT monitors) | M | out until the owner asks |
+| F11 | NPCs: gunfire, hiding, ranged fighters, turrets | 3, AI | L | 3 (humans arrive at the end of Act 1) |
+| F12 | Scenes that keep the player's camera; NPC sequences | 4, Narrative; scenes #1, #2 | M | 1 (the opening needs it) |
+| F13 | Lights from content: types, flicker, colour grading | 4, Locations | M | 2 |
+| F14 | Screens in the world (render to texture) | 4, Narrative (CRT monitors) | M | out until the owner asks |
 
 Phase 1 is a playable opening and Level 1 blockout; phase 2 is feel and real levels; phase 3 is the human enemies and polish.
 
@@ -204,9 +205,11 @@ What to do:
 
 1. **A hitscan effect.** `Effect::Fire(FireDef)` on an action, at its moment: `pellets`, `spread_deg` (a cone, each pellet drawn from `SimRng`
    keyed by tick, `AiId` and pellet index), `range`, `falloff` (damage by distance, as points), `pierce` (how many bodies a ray passes), and the
-   hit's `HitDef`-like payload (damage, poise, reaction, flags). Each ray starts at the shooter's eye (F1) along `look_dir`, tests `HURTBOX` and
-   `WORLD` through `PhysicsWorld` in the simulation, stops at the first `WORLD` collider, and resolves hits through the existing pipeline
-   (credit, R1 parts and their multipliers, armour, hooks, reactions) in `AiId` order.
+   hit's `HitDef`-like payload (damage, poise, reaction, flags). One function gives a shot's ray, `shot_ray(world, shooter) -> (origin, dir)`:
+   the shooter's eye (F1) along `look_dir`, or for an NPC along its aim at its target. Every pellet starts there (spread turns `dir`), tests
+   `HURTBOX` and `WORLD` through `PhysicsWorld` in the simulation, stops at the first `WORLD` collider, and resolves hits through the existing
+   pipeline (credit, R1 parts and their multipliers, armour, hooks, reactions) in `AiId` order. F11's line-of-fire check uses the same
+   `shot_ray`, so the check and the shot never disagree.
 2. **Events for the picture and sound.** `ShotFired { shooter, from, dir, pellets }` and `ShotImpact { point, normal, collider or body, part }`,
    so F9 lays decals, `shards_fx` plays sparks and blood, and `shards_audio` plays the impact, all picture or local.
 3. **Noise.** Each shot fires a `Noise` with a content radius (`FireDef.noise`), so NPCs hear gunfire (F11).
@@ -257,7 +260,8 @@ Done when: the scenario fires a pistol dry, sees the refusal, reloads, switches 
 What to do:
 
 1. A use ray from the eye along `look_dir` (F1), `use_range` from content (default 2 m), against a new physics layer `USE` (or the marker's own
-   sensor collider). The nearest hit wins, ties by `ColliderId`.
+   sensor collider) **and** the blocking `WORLD` geometry. A target counts only when it is nearer than every `WORLD` hit on the ray (glass
+   and walls block a use). Among targets, the nearest wins, ties by `ColliderId`.
 2. A level `interactable` gets a collider on that layer (its shape from the node, as volumes do).
 3. On an `interact` press, the event `Used { who, what, name }` (in the simulation, journalled); `hold_s` on a marker turns it into a hold-to-use
    with `UseProgress` (for a valve or a lever).
@@ -390,7 +394,8 @@ What to do:
    ray from the threat's eye), farthest from it, ties by node order; a hook `hide` that runs there and stays; `cower` when no spot is found (the
    game plays the animation).
 3. **Ranged fighters.** An attack-plan option that keeps a distance band (`keep_range: (min, max)`) instead of closing in; a line-of-fire check
-   before a press (no ally and no wall between the muzzle and the target's aim point), refused with a reason in `npc_schedule`; accuracy from
+   before a press along the shot's own ray (F3's `shot_ray`: no ally and no wall between it and the target's aim point), refused with a
+   reason in `npc_schedule`; accuracy from
    content (`aim_error_deg`, worse while moving or far); bursts as actions.
 4. **Turrets.** A body with no locomotion that turns its look at a content rate (yaw and pitch limits) and fires through F3; activated and
    deactivated by the game.
