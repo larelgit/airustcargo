@@ -25,6 +25,7 @@ pub mod modes;
 pub mod overlay;
 pub mod props;
 mod turn;
+pub mod view_model;
 
 use bevy::prelude::*;
 use shards_core::LocalPlayer;
@@ -35,6 +36,7 @@ pub use hud::ThreatHud;
 pub use model::GltfModel;
 pub use modes::AnimSystems;
 pub use props::{PropOf, Sockets};
+pub use view_model::{ViewModelCamera, ViewModelRig};
 pub use overlay::{CombatOverlay, CombatOverlayGizmos, TelegraphGizmos, TelegraphSettings};
 
 pub(crate) fn plugin(app: &mut App) {
@@ -44,6 +46,7 @@ pub(crate) fn plugin(app: &mut App) {
     app.add_systems(Update, apply_flashes);
     if app.is_plugin_added::<bevy::animation::AnimationPlugin>() {
         bridge::plugin(app);
+        view_model::plugin(app);
     }
 }
 
@@ -67,7 +70,7 @@ fn apply_flashes(
 /// The camera the player looks through: the first active 3D camera, the AI's own
 /// (`AiCamera`) before any other.
 pub(crate) fn active_camera(world: &mut World) -> Option<Entity> {
-    let mut q = world.query_filtered::<(Entity, &Camera, Has<ai_core::AiCamera>), With<Camera3d>>();
+    let mut q = world.query_filtered::<(Entity, &Camera, Has<ai_core::AiCamera>), (With<Camera3d>, Without<ViewModelCamera>)>();
     let mut cameras: Vec<(Entity, bool)> = q.iter(world).filter(|(_, c, _)| c.is_active).map(|(e, _, ai)| (e, ai)).collect();
     cameras.sort_by_key(|(e, ai)| (!*ai, *e));
     cameras.first().map(|(e, _)| *e)

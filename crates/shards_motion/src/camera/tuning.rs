@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_content::{ContentDef, Refs};
 
+use super::first_person::{CameraMode, FirstPersonTuning};
 use super::picture::PictureTuning;
 
 /// Names a `skip_serializing_if` predicate for a field whose default is `$value`: a field that
@@ -50,6 +51,10 @@ is_default!(max_turn_is_default, f32, 150.0);
 
 fn is_false(v: &bool) -> bool {
     !*v
+}
+
+fn mode_is_default(v: &CameraMode) -> bool {
+    *v == CameraMode::ThirdPerson
 }
 
 /// How a camera locked on to a target turns to frame it. Today's behaviour is kept: the camera
@@ -301,6 +306,14 @@ pub struct CameraTuning {
     /// The picture the camera draws: its tone mapping and its bloom ([`PictureTuning`]); left out, the camera's own.
     #[serde(skip_serializing_if = "PictureTuning::is_default")]
     pub picture: PictureTuning,
+    /// Which camera the game plays through. `ThirdPerson` (the default) is the orbit camera as it always
+    /// was; `FirstPerson` puts a `FirstPersonCamera` on every `ThirdPersonCamera` entity (F1b).
+    #[serde(skip_serializing_if = "mode_is_default")]
+    pub mode: CameraMode,
+    /// The first-person camera's numbers (F1b): the ease on steps, the landing dip, the bob and the lean,
+    /// and the view model drawn when the weapon names none.
+    #[serde(skip_serializing_if = "FirstPersonTuning::is_default")]
+    pub first_person: FirstPersonTuning,
 }
 
 impl Default for CameraTuning {
@@ -317,6 +330,8 @@ impl Default for CameraTuning {
             trauma: TraumaTuning::default(),
             auto_centre: AutoCentreTuning::default(),
             picture: PictureTuning::default(),
+            mode: CameraMode::default(),
+            first_person: FirstPersonTuning::default(),
         }
     }
 }
@@ -465,6 +480,7 @@ impl CameraTuning {
             out.push(format!("auto_centre.pitch {pitch} is outside the pitch limits ({lo}, {hi})"));
         }
         out.extend(self.picture.problems());
+        out.extend(self.first_person.problems());
         out
     }
 }
@@ -540,6 +556,27 @@ mod tests {
         assert_eq!(set.arm.radius, 0.25, "what is not set stays");
         assert_eq!(ron::from_str::<CameraTuning>(&ron::to_string(&set).unwrap()).unwrap(), set);
         assert!(ron::from_str::<CameraTuning>("(pich: (0.0, 1.0))").is_err(), "a typo is an error");
+    }
+
+    #[test]
+    fn the_mode_and_the_first_person_numbers_are_content_and_are_checked() {
+        use super::super::first_person::{BobTuning, CameraMode};
+        let set: CameraTuning =
+            ron::from_str(r#"(mode: FirstPerson, first_person: (landing: None, bob: Some((stride_m: 2.0)), view_model: Some("arms")))"#).unwrap();
+        assert_eq!(set.mode, CameraMode::FirstPerson);
+        assert_eq!(set.first_person.landing, None);
+        assert_eq!(set.first_person.bob, Some(BobTuning { stride_m: 2.0, ..default() }));
+        assert_eq!(set.first_person.view_model.as_deref(), Some("arms"));
+        assert!(errors(&set).is_empty(), "{:?}", errors(&set));
+        assert_eq!(ron::from_str::<CameraTuning>(&ron::to_string(&set).unwrap()).unwrap(), set, "a round trip");
+        // Each is a change of the definition, and neither is there until it is set.
+        assert_eq!(ron::to_string(&CameraTuning::default()).unwrap(), "()");
+        assert_ne!(ron::to_string(&CameraTuning { mode: CameraMode::FirstPerson, ..default() }).unwrap(), "()");
+        let mut bad = CameraTuning::default();
+        bad.first_person.step_ease = Some(0.0);
+        assert!(errors(&bad)[0].contains("first_person.step_ease"), "{:?}", errors(&bad));
+        assert!(ron::from_str::<CameraTuning>("(mode: Sideways)").is_err(), "a mode that is none of them is an error");
+        assert!(ron::from_str::<CameraTuning>("(first_person: (bobbing: None))").is_err(), "so is a typo");
     }
 
     #[test]

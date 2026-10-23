@@ -38,7 +38,7 @@ use bevy::prelude::*;
 use serde_json::{json, Value};
 use shards_content::{ContentAppExt, ContentDb};
 use shards_core::{EngineAppExt, LocalPlayer};
-use shards_motion::camera::{picture_clock, ThirdPersonCamera};
+use shards_motion::camera::{picture_clock, FirstPersonCamera, ThirdPersonCamera};
 use shards_settings::GraphicsSettings;
 
 pub use def::{kelvin_srgb, Flicker, LightDef, LightKind, MAX_RANGE};
@@ -153,7 +153,7 @@ fn key_of(id: &str, name: &str, at: Vec3) -> String {
 
 /// What the viewer is: the active camera (the AI's, else an orbit camera), else the local player's eye.
 type Cameras<'w, 's> = Query<'w, 's, &'static GlobalTransform, With<AiCamera>>;
-type OrbitCameras<'w, 's> = Query<'w, 's, &'static GlobalTransform, With<ThirdPersonCamera>>;
+type OrbitCameras<'w, 's> = Query<'w, 's, &'static GlobalTransform, Or<(With<ThirdPersonCamera>, With<FirstPersonCamera>)>>;
 type Players<'w, 's> = Query<'w, 's, &'static Transform, With<LocalPlayer>>;
 type Placed<'w, 's> =
     Query<'w, 's, (Entity, &'static ContentLight, &'static Transform, &'static GlobalTransform, Option<&'static Name>, Has<ChildOf>)>;

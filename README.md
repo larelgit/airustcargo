@@ -102,7 +102,7 @@ The roll is an ordinary player input: the agent's tools go through the same `Int
 
 **Gameplay**
 
-- A kinematic character controller (walk, sprint, jump, ledge climb, swim) on a physics layer, an input map for keyboard, mouse and gamepad, a third-person camera.
+- A kinematic character controller (walk, sprint, jump, ledge climb, swim) on a physics layer, an input map for keyboard, mouse and gamepad, a third-person camera and a first-person one (at the body's eye, with a view model).
 - Combat as data: actions with phases, hit windows, invulnerability, cancels and stamina costs; movesets, block, parry, dodge, lock-on, statuses, ground telegraphs; a game has its say before a death (survive, or go down for a partner to revive).
 - Animation from content: a set maps states and actions to the clips of a glTF skeleton; attack and roll displacement is baked from the clips.
 - NPCs with behaviour state machines, sight, hearing and memory, and attack plans, all in content; a leash keeps an enemy near its home.
@@ -164,7 +164,7 @@ cargo shards observe                       # a text snapshot of the world + the 
 cargo shards tools                         # what can be done (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 283 definitions in 94 files
+cargo shards content check                 # ok: 285 definitions in 96 files
 cargo shards save-replay                   # the session from tick 0 → replays/tick<T>.json
 kill 4242                                  # the pid from `wait`; not kill -9: the game removes its token and port file
 
@@ -242,7 +242,7 @@ The rules that keep a game deterministic (gameplay in `FixedUpdate`, randomness 
 | `shards` | The only dependency of a game: `EnginePlugins`, `EngineConfig`, the standard `main` (`run`), test apps, the prelude |
 | `shards_core` | Config, engine states, the loading gate, `Intent` and orders, the module registry |
 | `shards_content` | Typed RON definitions, validation, references, hot reload, prefabs |
-| `shards_motion` | Physics layer, kinematic character controller, input map, third-person camera |
+| `shards_motion` | Physics layer, kinematic character controller, input map, third- and first-person cameras |
 | `shards_action` | Data-driven action machine, hits, damage, fighter resources, statuses, telegraphs |
 | `shards_level` | Levels from Blender: glTF becomes entities, colliders, volumes and markers |
 | `shards_world` | Tiles and sockets, the region generator, manifests, dungeons, region loading, active zones, tile streaming |

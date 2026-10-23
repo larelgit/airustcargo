@@ -258,7 +258,7 @@ fn track_volumes(
     db: Option<Res<ContentDb>>,
     tuning: Res<CameraTuning>,
     players: Query<&MotionState, With<LocalPlayer>>,
-    cameras: Query<&Transform, With<super::ThirdPersonCamera>>,
+    cameras: Query<&Transform, Or<(With<super::ThirdPersonCamera>, With<super::FirstPersonCamera>)>>,
     world: Option<Res<crate::physics::PhysicsWorld>>,
     volumes: Query<&GradingVolume>,
     mut blend: ResMut<GradingBlend>,
@@ -301,7 +301,7 @@ mod render {
     use shards_content::ContentDb;
 
     use super::{picture_clock, Grading, GradingBlend, GradingDef};
-    use crate::camera::{CameraTuning, ThirdPersonCamera};
+    use crate::camera::{CameraTuning, FirstPersonCamera, ThirdPersonCamera};
 
     impl Grading {
         /// Bevy's grade: the same section for the shadows, the midtones and the highlights.
@@ -325,11 +325,15 @@ mod render {
     }
 
     /// The cameras a grade applies to, with what they have now.
-    type Cameras<'w, 's> =
-        Query<'w, 's, (Entity, Option<&'static ColorGrading>, Option<&'static GradingSet>), (With<Camera3d>, With<ThirdPersonCamera>)>;
+    type Cameras<'w, 's> = Query<
+        'w,
+        's,
+        (Entity, Option<&'static ColorGrading>, Option<&'static GradingSet>),
+        (With<Camera3d>, Or<(With<ThirdPersonCamera>, With<FirstPersonCamera>)>),
+    >;
 
     /// `Update`: the grade in force (the volume's blend, else the camera content's `picture.grading`)
-    /// onto every 3D camera with a [`ThirdPersonCamera`]; a camera gets its own grade back when none is.
+    /// onto every 3D camera with a [`ThirdPersonCamera`] or a [`FirstPersonCamera`]; a camera gets its own grade back when none is.
     pub fn apply_grading(
         fixed: Res<Time<Fixed>>,
         tuning: Res<CameraTuning>,
@@ -361,6 +365,103 @@ mod render {
                 }
                 (None, None) => {}
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::time::Duration;
+
+        use shards_content::db::{ContentKinds, Source};
+
+        use super::*;
+        use crate::camera::PictureTuning;
+
+        fn app() -> App {
+            let mut app = App::new();
+            app.init_resource::<CameraTuning>().init_resource::<GradingBlend>().init_resource::<Time<Fixed>>().add_systems(Update, apply_grading);
+            app
+        }
+
+        fn warm() -> Grading {
+            Grading { temperature: 0.4, saturation: 0.5, ..default() }
+        }
+
+        fn set(app: &mut App, grading: Option<Grading>) {
+            app.world_mut().resource_mut::<CameraTuning>().picture = PictureTuning { grading, ..default() };
+            app.update();
+            app.update();
+        }
+
+        #[test]
+        fn a_camera_with_no_grade_in_the_content_keeps_the_game_s_own() {
+            let mut app = app();
+            let own = ColorGrading::with_identical_sections(ColorGradingGlobal { exposure: 0.5, ..default() }, ColorGradingSection::default());
+            let camera = app.world_mut().spawn((Camera3d::default(), ThirdPersonCamera::default(), own.clone())).id();
+            let plain = app.world_mut().spawn((Camera3d::default(), ThirdPersonCamera::default())).id();
+            app.update();
+            assert_eq!(app.world().get::<ColorGrading>(camera), Some(&own));
+            assert!(app.world().get::<ColorGrading>(plain).is_none() && app.world().get::<GradingSet>(plain).is_none());
+        }
+
+        #[test]
+        fn the_contents_grade_reaches_every_kind_of_world_camera_and_leaving_it_gives_each_its_own_back() {
+            let mut app = app();
+            let own = ColorGrading::with_identical_sections(ColorGradingGlobal { exposure: 0.5, ..default() }, ColorGradingSection::default());
+            let orbit = app.world_mut().spawn((Camera3d::default(), ThirdPersonCamera::default(), own.clone())).id();
+            let first = app.world_mut().spawn((Camera3d::default(), FirstPersonCamera::default())).id();
+            let other = app.world_mut().spawn(Camera3d::default()).id();
+            app.update();
+            set(&mut app, Some(warm()));
+            assert_eq!(app.world().get::<ColorGrading>(orbit), Some(&warm().bevy()), "a third-person camera");
+            assert_eq!(app.world().get::<ColorGrading>(first), Some(&warm().bevy()), "a first-person camera");
+            assert!(app.world().get::<ColorGrading>(other).is_none(), "a camera with neither is the game's own business");
+
+            // Another grade replaces it, and none gives the cameras back what they had.
+            set(&mut app, Some(Grading { exposure: 1.0, ..default() }));
+            assert_eq!(app.world().get::<ColorGrading>(first).map(|g| g.global.exposure), Some(1.0));
+            set(&mut app, None);
+            assert_eq!(app.world().get::<ColorGrading>(orbit), Some(&own), "its own grade back");
+            assert!(app.world().get::<ColorGrading>(first).is_none() && app.world().get::<GradingSet>(first).is_none(), "and none where it had none");
+            // A camera that appears later gets it too.
+            set(&mut app, Some(warm()));
+            let late = app.world_mut().spawn((Camera3d::default(), FirstPersonCamera::default())).id();
+            app.update();
+            app.update();
+            assert_eq!(app.world().get::<ColorGrading>(late), Some(&warm().bevy()));
+        }
+
+        #[test]
+        fn a_blend_toward_a_volume_moves_the_cameras_grade_on_the_simulations_clock() {
+            let mut app = app();
+            let mut kinds = ContentKinds::default();
+            kinds.register::<GradingDef>();
+            let source = Source { path: "content/g.grading.ron".into(), text: r#"{"rust": (blend_s: 2.0, grading: (temperature: 0.4))}"#.into() };
+            app.insert_resource(ContentDb::build(&kinds, &[source]));
+            let camera = app.world_mut().spawn((Camera3d::default(), FirstPersonCamera::default())).id();
+            app.update();
+            assert!(app.world().get::<ColorGrading>(camera).is_none(), "no volume, no content grade: nothing is written");
+            let db = app.world().resource::<ContentDb>().clone();
+            app.world_mut().resource_mut::<GradingBlend>().retarget(Some("rust"), 0.0, None, &|id| db.peek::<GradingDef>(id));
+            app.update();
+            app.update();
+            assert_eq!(app.world().get::<ColorGrading>(camera).map(|g| g.global.temperature), Some(0.0), "it starts where the picture was");
+            app.world_mut().resource_mut::<Time<Fixed>>().advance_by(Duration::from_secs(1));
+            app.update();
+            app.update();
+            assert!((app.world().get::<ColorGrading>(camera).unwrap().global.temperature - 0.2).abs() < 1e-5, "half way, eased");
+            app.world_mut().resource_mut::<Time<Fixed>>().advance_by(Duration::from_secs(2));
+            app.update();
+            app.update();
+            assert_eq!(app.world().get::<ColorGrading>(camera).map(|g| g.global.temperature), Some(0.4));
+            // Out again: back to the camera's own, which is no grade at all.
+            let db = app.world().resource::<ContentDb>().clone();
+            let now = picture_clock(app.world().resource::<Time<Fixed>>());
+            app.world_mut().resource_mut::<GradingBlend>().retarget(None, now, None, &|id| db.peek::<GradingDef>(id));
+            app.world_mut().resource_mut::<Time<Fixed>>().advance_by(Duration::from_secs(3));
+            app.update();
+            app.update();
+            assert!(app.world().get::<ColorGrading>(camera).is_none() && app.world().get::<GradingSet>(camera).is_none());
         }
     }
 }

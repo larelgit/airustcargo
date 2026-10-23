@@ -16,6 +16,7 @@ use shards_settings::AccessibilitySettings;
 
 use crate::common::*;
 
+mod first_person;
 mod shot;
 
 struct Scene {
