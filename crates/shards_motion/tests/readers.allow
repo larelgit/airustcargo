@@ -52,3 +52,5 @@ crates/shards_action/src/leap.rs :: pub(crate) fn radius_of(collider: Option<&Co
 crates/shards_action/src/machine.rs :: positions: Query<(&Transform, Option<&CharacterParams>, Option<&Collider>)>, :: the lock-on target is a character: its body's width sets a leap's landing
 crates/shards_action/src/machine.rs :: positions: &Query<(&Transform, Option<&CharacterParams>, Option<&Collider>)>, :: a leap at a lock-on target lands by a character (a lock point's body): its body's width
 crates/shards_action/src/predict.rs :: positions: Query<(&Transform, Option<&CharacterParams>, Option<&Collider>)>, :: the lock-on target is a character: its body's width sets a leap's landing (the prediction)
+crates/shards_motion/src/usable.rs :: let collider = world.get::<Collider>(entity)?; :: the middle of a usable thing's own use area (a level node's or a prefab's, a Usable never is a field): where a look at it aims
+crates/shards_level/src/tools.rs :: let layers = entity.get::<Collider>().map(|c| c.layers.memberships); :: which of a spawned level's entities are solid and which only a use area: it reads their layers, never their boxes, and a field has none

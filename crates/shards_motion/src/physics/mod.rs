@@ -141,6 +141,10 @@ impl LayerMask {
     /// Sensors: water, updrafts, triggers.
     pub const VOLUME: Self = Self(1 << 4);
     pub const PROJECTILE: Self = Self(1 << 5);
+    /// What a character can use by looking at it (F5): the use areas of interactable things. A query
+    /// layer only: a collider on it collides with nothing ([`CollisionLayers::USE`]) and only the
+    /// ray of [`use_target`](crate::use_target) asks for it.
+    pub const USE: Self = Self(1 << 6);
 
     /// Game layer `n` (0..16), bit `16 + n`.
     pub const fn game(n: u32) -> Self {
@@ -203,6 +207,9 @@ impl CollisionLayers {
     pub const CHARACTER: Self = Self::new(LayerMask::CHARACTER, LayerMask::WORLD);
     /// A sensor volume that notices characters.
     pub const VOLUME: Self = Self::new(LayerMask::VOLUME, LayerMask::CHARACTER);
+    /// The use area of something a character looks at to use it (F5): on the `USE` layer, and it
+    /// collides with nothing, so no body, ray or cast that does not ask for `USE` ever meets it.
+    pub const USE: Self = Self::new(LayerMask::USE, LayerMask::NONE);
 
     pub const fn new(memberships: LayerMask, filters: LayerMask) -> Self {
         Self { memberships, filters }

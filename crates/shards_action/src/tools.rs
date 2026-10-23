@@ -10,7 +10,7 @@ use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use shards_content::ContentDb;
-use shards_core::input_names::{BLOCK, DODGE, HEAVY, INTERACT, LIGHT, PARRY, TECHNIQUE, USE_ITEM};
+use shards_core::input_names::{BLOCK, DODGE, HEAVY, LIGHT, PARRY, TECHNIQUE, USE_ITEM};
 use shards_core::{flat, Intent, NetRole, Order, Predicted};
 use shards_motion::camera::{LockOnDef, Side};
 
@@ -709,12 +709,8 @@ fn down_tool(In(call): In<Call<DownArgs>>, world: &mut World) -> ToolResult {
     })
 }
 
-/// Interact: press (or hold) the interact button. It starts an action only where the moveset binds
-/// one to `interact`, usually a context binding that holds only next to the right body (a
-/// revive: a downed ally within reach); that action goes on only while the button is
-/// held: `hold=true` keeps it held, `hold=false` lets go. Answers `ok`, `ok: queued` or why not.
-fn interact(In(call): In<Call<HoldArgs>>, world: &mut World) -> ToolResult {
-    press_held(world, &call.caller, INTERACT, None, "", call.args.hold)
+fn interact(In(call): In<Call<crate::using::InteractArgs>>, world: &mut World) -> ToolResult {
+    crate::using::interact(world, &call.caller, call.args)
 }
 
 /// Grant `id` (default: you) a barrier that takes damage before health: the larger of its pool and

@@ -29,7 +29,7 @@ use crate::asset::{json_kind, LevelAsset, LevelNode};
 use crate::marker::{MarkerKind, RequiredMarker};
 
 /// The level properties, in documentation order.
-pub const PROPERTIES: [&str; 16] = [
+pub const PROPERTIES: [&str; 19] = [
     "marker",
     "name",
     "socket",
@@ -46,6 +46,9 @@ pub const PROPERTIES: [&str; 16] = [
     "max_speed",
     "prefab",
     "mover",
+    "hold_s",
+    "use_range",
+    "prompt",
 ];
 
 /// Components the file cannot set: the engine owns them.
@@ -110,6 +113,19 @@ pub(crate) struct MarkerSpec {
     pub name: String,
     /// A navlink's end: the name of the node it goes to.
     pub link: Option<String>,
+    /// For an `interactable`: how it is used (F5).
+    pub using: UseSpec,
+}
+
+/// How an `interactable` is used: the node properties `hold_s`, `use_range` and `prompt`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct UseSpec {
+    /// Seconds the button is held for a use; 0: a press.
+    pub hold_s: f32,
+    /// How far from the eye it can be used (m); `None`: the body's own reach.
+    pub use_range: Option<f32>,
+    /// What a HUD shows; empty: the marker's name.
+    pub prompt: String,
 }
 
 /// A node that spawns a content prefab; the node's component properties patch it.
@@ -231,13 +247,14 @@ fn names<'a>(props: &'a Map<String, Value>, key: &str) -> Result<Option<Vec<&'a 
 
 /// `["world", "game0"]` as a mask.
 fn layer_mask(key: &str, names: &[&str]) -> Result<LayerMask, String> {
-    const FIXED: [(&str, LayerMask); 8] = [
+    const FIXED: [(&str, LayerMask); 9] = [
         ("world", LayerMask::WORLD),
         ("character", LayerMask::CHARACTER),
         ("hurtbox", LayerMask::HURTBOX),
         ("hitbox", LayerMask::HITBOX),
         ("volume", LayerMask::VOLUME),
         ("projectile", LayerMask::PROJECTILE),
+        ("use", LayerMask::USE),
         ("all", LayerMask::ALL),
         ("none", LayerMask::NONE),
     ];
@@ -251,7 +268,7 @@ fn layer_mask(key: &str, names: &[&str]) -> Result<LayerMask, String> {
             (None, None) => {
                 let all: Vec<&str> = FIXED.iter().map(|(n, _)| *n).chain(["game0", "game15"]).collect();
                 let hint = closest(&lower, all.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
-                return Err(format!("`{key}`: unknown layer `{name}`{hint}; layers: world, character, hurtbox, hitbox, volume, projectile, game0..game15, all, none"));
+                return Err(format!("`{key}`: unknown layer `{name}`{hint}; layers: world, character, hurtbox, hitbox, volume, projectile, use, game0..game15, all, none"));
             }
         };
     }
@@ -361,7 +378,8 @@ pub(crate) fn plan_node(node: &LevelNode, position: usize, registry: &TypeRegist
                 }
                 _ => None,
             };
-            plan.marker = Some(MarkerSpec { kind, name, link });
+            let using = if kind == MarkerKind::Interactable { read_use(props, &mut used, &mut problems) } else { UseSpec::default() };
+            plan.marker = Some(MarkerSpec { kind, name, link, using });
         }
         Ok(None) => {}
         Err(e) => problems.push(e),
@@ -395,9 +413,19 @@ pub(crate) fn plan_node(node: &LevelNode, position: usize, registry: &TypeRegist
         problems.push(e);
         None
     });
-    if collider_word.is_some() || plan.volume.is_some() {
+    // An interactable is looked at to be used (F5): its node's shape is its use area, unless the node has nothing to
+    // take a shape from (a bare empty stays a plain marker, as it always was, and cannot be looked at).
+    let interactable = plan.marker.as_ref().is_some_and(|m| m.kind == MarkerKind::Interactable);
+    let shaped = interactable && (node.bounds.is_some() || props.contains_key("size"));
+    if collider_word.is_some() || plan.volume.is_some() || shaped {
         used.extend(["size", "radius", "height", "offset", "layers", "collides_with"]);
-        match plan_collider(node, collider_word.unwrap_or("auto"), plan.volume.is_some()) {
+        let role = match (plan.volume.is_some(), interactable, collider_word.is_some()) {
+            (true, ..) => ColliderRole::Volume,
+            (false, true, true) => ColliderRole::SolidUse,
+            (false, true, false) => ColliderRole::Use,
+            (false, false, _) => ColliderRole::Solid,
+        };
+        match plan_collider(node, collider_word.unwrap_or("auto"), role) {
             Ok(spec) => plan.collider = Some(spec),
             Err(e) => problems.push(e),
         }
@@ -469,6 +497,7 @@ fn why_unused(key: &str) -> &'static str {
         "to" => "it is where a navlink ends, and the node is no navlink",
         "size" | "radius" | "height" | "offset" | "layers" | "collides_with" => "it shapes a collider, and the node has no `collider` or `volume`",
         "accel" | "max_speed" => "they belong to an updraft volume",
+        "hold_s" | "use_range" | "prompt" => "it says how an `interactable` is used, and the node is no interactable marker",
         _ => "check the spelling of the property",
     }
 }
@@ -486,7 +515,7 @@ fn read_updraft(props: &Map<String, Value>, used: &mut Vec<&'static str>) -> Res
 }
 
 /// The collider properties of a node: shape word, dimensions, offset and layers.
-fn plan_collider(node: &LevelNode, word: &str, volume: bool) -> Result<ColliderSpec, String> {
+fn plan_collider(node: &LevelNode, word: &str, role: ColliderRole) -> Result<ColliderSpec, String> {
     let props = &node.extras;
     let size = vector(props, "size", true)?;
     let radius = positive(props, "radius")?;
@@ -540,10 +569,13 @@ fn plan_collider(node: &LevelNode, word: &str, volume: bool) -> Result<ColliderS
     }
     let offset = vector(props, "offset", false)?;
 
-    let solid = !volume;
     let memberships = names(props, "layers")?;
     let filters = names(props, "collides_with")?;
-    let preset = if solid { CollisionLayers::WORLD } else { CollisionLayers::VOLUME };
+    let preset = match role {
+        ColliderRole::Solid | ColliderRole::SolidUse => CollisionLayers::WORLD,
+        ColliderRole::Volume => CollisionLayers::VOLUME,
+        ColliderRole::Use => CollisionLayers::USE,
+    };
     let layers = CollisionLayers::new(
         match &memberships {
             Some(list) => layer_mask("layers", list)?,
@@ -553,11 +585,56 @@ fn plan_collider(node: &LevelNode, word: &str, volume: bool) -> Result<ColliderS
             (Some(list), _) => layer_mask("collides_with", list)?,
             (None, None) => preset.filters,
             // Own memberships, nothing said about what they hit: solids hit everything,
-            // sensors characters.
-            (None, Some(_)) => if solid { LayerMask::ALL } else { LayerMask::CHARACTER },
+            // sensors characters, use areas nothing.
+            (None, Some(_)) => match role {
+                ColliderRole::Solid | ColliderRole::SolidUse => LayerMask::ALL,
+                ColliderRole::Volume => LayerMask::CHARACTER,
+                ColliderRole::Use => LayerMask::NONE,
+            },
         },
     );
+    // An interactable's collider is on the `USE` layer whatever else it is on: that is where a look finds it.
+    let layers = match role {
+        ColliderRole::Use | ColliderRole::SolidUse => CollisionLayers::new(layers.memberships | LayerMask::USE, layers.filters),
+        ColliderRole::Solid | ColliderRole::Volume => layers,
+    };
     Ok(ColliderSpec { shape, offset, layers })
+}
+
+/// What a node's collider is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ColliderRole {
+    /// Level geometry: blocks.
+    Solid,
+    /// A sensor volume.
+    Volume,
+    /// The use area of an `interactable` with no solid of its own: on `USE`, blocks nothing.
+    Use,
+    /// An `interactable` that is also solid (a door): on `WORLD` and `USE`.
+    SolidUse,
+}
+
+/// The properties of an `interactable` that say how it is used: `hold_s` (seconds, zero or more),
+/// `use_range` (metres, above zero) and `prompt` (text).
+fn read_use(props: &Map<String, Value>, used: &mut Vec<&'static str>, problems: &mut Vec<String>) -> UseSpec {
+    used.extend(["hold_s", "use_range", "prompt"]);
+    let mut spec = UseSpec::default();
+    match number(props, "hold_s") {
+        Ok(Some(v)) if v < 0.0 => problems.push(format!("`hold_s` must be zero or more (seconds to hold the button), found {v}")),
+        Ok(Some(v)) => spec.hold_s = v,
+        Ok(None) => {}
+        Err(e) => problems.push(e),
+    }
+    match positive(props, "use_range") {
+        Ok(v) => spec.use_range = v,
+        Err(e) => problems.push(e),
+    }
+    match text(props, "prompt") {
+        Ok(Some(t)) => spec.prompt = t.to_owned(),
+        Ok(None) => {}
+        Err(e) => problems.push(e),
+    }
+    spec
 }
 
 /// A component value from JSON: as written, or (Blender's property panel only makes text,

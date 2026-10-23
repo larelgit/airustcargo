@@ -77,6 +77,7 @@
 //! SimSet::Input    ActionSystems::Orders    Order::Attack → Intent (after core's follow_orders)
 //! SimSet::Act      ActionSystems::Weapons   weapon switches: the arsenal's charges and moveset, `weapon.*` presses (arsenal)
 //!                  ActionSystems::Context   guard presses (GuardArm), context bindings (ContextInputs)
+//!                  ActionSystems::Use       interact presses and holds use what the body looks at (using, F5; a revive in reach keeps its press)
 //!                  ActionSystems::Machine   presses → buffer → start/advance → LocomotionInput
 //!                  ActionSystems::Objects   combat objects: delayed starts, their runs step (effects, telegraphs)
 //!                  ActionSystems::Effects   pairs start (start_pairs), heal, stamina, statuses, sounds, spawns, game effects;
@@ -94,7 +95,7 @@
 //!
 //! Tools: `light_attack`, `heavy_attack`, `block`, `parry`, `dodge`, `use_technique`,
 //! `use_item`, `lock_on`, `attack`, `interact`, `reload`, `weapon` (player); `god`, `heal`, `stagger`, `react`, `remember`, `down`, `part`, `motion_bake`,
-//! `give_weapon`, `take_weapon`, `give_ammo` (dev); `fire` (player, F3);
+//! `give_weapon`, `take_weapon`, `give_ammo` (dev); `fire` (player, F3); `interact` also uses what the look meets (F5);
 //! `combat_overlay` (dev, with the `render` feature). Queries: `combat_objects`, `shot_trace` (player).
 //!
 //! ## The render feature
@@ -143,6 +144,7 @@ pub mod shot;
 pub mod stance;
 pub mod status;
 mod tools;
+pub mod using;
 pub mod zone;
 
 use ai_core::{AiAppExt, SimSet};
@@ -215,6 +217,7 @@ pub use parts::{
 };
 pub use look::{view_hit, ViewHit, AIM_RANGE};
 pub use shot::{cone_dir, fire, shot_aim, shot_ray, trace_shot, AimedBy, FireDef, ShotAim, ShotFired, ShotHit, ShotImpact, ShotPath};
+pub use using::{use_view, InteractArgs, UseProgress, UseView, Used};
 pub use zone::{action_zones, hit_zones, threat_indicators, HitZone, Indicator, WorldShape};
 
 /// Version of the action module.
@@ -239,6 +242,9 @@ pub enum ActionSystems {
     /// `SimSet::Act`, before the machine: guard presses arm, and every fighter's context
     /// bindings are resolved ([`ContextInputs`]).
     Context,
+    /// `SimSet::Act`, after the context, before the machine: the `interact` presses and holds of every body use
+    /// what it looks at ([`using`], F5). A press the context binds (a revive in reach) is left to the machine.
+    Use,
     /// `SimSet::Act`: every fighter's action machine.
     Machine,
     /// `SimSet::Act`, after the machine: the combat objects' delayed starts and runs
@@ -461,6 +467,7 @@ impl Plugin for ActionPlugin {
                     (
                         ActionSystems::Weapons,
                         ActionSystems::Context,
+                        ActionSystems::Use,
                         ActionSystems::Machine,
                         ActionSystems::Objects,
                         ActionSystems::Effects,
@@ -535,6 +542,7 @@ impl Plugin for ActionPlugin {
         parts::plugin(app);
         arsenal::plugin(app);
         shot::plugin(app);
+        using::plugin(app);
         #[cfg(feature = "render")]
         render::plugin(app);
     }

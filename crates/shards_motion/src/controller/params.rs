@@ -10,6 +10,7 @@ use shards_core::{Gaze, Intent};
 
 use super::{CharacterController, MotionMode};
 use crate::physics::{Collider, CollisionLayers, Shape};
+use crate::usable::DEFAULT_USE_RANGE;
 
 /// How far above `mantle_height` a ledge may stand and still be climbed (m): float noise.
 pub(crate) const MANTLE_SLACK: f32 = 1e-3;
@@ -296,6 +297,11 @@ pub struct CharacterParams {
     /// changes the body's height (a crouch) changes the eye with it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub eye_height: Option<f32>,
+    /// How far the body reaches to use something it looks at (m, F5): the longest distance from its
+    /// eye at which `use_target` counts a `Usable`, unless the thing says its own `use_range`.
+    /// Above 0; the default is 2 m.
+    #[serde(skip_serializing_if = "use_range_is_default")]
+    pub use_range: f32,
 }
 
 /// The pitch limits a body has unless its `locomotion` says (degrees): just short of straight up
@@ -369,6 +375,7 @@ impl Default for CharacterParams {
             face: Facing::Move,
             pitch_limits_deg: DEFAULT_PITCH_LIMITS_DEG,
             eye_height: None,
+            use_range: DEFAULT_USE_RANGE,
         }
     }
 }
@@ -405,6 +412,10 @@ fn is_move(v: &Facing) -> bool {
 
 fn pitch_limits_are_default(v: &(f32, f32)) -> bool {
     *v == DEFAULT_PITCH_LIMITS_DEG
+}
+
+fn use_range_is_default(v: &f32) -> bool {
+    *v == DEFAULT_USE_RANGE
 }
 
 /// What a character without content moves by: the code defaults.
@@ -692,6 +703,9 @@ impl CharacterParams {
         {
             errors.push(format!("eye_height must be above 0 and at most height {} (is {eye})", self.height));
         }
+        if !(self.use_range > 0.0 && self.use_range.is_finite()) {
+            errors.push(format!("use_range must be a number of metres above 0 (is {})", self.use_range));
+        }
         if self.buoyancy_omega <= 0.0 && (self.water_max_vertical_speed > 0.0 || self.water_fall_drag > 0.0) {
             errors.push("water_max_vertical_speed and water_fall_drag are set but buoyancy_omega is 0, so they never apply".to_string());
         }
@@ -769,6 +783,20 @@ mod tests {
             assert!(err.contains("eye_height"), "{eye}: {err}");
         }
         CharacterParams { eye_height: Some(1.8), ..default() }.check().unwrap();
+    }
+
+    #[test]
+    fn the_use_range_defaults_to_two_metres_and_stays_out_of_the_written_form() {
+        let p = CharacterParams::default();
+        assert_eq!(p.use_range, 2.0);
+        assert!(!ron::to_string(&p).unwrap().contains("use_range"), "a definition that never mentions it keeps its hash");
+        let set: CharacterParams = ron::from_str("(use_range: 3.5)").unwrap();
+        assert_eq!(set.use_range, 3.5);
+        assert!(ron::to_string(&set).unwrap().contains("use_range:3.5"));
+        for bad in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            let err = CharacterParams { use_range: bad, ..default() }.check().unwrap_err();
+            assert!(err.contains("use_range must be a number of metres above 0"), "{bad}: {err}");
+        }
     }
 
     #[test]
