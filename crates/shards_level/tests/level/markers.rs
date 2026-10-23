@@ -303,3 +303,11 @@ fn a_usable_thing_can_also_be_made_by_naming_the_component() {
     assert_eq!(app.world().get::<Collider>(e).unwrap().layers.memberships, LayerMask::USE);
     assert!(app.world().get::<LevelMarker>(e).is_none());
 }
+
+#[test]
+fn an_interactable_cannot_also_be_a_sensor_volume() {
+    // A look never meets a sensor (a ray skips them unless it asks), so the thing could not be used: the check says so.
+    let mut app = app();
+    let err = spawn(&mut app, &one(json!({"marker": "interactable", "volume": "water"}))).unwrap_err();
+    assert!(err.contains("node `Thing`: an `interactable` cannot also be a `volume`"), "{err}");
+}

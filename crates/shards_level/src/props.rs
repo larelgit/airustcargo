@@ -417,7 +417,10 @@ pub(crate) fn plan_node(node: &LevelNode, position: usize, registry: &TypeRegist
     // take a shape from (a bare empty stays a plain marker, as it always was, and cannot be looked at).
     let interactable = plan.marker.as_ref().is_some_and(|m| m.kind == MarkerKind::Interactable);
     let shaped = interactable && (node.bounds.is_some() || props.contains_key("size"));
-    if collider_word.is_some() || plan.volume.is_some() || shaped {
+    if interactable && plan.volume.is_some() {
+        // A sensor is skipped by every ray that does not ask for sensors: a look would never meet it.
+        problems.push("an `interactable` cannot also be a `volume`: a look never meets a sensor; give the volume a node of its own".into());
+    } else if collider_word.is_some() || plan.volume.is_some() || shaped {
         used.extend(["size", "radius", "height", "offset", "layers", "collides_with"]);
         let role = match (plan.volume.is_some(), interactable, collider_word.is_some()) {
             (true, ..) => ColliderRole::Volume,
