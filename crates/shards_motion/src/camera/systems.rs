@@ -43,7 +43,7 @@ pub(super) fn plugin(app: &mut App) {
         PreUpdate,
         (lock_on.run_if(not(lock_rules)), lock_by_rules.run_if(lock_rules))
             .run_if(not(shot_playing))
-            .run_if(not(any_with_component::<FirstPersonCamera>))
+            .run_if(not(super::first_person::systems::local_first_person_view))
             .after(ControlSystems::Read),
     )
     .add_systems(PostUpdate, orbit_camera.in_set(CameraSystems::Orbit).after(InterpSystems::Blend).before(TransformSystems::Propagate))

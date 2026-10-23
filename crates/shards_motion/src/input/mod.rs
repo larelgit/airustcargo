@@ -468,7 +468,7 @@ fn let_go(intent: &mut Mut<Intent>, applied: &Applied) {
 type LocalBody = (Entity, &'static mut Intent, Option<&'static CharacterController>, Option<&'static CharacterParams>);
 
 /// The first-person cameras there are (the walk is then turned by the look).
-type FirstPersonCameras<'w, 's> = Query<'w, 's, (), With<FirstPersonCamera>>;
+type FirstPersonCameras<'w, 's> = Query<'w, 's, &'static FirstPersonCamera>;
 
 /// `PreUpdate`: reads the devices through the top context of the map and writes what
 /// changed into the local player's `Intent`.
@@ -655,7 +655,7 @@ fn read_input(
             // A first-person camera (F1b) looks through a body whatever it faces: forward is the way the
             // view points. The look is the last frame's here (the camera turns it after this system), the
             // same one frame behind the third-person camera's yaw is.
-            (!first_person.is_empty()).then(|| intent.look.filter(|l| l.is_finite())).flatten()
+            first_person.iter().any(|c| c.looks_through(player, true)).then(|| intent.look.filter(|l| l.is_finite())).flatten()
         })
         .map_or_else(|| cameras.iter().next().map_or(0.0, |c| c.yaw), |gaze| gaze.yaw);
     let world_move = Quat::from_rotation_y(yaw) * Vec3::new(move_axis.x, 0.0, -move_axis.y);

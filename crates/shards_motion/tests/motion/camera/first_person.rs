@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use ai_core::{AiCorePlugin, AiKind, SimConfig};
 use bevy::camera::visibility::RenderLayers;
-use bevy::camera::{Camera3d, Projection};
+use bevy::camera::{Camera, Camera3d, Projection};
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::light::{DirectionalLight, PointLight};
 use bevy::prelude::*;
@@ -429,4 +429,27 @@ fn the_lock_on_button_only_lets_go_under_a_first_person_camera() {
     assert_eq!(target(&s), None);
     let lines: Vec<String> = s.app.world().resource::<ai_core::AiJournal>().after(0).0.map(|e| e.text.clone()).collect();
     assert!(lines.iter().any(|l| l.contains("lock released")), "{lines:?}");
+}
+
+#[test]
+fn a_first_person_camera_of_another_body_or_one_switched_off_leaves_the_orbit_camera_alone() {
+    // A first-person camera that looks through another body (a spectator's view of somebody else).
+    let mut s = super::scene();
+    let other = s.app.world_mut().spawn((AiKind::new("Other"), Transform::default())).id();
+    s.app.world_mut().spawn((Camera3d::default(), FirstPersonCamera::looking_through(other), Transform::default()));
+    super::tap_lock(&mut s);
+    assert!(super::target(&s).is_some(), "the orbit camera still picks a target for the local player");
+    // The walk is turned by the orbit camera's yaw, not by a look the local player has not got from a camera.
+    s.app.world_mut().get_mut::<Intent>(s.player).unwrap().target = None;
+    s.app.world_mut().get_mut::<Intent>(s.player).unwrap().look = Some(Gaze::from_degrees(90.0, 0.0));
+    s.app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyW);
+    s.app.update();
+    let walk = s.app.world().get::<Intent>(s.player).unwrap().move_dir;
+    assert!(walk.distance(Vec3::NEG_Z) < 1e-3, "the orbit camera behind a body that looks north: forward is north, not the stale look's west: {walk}");
+
+    // One that looks through the local player but is switched off.
+    let mut s = super::scene();
+    s.app.world_mut().spawn((Camera3d::default(), Camera { is_active: false, ..default() }, FirstPersonCamera::default(), Transform::default()));
+    super::tap_lock(&mut s);
+    assert!(super::target(&s).is_some(), "an inactive first-person camera does not turn the local player's view off");
 }

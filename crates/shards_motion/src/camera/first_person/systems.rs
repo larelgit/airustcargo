@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use ai_core::{journal, label, AiReplay, JournalKind};
 use bevy::camera::visibility::RenderLayers;
-use bevy::camera::{Camera3d, Projection};
+use bevy::camera::{Camera, Camera3d, Projection};
 use bevy::light::{DirectionalLight, PointLight, SpotLight};
 use bevy::prelude::*;
 use shards_content::ContentDb;
@@ -51,8 +51,8 @@ pub(in crate::camera) fn plugin(app: &mut App) {
         // After the input map (it turned the walk by the look of the last frame: the one frame the
         // third-person camera's yaw is behind by too) and before the tick, so a turn made in this frame
         // is the look the next tick reads.
-        .add_systems(PreUpdate, first_person_look.after(ControlSystems::Read).run_if(any_with_component::<FirstPersonCamera>))
-        .add_systems(PreUpdate, first_person_unlock.after(ControlSystems::Read).run_if(any_with_component::<FirstPersonCamera>))
+        .add_systems(PreUpdate, first_person_look.after(ControlSystems::Read).run_if(local_first_person_view))
+        .add_systems(PreUpdate, first_person_unlock.after(ControlSystems::Read).run_if(local_first_person_view))
         .add_systems(
             PostUpdate,
             first_person_camera
@@ -66,6 +66,13 @@ pub(in crate::camera) fn plugin(app: &mut App) {
             (hide_own_body, share_lights, other_cameras_see_the_body)
                 .before(bevy::camera::visibility::VisibilitySystems::CheckVisibility),
         );
+}
+
+/// Run condition: an active first-person camera looks through the local player. A first-person camera of another
+/// body (a spectator's view), or one that is switched off, leaves the local player to the orbit camera.
+pub(in crate::camera) fn local_first_person_view(cameras: Query<(&Camera, &FirstPersonCamera)>, players: Query<Entity, With<LocalPlayer>>) -> bool {
+    let Ok(me) = players.single() else { return false };
+    cameras.iter().any(|(camera, first)| camera.is_active && first.looks_through(me, true))
 }
 
 /// The facing of a body that has no look yet: its heading, level.
@@ -87,8 +94,7 @@ fn current_look(intent: Option<&Intent>, params: Option<&CharacterParams>, tf: &
 fn note_landing(landed: On<Landed>, mut cameras: Query<&mut FirstPersonCamera>, players: Query<(), With<LocalPlayer>>) {
     let event = landed.event();
     for mut camera in &mut cameras {
-        let through = if camera.target == Entity::PLACEHOLDER { players.contains(event.entity) } else { camera.target == event.entity };
-        if through {
+        if camera.looks_through(event.entity, players.contains(event.entity)) {
             camera.eye.land(event.impact_speed);
         }
     }
@@ -116,7 +122,7 @@ fn first_person_look(
     }
     let Ok((me, mut intent, tf, controller, own)) = players.single_mut() else { return };
     // Only a camera that looks through the local player turns its look.
-    if !cameras.iter().any(|c| c.target == Entity::PLACEHOLDER || c.target == me) {
+    if !cameras.iter().any(|c| c.looks_through(me, true)) {
         return;
     }
     let params = controller.map(|c| c.resolve(own, db.as_deref()));
@@ -136,7 +142,10 @@ fn first_person_look(
 /// took before the mode changed, one a tool or a brain set) must not be stuck to the player: the simulation's
 /// own checks still let go of one that is no longer valid, and the `lock_on` tool still releases.
 fn first_person_unlock(world: &mut World, players: &mut QueryState<Entity, (With<LocalPlayer>, With<Intent>)>) {
-    if !world.get_resource::<ControlState>().is_some_and(|state| state.just_pressed(LOCK_ON)) {
+    // A replay that plays is the recording's: a live press is no input of it, and the lock would only come back.
+    if world.get_resource::<AiReplay>().is_some_and(AiReplay::is_playing)
+        || !world.get_resource::<ControlState>().is_some_and(|state| state.just_pressed(LOCK_ON))
+    {
         return;
     }
     let Ok(me) = players.single(world) else { return };

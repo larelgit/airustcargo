@@ -77,6 +77,12 @@ impl Default for FirstPersonCamera {
 }
 
 impl FirstPersonCamera {
+    /// Whether this camera looks through `body`: it names it, or it names none (the default) and `body` is the
+    /// local player (`local`).
+    pub fn looks_through(&self, body: Entity, local: bool) -> bool {
+        self.target == body || (self.target == Entity::PLACEHOLDER && local)
+    }
+
     /// A camera looking through `target`.
     pub fn looking_through(target: Entity) -> Self {
         Self { target, ..default() }

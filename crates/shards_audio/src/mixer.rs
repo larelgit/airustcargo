@@ -374,7 +374,7 @@ fn first_person_ears(world: &World, body: Entity) -> Option<Vec3> {
     let local = world.get::<shards_core::LocalPlayer>(body).is_some();
     let looked_through = params.face == shards_motion::Facing::Look
         || world.try_query_filtered::<&shards_motion::FirstPersonCamera, ()>().is_some_and(|mut cameras| {
-            cameras.iter(world).any(|camera| camera.target == body || (camera.target == Entity::PLACEHOLDER && local))
+            cameras.iter(world).any(|camera| camera.looks_through(body, local))
         });
     looked_through.then(|| shards_motion::eye_of(world, body)).flatten()
 }
