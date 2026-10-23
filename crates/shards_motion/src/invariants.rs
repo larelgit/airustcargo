@@ -4,7 +4,7 @@
 use ai_core::{with_query, AiId, AiVisible, Offenders};
 use bevy::prelude::*;
 
-use crate::controller::{CharacterController, Launch, Mantle, MotionState};
+use crate::controller::{CharacterController, Crouch, Launch, Mantle, MotionState};
 use crate::physics::{Body, Collider};
 
 /// How far a rotation's length may be from 1 before it counts as not normalised.
@@ -13,7 +13,8 @@ const ROTATION_TOLERANCE: f32 = 1e-3;
 /// The engine rule `motion.finite`: every `AiVisible` entity has a finite `Transform` translation
 /// and a finite, normalised rotation (length within 1e-3 of 1), and every number of its
 /// [`MotionState`] is finite: `velocity`, `ground_normal`, `coyote_left`, `jump_buffer_left`,
-/// the corners and times of a `mantle`, `fall_from_y`, `water_surface`, `updraft` and `placed`.
+/// the corners and times of a `mantle`, `fall_from_y`, `water_surface`, `updraft` and `placed`; and the
+/// `depth` of its [`Crouch`] is a number from 0 to 1 (the capsule's height is built from it).
 ///
 /// A NaN in a position spreads into physics, the navmesh and the replay hash, and shows up
 /// ticks later as a body that vanished or a panic far from the cause; this names the first
@@ -28,7 +29,11 @@ pub fn motion_finite(world: &World) -> Option<String> {
     with_query::<(Entity, &AiId, &Transform), With<AiVisible>, _>(world, |query| {
         for (entity, id, transform) in query.iter(world) {
             let motion = world.get::<MotionState>(entity);
-            if let Some(what) = transform_problem(transform).or_else(|| motion.and_then(motion_problem)) {
+            let crouch = world.get::<Crouch>(entity);
+            let problem = transform_problem(transform)
+                .or_else(|| motion.and_then(motion_problem))
+                .or_else(|| crouch.and_then(crouch_problem));
+            if let Some(what) = problem {
                 bad.note(*id, || what);
             }
         }
@@ -59,6 +64,10 @@ fn motion_problem(m: &MotionState) -> Option<String> {
         .or_else(|| m.water_surface.and_then(|v| float("water_surface", v)))
         .or_else(|| m.updraft.and_then(|v| (!v.is_finite()).then(|| format!("MotionState.updraft = {v} is not finite"))))
         .or_else(|| m.placed.and_then(|v| vec3("placed", v)))
+}
+
+fn crouch_problem(c: &Crouch) -> Option<String> {
+    (!(0.0..=1.0).contains(&c.depth)).then(|| format!("Crouch.depth = {} is not a number from 0 to 1", c.depth))
 }
 
 fn mantle_problem(m: &Mantle) -> Option<String> {

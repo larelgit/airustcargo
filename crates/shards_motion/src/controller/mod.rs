@@ -23,10 +23,15 @@
 //! Facing: a body turns toward where it walks, its lock-on, its aim point or the action it runs, at
 //! its turn rates. A body whose params say `face: Look` ([`Facing`]) takes its yaw from
 //! [`Intent::look`] instead, every tick with no turn rate, whatever else it does (F1a).
+//!
+//! Stance (F2): a body whose params give a `crouch_height` lowers its capsule while the `crouch` input is
+//! held ([`Crouch`], `stance.rs`): the feet stay on the ground and the head stays in the air, a stand-up
+//! waits for room, and everything that reads the body's size asks [`CharacterParams::at_depth`].
 
 pub(crate) mod locomotion;
 pub(crate) mod mover;
 mod params;
+mod stance;
 
 use std::collections::HashSet;
 
@@ -37,9 +42,12 @@ use bevy::ecs::world::DeferredWorld;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_content::{ContentAppExt, ContentDb};
+use shards_core::input_names::CROUCH;
 use shards_core::{Intent, NetSet, Predicted};
 
 pub use params::{CharacterParams, Facing, SprintResume, DEFAULT_EYE_FRACTION, DEFAULT_PITCH_LIMITS_DEG};
+pub use stance::{Crouch, Crouched, Stood};
+pub(crate) use stance::room_to_stand;
 
 use crate::modifiers::MoveModifiers;
 use crate::physics::{Body, Collider, ColliderId, PhysicsPlugin, PhysicsWorld, VolumeEntered, VolumeExited};
@@ -283,6 +291,9 @@ impl Plugin for ControllerPlugin {
             .net_predicted::<JumpedFlight>()
             .register_type::<Launch>()
             .register_type::<Ghost>()
+            .register_type::<Crouch>()
+            // The own body's on a client: its `crouch` input runs there.
+            .net_predicted::<Crouch>()
             // The host's `Ghost` does not reach a client's own body: the client puts and takes it itself.
             .net_predicted::<Ghost>()
             .register_type::<MotionState>()
@@ -331,6 +342,7 @@ type CharacterQuery<'w, 's, F = ()> = Query<
         Option<&'static Launch>,
         Has<Ghost>,
         Option<&'static Intent>,
+        Option<&'static mut Crouch>,
     ),
     F,
 >;
@@ -370,7 +382,7 @@ pub fn move_characters<F: QueryFilter + 'static>(
     order.sort_unstable();
     let mut placed = Vec::with_capacity(order.len());
     for &(_, entity) in &order {
-        let Ok((_, _, controller, own, mut input, mut state, mut tf, mut collider, modifiers, flight, launch, ghost, intent)) =
+        let Ok((_, _, controller, own, mut input, mut state, mut tf, mut collider, modifiers, flight, launch, ghost, intent, mut stance)) =
             characters.get_mut(entity)
         else {
             continue;
@@ -391,7 +403,6 @@ pub fn move_characters<F: QueryFilter + 'static>(
             // Taken or not, a launch is for this tick only.
             commands.entity(entity).try_remove::<Launch>();
         }
-        fit(&mut collider, &params.collider());
         let mut now = sanitized(&input);
         // A root takes the body from the walker the way an action does; `external` and gravity stay.
         if modifiers.rooted {
@@ -405,6 +416,34 @@ pub fn move_characters<F: QueryFilter + 'static>(
             warn!("{entity}: character at {} cannot move; teleport it somewhere real", tf.translation);
             continue;
         }
+        // The stance (F2): the crouch input moves the capsule's height, and in the air its bottom (the feet)
+        // with it. The controller's casts, the body's collider and the separation pass all use the size it
+        // has now. A body that cannot crouch and never did goes through none of this.
+        let before = stance.as_deref().copied().unwrap_or_default();
+        let mut settled = None;
+        if params.can_crouch() || before != Crouch::default() {
+            let held = intent.is_some_and(|intent| intent.is_held(CROUCH));
+            let s = stance::settle(&physics, params, (entity, collider.layers), state.mode, tf.translation, before, held, modifiers.rooted, dt);
+            // A body someone else moved this tick restarts afresh in `Step::run`, from where it was put: the
+            // feet shift and the controller's own record of them move together, or it would take its own
+            // shift for a teleport.
+            if s.lift != 0.0 && state.placed == Some(tf.translation) {
+                tf.translation.y += s.lift;
+                state.placed = Some(tf.translation);
+            }
+            match (stance.as_deref_mut(), s.crouch) {
+                (Some(kept), now) if *kept != now => *kept = now,
+                (None, now) if now != Crouch::default() => {
+                    commands.entity(entity).try_insert(now);
+                }
+                _ => {}
+            }
+            settled = Some(s);
+        }
+        let depth = settled.map_or(0.0, |s| s.crouch.depth);
+        let sized = params.at_depth(depth);
+        let params: &CharacterParams = &sized;
+        fit(&mut collider, &params.collider());
         let mover = Mover::new(&physics, params, entity, collider.layers);
         let facing = flat(*tf.forward()).try_normalize().unwrap_or(Vec3::NEG_Z);
         let mut step = Step {
@@ -417,12 +456,21 @@ pub fn move_characters<F: QueryFilter + 'static>(
             facing,
             jumped_flight: flight,
             launch: launch.map(|l| l.height),
+            crouched: depth > 0.0,
             notes: Vec::new(),
         };
         let feet = step.run(tf.translation);
         let notes = std::mem::take(&mut step.notes);
         if tf.translation != feet {
             tf.translation = feet;
+        }
+        if let Some(s) = settled {
+            if s.crouched {
+                commands.trigger(Crouched { entity });
+            }
+            if s.stood {
+                commands.trigger(Stood { entity });
+            }
         }
         match intent.and_then(|intent| params.bound_look(intent)) {
             // A body that faces its look has its yaw, whatever it walks, runs or climbs: no turn rate.
@@ -443,7 +491,7 @@ pub fn move_characters<F: QueryFilter + 'static>(
     }
     separate(&physics, &mut characters, &placed);
     for body in &placed {
-        if let Ok((.., mut state, tf, _, _, _, _, _, _)) = characters.get_mut(body.entity) {
+        if let Ok((.., mut state, tf, _, _, _, _, _, _, _)) = characters.get_mut(body.entity) {
             state.placed = Some(tf.translation);
         }
     }
@@ -587,7 +635,7 @@ fn separate<F: QueryFilter>(physics: &PhysicsWorld, characters: &mut CharacterQu
         if push == Vec3::ZERO {
             continue;
         }
-        let Ok((.., mut tf, collider, _, _, _, _, _)) = characters.get_mut(body.entity) else {
+        let Ok((.., mut tf, collider, _, _, _, _, _, _)) = characters.get_mut(body.entity) else {
             continue;
         };
         let mover = Mover::new(physics, &body.params, body.entity, collider.layers);
