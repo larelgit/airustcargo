@@ -168,7 +168,6 @@ mod follow {
     /// `PostUpdate`, before transforms propagate: each picture node is put where its mover draws
     /// it: its rest pose moved by the mover's motion since it was put (the mover's pose as drawn,
     /// relative to its origin), in the world, whatever the nodes above it are.
-    #[expect(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
     pub(super) fn draw_movers(
         fixed: Res<Time<Fixed>>,
         virtual_time: Res<Time<Virtual>>,

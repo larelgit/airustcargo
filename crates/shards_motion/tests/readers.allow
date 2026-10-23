@@ -29,6 +29,12 @@ crates/shards_motion/src/controller/mod.rs :: Collider = CharacterParams::defaul
 crates/shards_motion/src/controller/mod.rs :: .collider(); :: builds a character's own collider from its numbers; reads nothing
 crates/shards_motion/src/controller/mod.rs :: fit(&mut collider, &params.collider()); :: builds a character's own collider from its numbers; reads nothing
 crates/shards_motion/src/controller/mod.rs :: fn fit(collider: &mut Mut<Collider>, want: &Collider) { :: fits a character's own collider to its numbers
+crates/shards_motion/src/movers/step.rs :: &Collider, :: the characters a mover carries and pushes: their own collider's layers (a character is never a field)
+crates/shards_motion/src/movers/step.rs :: Some((p.entity, *e.get::<ColliderId>()?, *e.get::<Collider>()?, e.get::<Volume>().cloned(), *e.get::<Transform>()?, e.get::<Body>().copied().unwrap_or_default())) :: a mover's pieces put back in the physics world as their entities have them: they are colliders (a field is never a mover's piece)
+crates/shards_motion/src/movers/step.rs :: colliders.iter().filter_map(|e| physics.collider(*e)).map(|c| (c.aabb_min, c.aabb_max)).reduce(|(a, b), (c, d)| (a.min(c), b.max(d))) :: the box a mover's pieces fill, to skip bodies far from it: its pieces are colliders (a field is never a mover's piece)
+crates/shards_motion/src/movers/step.rs :: if world.get::<Collider>(part).is_some() { :: which of a mover's parts are solid: a part is a level node's entity, never a field
+crates/shards_motion/src/movers/step.rs :: let collider = *world.get::<Collider>(p.entity)?; :: a mover's piece put where the mover stands in the physics world: its collider (a field is never a mover's piece)
+crates/shards_motion/src/movers/step.rs :: let solid = |e: Entity| world.get::<Collider>(e).is_some(); :: whether a mover or its part has a collider of its own: a field is never a mover's piece
 crates/shards_motion/src/invariants.rs :: type Character = (&'static AiId, &'static Transform, &'static MotionState, &'static Collider, &'static Body); :: `voxel.body_in_solid` reads a character's own capsule, and judges it against the fields
 crates/shards_motion/src/overlay.rs :: for c in physics.colliders() { :: the collider overlay draws colliders; a field is drawn by the chunk overlay (A2g)
 crates/shards_motion/src/perception/terrain.rs :: .filter_map(|(entity, _)| self.physics.collider(entity).map(|c| c.bounds().1.y)) :: water surfaces are the tops of water volumes, which stay boxes
