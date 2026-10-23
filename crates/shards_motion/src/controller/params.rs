@@ -11,7 +11,7 @@ use shards_core::{Gaze, Intent};
 
 use super::{CharacterController, MotionMode};
 use crate::physics::{Collider, CollisionLayers, Shape};
-use crate::usable::DEFAULT_USE_RANGE;
+use crate::usable::{DEFAULT_USE_RANGE, PROBE_RANGE};
 
 /// How far above `mantle_height` a ledge may stand and still be climbed (m): float noise.
 pub(crate) const MANTLE_SLACK: f32 = 1e-3;
@@ -300,7 +300,7 @@ pub struct CharacterParams {
     pub eye_height: Option<f32>,
     /// How far the body reaches to use something it looks at (m, F5): the longest distance from its
     /// eye at which `use_target` counts a `Usable`, unless the thing says its own `use_range`.
-    /// Above 0; the default is 2 m.
+    /// Above 0 and at most 100 (how far a use is looked for); the default is 2 m.
     #[serde(skip_serializing_if = "use_range_is_default")]
     pub use_range: f32,
     /// The capsule's height when crouched (F2), in meters from the feet. `None`: the body cannot
@@ -754,8 +754,8 @@ impl CharacterParams {
         {
             errors.push(format!("eye_height must be above 0 and at most height {} (is {eye})", self.height));
         }
-        if !(self.use_range > 0.0 && self.use_range.is_finite()) {
-            errors.push(format!("use_range must be a number of metres above 0 (is {})", self.use_range));
+        if !(self.use_range > 0.0 && self.use_range <= PROBE_RANGE) {
+            errors.push(format!("use_range must be a number of metres above 0 and at most {PROBE_RANGE} (is {})", self.use_range));
         }
         match self.crouch_height {
             Some(crouched) => {
@@ -912,9 +912,9 @@ mod tests {
         let set: CharacterParams = ron::from_str("(use_range: 3.5)").unwrap();
         assert_eq!(set.use_range, 3.5);
         assert!(ron::to_string(&set).unwrap().contains("use_range:3.5"));
-        for bad in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+        for bad in [0.0, -1.0, f32::NAN, f32::INFINITY, 100.5] {
             let err = CharacterParams { use_range: bad, ..default() }.check().unwrap_err();
-            assert!(err.contains("use_range must be a number of metres above 0"), "{bad}: {err}");
+            assert!(err.contains("use_range must be a number of metres above 0 and at most 100"), "{bad}: {err}");
         }
     }
 

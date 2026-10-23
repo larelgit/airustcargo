@@ -23,7 +23,7 @@ use serde_json::{json, Map, Value};
 use shards_content::db::closest;
 use shards_content::prefab::{check_prefab, component_from_json, resolve_component};
 use shards_content::ContentDb;
-use shards_motion::{CollisionLayers, LayerMask, MoverDef, VolumeKind};
+use shards_motion::{CollisionLayers, LayerMask, MoverDef, VolumeKind, PROBE_RANGE};
 
 use crate::asset::{json_kind, LevelAsset, LevelNode};
 use crate::marker::{MarkerKind, RequiredMarker};
@@ -629,6 +629,7 @@ fn read_use(props: &Map<String, Value>, used: &mut Vec<&'static str>, problems: 
         Err(e) => problems.push(e),
     }
     match positive(props, "use_range") {
+        Ok(Some(v)) if v > PROBE_RANGE => problems.push(format!("`use_range` must be at most {PROBE_RANGE} (metres, how far a use is looked for), found {v}")),
         Ok(v) => spec.use_range = v,
         Err(e) => problems.push(e),
     }

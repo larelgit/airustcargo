@@ -58,7 +58,7 @@
 //! | `volume` | `water`, `updraft`, `trigger` | a sensor [`Volume`](shards_motion::Volume), shaped by `collider` (default `auto`) |
 //! | `accel`, `max_speed` | numbers | an updraft's pull (m/s²) and top speed (m/s) |
 //! | `prefab` | text | spawn the content prefab with that id at the node; component properties patch it |
-//! | `hold_s`, `use_range`, `prompt` | seconds (zero or more), metres (above zero), text | for an `interactable` (F5): the seconds the button is held for a use (0 is a press), how far from the eye it can be used (the body's own reach when left out), and what a HUD shows (a Fluent `@id` or text; the name when left out) |
+//! | `hold_s`, `use_range`, `prompt` | seconds (zero or more), metres (above zero, at most 100), text | for an `interactable` (F5): the seconds the button is held for a use (0 is a press), how far from the eye it can be used (the body's own reach when left out), and what a HUD shows (a Fluent `@id` or text; the name when left out) |
 //! | `mover` | text | the node becomes a [`Mover`](shards_motion::Mover) going through the keys of that `mover` definition (F6); the nodes below it move with it as its [`MoverPart`](shards_motion::MoverPart)s, and its picture follows it; movers do not nest |
 //!
 //! Every other key is a **component**: its short name (`Health`) or full type path

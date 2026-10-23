@@ -82,7 +82,7 @@ impl Usable {
 
     /// How far this one can be used from, for a body that reaches `body` metres.
     pub fn reach(&self, body: f32) -> f32 {
-        self.use_range.unwrap_or(body)
+        self.use_range.unwrap_or(body).min(PROBE_RANGE)
     }
 }
 
@@ -290,6 +290,7 @@ mod tests {
     #[test]
     fn a_marker_can_reach_further_or_less_than_the_body() {
         let (mut app, user) = room();
+        assert_eq!(Usable::default().reaching(500.0).reach(2.0), PROBE_RANGE, "no reach is past what the probe looks for");
         let far = area(&mut app, "console", Vec3::new(0.0, 1.6, -4.0), Vec3::splat(0.2), Usable::default().reaching(5.0));
         assert_eq!(target(&mut app, user).map(|t| (t.entity, t.range)), Some((far, 5.0)));
         app.world_mut().despawn(far);

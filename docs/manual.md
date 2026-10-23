@@ -1281,7 +1281,7 @@ headless run, a replay and a window agree. `None` (the default) is a character t
   | `face` | `Move` | `Move`: the body turns toward where it walks, its lock-on, its aim point or its action, at its turn rates, as always. `Look`: its yaw is the look's yaw **every tick, with no turn rate**, whatever it walks, climbs or runs (an action included) |
   | `pitch_limits_deg` | `(-89, 89)` | `(lowest, highest)`, within -90..90; readers of the look hold the pitch between them (`look_dir`, the `look` tool) |
   | `eye_height` | 0.9 of `height` | metres from the feet to the eye (the lock-on's own `eye_height` fraction); checked: above 0 and at most `height` |
-  | `use_range` | 2 | metres from the eye at which a thing can be used by looking at it (F5, "Use by looking"), unless the thing says its own `use_range`; checked: above 0 |
+  | `use_range` | 2 | metres from the eye at which a thing can be used by looking at it (F5, "Use by looking"), unless the thing says its own `use_range`; checked: above 0 and at most 100 |
 
   A `Look` body without an `Intent.look` turns as a `Move` one does. **Movement input is relative to the look, not to a camera**: the keyboard and the stick
   (the input map, `ControlSystems::Read`) turn their axes by the yaw of the local player's look when its body faces its look, by the third-person camera's yaw
@@ -2367,8 +2367,8 @@ owns (`mover_go`, a pickup, a line of text).
   nothing to `interact` sees all its presses go to the use; an `interact` press with no target in reach is left as it was (the machine buffers it as always). Only a
   context binding (`MovesetDef::context`, as the revive's) can say when its press is wanted: a moveset that binds `interact` as a plain input (`inputs`) has no condition, so a target in reach
   takes the press before the machine sees it.
-- **Content.** `locomotion` gets `use_range` (default 2, left out of the written form at the default, so no hash moves). The node properties of an
-  `interactable` are `hold_s` (zero or more), `use_range` (above zero) and `prompt` (text; a Fluent `@id` or plain text, the marker's name when left
+- **Content.** `locomotion` gets `use_range` (default 2, above 0 and at most 100, the distance a use is looked for; left out of the written form at the default, so no hash moves). The node properties of an
+  `interactable` are `hold_s` (zero or more), `use_range` (above zero, at most 100) and `prompt` (text; a Fluent `@id` or plain text, the marker's name when left
   out); `content check` names the level, the node and the property (``node `Valve`: `hold_s` must be zero or more (seconds to hold the button), found -1``, ``node `Panel`:
   `use_range` must be above zero, found 0``), a `hold_s`, `use_range` or `prompt` on a node that is no interactable is a problem of its own, and so is an `interactable` that is also a `volume` (a look never meets a sensor). In `layers` the new word is `use`; `layers` on an interactable names more of its use area, and `layers = world` makes it solid as a `collider` does (the `USE` layer is added whatever it says).
 - **For the AI.** The player tool **`interact`**: `interact` uses what you look at; `interact target=e12` turns the look to the thing's use area and presses
@@ -2544,7 +2544,7 @@ Blender (.blend) ── export glTF ──► tiles/ruin.gltf ──► LevelAss
 | `volume` | `water`, `updraft`, `trigger` | a `Volume` sensor with the `collider` shape (default `auto`); `accel` and `max_speed` are for the flow |
 | `prefab` | text | spawns a prefab from the content at the node; component properties edit its fields |
 | `mover` | text | the node is a mover (F6) that goes through the keys of that `mover` definition, and the nodes below it move with it (see "Movers (F6)") |
-| `hold_s`, `use_range`, `prompt` | seconds (zero or more), metres (above zero), text | for an `interactable` (F5, see "Use by looking"): the seconds the button is held for a use (0, the default, is a press), how far from the eye it can be used (without it, the body's own `use_range`), and the text a HUD shows (a Fluent `@id` or plain text; without it, the marker's name) |
+| `hold_s`, `use_range`, `prompt` | seconds (zero or more), metres (above zero, at most 100), text | for an `interactable` (F5, see "Use by looking"): the seconds the button is held for a use (0, the default, is a press), how far from the eye it can be used (without it, the body's own `use_range`), and the text a HUD shows (a Fluent `@id` or plain text; without it, the marker's name) |
 
 Any other key is a **component**: a short name (`Health`) or the full type path. The value is JSON in the form that `inspect` and `get` show:
 
