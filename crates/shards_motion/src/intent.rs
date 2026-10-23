@@ -17,6 +17,13 @@ use crate::controller::{CharacterController, CharacterParams, LocomotionInput, M
 /// The motion systems other modules order against.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MotionSystems {
+    /// `SimSet::Act`, before everything that reads `Intent` (the lock-on switch, [`MotionSystems::Intent`],
+    /// the weapons, the action machine): the control lock (F12) takes what it locks from `Intent` for the
+    /// tick and holds the look inside its cones ([`control_lock`](crate::control_lock)).
+    Lock,
+    /// `FixedLast`, before the replay check: the control lock gives back what it took, so `Intent`
+    /// between ticks is what the world wrote.
+    Unlock,
     /// `SimSet::Act`: [`intent_to_locomotion`] fills [`LocomotionInput`] from `Intent`
     /// (`move_dir`, held `sprint` and `glide`, the `jump` press, facing).
     Intent,

@@ -18,6 +18,7 @@ mod ranged;
 mod replay;
 mod rules;
 mod schedule;
+mod sequence;
 mod snapshot;
 mod tools;
 mod voxel_nav;

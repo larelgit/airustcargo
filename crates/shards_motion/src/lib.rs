@@ -47,6 +47,7 @@
 
 pub mod ai;
 pub mod camera;
+pub mod control_lock;
 pub mod controller;
 mod coverage;
 pub mod eye;
@@ -70,6 +71,9 @@ use shards_core::EngineAppExt;
 pub use invariants::{body_in_solid, launch_sane, motion_finite, BODY_IN_SOLID};
 
 pub use ai::{describe_motion, physics_line_of_sight, MotionAi};
+pub use control_lock::{
+    control_line, lock_controls, unlock_controls, within_cone, ControlLock, ControlLocks, ControlsLocked, ControlsUnlocked, LockStash, LookLock,
+};
 pub use camera::{CameraSettings, LockHooks, LockOnDef, LockOnTarget, LockPoint, ThirdPersonCamera};
 pub use eye::{aim_point_of, eye_of, look_dir, params_of};
 pub use controller::{
@@ -133,6 +137,7 @@ impl Plugin for MotionPlugin {
         movers::plugin(app);
         coverage::plugin(app);
         intent::plugin(app);
+        control_lock::plugin(app);
         orders::plugin(app);
         tools::plugin(app);
         perception::plugin(app);

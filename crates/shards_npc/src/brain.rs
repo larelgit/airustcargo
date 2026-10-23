@@ -34,6 +34,7 @@ use crate::director::{AttackToken, Grant};
 use crate::nav::NavAgent;
 use crate::perception::Perceived;
 use crate::planner::{NpcOptions, NpcPlan};
+use crate::sequence::SequenceHold;
 
 /// Salts of the NPC's random streams (`SimRng`: seed, tick, id, salt).
 pub(crate) mod salt {
@@ -450,13 +451,16 @@ pub struct NpcStateChanged {
 /// without a place gets the one its NPC stands on.
 pub(crate) fn update_activity(world: &mut World) {
     let rule = world.get_resource::<NpcActivity>().copied().unwrap_or_default();
-    let Some(mut q) = world.try_query_filtered::<(Entity, (Has<Dead>, Has<Downed>), Option<&Home>, &Transform), With<Npc>>() else {
+    let Some(mut q) = world.try_query_filtered::<(Entity, (Has<Dead>, Has<Downed>), Has<SequenceHold>, Option<&Home>, &Transform), With<Npc>>() else {
         return;
     };
-    // A downed NPC does nothing either, until it is revived.
+    // A downed NPC does nothing either, until it is revived. One a sequence holds (F12) is awake wherever it
+    // stands: the scene needs it (its brain does not choose, see `decide`).
     let found: Vec<(Entity, bool, Option<Vec3>)> = q
         .iter(world)
-        .map(|(e, (dead, downed), home, tf)| (e, !dead && !downed && (rule.0)(world, e), home.filter(|h| h.pos.is_none()).map(|_| tf.translation)))
+        .map(|(e, (dead, downed), held, home, tf)| {
+            (e, !dead && !downed && (held || (rule.0)(world, e)), home.filter(|h| h.pos.is_none()).map(|_| tf.translation))
+        })
         .collect();
     for (e, active, settle) in found {
         if let Some(mut brain) = world.get_mut::<NpcBrain>(e)
@@ -606,6 +610,11 @@ fn decide_all(world: &World, hooks: &NpcHooks, dt: f32) -> (Vec<Decided>, Vec<(S
     let Some(db) = world.get_resource::<ContentDb>() else { return (decided, problems) };
     for (id, entity) in npcs_in_order(world) {
         let (Some(npc), Some(brain)) = (world.get::<Npc>(entity), world.get::<NpcBrain>(entity)) else { continue };
+        // A sequence holds it (F12): its brain, plan, decision timer and drive stay exactly as they are (the
+        // sequence writes its drive), and it takes up where it was when the hold goes.
+        if world.get::<SequenceHold>(entity).is_some() {
+            continue;
+        }
         if !brain.active {
             decided.push(Decided { entity, brain: brain.clone(), drive: None, changed: None, first_rest: None, think: Think::Keep, rest_cap: None, options: Gates::Keep });
             continue;

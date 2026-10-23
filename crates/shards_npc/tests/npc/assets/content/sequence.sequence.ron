@@ -1,0 +1,34 @@
+// F12's tests: scenes for the bodies the test binds to `actor` and `listener`.
+{
+    // The whole of it: walk, turn to the listener, gesture, say a line, wait, wait for a condition, signal.
+    "scene": (
+        roles: ["actor", "listener"],
+        steps: [
+            MoveTo(role: "actor", marker: "mark_a", speed: 0.5, within: 0.4),
+            Face(role: "actor", at: Role("listener")),
+            Play(role: "actor", action: "gesture"),
+            Sound(role: "actor", sound: "line"),
+            Wait(secs: 0.5),
+            WaitFor(condition: "scene_go"),
+            Signal(name: "done"),
+        ],
+    ),
+    // Holds a body in place for a while: turns to a marker and waits 3 s.
+    "stand": (
+        roles: ["actor"],
+        steps: [
+            Face(role: "actor", at: Marker("mark_b")),
+            Wait(secs: 3.0),
+        ],
+    ),
+    // A walk that gives up.
+    "far": (
+        roles: ["actor"],
+        steps: [MoveTo(role: "actor", marker: "mark_far", speed: 0.5, timeout: 1.0)],
+    ),
+    "tell": (roles: [], steps: [Signal(name: "hello"), Wait(secs: 0.0), Signal(name: "again")]),
+    "long": (
+        roles: ["actor"],
+        steps: [Play(role: "actor", action: "long_gesture"), Signal(name: "never")],
+    ),
+}
