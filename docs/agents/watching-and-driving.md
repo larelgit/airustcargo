@@ -52,7 +52,7 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   bugs: a PNG with `eN` labels and a legend that says which id is which in the picture.
 - Tool errors explain how to fix the call. Read them, do not repeat the call blindly.
 - Engine tools (`shards tools`): **movement** — `move_to` (`path=true` follows `path_to`), `move`, `stop`, `jump`,
-  `sprint`, `glide`, the `clearance` and `path_to` queries (in a region over the navmesh: `path_to` names the `provider`, `clearance` —
+  `sprint`, `glide`, `look` (F1a: `yaw= pitch=` in degrees, `at=eN [part=NAME]`, `clear=true`; sets `Intent.look`, and `observe` then shows an `AIM` line: what the centre of the view meets), the `clearance` and `path_to` queries (in a region over the navmesh: `path_to` names the `provider`, `clearance` —
   `closed`, where the navmesh ends before the physics does), `input_bindings`, `rebind`; **combat** — `light_attack`, `heavy_attack`,
   `block`, `parry`, `dodge`, `use_item`, `use_technique`, `lock_on` (`side=left|right` switches; `point=NAME` a big body's lock point, R3), `attack`, `god`, `heal`, `stagger` (`poise=true` breaks the poise), `react` (a developer tool: it forces a reaction), `remember` (a developer tool: a memory of the context, B3), `barrier` and `damage_taken` (developer tools: a barrier, a named damage multiplier), `combat_objects` (the projectiles and zones in the world, B4), `interact` (`hold=true` holds it: a revive next to a downed ally, B5), `down` (a developer tool: lays a fighter down, B5; `heal` stands it up), `motion_bake`, `animation` (a developer tool: what the animation bridge shows for a body, `id=eN [animset=ID] [bones=true]`)
   (the same as `--bake-motion`); **content** —

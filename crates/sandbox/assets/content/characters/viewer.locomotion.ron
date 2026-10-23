@@ -1,0 +1,20 @@
+// A first-person body (F1a, the manual's "Look as input"): the player's numbers, but its yaw is the
+// yaw of `Intent::look` every tick (`face: Look`, no turn rate), so it looks where it is told and
+// walks wherever `move_dir` says; its eye is 1.6 m above its feet and its view stops short of
+// straight up and down. A body with this and no `Intent::look` turns as the player does.
+{
+    "viewer": (
+        radius: 0.4,
+        height: 1.8,
+        walk_speed: 2.0,
+        run_speed: 5.0,
+        sprint_speed: 7.5,
+        jump_height: 1.2,
+        mantle_height: 1.6,
+        mantle_time: 0.45,
+        turn_speed_deg: 720.0,
+        face: Look,
+        pitch_limits_deg: (-85.0, 85.0),
+        eye_height: Some(1.6),
+    ),
+}

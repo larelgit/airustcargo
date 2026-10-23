@@ -1026,6 +1026,8 @@ pub(crate) fn run_machines(
 
         let here = f.transform.translation;
         let forward = *f.transform.forward();
+        // Where a body that faces its look aims its actions (F1a); none for every other body.
+        let look = looked_at(f.body, &db, &f.intent);
         let locked = f.intent.target.and_then(|id| index.get(id)).and_then(|e| positions.get(e).ok().map(|p| (e, p)));
         // The lock-on target as a leap sees it: where it stands and how wide its body is (a lock point's
         // body: a leap at a hand or a horn lands by the body, not under the point).
@@ -1079,7 +1081,7 @@ pub(crate) fn run_machines(
                     f.cooldowns.cut_to(&key, secs);
                 }
                 pay(&mut f, &choice.start.action, def, stamina_cost(def, &choice.start.action, ruled));
-                let facing = plan_dir.unwrap_or_else(|| start_facing(def, choice.dir, &f.intent, here, forward, target));
+                let facing = plan_dir.unwrap_or_else(|| start_facing(def, choice.dir, &f.intent, look, here, forward, target));
                 let instance = f.state.started;
                 f.state.started += 1;
                 let mut run =
@@ -1141,7 +1143,7 @@ pub(crate) fn run_machines(
                     let spans;
                     let aimed = tracked(def, &f.intent, target, sees);
                     let scale = leap.map_or(1.0, |l| l.scale);
-                    (spans, external) = step_run(run, def, extras.as_mut(), scale, &f.intent, here, aimed, dt);
+                    (spans, external) = step_run(run, def, extras.as_mut(), scale, &f.intent, look, here, aimed, dt);
                     if f.halted.is_some_and(|h| h.instance == run.instance) {
                         external = Vec3::ZERO;
                     }
@@ -1663,11 +1665,26 @@ fn pay(f: &mut FighterDataItem, action: &str, def: &ActionDef, stamina: f32) {
     }
 }
 
-/// Where an action points when it starts.
+/// The ground-plane direction a fighter's actions aim along because it looks that way: the yaw of
+/// its `Intent::look` when its body has `face: Look` ([`CharacterParams::bound_look`]), else
+/// `None` and its actions steer as they always did. A fighter without a character controller has none.
+pub(crate) fn looked_at(
+    body: Option<(&CharacterController, Option<&CharacterParams>)>,
+    db: &ContentDb,
+    intent: &Intent,
+) -> Option<Vec3> {
+    let (controller, own) = body?;
+    controller.resolve(own, Some(db)).bound_look(intent).map(|gaze| gaze.flat_dir())
+}
+
+/// Where an action points when it starts. `look`: the direction the fighter looks along, if its
+/// body faces its look ([`looked_at`]); an aiming action goes there unless a press names a
+/// direction, before the lock-on, the aim point and the movement input.
 pub(crate) fn steer(
     def: &ActionDef,
     dir: Option<Vec3>,
     intent: &Intent,
+    look: Option<Vec3>,
     here: Vec3,
     forward: Vec3,
     target: Option<Vec3>,
@@ -1676,10 +1693,11 @@ pub(crate) fn steer(
     let pressed = dir.and_then(|d| flat(d).try_normalize());
     let moving = flat(intent.move_dir).try_normalize();
     let pick = match def.steer {
-        Steer::Aim => pressed.or_else(|| target.and_then(toward)).or_else(|| intent.aim.and_then(toward)).or(moving),
+        Steer::Aim => pressed.or(look).or_else(|| target.and_then(toward)).or_else(|| intent.aim.and_then(toward)).or(moving),
         Steer::Move | Steer::MoveOrBack => pressed.or(moving),
     };
-    let ahead = flat(forward).try_normalize().unwrap_or(Vec3::NEG_Z);
+    // A body that faces its look faces it now; one that does not, as it faced after its last tick.
+    let ahead = look.or_else(|| flat(forward).try_normalize()).unwrap_or(Vec3::NEG_Z);
     // Nothing pressed and nothing held: a backstep leaves the way the body does not face.
     pick.unwrap_or(if def.steer == Steer::MoveOrBack { -ahead } else { ahead })
 }
@@ -1703,13 +1721,13 @@ pub(crate) fn pair_victim_of(
     keeps_victim(state, dead, down, past_revive(def, run.t)).then_some(pairing.victim)
 }
 
-/// While an action tracks, it turns toward the target or the aim point.
-fn track(def: &ActionDef, intent: &Intent, here: Vec3, target: Option<Vec3>) -> Option<Vec3> {
+/// While an action tracks, it turns toward the look (of a body that faces it), the target or the aim point.
+fn track(def: &ActionDef, intent: &Intent, look: Option<Vec3>, here: Vec3, target: Option<Vec3>) -> Option<Vec3> {
     if matches!(def.steer, Steer::Move | Steer::MoveOrBack) {
         return None;
     }
     let toward = |p: Vec3| flat(p - here).try_normalize();
-    target.and_then(toward).or_else(|| intent.aim.and_then(toward))
+    look.or_else(|| target.and_then(toward)).or_else(|| intent.aim.and_then(toward))
 }
 
 /// Where a run of `def` starts pointing: [`steer`]; an action with `turn` spans starts from the
@@ -1718,14 +1736,15 @@ pub(crate) fn start_facing(
     def: &ActionDef,
     dir: Option<Vec3>,
     intent: &Intent,
+    look: Option<Vec3>,
     here: Vec3,
     forward: Vec3,
     target: Option<Vec3>,
 ) -> Vec3 {
     if def.turn.is_empty() {
-        steer(def, dir, intent, here, forward, target)
+        steer(def, dir, intent, look, here, forward, target)
     } else {
-        flat(forward).try_normalize().unwrap_or(Vec3::NEG_Z)
+        look.or_else(|| flat(forward).try_normalize()).unwrap_or(Vec3::NEG_Z)
     }
 }
 
@@ -1742,6 +1761,7 @@ pub(crate) fn step_run(
     extras: Option<&mut RunExtras>,
     scale: f32,
     intent: &Intent,
+    look: Option<Vec3>,
     here: Vec3,
     target: Option<Vec3>,
     dt: f32,
@@ -1753,7 +1773,7 @@ pub(crate) fn step_run(
     let external = match extras {
         None => {
             if run.t <= def.track_until + EPS
-                && let Some(dir) = track(def, intent, here, target)
+                && let Some(dir) = track(def, intent, look, here, target)
             {
                 run.facing = dir;
             }
@@ -1761,7 +1781,7 @@ pub(crate) fn step_run(
         }
         Some(x) => {
             x.held &= run.input.as_deref().is_some_and(|input| intent.is_held(input));
-            turn_run(run, def, x, intent, here, target, dt);
+            turn_run(run, def, x, intent, look, here, target, dt);
             let along = moved(&spans);
             run.facing * along - over_close(def, x, run.facing, along, here, target)
         }
@@ -1815,11 +1835,21 @@ pub(crate) fn tracked(def: &ActionDef, intent: &Intent, target: Option<Vec3>, se
 /// `assist.angle` degrees of [`RunExtras::start_facing`] while there is a lock-on target; snapping
 /// while `t <= track_until` (no `turn` spans: the old rule), else at most the open spans' rate,
 /// toward the target, the aim, else the movement input (a player steering the swing).
-fn turn_run(run: &mut Running, def: &ActionDef, x: &RunExtras, intent: &Intent, here: Vec3, target: Option<Vec3>, dt: f32) {
+#[allow(clippy::too_many_arguments, reason = "one tick of a run: the run, its definition, what it reads and what moves it")]
+fn turn_run(
+    run: &mut Running,
+    def: &ActionDef,
+    x: &RunExtras,
+    intent: &Intent,
+    look: Option<Vec3>,
+    here: Vec3,
+    target: Option<Vec3>,
+    dt: f32,
+) {
     let desired = if def.turn.is_empty() {
-        track(def, intent, here, target)
+        track(def, intent, look, here, target)
     } else {
-        track(def, intent, here, target).or_else(|| flat(intent.move_dir).try_normalize())
+        track(def, intent, look, here, target).or_else(|| flat(intent.move_dir).try_normalize())
     };
     let Some(desired) = desired else { return };
     let desired = match (&def.assist, target) {
@@ -2548,7 +2578,7 @@ mod tests {
         let step = |text: &str, dir: Option<Vec3>, held: Vec3| {
             let def = parse_def(text);
             let intent = Intent { move_dir: held, ..default() };
-            steer(&def, dir, &intent, Vec3::ZERO, Vec3::X, None)
+            steer(&def, dir, &intent, None, Vec3::ZERO, Vec3::X, None)
         };
         let back = r#"(net_id: 1, phases: [("a", 0.4)], steer: MoveOrBack)"#;
         let plain = r#"(net_id: 1, phases: [("a", 0.4)], steer: Move)"#;
@@ -2557,7 +2587,31 @@ mod tests {
         assert_eq!(step(back, Some(Vec3::Z), Vec3::ZERO), Vec3::Z, "a press names the way");
         assert_eq!(step(back, None, -Vec3::Z), -Vec3::Z, "so does the stick");
         let def = parse_def(back);
-        assert!(track(&def, &Intent { aim: Some(Vec3::Z), ..default() }, Vec3::ZERO, Some(Vec3::Z)).is_none(), "no tracking");
+        assert!(track(&def, &Intent { aim: Some(Vec3::Z), ..default() }, None, Vec3::ZERO, Some(Vec3::Z)).is_none(), "no tracking");
+    }
+
+    #[test]
+    fn an_aiming_action_of_a_body_that_faces_its_look_goes_where_it_looks() {
+        let aim = parse_def(r#"(net_id: 1, phases: [("a", 0.4)], steer: Aim)"#);
+        let back = parse_def(r#"(net_id: 1, phases: [("a", 0.4)], steer: MoveOrBack)"#);
+        let west = Some(Vec3::NEG_X);
+        // Walking north, aiming at a point to the east, locked on a body to the south, looking west.
+        let intent = Intent { move_dir: Vec3::NEG_Z, aim: Some(Vec3::new(5.0, 0.0, 0.0)), ..default() };
+        let there = Some(Vec3::new(0.0, 0.0, 5.0));
+        assert_eq!(steer(&aim, None, &intent, west, Vec3::ZERO, Vec3::X, there), Vec3::NEG_X, "the look comes before the lock-on, the aim and the stick");
+        assert_eq!(steer(&aim, Some(Vec3::Z), &intent, west, Vec3::ZERO, Vec3::X, there), Vec3::Z, "a press that names a direction still wins");
+        assert_eq!(steer(&aim, None, &intent, None, Vec3::ZERO, Vec3::X, there), Vec3::Z, "no look: the lock-on, as before");
+        assert_eq!(steer(&aim, None, &Intent::default(), west, Vec3::ZERO, Vec3::X, None), Vec3::NEG_X);
+        // A backstep of a body that looks west goes back from the look, not from where it faced a tick ago.
+        assert_eq!(steer(&back, None, &Intent::default(), west, Vec3::ZERO, Vec3::X, None), Vec3::X);
+        // What the run turns toward while it tracks.
+        assert_eq!(track(&aim, &intent, west, Vec3::ZERO, there), Some(Vec3::NEG_X));
+        assert_eq!(track(&aim, &intent, None, Vec3::ZERO, there), Some(Vec3::Z));
+        assert_eq!(track(&back, &intent, west, Vec3::ZERO, there), None, "an action that does not aim does not track");
+        // With turn spans a run starts from the body's facing, which for such a body is the look.
+        let turning = parse_def(r#"(net_id: 1, phases: [("a", 0.4)], steer: Aim, turn: [(Phase("a"), 90)])"#);
+        assert_eq!(start_facing(&turning, None, &intent, west, Vec3::ZERO, Vec3::X, there), Vec3::NEG_X);
+        assert_eq!(start_facing(&turning, None, &intent, None, Vec3::ZERO, Vec3::X, there), Vec3::X);
     }
 
     #[test]

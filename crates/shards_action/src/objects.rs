@@ -286,7 +286,7 @@ pub struct MetProjectiles(pub(crate) Vec<Entity>);
 
 /// The intent of a body with no controls: an object's run reads no presses and holds nothing.
 static NO_INTENT: Intent =
-    Intent { move_dir: Vec3::ZERO, aim: None, target: None, held: Vec::new(), pressed: Vec::new(), orders: std::collections::VecDeque::new() };
+    Intent { move_dir: Vec3::ZERO, aim: None, target: None, held: Vec::new(), pressed: Vec::new(), orders: std::collections::VecDeque::new(), look: None };
 
 /// A salt of the spawner's random stream: the pattern's turn.
 const TURN_SALT: u64 = 0x05fa_7e0b;
@@ -650,7 +650,7 @@ fn step_object(world: &mut World, entity: Entity, dt: f32) {
         world.trigger(ActionEnded::of(entity, &run, ActionEnd::Removed));
         return;
     };
-    let (spans, _) = step_run(&mut run, def, None, 1.0, &NO_INTENT, here, None, dt);
+    let (spans, _) = step_run(&mut run, def, None, 1.0, &NO_INTENT, None, here, None, dt);
     let mut effects = Vec::new();
     let mut telegraphs = Vec::new();
     crossed(def, &spans, |e| effects.push(e.clone()), || telegraphs.push(telegraph(entity, def, &run, here)));

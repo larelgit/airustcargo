@@ -1,0 +1,139 @@
+# Look as input (F1a, the manual's "Look as input"): `Intent.look` is where a body looks. The `look` tool
+# writes it (degrees; 0 is north, positive turns left), `observe` shows the `AIM` line while there is
+# one (what the centre of the view meets, from the body's eye and look, never from a camera), and a body
+# whose `locomotion` says `face: Look` (`viewer`, `characters/viewer.locomotion.ron`) turns to the look's
+# yaw every tick and walks wherever `move` says, in the world's directions. The part of a body that a
+# view passes through (`AIM e7 Dummy head 14.2m`) needs the id of a spawned body, which differs from one
+# run order to another, so `tests/sandbox/look.rs` checks it; here the arena's own bodies stand in.
+#
+# The player is moved a step north first so that it faces north, then put 12 m south of the middle
+# with the first skeleton 6 m east of it and the others away; the pillars are e1-e4 (e3 at x -7, z 7).
+
+seed 42
+
+# --- the arena as the game spawns it, whatever was played in it before
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act look clear=true
+act set id=e5 component=CharacterController path=params value='"player"'
+step 30
+act heal id=e5
+act teleport id=e5 x=0 z=13 y=0
+act teleport id=e7 x=6 z=12 y=0
+act teleport id=e6 x=-18 z=-18 y=0
+act teleport id=e8 x=18 z=-18 y=0
+act teleport id=e14 x=-18 z=18 y=0
+step 2
+invariant field e5 Health.current > 0
+
+# --- 1. a body that faces its movement keeps its heading whatever it looks at
+# (a player-scope agent can look: the tool acts through the body's Intent, as a mouse does)
+session --agent hero --scope player
+act look yaw=0 pitch=0
+session --agent scenario
+act look clear=true
+act move dir=N meters=0.5
+step 40
+act teleport id=e5 x=0 z=12 y=0
+step 2
+observe
+expect result contains "facing N"
+expect result !contains "AIM"
+expect result !contains "° pitch"
+act look yaw=-90 pitch=0
+expect result contains "ok: looking E (yaw -90.0°, pitch 0.0°)"
+step 5
+observe
+expect result contains "look E yaw -90.0° pitch 0.0°"
+expect result contains "facing N"
+expect result contains "AIM e7 Skeleton 5."
+
+# --- 2. at a body, by its id: yaw and pitch from the eye to its aim point
+act look yaw=0 pitch=0
+act look at=e7
+expect result contains "ok: looking at e7, 6.0m E (yaw -90.0°, pitch -5."
+observe
+expect result contains "AIM e7 Skeleton 5."
+act look at=e3
+expect result contains "ok: looking at e3, 8.6m NW"
+observe
+expect result contains "AIM e3 Pillar 7."
+
+# --- 3. what the tool refuses says what to do
+act? look
+expect result contains "nothing to do: give yaw= and/or pitch= (degrees), or at=eN [part=NAME], or clear=true"
+act? look at=e5
+expect result contains "that is you; look at something else"
+act? look at=e7 part=head
+expect result contains "e7 has no parts"
+act? look at=e7 yaw=10
+expect result contains "give angles (yaw=, pitch=) or a target (at=), not both"
+act? look clear=true yaw=1
+expect result contains "clear=true stops looking and takes no other argument"
+act? look part=head
+expect result contains "give at= too"
+act? look at=e999
+expect result contains "e999"
+
+# --- 4. the world the view meets: a wall, the floor, a pillar, nothing
+act look yaw=180 pitch=0
+observe
+expect result contains "AIM wall 8.0m"
+act look yaw=0 pitch=-90
+expect result contains "(pitch held to your limits, -89..89)"
+observe
+expect result contains "AIM floor 1.6m"
+act look yaw=0 pitch=60
+observe
+expect result contains "AIM nothing within 100m"
+act look yaw=0 pitch=0
+observe
+expect result contains "AIM wall 32."
+
+# --- 5. a look is held until it is cleared
+act look clear=true
+expect result contains "ok: not looking; your body turns by its movement"
+observe
+expect result !contains "AIM"
+act look clear=true
+expect result contains "ok: you were not looking"
+
+# --- 6. a body that faces its look: its yaw is the look's, within a tick, whatever it walks
+act look yaw=90 pitch=0
+step 5
+observe
+expect result contains "facing N"
+act set id=e5 component=CharacterController path=params value='"viewer"'
+step 2
+observe
+expect result contains "facing W"
+act look yaw=-90
+step 1
+observe
+expect result contains "facing E"
+act look yaw=-90 pitch=90
+expect result contains "(pitch held to your limits, -85..85)"
+observe
+expect result contains "look E yaw -90.0° pitch 85.0°"
+expect result contains "AIM nothing within 100m"
+# walking north while looking east: the world's directions, and the body keeps facing east
+act look yaw=-90 pitch=0
+act move dir=N meters=2
+step 60
+observe
+expect result contains "facing E"
+expect field e5 Transform.translation.z < 11
+act stop
+
+# --- back as it was found
+act look clear=true
+act set id=e5 component=CharacterController path=params value='"player"'
+act stop
+act teleport id=e6 x=0 z=-6 y=0
+step 2

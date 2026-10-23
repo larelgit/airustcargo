@@ -19,6 +19,10 @@
 //! The transform's translation is the character's feet. Writing it from outside (the
 //! `teleport` tool, a respawn) puts the character there afresh: no speed, no fall, no
 //! climb carried over from where it was.
+//!
+//! Facing: a body turns toward where it walks, its lock-on, its aim point or the action it runs, at
+//! its turn rates. A body whose params say `face: Look` ([`Facing`]) takes its yaw from
+//! [`Intent::look`] instead, every tick with no turn rate, whatever else it does (F1a).
 
 pub(crate) mod locomotion;
 pub(crate) mod mover;
@@ -35,7 +39,7 @@ use serde::{Deserialize, Serialize};
 use shards_content::{ContentAppExt, ContentDb};
 use shards_core::{Intent, NetSet, Predicted};
 
-pub use params::{CharacterParams, SprintResume};
+pub use params::{CharacterParams, Facing, SprintResume, DEFAULT_EYE_FRACTION, DEFAULT_PITCH_LIMITS_DEG};
 
 use crate::modifiers::MoveModifiers;
 use crate::physics::{Body, Collider, ColliderId, PhysicsPlugin, PhysicsWorld, VolumeEntered, VolumeExited};
@@ -269,6 +273,7 @@ impl Plugin for ControllerPlugin {
         app.add_content::<CharacterParams>()
             .register_type::<CharacterParams>()
             .register_type::<SprintResume>()
+            .register_type::<Facing>()
             .register_type::<CharacterController>()
             .register_type::<LocomotionInput>()
             .register_type::<MotionMode>()
@@ -325,6 +330,7 @@ type CharacterQuery<'w, 's, F = ()> = Query<
         Has<JumpedFlight>,
         Option<&'static Launch>,
         Has<Ghost>,
+        Option<&'static Intent>,
     ),
     F,
 >;
@@ -364,7 +370,7 @@ pub fn move_characters<F: QueryFilter + 'static>(
     order.sort_unstable();
     let mut placed = Vec::with_capacity(order.len());
     for &(_, entity) in &order {
-        let Ok((_, _, controller, own, mut input, mut state, mut tf, mut collider, modifiers, flight, launch, ghost)) =
+        let Ok((_, _, controller, own, mut input, mut state, mut tf, mut collider, modifiers, flight, launch, ghost, intent)) =
             characters.get_mut(entity)
         else {
             continue;
@@ -418,9 +424,15 @@ pub fn move_characters<F: QueryFilter + 'static>(
         if tf.translation != feet {
             tf.translation = feet;
         }
-        let look = look_dir(&now, &state, params.turn_toward_input);
-        let turn_speed = turn_rate(params, modifiers, state.mode, now.face.is_some() && look.is_some());
-        turn(&mut tf, look, turn_speed, dt);
+        match intent.and_then(|intent| params.bound_look(intent)) {
+            // A body that faces its look has its yaw, whatever it walks, runs or climbs: no turn rate.
+            Some(gaze) => face_exactly(&mut tf, gaze.yaw),
+            None => {
+                let look = look_dir(&now, &state, params.turn_toward_input);
+                let turn_speed = turn_rate(params, modifiers, state.mode, now.face.is_some() && look.is_some());
+                turn(&mut tf, look, turn_speed, dt);
+            }
+        }
         let tracks = params.tracks_landings();
         for note in notes {
             trigger(&mut commands, entity, note, tracks);
@@ -431,7 +443,7 @@ pub fn move_characters<F: QueryFilter + 'static>(
     }
     separate(&physics, &mut characters, &placed);
     for body in &placed {
-        if let Ok((.., mut state, tf, _, _, _, _, _)) = characters.get_mut(body.entity) {
+        if let Ok((.., mut state, tf, _, _, _, _, _, _)) = characters.get_mut(body.entity) {
             state.placed = Some(tf.translation);
         }
     }
@@ -515,6 +527,14 @@ fn look_dir(input: &LocomotionInput, state: &MotionState, toward_input: bool) ->
     (!input.locked && moving.length() > 0.1).then(|| moving.normalize())
 }
 
+/// Turns the transform to face `yaw` (radians, as `Gaze::yaw`: 0 faces -Z) at once, upright.
+fn face_exactly(tf: &mut Mut<Transform>, yaw: f32) {
+    let want = Quat::from_rotation_y(yaw);
+    if tf.rotation != want {
+        tf.rotation = want;
+    }
+}
+
 /// Turns the transform about Y toward `dir` at `speed_deg` per second (0: at once).
 fn turn(tf: &mut Mut<Transform>, dir: Option<Vec3>, speed_deg: f32, dt: f32) {
     let Some(dir) = dir else {
@@ -567,7 +587,7 @@ fn separate<F: QueryFilter>(physics: &PhysicsWorld, characters: &mut CharacterQu
         if push == Vec3::ZERO {
             continue;
         }
-        let Ok((.., mut tf, collider, _, _, _, _)) = characters.get_mut(body.entity) else {
+        let Ok((.., mut tf, collider, _, _, _, _, _)) = characters.get_mut(body.entity) else {
             continue;
         };
         let mover = Mover::new(physics, &body.params, body.entity, collider.layers);
