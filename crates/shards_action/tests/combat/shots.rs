@@ -142,8 +142,12 @@ fn falloff_keeps_the_share_its_distance_gives() {
     assert!((hp(&app, far) - (100.0 - 20.0 * share)).abs() < 1e-3, "hp {} at {} m", hp(&app, far), hit.distance);
 }
 
-/// Fires the scatter gun once at a target 6 m north in a fresh arena; the impacts and the target's health.
-fn scatter_once() -> (Vec<(Vec3, Option<Entity>)>, f32, Vec<Vec3>) {
+/// Where each pellet ended and the body it hit, if any.
+type Impacts = Vec<(Vec3, Option<Entity>)>;
+
+/// Fires the scatter gun once at a target 6 m north in a fresh arena: the impacts, the target's health and
+/// the pellets' directions from the eye.
+fn scatter_once() -> (Impacts, f32, Vec<Vec3>) {
     let mut app = arena();
     let hero = hero(app.world_mut(), "sg_scatter", Vec3::ZERO, N);
     let dummy = target(&mut app, Vec3::new(0.0, 0.0, -6.0), true);
