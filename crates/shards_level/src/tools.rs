@@ -16,12 +16,13 @@ use crate::def::LevelDef;
 use crate::library::{held_change, level_asset};
 use crate::marker::{LevelMarker, MarkerKind};
 use crate::props::check_level;
-use crate::spawn::{reload_level, spawn_level_as, FromLevel, LevelInstances, SpawnedLevel};
+use crate::spawn::{despawn_level, reload_level, spawn_level_as, FromLevel, LevelInstances, SpawnedLevel};
 
 pub(crate) fn register(world: &mut World) {
     register_tool(world, "level_info", Scope::Player, ToolKind::Query, level_info);
     register_tool(world, "spawn_level", Scope::Dev, ToolKind::Action, spawn_level_tool);
     register_tool(world, "level_reload", Scope::Dev, ToolKind::Action, level_reload);
+    register_tool(world, "level_despawn", Scope::Dev, ToolKind::Action, level_despawn);
 }
 
 /// `spawn "start"`, `navlink "ladder" -> (11.0, 3.0, 5.5)`.
@@ -252,4 +253,45 @@ fn level_reload(In(call): In<Call<LevelReloadArgs>>, world: &mut World) -> ToolR
     let text = format!("level reloaded: {}", done.join(", "));
     journal::emit(world, JournalKind::Event, text.clone());
     Ok(text)
+}
+
+/// Take spawned levels away: every entity they spawned (and their pictures) goes, and a level
+/// placed by id is placed no more (a snapshot taken after it does not put it back). Name the
+/// instance, or a level id for every instance of it. A region's tiles go with the region instead
+/// (`regen`).
+#[derive(Deserialize, JsonSchema, Default)]
+pub struct LevelDespawnArgs {
+    /// Level id, e.g. "arena": every instance of it.
+    pub id: Option<String>,
+    /// Or one instance, by its number (`spawn_level` and `level_info` say it).
+    pub instance: Option<u32>,
+}
+
+fn level_despawn(In(call): In<Call<LevelDespawnArgs>>, world: &mut World) -> ToolResult {
+    let LevelDespawnArgs { id, instance } = call.args;
+    if id.is_none() && instance.is_none() {
+        return Err("name what goes: `id` (every instance of a level) or `instance`".into());
+    }
+    let mut wanted: Vec<(u32, String)> = world
+        .get_resource::<LevelInstances>()
+        .into_iter()
+        .flat_map(|instances| instances.iter())
+        .filter(|i| id.as_ref().is_none_or(|id| i.label == *id) && instance.is_none_or(|n| i.id == n))
+        .map(|i| (i.id, i.label.clone()))
+        .collect();
+    wanted.sort();
+    if wanted.is_empty() {
+        let spawned: Vec<String> =
+            world.get_resource::<LevelInstances>().into_iter().flat_map(|i| i.iter()).map(|i| format!("{} (instance {})", i.label, i.id)).collect();
+        let list = if spawned.is_empty() { "no level is spawned (spawn_level)".to_owned() } else { format!("spawned: {}", spawned.join(", ")) };
+        return Err(format!("no spawned level matches; {list}"));
+    }
+    let mut done = Vec::new();
+    for (instance, label) in wanted {
+        let entities = despawn_level(world, instance);
+        done.push(format!("{label} (instance {instance}, {entities} entities)"));
+    }
+    let text = format!("level taken away: {}", done.join(", "));
+    journal::emit(world, JournalKind::Event, text.clone());
+    Ok(format!("ok: {text}"))
 }

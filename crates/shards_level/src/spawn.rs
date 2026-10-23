@@ -17,12 +17,12 @@ use ai_core::prelude::*;
 use bevy::prelude::*;
 use serde_json::Value;
 use shards_content::{spawn_prefab, ContentDb};
-use shards_motion::{Collider, Shape, Volume};
+use shards_motion::{CharacterController, Collider, Mover, MoverPart, Shape, Volume};
 
 use crate::asset::{Bounds, Fnv, LevelAsset};
 use crate::library::level_asset;
 use crate::marker::{LevelMarker, MarkerKind};
-use crate::props::{analyze, ColliderSpec, LevelProblem, MarkerSpec, NodePlan, ShapeSpec};
+use crate::props::{analyze, mover_above, ColliderSpec, LevelProblem, MarkerSpec, NodePlan, ShapeSpec};
 
 /// Where an entity came from: the level file's node. Every entity a level spawns has it;
 /// query it to find (or despawn) a level's entities.
@@ -212,9 +212,13 @@ fn place(world: &mut World, level: &LevelAsset, plans: &[NodePlan], at: Transfor
     let worlds: Vec<Mat4> = level.nodes.iter().map(|node| at_matrix * node.world).collect();
     let app_registry = world.resource::<AppTypeRegistry>().clone();
     let mut entities = Vec::new();
+    let mut spawned = Vec::new();
     for plan in plans.iter().filter(|p| p.spawns()) {
         match spawn_node(world, &app_registry, level, &worlds, plan, label, instance) {
-            Ok(entity) => entities.push(entity),
+            Ok(entity) => {
+                entities.push(entity);
+                spawned.push((plan.node, entity));
+            }
             Err(why) => {
                 for entity in entities {
                     world.despawn(entity);
@@ -223,6 +227,7 @@ fn place(world: &mut World, level: &LevelAsset, plans: &[NodePlan], at: Transfor
             }
         }
     }
+    link_movers(world, level, plans, &spawned);
     let visual = crate::render::spawn_visual(world, &level.path, level.scene.unwrap_or(0), at, instance);
     let mut instances = world.get_resource_or_init::<LevelInstances>();
     let position = instances.list.partition_point(|i| i.id < instance);
@@ -268,6 +273,9 @@ fn spawn_node(
     if let Some(kind) = &plan.volume {
         e.insert(Volume { kind: kind.clone() });
     }
+    if let Some(def) = &plan.mover {
+        e.insert(Mover { def: def.clone() });
+    }
     // The file's own components come last: what an artist wrote beats what the engine
     // derived from the same node.
     {
@@ -280,6 +288,28 @@ fn spawn_node(
     }
     e.insert(transform);
     Ok(entity)
+}
+
+/// The nodes below a mover node move with it: each one spawned becomes the mover's part, posed in
+/// the mover's frame as the file poses it (`MoverPart`, which gives it an `AiId`), in file order. A
+/// character spawned there (a prefab with a controller) is not welded on: it stands on the mover and
+/// is carried as any body is.
+fn link_movers(world: &mut World, level: &LevelAsset, plans: &[NodePlan], spawned: &[(usize, Entity)]) {
+    for &(position, entity) in spawned {
+        let Some(outer) = mover_above(level, plans, position) else { continue };
+        let Some(&(_, mover)) = spawned.iter().find(|(p, _)| *p == outer) else { continue };
+        if world.get::<CharacterController>(entity).is_some() {
+            continue;
+        }
+        let (Some(id), Some(root), Some(tf)) =
+            (world.get::<AiId>(mover).copied(), world.get::<Transform>(mover).copied(), world.get::<Transform>(entity).copied())
+        else {
+            continue;
+        };
+        let inverse = root.rotation.inverse();
+        let offset = Transform { translation: inverse * (tf.translation - root.translation), rotation: (inverse * tf.rotation).normalize(), scale: Vec3::ONE };
+        world.entity_mut(entity).insert(MoverPart { mover: id, offset });
+    }
 }
 
 /// The marker, and how the AI sees it: landmarks as the compact LANDMARKS line, spawn

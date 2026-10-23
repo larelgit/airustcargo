@@ -7,6 +7,7 @@ mod body_motion;
 mod body_state;
 mod common;
 mod context;
+mod crush;
 mod golden;
 mod hits;
 mod lethal;

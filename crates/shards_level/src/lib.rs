@@ -172,11 +172,13 @@ pub use marker::{LevelMarker, MarkerKind, RequiredMarker};
 pub use placed::{PlacedLevel, PlacedLevels};
 pub use props::{check_level, LevelProblem, PROPERTIES};
 pub use render::LevelVisual;
+#[cfg(feature = "render")]
+pub use render::MoverPicture;
 pub use spawn::{
     despawn_level, reload_level, spawn_level, spawn_level_as, FromLevel, LevelCounter, LevelInstance, LevelInstances,
     SpawnedLevel,
 };
-pub use tools::{spawn_level_by_id, spawn_level_file, LevelInfoArgs, LevelReloadArgs, SpawnLevelArgs};
+pub use tools::{spawn_level_by_id, spawn_level_file, LevelDespawnArgs, LevelInfoArgs, LevelReloadArgs, SpawnLevelArgs};
 
 /// Version of the engine crates (they share one).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -236,6 +238,8 @@ impl Plugin for LevelPlugin {
                 Update,
                 (library::request_levels, library::collect_changed, library::apply_changed).chain(),
             );
+        #[cfg(feature = "render")]
+        render::plugin(app);
         tools::register(app.world_mut());
     }
 }

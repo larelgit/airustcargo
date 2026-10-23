@@ -21,6 +21,17 @@ const MAX_AHEAD: u64 = 120;
 /// Pushes per body and mover: a corner of two of the mover's colliders takes two.
 const PUSHES: usize = 4;
 
+/// Every mover's parts by the mover's id: `(part id, part, offset)`, each list in `AiId` order.
+type Parts = BTreeMap<AiId, Vec<(AiId, Entity, Transform)>>;
+
+/// A mover as a client foresees it: its id, its pieces, and its poses a tick before and at this
+/// tick (`None`: it stands as replicated).
+struct Foreseen {
+    id: AiId,
+    pieces: Vec<Piece>,
+    poses: Option<(Transform, Transform)>,
+}
+
 /// A character as movers see it.
 struct Walker {
     entity: Entity,
@@ -88,7 +99,7 @@ fn walkers(world: &mut World) -> Vec<Walker> {
 }
 
 /// The mover `entity` (id `id`) and its parts in `AiId` order.
-fn pieces(world: &World, entity: Entity, parts: &BTreeMap<AiId, Vec<(AiId, Entity, Transform)>>, id: AiId) -> Vec<Piece> {
+fn pieces(world: &World, entity: Entity, parts: &Parts, id: AiId) -> Vec<Piece> {
     let solid = |e: Entity| world.get::<Collider>(e).is_some();
     let mut out = vec![Piece { entity, offset: Transform::IDENTITY, solid: solid(entity) }];
     for &(_, part, offset) in parts.get(&id).into_iter().flatten() {
@@ -98,8 +109,8 @@ fn pieces(world: &World, entity: Entity, parts: &BTreeMap<AiId, Vec<(AiId, Entit
 }
 
 /// Every part by its mover's id, each list in `AiId` order.
-fn parts_by_mover(world: &mut World) -> BTreeMap<AiId, Vec<(AiId, Entity, Transform)>> {
-    let mut out: BTreeMap<AiId, Vec<(AiId, Entity, Transform)>> = BTreeMap::new();
+fn parts_by_mover(world: &mut World) -> Parts {
+    let mut out: Parts = BTreeMap::new();
     let Some(mut q) = world.try_query::<(Entity, &AiId, &MoverPart)>() else { return out };
     for (entity, id, part) in q.iter(world) {
         out.entry(part.mover).or_default().push((*id, entity, part.offset));
@@ -155,7 +166,7 @@ fn restore(world: &mut World, pieces: &[Piece]) {
 }
 
 /// Which mover (by id) each collider of a mover belongs to.
-fn owners(world: &World, movers: &[(AiId, Entity)], parts: &BTreeMap<AiId, Vec<(AiId, Entity, Transform)>>) -> BTreeMap<Entity, AiId> {
+fn owners(world: &World, movers: &[(AiId, Entity)], parts: &Parts) -> BTreeMap<Entity, AiId> {
     let mut out = BTreeMap::new();
     for &(id, entity) in movers {
         out.insert(entity, id);
@@ -225,7 +236,7 @@ fn push_out(capsule: &Capsule, free: &Capsule, mut feet: Vec3, colliders: &[Enti
 /// yaw it turns by: `(walker, feet, yaw)`. `Err` names the first walker (in `ColliderId` order) that
 /// cannot be pushed out of the mover's way. The mover's colliders stand at `to` in the physics
 /// world.
-#[allow(clippy::too_many_arguments, reason = "the step's parts, passed once")]
+#[expect(clippy::too_many_arguments, reason = "the step's parts, passed once")]
 fn carry_and_push(
     physics: &PhysicsWorld,
     walkers: &[Walker],
@@ -371,7 +382,7 @@ pub(crate) fn step_movers(world: &mut World) {
 }
 
 /// The mover's step as its state would take it, before anything is moved.
-fn plan(world: &World, entity: Entity, id: AiId, parts: &BTreeMap<AiId, Vec<(AiId, Entity, Transform)>>, dt: f32) -> Option<Plan> {
+fn plan(world: &World, entity: Entity, id: AiId, parts: &Parts, dt: f32) -> Option<Plan> {
     let def_id = &world.get::<Mover>(entity)?.def;
     let def = world.get_resource::<ContentDb>()?.get::<MoverDef>(def_id)?.clone();
     let before = world.get::<MoverState>(entity)?.clone();
@@ -406,7 +417,7 @@ fn held(world: &mut World, plan: &Plan, blocker: Entity, dt: f32, fire: &mut Vec
         Blocked::Stop => (held <= 0.0, 0.0),
         Blocked::Reverse => {
             run::reverse(&plan.def, &mut state);
-            (true, 0.0)
+            (held <= 0.0, 0.0)
         }
         Blocked::Crush { damage, every } => {
             let due = crush_due(held, dt, every);
@@ -435,7 +446,7 @@ pub(crate) fn predict_movers(world: &mut World) {
     let host = world.get_resource::<NetPrediction>().map(|p| p.host_tick);
     let ahead = host.map_or(0, |host| sim::tick(world).saturating_sub(host));
     let dt = tick_dt(world);
-    let plans: Vec<(AiId, Vec<Piece>, Option<(Transform, Transform)>)> = movers
+    let plans: Vec<Foreseen> = movers
         .iter()
         .map(|&(id, entity)| {
             let pieces = pieces(world, entity, &parts, id);
@@ -443,11 +454,11 @@ pub(crate) fn predict_movers(world: &mut World) {
                 Some(dt) if (1..=MAX_AHEAD).contains(&ahead) => foresee(world, entity, dt, ahead),
                 _ => None,
             };
-            (id, pieces, poses)
+            Foreseen { id, pieces, poses }
         })
         .collect();
     // Where the movers stood a tick ago is where the body stood on them.
-    for (_, pieces, poses) in &plans {
+    for Foreseen { pieces, poses, .. } in &plans {
         match poses {
             Some((before, _)) => place(world, pieces, before, None),
             None => restore(world, pieces),
@@ -456,7 +467,7 @@ pub(crate) fn predict_movers(world: &mut World) {
     let mut own: Vec<Walker> = walkers(world).into_iter().filter(|w| world.get::<Predicted>(w.entity).is_some()).collect();
     own.truncate(1);
     if own.is_empty() {
-        for (_, pieces, poses) in &plans {
+        for Foreseen { pieces, poses, .. } in &plans {
             if let Some((_, after)) = poses {
                 place(world, pieces, after, None);
             }
@@ -466,7 +477,7 @@ pub(crate) fn predict_movers(world: &mut World) {
     let owners = owners(world, &movers, &parts);
     let riding = riding(world, &own, &owners);
     let mut feet = vec![own[0].feet];
-    for (id, pieces, poses) in &plans {
+    for Foreseen { id, pieces, poses } in &plans {
         let Some((before, after)) = poses else { continue };
         place(world, pieces, after, None);
         if before.translation == after.translation && before.rotation == after.rotation {
