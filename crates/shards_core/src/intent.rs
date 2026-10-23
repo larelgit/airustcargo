@@ -26,6 +26,9 @@ pub mod input_names {
     pub const SPRINT: &str = "sprint";
     /// Held in the air: glide.
     pub const GLIDE: &str = "glide";
+    /// Held: crouch (F2). The controller of a body whose `locomotion` has a `crouch_height` lowers
+    /// its capsule while this is held; a body without one ignores it.
+    pub const CROUCH: &str = "crouch";
     /// Press, with a direction: dodge roll.
     pub const DODGE: &str = "dodge";
     /// Press: light attack.

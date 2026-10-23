@@ -47,7 +47,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use shards_content::{ContentAppExt, ContentDb, ContentDef, PrefabDef, Refs};
 use shards_core::{Intent, NetRole};
-use shards_motion::{Body, Collider, CollisionLayers, LayerMask, LockOnTarget, LockPoint, Shape};
+use shards_motion::{Body, Collider, CollisionLayers, Crouch, LayerMask, LockOnTarget, LockPoint, Shape};
 
 use crate::def::{Local, EPS};
 
@@ -86,6 +86,12 @@ pub struct PartDef {
     /// the right.
     #[serde(default, skip_serializing_if = "is_zero_local")]
     pub at: Local,
+    /// Where its centre is when the body is fully crouched (F2), in the same frame as `at`; while the
+    /// body goes down or up it moves in a straight line between the two by how deep the crouch is, so a
+    /// head stays on the shoulders of a body whose capsule got shorter. `None`: the same as `at` (a part
+    /// that does not move with the stance).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at_crouched: Option<Local>,
     /// Its own turn in the body's frame, in degrees (a capsule lies along the body's forward with
     /// `pitch: 90`).
     #[serde(default, skip_serializing_if = "is_zero_turn")]
@@ -179,8 +185,8 @@ impl PartsDef {
             }
             let at = p.at.to_vec3();
             let turn = Vec3::new(p.turn.pitch, p.turn.yaw, p.turn.roll);
-            if !(at.is_finite() && turn.is_finite()) {
-                out.push(format!("part `{id}`: `at` and `turn` must be finite"));
+            if !(at.is_finite() && turn.is_finite() && p.at_crouched.is_none_or(|c| c.to_vec3().is_finite())) {
+                out.push(format!("part `{id}`: `at`, `at_crouched` and `turn` must be finite"));
             }
             if let Some(h) = p.health
                 && !(h > 0.0 && h.is_finite())
@@ -282,10 +288,16 @@ fn layers(on: bool) -> CollisionLayers {
     CollisionLayers::new(if on { LayerMask::HURTBOX } else { LayerMask::NONE }, LayerMask::NONE)
 }
 
-/// Where a part is: `at` from the body's feet in the body's frame, turned with the body.
-fn place(body: &Transform, def: &PartDef) -> Transform {
+/// Where a part is: `at` from the body's feet in the body's frame, turned with the body. `depth` is how
+/// far into a crouch the body is (0 standing, 1 crouched): a part with an `at_crouched` is that far
+/// along the line from `at` to it.
+fn place(body: &Transform, def: &PartDef, depth: f32) -> Transform {
+    let at = match def.at_crouched {
+        Some(crouched) if depth > 0.0 => def.at.to_vec3().lerp(crouched.to_vec3(), depth.min(1.0)),
+        _ => def.at.to_vec3(),
+    };
     Transform {
-        translation: body.translation + body.rotation * def.at.to_vec3(),
+        translation: body.translation + body.rotation * at,
         rotation: body.rotation * def.turn.rotation(),
         scale: Vec3::ONE,
     }
@@ -319,7 +331,7 @@ pub(crate) fn spawn_parts(world: &mut World) {
                 Name::new(id.clone()),
                 AiKind::new("Part"),
                 Part { body: body_id, id: id.clone(), on: p.enabled, broken: false },
-                place(&body_tf, p),
+                place(&body_tf, p, 0.0),
                 Collider::new(p.shape).with_layers(layers(p.enabled)),
                 Body::Kinematic,
             ));
@@ -345,7 +357,7 @@ pub(crate) fn place_parts(
     index: Res<AiIndex>,
     db: Res<ContentDb>,
     role: Option<Res<NetRole>>,
-    bodies: Query<(&Transform, &BodyParts, Option<&SpawnedParts>), Without<Part>>,
+    bodies: Query<(&Transform, &BodyParts, Option<&SpawnedParts>, Option<&Crouch>), Without<Part>>,
     mut parts: Query<(Entity, &AiId, &Part, &mut Transform)>,
     mut commands: Commands,
 ) {
@@ -357,14 +369,15 @@ pub(crate) fn place_parts(
     for (id, entity) in order {
         let Ok((_, _, part, mut tf)) = parts.get_mut(entity) else { continue };
         let body = index.get(part.body).and_then(|b| bodies.get(b).ok());
-        let Some((body_tf, kind, _)) = body.filter(|(_, _, s)| s.is_some_and(|s| s.0.contains(&id))) else {
+        let Some((body_tf, kind, _, crouch)) = body.filter(|(_, _, s, _)| s.is_some_and(|s| s.0.contains(&id))) else {
             if role.as_ref().is_none_or(|r| r.simulates()) {
                 commands.entity(entity).despawn();
             }
             continue;
         };
         let Some(def) = db.get::<PartsDef>(&kind.0).and_then(|d| d.parts.get(&part.id)) else { continue };
-        let want = place(body_tf, def);
+        // A crouched body's parts follow its stance, a head with it (`at_crouched`).
+        let want = place(body_tf, def, crouch.map_or(0.0, |c| c.depth));
         if *tf != want {
             *tf = want;
         }
@@ -725,8 +738,27 @@ mod tests {
         p.at = Local { forward: 2.0, up: 3.0, right: 1.0 };
         // A body at (10, 0, 0) facing east (+X): forward is +X, right is +Z.
         let body = Transform::from_xyz(10.0, 0.0, 0.0).looking_to(Vec3::X, Vec3::Y);
-        let at = place(&body, &p).translation;
+        let at = place(&body, &p, 0.0).translation;
         assert!((at - Vec3::new(12.0, 3.0, 1.0)).length() < 1e-4, "{at}");
+    }
+
+    #[test]
+    fn a_part_with_a_crouched_place_moves_along_the_line_by_how_deep_the_crouch_is() {
+        let head: PartDef = ron::from_str("(shape: Sphere(radius: 0.2), at: (up: 1.6), at_crouched: Some((up: 0.8, forward: 0.2)))").unwrap();
+        let body = Transform::from_xyz(1.0, 0.0, 1.0);
+        let at = |depth: f32| place(&body, &head, depth).translation;
+        assert!(at(0.0).distance(Vec3::new(1.0, 1.6, 1.0)) < 1e-5, "standing: `at`");
+        assert!(at(1.0).distance(Vec3::new(1.0, 0.8, 0.8)) < 1e-5, "crouched: `at_crouched` (forward is -Z)");
+        assert!(at(0.5).distance(Vec3::new(1.0, 1.2, 0.9)) < 1e-5, "half way: half way");
+        assert!(at(7.0).distance(at(1.0)) < 1e-5, "a depth past 1 is a full crouch");
+        let still = sphere();
+        assert_eq!(place(&body, &still, 1.0), place(&body, &still, 0.0), "a part without `at_crouched` stays where `at` puts it");
+        let written = ron::to_string(&head).unwrap();
+        assert!(written.contains("at_crouched:Some("), "{written}");
+        assert!(!ron::to_string(&still).unwrap().contains("crouched"), "a part without one writes none");
+        let mut bad = sphere();
+        bad.at_crouched = Some(Local { up: f32::NAN, ..default() });
+        assert!(def(&[("head", bad)]).problems().join("\n").contains("must be finite"));
     }
 
     #[test]
@@ -734,7 +766,7 @@ mod tests {
         let mut p: PartDef = ron::from_str("(shape: Capsule(half_height: 1.0, radius: 0.3), turn: (pitch: 90))").unwrap();
         p.at = Local::default();
         let body = Transform::default().looking_to(Vec3::NEG_Z, Vec3::Y);
-        let axis = place(&body, &p).rotation * Vec3::Y;
+        let axis = place(&body, &p, 0.0).rotation * Vec3::Y;
         assert!(axis.y.abs() < 1e-4 && (axis.z.abs() - 1.0).abs() < 1e-4, "{axis}");
     }
 }

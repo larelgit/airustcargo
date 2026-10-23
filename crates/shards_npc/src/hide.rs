@@ -24,7 +24,7 @@ use ai_core::AiId;
 use bevy::prelude::*;
 use shards_content::ContentDb;
 use shards_core::flat;
-use shards_motion::{params_of, PhysicsWorld};
+use shards_motion::{eye_of, params_of, PhysicsWorld};
 
 use crate::brain::{Home, Npc, NpcBrain, NpcCtx, NpcOutput};
 use crate::def::{BehaviorDef, Params};
@@ -142,7 +142,8 @@ pub fn threat_eye(c: &NpcCtx) -> Option<(Option<AiId>, Vec3)> {
     let body_eye = |id: AiId, pos: Vec3| {
         let body = index.and_then(|i| i.get(id));
         let feet_y = body.and_then(|e| c.world.get::<Transform>(e)).map_or(pos.y, |t| t.translation.y);
-        let above = body.and_then(|e| params_of(c.world, e)).map_or(THREAT_EYE, |p| p.eye_above_feet());
+        // The eye it shoots from (`eye_of`): a crouched threat's is lower (F2).
+        let above = body.and_then(|e| eye_of(c.world, e)).map_or(THREAT_EYE, |eye| eye.y - feet_y);
         Vec3::new(pos.x, feet_y + above, pos.z)
     };
     if let Some((id, pos)) = known_threats(c).into_iter().next() {

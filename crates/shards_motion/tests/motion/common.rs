@@ -24,6 +24,8 @@ pub fn app() -> App {
         .add_observer(|e: On<Landed>, mut seen: ResMut<Seen>| seen.landed.push(*e.event()))
         .add_observer(|e: On<Jumped>, mut seen: ResMut<Seen>| seen.jumped.push(*e.event()))
         .add_observer(|e: On<Mantled>, mut seen: ResMut<Seen>| seen.mantled.push(*e.event()))
+        .add_observer(|e: On<Crouched>, mut seen: ResMut<Seen>| seen.crouched.push(*e.event()))
+        .add_observer(|e: On<Stood>, mut seen: ResMut<Seen>| seen.stood.push(*e.event()))
         .add_observer(|e: On<ModeChanged>, mut seen: ResMut<Seen>| seen.modes.push(*e.event()))
         .add_observer(|e: On<VolumeEntered>, mut seen: ResMut<Seen>| seen.entered.push(*e.event()))
         .add_observer(|e: On<VolumeExited>, mut seen: ResMut<Seen>| seen.exited.push(*e.event()));
@@ -39,6 +41,8 @@ pub struct Seen {
     pub landed: Vec<Landed>,
     pub jumped: Vec<Jumped>,
     pub mantled: Vec<Mantled>,
+    pub crouched: Vec<Crouched>,
+    pub stood: Vec<Stood>,
     pub modes: Vec<ModeChanged>,
     pub entered: Vec<VolumeEntered>,
     pub exited: Vec<VolumeExited>,
