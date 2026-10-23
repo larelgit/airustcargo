@@ -397,16 +397,22 @@ pub(crate) fn run_arsenals(world: &mut World, bodies: &mut QueryState<(Entity, O
     }
 }
 
+/// Whether `input` is one an arsenal answers: `weapon.slot.N`, `weapon.next`, `weapon.prev` (a game's other
+/// `weapon.…` inputs are its own).
+fn is_switch_input(input: &str) -> bool {
+    input == WEAPON_NEXT || input == WEAPON_PREV || input.strip_prefix(WEAPON_SLOT).is_some_and(|rest| rest.starts_with('.'))
+}
+
 /// The `weapon.*` presses in `body`'s `Intent`, in order, taken out of it.
 fn take_presses(world: &mut World, body: Entity) -> Vec<String> {
-    let has = world.get::<Intent>(body).is_some_and(|i| i.pressed.iter().any(|p| p.input.starts_with("weapon.")));
+    let has = world.get::<Intent>(body).is_some_and(|i| i.pressed.iter().any(|p| is_switch_input(&p.input)));
     if !has {
         return Vec::new();
     }
     let Some(mut intent) = world.get_mut::<Intent>(body) else { return Vec::new() };
     let mut taken = Vec::new();
     intent.pressed.retain(|p| {
-        let ours = p.input.starts_with("weapon.");
+        let ours = is_switch_input(&p.input);
         if ours {
             taken.push(p.input.clone());
         }
