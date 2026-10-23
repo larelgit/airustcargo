@@ -1,6 +1,7 @@
 //! [`CharacterParams`]: every number the controller uses, as content (kind `locomotion`,
 //! hot-reloadable) that a [`CharacterController`] names.
 
+use std::borrow::Cow;
 use std::sync::LazyLock;
 
 use bevy::prelude::*;
@@ -293,8 +294,8 @@ pub struct CharacterParams {
     #[serde(skip_serializing_if = "pitch_limits_are_default")]
     pub pitch_limits_deg: (f32, f32),
     /// Where the eye is, in meters above the feet (`eye_of`, the point the look starts from). `None`:
-    /// 0.9 of `height`, the fraction the lock-on's `eye_height` defaults to. A stance that
-    /// changes the body's height (a crouch) changes the eye with it.
+    /// 0.9 of `height`, the fraction the lock-on's `eye_height` defaults to. The standing eye: crouched,
+    /// the eye keeps its place in the shorter capsule (`crouch_height`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub eye_height: Option<f32>,
     /// How far the body reaches to use something it looks at (m, F5): the longest distance from its
@@ -302,6 +303,21 @@ pub struct CharacterParams {
     /// Above 0; the default is 2 m.
     #[serde(skip_serializing_if = "use_range_is_default")]
     pub use_range: f32,
+    /// The capsule's height when crouched (F2), in meters from the feet. `None`: the body cannot
+    /// crouch (a `crouch` input does nothing, and the `crouch` tool says why). The eye keeps its
+    /// place in the capsule: crouched, it is [`eye_above_feet`](Self::eye_above_feet) scaled by
+    /// `crouch_height / height`. At least the capsule's diameter and below `height`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crouch_height: Option<f32>,
+    /// The highest ground speed while crouched (m/s, a cap on walking and running; a crouched body
+    /// never sprints). `None`: crouching does not slow the walk. Not applied in the air: a crouch
+    /// jump keeps its speed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crouch_speed: Option<f32>,
+    /// Seconds a full crouch, and a full stand, take: the capsule (and the eye with it) moves
+    /// between the two heights at an even rate. 0: at once.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub crouch_time: f32,
 }
 
 /// The pitch limits a body has unless its `locomotion` says (degrees): just short of straight up
@@ -376,6 +392,9 @@ impl Default for CharacterParams {
             pitch_limits_deg: DEFAULT_PITCH_LIMITS_DEG,
             eye_height: None,
             use_range: DEFAULT_USE_RANGE,
+            crouch_height: None,
+            crouch_speed: None,
+            crouch_time: 0.0,
         }
     }
 }
@@ -541,10 +560,42 @@ impl CharacterParams {
     }
 
     /// Where the eye is, in meters above the feet: [`eye_height`](Self::eye_height), else 0.9 of
-    /// the body's height. `eye_of` adds it to the body's feet. (A stance that changes the height,
-    /// a crouch, changes this with it.)
+    /// the body's height. The standing eye; `eye_above_feet_at` is the eye at a depth of crouch, and `eye_of`
+    /// adds that to the body's feet.
     pub fn eye_above_feet(&self) -> f32 {
         self.eye_height.unwrap_or(DEFAULT_EYE_FRACTION * self.height)
+    }
+
+    /// Whether the body can crouch: its `locomotion` gives a [`crouch_height`](Self::crouch_height).
+    pub fn can_crouch(&self) -> bool {
+        self.crouch_height.is_some()
+    }
+
+    /// The capsule's height when `depth` of the way into a crouch (0 standing, 1 crouched; held
+    /// between): [`height`](Self::height) for a body that cannot crouch, whatever the depth.
+    pub fn height_at(&self, depth: f32) -> f32 {
+        match self.crouch_height {
+            Some(crouched) if depth > 0.0 => self.height + (crouched - self.height) * depth.min(1.0),
+            _ => self.height,
+        }
+    }
+
+    /// [`eye_above_feet`](Self::eye_above_feet) when `depth` of the way into a crouch: the eye keeps
+    /// its place in the capsule, so it is scaled with [`height_at`](Self::height_at).
+    pub fn eye_above_feet_at(&self, depth: f32) -> f32 {
+        let standing = self.eye_above_feet();
+        if depth > 0.0 && self.can_crouch() { standing * (self.height_at(depth) / self.height) } else { standing }
+    }
+
+    /// These params for a body `depth` of the way into a crouch: the capsule's height and the eye at
+    /// that depth, everything else as it is. What every reader of a body's size asks (the
+    /// controller's casts, its collider, the movers that carry it, `clearance`). Borrowed (no copy)
+    /// for a standing body or one that cannot crouch.
+    pub fn at_depth(&self, depth: f32) -> Cow<'_, CharacterParams> {
+        if depth <= 0.0 || !self.can_crouch() {
+            return Cow::Borrowed(self);
+        }
+        Cow::Owned(CharacterParams { height: self.height_at(depth), eye_height: Some(self.eye_above_feet_at(depth)), ..self.clone() })
     }
 
     /// [`pitch_limits_deg`](Self::pitch_limits_deg) in radians, `(lowest, highest)`.
@@ -706,6 +757,27 @@ impl CharacterParams {
         if !(self.use_range > 0.0 && self.use_range.is_finite()) {
             errors.push(format!("use_range must be a number of metres above 0 (is {})", self.use_range));
         }
+        match self.crouch_height {
+            Some(crouched) => {
+                if !(crouched.is_finite() && crouched >= 2.0 * self.radius && crouched < self.height) {
+                    errors.push(format!(
+                        "crouch_height must be at least the capsule's diameter {} and below height {} (is {crouched})",
+                        2.0 * self.radius,
+                        self.height
+                    ));
+                }
+            }
+            None if self.crouch_speed.is_some() || self.crouch_time > 0.0 => {
+                errors.push("crouch_speed and crouch_time are set but crouch_height is not, so the body never crouches".to_string());
+            }
+            None => {}
+        }
+        if self.crouch_speed.is_some_and(|v| !(v > 0.0 && v.is_finite())) {
+            errors.push(format!("crouch_speed must be > 0 (is {:?}); leave it out to keep the walk's speed", self.crouch_speed));
+        }
+        if !(self.crouch_time >= 0.0 && self.crouch_time.is_finite()) {
+            errors.push(format!("crouch_time must be >= 0 (is {})", self.crouch_time));
+        }
         if self.buoyancy_omega <= 0.0 && (self.water_max_vertical_speed > 0.0 || self.water_fall_drag > 0.0) {
             errors.push("water_max_vertical_speed and water_fall_drag are set but buoyancy_omega is 0, so they never apply".to_string());
         }
@@ -749,6 +821,53 @@ mod tests {
         let again = ron::to_string(&set).unwrap();
         assert!(again.contains("face:Look") && again.contains("pitch_limits_deg:(-60.0,80.0)") && again.contains("eye_height:Some(1.7)"), "{again}");
         assert_eq!(ron::from_str::<CharacterParams>(&again).unwrap(), set);
+    }
+
+    #[test]
+    fn the_crouch_options_default_to_nothing_and_leave_the_written_form_alone() {
+        let p = CharacterParams::default();
+        assert_eq!((p.crouch_height, p.crouch_speed, p.crouch_time, p.can_crouch()), (None, None, 0.0, false));
+        let written = ron::to_string(&p).unwrap();
+        assert!(!written.contains("crouch"), "a definition that never mentions them writes none of them back: {written}");
+        let set: CharacterParams = ron::from_str("(crouch_height: Some(1.0), crouch_speed: Some(1.5), crouch_time: 0.25)").unwrap();
+        assert_eq!((set.crouch_height, set.crouch_speed, set.crouch_time, set.can_crouch()), (Some(1.0), Some(1.5), 0.25, true));
+        let again = ron::to_string(&set).unwrap();
+        assert!(again.contains("crouch_height:Some(1.0)") && again.contains("crouch_speed:Some(1.5)") && again.contains("crouch_time:0.25"), "{again}");
+        assert_eq!(ron::from_str::<CharacterParams>(&again).unwrap(), set);
+    }
+
+    #[test]
+    fn the_height_and_the_eye_at_a_depth_of_crouch() {
+        let p = CharacterParams { crouch_height: Some(1.0), eye_height: Some(1.6), ..default() };
+        assert_eq!((p.height_at(0.0), p.height_at(1.0), p.height_at(2.0), p.height_at(-1.0)), (1.8, 1.0, 1.0, 1.8), "held between standing and crouched");
+        assert!((p.height_at(0.5) - 1.4).abs() < 1e-6);
+        // The eye keeps its place in the capsule.
+        assert!((p.eye_above_feet_at(0.0) - 1.6).abs() < 1e-6 && (p.eye_above_feet_at(1.0) - 1.6 / 1.8).abs() < 1e-6);
+        assert!((p.eye_above_feet_at(0.5) - 1.6 * 1.4 / 1.8).abs() < 1e-6);
+        let sized = p.at_depth(0.5);
+        assert!(matches!(sized, Cow::Owned(_)) && (sized.height - 1.4).abs() < 1e-6 && (sized.eye_above_feet() - 1.6 * 1.4 / 1.8).abs() < 1e-6);
+        assert_eq!(sized.crouch_height, Some(1.0), "the rest is as it was");
+        assert!(matches!(p.at_depth(0.0), Cow::Borrowed(_)), "standing: no copy");
+        // A body that cannot crouch is the same at any depth.
+        let plain = CharacterParams::default();
+        assert!(matches!(plain.at_depth(1.0), Cow::Borrowed(_)) && plain.height_at(1.0) == 1.8 && plain.eye_above_feet_at(1.0) == plain.eye_above_feet());
+    }
+
+    #[test]
+    fn bad_crouch_numbers_are_named() {
+        let bad = |p: CharacterParams| p.check().unwrap_err();
+        // The height: not the diameter's worth, not below the standing one, not a number.
+        for height in [0.7, 1.8, 2.5, f32::NAN] {
+            let err = bad(CharacterParams { crouch_height: Some(height), ..default() });
+            assert!(err.contains("crouch_height must be at least the capsule's diameter 0.8 and below height 1.8"), "{height}: {err}");
+        }
+        CharacterParams { crouch_height: Some(0.8), ..default() }.check().unwrap();
+        let err = bad(CharacterParams { crouch_height: Some(1.0), crouch_speed: Some(0.0), crouch_time: -1.0, ..default() });
+        assert!(err.contains("crouch_speed must be > 0") && err.contains("crouch_time must be >= 0"), "{err}");
+        // A speed or a time with no height to crouch to is a typo: it would never apply.
+        let err = bad(CharacterParams { crouch_speed: Some(1.0), ..default() });
+        assert!(err.contains("crouch_speed and crouch_time are set but crouch_height is not"), "{err}");
+        CharacterParams { crouch_height: Some(1.0), crouch_speed: Some(1.0), crouch_time: 0.2, ..default() }.check().unwrap();
     }
 
     #[test]

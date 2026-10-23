@@ -12,7 +12,7 @@ use super::def::{Blocked, MoverDef};
 use super::run::{self, Note};
 use super::{movers_in_order, Mover, MoverArrived, MoverBlocked, MoverPart, MoverStarted, MoverState};
 use crate::controller::mover::Mover as Capsule;
-use crate::controller::{CharacterController, CharacterParams, MotionMode, MotionState};
+use crate::controller::{CharacterController, CharacterParams, Crouch, MotionMode, MotionState};
 use crate::physics::{Body, Collider, ColliderId, CollisionLayers, PhysicsWorld, Volume};
 
 /// A client runs a mover's state on by at most this many ticks past the host's (two seconds).
@@ -77,16 +77,18 @@ fn walkers(world: &mut World) -> Vec<Walker> {
         &Collider,
         &Transform,
         Option<&MotionState>,
+        Option<&Crouch>,
     )>() else {
         return Vec::new();
     };
     let db = world.get_resource::<ContentDb>();
     let mut out: Vec<(ColliderId, Walker)> = q
         .iter(world)
-        .map(|(entity, id, controller, own, collider, tf, state)| {
+        .map(|(entity, id, controller, own, collider, tf, state, crouch)| {
             let walker = Walker {
                 entity,
-                params: controller.resolve(own, db).clone(),
+                // The size it has now: a crouched body rides, and is pushed, as the shorter capsule it is.
+                params: controller.resolve(own, db).at_depth(crouch.map_or(0.0, |c| c.depth)).into_owned(),
                 layers: collider.layers,
                 feet: tf.translation,
                 grounded: state.is_some_and(|s| s.mode == MotionMode::Ground && s.grounded),

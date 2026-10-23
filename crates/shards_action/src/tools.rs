@@ -45,6 +45,7 @@ pub(crate) fn register(app: &mut App) {
         .add_ai_tool_guard("jump", dead_refusal)
         .add_ai_tool_guard("sprint", dead_refusal)
         .add_ai_tool_guard("glide", dead_refusal)
+        .add_ai_tool_guard("crouch", dead_refusal)
         .add_ai_tool("god", Scope::Dev, god)
         .add_ai_tool("heal", Scope::Dev, heal)
         .add_ai_tool("barrier", Scope::Dev, barrier)

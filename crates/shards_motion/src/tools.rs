@@ -1,4 +1,4 @@
-//! Movement tools for agents: `move_to`, `move`, `stop`, `jump`, `sprint`, `glide`.
+//! Movement tools for agents: `move_to`, `move`, `stop`, `jump`, `sprint`, `crouch`, `glide`.
 //!
 //! They act the way a player does, through `Intent` only (Player scope): orders for the
 //! fixed tick to carry out, held buttons, one-shot presses. A refusal says why and what to do.
@@ -11,14 +11,15 @@ use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use shards_content::ContentDb;
-use shards_core::input_names::{GLIDE, JUMP, SPRINT};
+use shards_core::input_names::{CROUCH, GLIDE, JUMP, SPRINT};
 use shards_core::{Intent, Order, Target};
 
 use crate::ai::MotionAi;
-use crate::controller::{CharacterController, CharacterParams, LocomotionInput, MotionMode, MotionState};
+use crate::controller::{room_to_stand, CharacterController, CharacterParams, Crouch, LocomotionInput, MotionMode, MotionState};
+use crate::modifiers::MoveModifiers;
 use crate::intent::GlideUntilLanded;
-use crate::perception::{self, reach_toward, Bodies, Hazard, PathPlan};
-use crate::physics::{fresh, PhysicsWorld};
+use crate::perception::{self, reach_toward, Bodies, Hazard, PathPlan, StanceArg};
+use crate::physics::{fresh, Collider, PhysicsWorld};
 
 pub(crate) fn plugin(app: &mut App) {
     use ToolKind::Action;
@@ -29,6 +30,7 @@ pub(crate) fn plugin(app: &mut App) {
     register_tool(world, "jump", Scope::Player, Action, fresh::<NoArgs>.pipe(jump));
     register_tool(world, "sprint", Scope::Player, Action, sprint);
     register_tool(world, "glide", Scope::Player, Action, glide);
+    register_tool(world, "crouch", Scope::Player, Action, crouch);
     register_tool(world, "move_info", Scope::Player, ToolKind::Query, move_info);
 }
 
@@ -79,7 +81,7 @@ fn routed(In(call): In<Call<MoveToArgs>>, world: &World) -> (Call<MoveToArgs>, R
         (true, Some(me)) => {
             let default = if matches!(call.args.target, TargetArg::Entity(_)) { 1.5 } else { 0.3 };
             let within = call.args.within.unwrap_or(default).max(0.2);
-            perception::planner_route(world, me, &call.args.target, Some(within), None).map(|(_, answer)| answer)
+            perception::planner_route(world, me, &call.args.target, Some(within), None, StanceArg::Current).map(|(_, answer)| answer)
         }
         _ => None,
     };
@@ -133,7 +135,7 @@ fn move_to(
     let plan = if path {
         let plan = match routed {
             Some(answer) => answer,
-            None => perception::plan_for(me, &target, Some(within), None, &index, &physics, &ai, db.as_deref(), &perceiving),
+            None => perception::plan_for(me, &target, Some(within), None, StanceArg::Current, &index, &physics, &ai, db.as_deref(), &perceiving),
         };
         Some(plan.map_err(|why| format!("{why}. Without path=true move_to walks a straight line"))?)
     } else {
@@ -327,6 +329,75 @@ fn sprint(In(call): In<Call<OnArgs>>, mut bodies: Query<(&Transform, &mut Intent
     })
 }
 
+/// Crouch (or let go with `hold=false`): lower your body while the crouch is held, which makes you a
+/// smaller target, lowers your eye and slows your walk, and passes under what a standing body cannot.
+/// On the ground your feet stay and your head comes down; in the air your head stays and your feet are
+/// pulled up, so a crouch in a jump clears a higher ledge. Standing up waits for room: under a low
+/// ceiling you stay crouched until you move out. Your locomotion needs a `crouch_height`.
+#[derive(Deserialize, JsonSchema)]
+pub struct CrouchArgs {
+    /// Hold the crouch (default true); false lets go and stands up as soon as there is room.
+    pub hold: Option<bool>,
+}
+
+#[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
+fn crouch(
+    In(call): In<Call<CrouchArgs>>,
+    physics: Res<PhysicsWorld>,
+    db: Option<Res<ContentDb>>,
+    mut bodies: Characters,
+    stances: Query<(Option<&Crouch>, Option<&MoveModifiers>, &Collider)>,
+) -> ToolResult {
+    let hold = call.args.hold.unwrap_or(true);
+    let Me { entity, tf, mut intent, state, params, .. } = my_character(&call.caller, &mut bodies, db.as_deref(), "crouch")?;
+    let (stance, modifiers, collider) = stances.get(entity).map_err(|_| "your body has no collider to crouch with".to_owned())?;
+    let stance = stance.copied().unwrap_or_default();
+    let Some(crouched) = params.crouch_height else {
+        if hold {
+            return Err("your body cannot crouch: its locomotion has no `crouch_height`".into());
+        }
+        intent.set_held(CROUCH, false);
+        return Ok("ok: crouch off (your body cannot crouch anyway)".into());
+    };
+    if hold {
+        if modifiers.is_some_and(|m| m.rooted) {
+            return Err("cannot crouch now: your movement is taken away (rooted); wait for it to end".into());
+        }
+        if state.mode == MotionMode::Mantle {
+            return Err("cannot crouch while climbing; it ends in a moment, then crouch".into());
+        }
+        intent.set_held(CROUCH, true);
+        let secs = params.crouch_time;
+        let how = match (secs > 0.0, matches!(state.mode, MotionMode::Air | MotionMode::Glide)) {
+            (true, true) => format!("your feet are pulled up {:.1}m over {secs:.2}s", params.height - crouched),
+            (false, true) => format!("your feet are pulled up {:.1}m", params.height - crouched),
+            (true, false) => format!("you go down to {crouched:.1}m over {secs:.2}s"),
+            (false, false) => format!("you go down to {crouched:.1}m"),
+        };
+        return Ok(if stance.depth >= 1.0 {
+            "ok: crouch held; you are crouched already".into()
+        } else {
+            let cap = params.crouch_speed.map_or(String::new(), |v| format!(", walking at most {v:.1}m/s"));
+            format!("ok: crouch held; {how}{cap}")
+        });
+    }
+    intent.set_held(CROUCH, false);
+    if stance.depth <= 0.0 {
+        return Ok("ok: crouch off; you are standing".into());
+    }
+    // The same cast the controller makes each tick, so the answer is the one the next ticks give.
+    let air = matches!(state.mode, MotionMode::Air | MotionMode::Glide);
+    let (room, lacking) = room_to_stand(&physics, &params, (entity, collider.layers), air, tf.translation, stance.depth);
+    if room + 1e-4 < lacking {
+        let (side, fix) = if air { ("below your feet", "land") } else { ("above your head", "move out from under it") };
+        return Ok(format!(
+            "ok: crouch off, but there is no room to stand: {:.2}m more is needed {side}; you stay crouched until you {fix}",
+            lacking - room
+        ));
+    }
+    Ok(format!("ok: crouch off; you stand up over {:.2}s", params.crouch_time * stance.depth))
+}
+
 /// Glide (or stop with `on=false`): while you fall, drop slowly and steer, and ride
 /// updrafts. Glide is held until you land or ask to stop; asking on the ground arms it
 /// for your next fall.
@@ -419,5 +490,9 @@ fn move_info(In(call): In<Call<MoveInfoArgs>>, world: &World) -> ToolResult<serd
         "buoyancy_omega": (params.buoyancy_omega > 0.0).then_some(params.buoyancy_omega),
         "climb_out_time": params.climb_out_time.unwrap_or(params.mantle_time),
         "climb_out_min_facing": params.climb_out_min_facing,
+        "crouch_height": params.crouch_height,
+        "crouch_speed": params.crouch_speed,
+        "crouch_time": params.can_crouch().then_some(params.crouch_time),
+        "crouch_depth": e.get::<Crouch>().map(|c| round(c.depth)),
     }))
 }

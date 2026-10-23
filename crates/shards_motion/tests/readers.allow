@@ -54,3 +54,4 @@ crates/shards_action/src/machine.rs :: positions: &Query<(&Transform, Option<&Ch
 crates/shards_action/src/predict.rs :: positions: Query<(&Transform, Option<&CharacterParams>, Option<&Collider>)>, :: the lock-on target is a character: its body's width sets a leap's landing (the prediction)
 crates/shards_motion/src/usable.rs :: let collider = world.get::<Collider>(entity)?; :: the middle of a usable thing's own use area (a level node's or a prefab's, a Usable never is a field): where a look at it aims
 crates/shards_level/src/tools.rs :: let layers = entity.get::<Collider>().map(|c| c.layers.memberships); :: which of a spawned level's entities are solid and which only a use area: it reads their layers, never their boxes, and a field has none
+crates/shards_motion/src/tools.rs :: stances: Query<(Option<&Crouch>, Option<&MoveModifiers>, &Collider)>, :: the layers of the caller's own body, for the same stand-up cast the controller makes (a character is never a field)

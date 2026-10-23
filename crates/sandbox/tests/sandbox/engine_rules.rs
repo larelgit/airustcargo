@@ -94,6 +94,17 @@ fn a_transform_or_motion_state_with_nan_stops_the_game() {
     world.spawn((AiVisible, Transform { rotation: Quat::from_xyzw(0.0, 0.0, 0.0, 1.0004), ..default() }));
     assert_eq!(shards::motion::motion_finite(&world), None, "within the tolerance");
 
+    // The depth of a crouch (F2) is a number from 0 to 1: the capsule's height is built from it.
+    world.clear_entities();
+    world.spawn((AiVisible, Transform::default(), shards::motion::Crouch { depth: 2.0, wanted: true, blocked: false }));
+    let text = shards::motion::motion_finite(&world).expect("a depth of 2 is no crouch");
+    assert!(text.ends_with("Crouch.depth = 2 is not a number from 0 to 1"), "{text}");
+    world.clear_entities();
+    world.spawn((AiVisible, Transform::default(), shards::motion::Crouch { depth: f32::NAN, wanted: false, blocked: false }));
+    assert!(shards::motion::motion_finite(&world).is_some_and(|t| t.contains("Crouch.depth = NaN")), "NaN is no depth");
+    world.clear_entities();
+    world.spawn((AiVisible, Transform::default(), shards::motion::Crouch { depth: 1.0, wanted: true, blocked: false }));
+    assert_eq!(shards::motion::motion_finite(&world), None, "1 is a full crouch");
 
     let mut app = sandbox::test_app(42);
     plant(&mut app, 3, |world| {

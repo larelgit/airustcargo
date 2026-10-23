@@ -1,0 +1,13 @@
+// The parts of the crouch test's target (`characters/crouch.prefab.ron`, `crouch_dummy`; the manual's "Crouching" and
+// "Body parts (R1)"): a head that takes double damage and a torso, with the places they take when the body is fully
+// crouched (`at_crouched`). Standing, the head is 1.6 m up and the torso 1.0 m; crouched (a 1.0 m capsule) they are
+// at 0.95 m and 0.45 m, and between they move in a straight line by how deep the crouch is, so a head stays a head:
+// a shot at it hits it for double, crouched or not.
+{
+    "crouch_dummy": (
+        parts: {
+            "head": (shape: Sphere(radius: 0.22), at: (up: 1.6), at_crouched: Some((up: 0.95)), damage: 2.0, tags: ["head"]),
+            "torso": (shape: Capsule(half_height: 0.2, radius: 0.3), at: (up: 1.0), at_crouched: Some((up: 0.45))),
+        },
+    ),
+}
