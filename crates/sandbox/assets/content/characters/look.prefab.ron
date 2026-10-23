@@ -1,0 +1,38 @@
+// The two bodies of the look scenario and tests (F1a, `scenarios/look.scenario`,
+// `tests/sandbox/look.rs`): a first-person character and a standing target with a head.
+// Neither is in the arena; `spawn_prefab id=viewer x=0 z=0` brings one.
+{
+    // A fighter with the player's moves that faces its look (`locomotion` `viewer`): drive it with a
+    // player-scope agent (`session --subject eN`) and the `look` tool. Not `Player`: the arena's
+    // player stays the one body the game's rules know.
+    "viewer": (
+        components: {
+            "Name": "Viewer",
+            "AiKind": ("Viewer"),
+            "Team": ("heroes"),
+            "Fighter": (moveset: "player"),
+            "Health": (current: 100.0, max: 100.0),
+            "Stamina": (current: 100.0, max: 100.0, regen: 45.0, delay: 0.5, since_use: 0.5),
+            "Poise": (current: 60.0, max: 60.0, regen: 20.0, delay: 2.0, since_hit: 2.0, broken: 0.0),
+            "CharacterController": (params: "viewer"),
+            "Look": ("player"),
+        },
+    ),
+    // A target that stands where it is put: no brain, a head and a torso of its own
+    // (`combat/dummy.parts.ron`), a body of 1.8 m. A view through its head names `head`.
+    "range_dummy": (
+        components: {
+            "Name": "Dummy",
+            "AiKind": ("Dummy"),
+            "AiImportance": (1.0),
+            "Team": ("monsters"),
+            "Fighter": (moveset: "skeleton"),
+            "Health": (current: 100.0, max: 100.0),
+            "Poise": (current: 60.0, max: 60.0, regen: 20.0, delay: 2.0, since_hit: 2.0, broken: 0.0),
+            "CharacterController": (params: "skeleton"),
+            "BodyParts": ("range_dummy"),
+            "Look": ("skeleton"),
+            "LockOnTarget": (),
+        },
+    ),
+}

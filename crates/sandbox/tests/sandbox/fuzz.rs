@@ -21,7 +21,9 @@ fn plan(seed: u64, stem: &str) -> FuzzPlan {
 fn a_fuzz_run_with_chaos_leaves_a_session_that_plays_back() {
     let _turn = crate::scenario_files::snapshot_file_turn();
     let mut app = sandbox::test_app(42);
-    let plan = plan(7, "fuzz-chaos");
+    // Twice the usual rounds: every tool a slice adds to the player's list is one more the seeded picks spread over,
+    // and with 120 rounds a run could miss one of the four tools below by chance (it did, once the list had 40).
+    let plan = FuzzPlan { rounds: 240, ..plan(7, "fuzz-chaos") };
     let report = play(&mut app, &plan);
     assert_eq!(report.ended, Ended::Done, "{report}: {report:#?}");
     // It played player actions of the game's own list, broke some calls on purpose, and shook the world.

@@ -6,6 +6,7 @@ use std::sync::LazyLock;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_content::{ContentDb, ContentDef, Refs};
+use shards_core::{Gaze, Intent};
 
 use super::{CharacterController, MotionMode};
 use crate::physics::{Collider, CollisionLayers, Shape};
@@ -36,6 +37,20 @@ impl SprintResume {
     pub fn latches(self) -> bool {
         !matches!(self, SprintResume::Fraction(f) if f <= 0.0)
     }
+}
+
+/// What a body's yaw follows ([`CharacterParams::face`]).
+#[derive(Reflect, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Facing {
+    /// The body turns toward where it walks, its lock-on target, its aim point or the action it
+    /// runs, at its turn rates: every character before the first-person view, and the default.
+    #[default]
+    Move,
+    /// The body's yaw is the yaw of [`Intent::look`](shards_core::Intent::look), set every tick
+    /// with no turn rate, whatever it walks or runs (an action included), and its actions that
+    /// aim steer by the look. A body without a look in its `Intent` turns as `Move` does.
+    /// Movement stays in world space (`Intent::move_dir`).
+    Look,
 }
 
 /// How a character moves. Distances in meters, times in seconds, speeds in m/s.
@@ -265,7 +280,30 @@ pub struct CharacterParams {
     /// fall. `None`: every landing is reported.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub landing_wade_limit: Option<f32>,
+    /// What the body's yaw follows (F1a): `Move` (the default: where it walks, its lock-on, its aim
+    /// point, its action) or `Look` (the yaw of `Intent::look` every tick, with no turn rate, and
+    /// its aiming actions steer by it). A first-person character is `Look`. Without an
+    /// `Intent::look` a `Look` body turns as a `Move` one does.
+    #[serde(skip_serializing_if = "is_move")]
+    pub face: Facing,
+    /// How far the look may pitch (degrees): `(lowest, highest)`, negative looks down. Readers of
+    /// `Intent::look` (`look_dir`, the `look` tool, the view) hold the pitch between them. Within
+    /// -90..90.
+    #[serde(skip_serializing_if = "pitch_limits_are_default")]
+    pub pitch_limits_deg: (f32, f32),
+    /// Where the eye is, in meters above the feet (`eye_of`, the point the look starts from). `None`:
+    /// 0.9 of `height`, the fraction the lock-on's `eye_height` defaults to. A stance that
+    /// changes the body's height (a crouch) changes the eye with it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eye_height: Option<f32>,
 }
+
+/// The pitch limits a body has unless its `locomotion` says (degrees): just short of straight up
+/// and down, where the yaw means nothing.
+pub const DEFAULT_PITCH_LIMITS_DEG: (f32, f32) = (-89.0, 89.0);
+
+/// The eye of a body without an `eye_height`, as a fraction of its height.
+pub const DEFAULT_EYE_FRACTION: f32 = 0.9;
 
 impl Default for CharacterParams {
     fn default() -> Self {
@@ -328,6 +366,9 @@ impl Default for CharacterParams {
             landing_tiers: Vec::new(),
             landing_drop_tiers: Vec::new(),
             landing_wade_limit: None,
+            face: Facing::Move,
+            pitch_limits_deg: DEFAULT_PITCH_LIMITS_DEG,
+            eye_height: None,
         }
     }
 }
@@ -356,6 +397,14 @@ fn is_false(v: &bool) -> bool {
 
 fn is_on_release(v: &SprintResume) -> bool {
     *v == SprintResume::OnRelease
+}
+
+fn is_move(v: &Facing) -> bool {
+    *v == Facing::Move
+}
+
+fn pitch_limits_are_default(v: &(f32, f32)) -> bool {
+    *v == DEFAULT_PITCH_LIMITS_DEG
 }
 
 /// What a character without content moves by: the code defaults.
@@ -478,6 +527,34 @@ impl CharacterParams {
     /// [`climb_out_reach`](Self::climb_out_reach), else 0.3.
     pub fn climb_reach(&self) -> f32 {
         self.climb_out_reach.unwrap_or(DEFAULT_CLIMB_OUT_REACH)
+    }
+
+    /// Where the eye is, in meters above the feet: [`eye_height`](Self::eye_height), else 0.9 of
+    /// the body's height. `eye_of` adds it to the body's feet. (A stance that changes the height,
+    /// a crouch, changes this with it.)
+    pub fn eye_above_feet(&self) -> f32 {
+        self.eye_height.unwrap_or(DEFAULT_EYE_FRACTION * self.height)
+    }
+
+    /// [`pitch_limits_deg`](Self::pitch_limits_deg) in radians, `(lowest, highest)`.
+    pub fn pitch_limits(&self) -> (f32, f32) {
+        (self.pitch_limits_deg.0.to_radians(), self.pitch_limits_deg.1.to_radians())
+    }
+
+    /// `look` with its pitch held between this body's limits.
+    pub fn clamp_look(&self, look: Gaze) -> Gaze {
+        let (lowest, highest) = self.pitch_limits();
+        look.with_pitch_between(lowest, highest)
+    }
+
+    /// The look this body's yaw is bound to this tick: `intent.look` (finite, its pitch clamped)
+    /// when the body has [`face: Look`](Facing::Look), else `None` (it turns by the movement,
+    /// its lock-on, its aim point or its action, as every character did before the look).
+    pub fn bound_look(&self, intent: &Intent) -> Option<Gaze> {
+        if self.face != Facing::Look {
+            return None;
+        }
+        intent.look.filter(|l| l.is_finite()).map(|l| self.clamp_look(l))
     }
 
     /// Whether landings are told apart (any tier thresholds): the controller then tracks
@@ -604,6 +681,17 @@ impl CharacterParams {
         if self.climb_out_min_facing.is_some_and(|f| !(-1.0..=1.0).contains(&f)) {
             errors.push(format!("climb_out_min_facing must be between -1 and 1 (is {:?})", self.climb_out_min_facing));
         }
+        let (lowest, highest) = self.pitch_limits_deg;
+        if !(lowest.is_finite() && highest.is_finite() && -90.0 <= lowest && lowest < highest && highest <= 90.0) {
+            errors.push(format!(
+                "pitch_limits_deg must be (lowest, highest) with -90 <= lowest < highest <= 90 (is ({lowest}, {highest}))"
+            ));
+        }
+        if let Some(eye) = self.eye_height
+            && !(eye > 0.0 && eye <= self.height)
+        {
+            errors.push(format!("eye_height must be above 0 and at most height {} (is {eye})", self.height));
+        }
         if self.buoyancy_omega <= 0.0 && (self.water_max_vertical_speed > 0.0 || self.water_fall_drag > 0.0) {
             errors.push("water_max_vertical_speed and water_fall_drag are set but buoyancy_omega is 0, so they never apply".to_string());
         }
@@ -633,6 +721,54 @@ mod tests {
         assert!(p.can_mantle(1.6) && !p.can_mantle(1.61), "mantle_height is the limit, with float noise to spare");
         assert!(p.can_climb(1.6, false), "on the ground the skins cancel");
         assert!(!p.can_climb(1.6, true) && p.can_climb(1.57, true), "a swimmer's second skin counts");
+    }
+
+    #[test]
+    fn the_look_options_default_to_nothing_and_leave_the_written_form_alone() {
+        let p = CharacterParams::default();
+        assert_eq!((p.face, p.pitch_limits_deg, p.eye_height), (Facing::Move, (-89.0, 89.0), None));
+        // A definition that never mentions them writes none of them back: its content hash is what it was.
+        let written = ron::to_string(&p).unwrap();
+        assert!(!written.contains("face") && !written.contains("pitch_limits_deg") && !written.contains("eye_height"), "{written}");
+        let set: CharacterParams = ron::from_str("(height: 2.0, face: Look, pitch_limits_deg: (-60.0, 80.0), eye_height: Some(1.7))").unwrap();
+        assert_eq!((set.face, set.pitch_limits_deg, set.eye_height), (Facing::Look, (-60.0, 80.0), Some(1.7)));
+        let again = ron::to_string(&set).unwrap();
+        assert!(again.contains("face:Look") && again.contains("pitch_limits_deg:(-60.0,80.0)") && again.contains("eye_height:Some(1.7)"), "{again}");
+        assert_eq!(ron::from_str::<CharacterParams>(&again).unwrap(), set);
+    }
+
+    #[test]
+    fn the_eye_is_nine_tenths_of_the_height_unless_content_says() {
+        let tall = CharacterParams { height: 2.0, ..default() };
+        assert!((tall.eye_above_feet() - 1.8).abs() < 1e-6);
+        assert_eq!(CharacterParams { eye_height: Some(1.5), ..tall }.eye_above_feet(), 1.5);
+    }
+
+    #[test]
+    fn a_look_is_bound_only_for_a_body_that_faces_it() {
+        let intent = Intent { look: Some(Gaze::from_degrees(30.0, 80.0)), ..default() };
+        assert_eq!(CharacterParams::default().bound_look(&intent), None, "a body that faces its movement ignores it");
+        let first_person = CharacterParams { face: Facing::Look, pitch_limits_deg: (-60.0, 45.0), ..default() };
+        let bound = first_person.bound_look(&intent).expect("bound");
+        assert_eq!(bound.yaw, 30.0_f32.to_radians());
+        assert!((bound.pitch - 45.0_f32.to_radians()).abs() < 1e-6, "the pitch is held to the limit");
+        assert_eq!(first_person.bound_look(&Intent::default()), None, "no look in the intent: it turns as a Move body does");
+        let bad = Intent { look: Some(Gaze::new(f32::NAN, 0.0)), ..default() };
+        assert_eq!(first_person.bound_look(&bad), None, "a look that is not a number binds nothing");
+    }
+
+    #[test]
+    fn bad_pitch_limits_and_eyes_are_named() {
+        for limits in [(-91.0, 89.0), (-89.0, 91.0), (10.0, 10.0), (20.0, -20.0), (f32::NAN, 0.0)] {
+            let err = CharacterParams { pitch_limits_deg: limits, ..default() }.check().unwrap_err();
+            assert!(err.contains("pitch_limits_deg"), "{limits:?}: {err}");
+        }
+        CharacterParams { pitch_limits_deg: (-90.0, 90.0), ..default() }.check().unwrap();
+        for eye in [0.0, -1.0, 1.9, f32::NAN] {
+            let err = CharacterParams { eye_height: Some(eye), ..default() }.check().unwrap_err();
+            assert!(err.contains("eye_height"), "{eye}: {err}");
+        }
+        CharacterParams { eye_height: Some(1.8), ..default() }.check().unwrap();
     }
 
     #[test]

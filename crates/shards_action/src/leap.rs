@@ -29,6 +29,9 @@ pub struct LeapSite<'a> {
     pub height: f32,
     /// The fighter's intent: the aim point and the movement input decide where an action points.
     pub intent: &'a Intent,
+    /// The direction the fighter looks along, on the ground plane, when its body faces its look
+    /// (`face: Look`): an aiming action starts there ([`looked_at`](crate::machine::looked_at)).
+    pub look: Option<Vec3>,
     /// The lock-on target: where it stands and how wide its body is.
     pub target: Option<(Vec3, f32)>,
 }
@@ -62,7 +65,7 @@ pub struct LeapPlan {
 pub fn plan_leap(def: &ActionDef, search: &LeapSearch, site: &LeapSite, press: Option<Vec3>) -> Option<LeapPlan> {
     let here = site.feet;
     let target = site.target.map(|(p, _)| p);
-    let start = start_facing(def, press, site.intent, here, site.forward, target);
+    let start = start_facing(def, press, site.intent, site.look, here, site.forward, target);
     let (dir, want) = match site.target {
         Some((there, radius)) if search.toward_target && flat(there - here).length() > 0.05 => {
             let to = flat(there - here);
@@ -155,6 +158,7 @@ impl<'a> LeapSite<'a> {
             radius,
             height: params.height.max(2.0 * radius),
             intent,
+            look: params.bound_look(intent).map(|gaze| gaze.flat_dir()),
             target,
         }
     }

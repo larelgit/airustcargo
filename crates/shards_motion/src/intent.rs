@@ -8,10 +8,11 @@
 use ai_core::{AiAppExt, AiIndex, SimSet};
 use bevy::ecs::query::QueryFilter;
 use bevy::prelude::*;
+use shards_content::ContentDb;
 use shards_core::input_names::{GLIDE, JUMP, SPRINT};
 use shards_core::{flat, follow_orders, Intent, NetSet, Predicted};
 
-use crate::controller::{LocomotionInput, MotionMode, MotionState};
+use crate::controller::{CharacterController, CharacterParams, LocomotionInput, MotionMode, MotionState};
 
 /// The motion systems other modules order against.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -59,7 +60,16 @@ pub(crate) fn plugin(app: &mut App) {
 }
 
 /// What [`intent_to_locomotion`] reads and writes of a character.
-type Steered = (Entity, &'static mut Intent, &'static mut LocomotionInput, &'static MotionState, &'static Transform, Option<&'static mut GlideUntilLanded>);
+type Steered = (
+    Entity,
+    &'static mut Intent,
+    &'static mut LocomotionInput,
+    &'static MotionState,
+    &'static Transform,
+    Option<&'static mut GlideUntilLanded>,
+    Option<&'static CharacterController>,
+    Option<&'static CharacterParams>,
+);
 
 /// For every character with `Intent` and `LocomotionInput`: clears what the last tick's
 /// actions left (`external`, `locked`, `face`), then takes
@@ -67,7 +77,8 @@ type Steered = (Entity, &'static mut Intent, &'static mut LocomotionInput, &'sta
 /// - `move_dir` from `Intent.move_dir` (flattened, at most length 1),
 /// - `sprint` and `glide` from the held buttons of the same names,
 /// - `jump` from the `jump` presses (consumed),
-/// - `face` toward `Intent.aim`, else toward the lock-on `Intent.target`.
+/// - `face` toward the yaw of `Intent.look` when the body's `locomotion` says `face: Look`, else
+///   toward `Intent.aim`, else toward the lock-on `Intent.target`.
 ///
 /// Dead or stunned characters are the action machine's business: it sets `locked`.
 ///
@@ -76,10 +87,11 @@ type Steered = (Entity, &'static mut Intent, &'static mut LocomotionInput, &'sta
 pub fn intent_to_locomotion<F: QueryFilter + 'static>(
     mut commands: Commands,
     index: Res<AiIndex>,
+    db: Option<Res<ContentDb>>,
     positions: Query<&Transform>,
     mut characters: Query<Steered, F>,
 ) {
-    for (entity, mut intent, mut input, state, tf, latch) in &mut characters {
+    for (entity, mut intent, mut input, state, tf, latch, controller, own) in &mut characters {
         if input.external != Vec3::ZERO {
             input.external = Vec3::ZERO;
         }
@@ -120,7 +132,9 @@ pub fn intent_to_locomotion<F: QueryFilter + 'static>(
         }
 
         let toward = |point: Vec3| Some(flat(point - tf.translation)).filter(|d| d.is_finite() && d.length_squared() > 1e-4);
-        let face = intent.aim.and_then(toward).or_else(|| {
+        // A body that faces its look faces it before anything else: the look is where it aims.
+        let looked = controller.and_then(|c| c.resolve(own, db.as_deref()).bound_look(&intent)).map(|gaze| gaze.flat_dir());
+        let face = looked.or_else(|| intent.aim.and_then(toward)).or_else(|| {
             let target = index.get(intent.target?)?;
             toward(positions.get(target).ok()?.translation)
         });
