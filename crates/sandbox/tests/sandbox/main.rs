@@ -38,6 +38,8 @@ mod net_sync;
 mod net_seams;
 mod npc_ranged;
 #[cfg(feature = "render")]
+mod first_person;
+#[cfg(feature = "render")]
 mod offscreen;
 mod reference_replays;
 mod replays;

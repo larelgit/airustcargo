@@ -10,15 +10,16 @@ use shards_audio::{AudioListener, SoundEmitter};
 use shards_content::prefab::resolve_component;
 use shards_content::{ContentAppExt, Refs};
 use shards_level::{LevelAsset, LevelDef, LevelPlugin};
-use shards_motion::ThirdPersonCamera;
+use shards_motion::{FirstPersonCamera, ThirdPersonCamera};
 
-/// Gives every [`ThirdPersonCamera`] an [`AudioListener`], and (with the level module) checks the
+/// Gives every [`ThirdPersonCamera`] and [`FirstPersonCamera`] an [`AudioListener`], and (with the level module) checks the
 /// emitters in level files. Part of [`EnginePlugins`](crate::EnginePlugins), after the audio module.
 pub struct EngineAudioPlugin;
 
 impl Plugin for EngineAudioPlugin {
     fn build(&self, app: &mut App) {
         app.register_required_components::<ThirdPersonCamera, AudioListener>();
+        app.register_required_components::<FirstPersonCamera, AudioListener>();
         if app.is_plugin_added::<LevelPlugin>() {
             app.add_content_check::<LevelDef>("sound emitters", check_level_emitters);
         }

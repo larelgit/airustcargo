@@ -22,6 +22,7 @@
 //! commands.trigger(AddTrauma(0.4));
 //! ```
 
+pub mod first_person;
 pub mod lock;
 pub mod math;
 pub mod picture;
@@ -43,6 +44,10 @@ pub use math::{
 pub use lock::{
     body_point, in_frustum, lock_candidates, lock_score, pick_lock, signed_bearing, sight_clear, switch_lock, switch_target, LockHooks,
     LockOnDef, LockWeights, Lockable, PickView,
+};
+pub use first_person::{
+    heading_of, look_through, turn_look, view_rotation, BobTuning, CameraMode, EyeFrame, EyeShift, EyeState, FirstPersonCamera, FirstPersonTuning, FromMode,
+    LandingTuning, RollTuning, OWN_BODY_LAYER, VIEW_MODEL_LAYER,
 };
 pub use picture::{BloomComposite, BloomTuning, PictureTuning, ToneMapping};
 pub use tuning::{ArmTuning, AutoCentreTuning, CameraOffsets, CameraTuning, FitTuning, FlickTuning, FramingTuning, TraumaTuning};
@@ -210,6 +215,7 @@ pub(crate) fn plugin(app: &mut App) {
         .register_type::<LockOnTarget>()
         .register_type::<LockPoint>()
         .register_type::<LockOnDef>()
+        .register_type::<FirstPersonCamera>()
         .add_content::<CameraTuning>()
         .add_content::<LockOnDef>()
         .init_resource::<LockHooks>()
@@ -217,12 +223,15 @@ pub(crate) fn plugin(app: &mut App) {
         .init_resource::<CameraTuning>()
         .init_resource::<CameraOffsets>()
         .init_resource::<CameraShake>()
+        .init_resource::<first_person::CameraModeOverride>()
         .add_observer(|trigger: On<AddTrauma>, settings: Res<CameraSettings>, mut shake: ResMut<CameraShake>| {
             if settings.shake {
                 shake.add_trauma(trigger.event().0 * settings.shake_intensity.clamp(0.0, 1.0));
             }
         })
-        .add_systems(PreUpdate, (apply_player_settings, resolve_tuning));
+        .add_systems(PreUpdate, (apply_player_settings, resolve_tuning))
+        .add_systems(PreUpdate, first_person::apply_mode.after(resolve_tuning));
+    first_person::plugin(app);
     shot::plugin(app);
     #[cfg(feature = "render")]
     systems::plugin(app);
