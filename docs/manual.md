@@ -2277,7 +2277,7 @@ owns (`mover_go`, a pickup, a line of text).
   between does not (bodies are on no layer the ray asks for). Of the things that count the **nearest wins; two at one distance go to the lower
   `ColliderId`**, never to an entity order. `use_probe` also lists what is out of its reach (up to 100 m, `PROBE_RANGE`), so a refusal can say how far a thing is.
 - **`Usable`** (`shards::motion`, `name`, `prompt`, `hold_s`, `use_range`) and **the `USE` layer** (`LayerMask::USE`, `CollisionLayers::USE`: memberships `USE`, filters
-  nothing). A collider on it collides with nothing: no body is stopped by it, a query meets it only when its mask has `USE` (the engine's own name their layers; `QueryFilter::default()` takes every layer, so a game's ray against solid geometry names `WORLD`), the navmesh does not carve it, a mover
+  nothing). A collider on it collides with nothing: no body is stopped by it, a query meets it only when its mask has `USE` (the engine's own queries name the layers they want; `QueryFilter::default()` takes every layer, so a game's ray against solid geometry names `WORLD`), the navmesh does not carve it, a mover
   does not push with it. A level's `interactable` marker makes both from its node (see "Levels from Blender"): `Usable` named by the marker, and a
   collider with the node's shape. A node with a `collider` of its own keeps it, solid, and adds the `USE` layer (a door); a node with a mesh or a `size` and no
   `collider` gets a box (`auto`) on `USE` alone; a bare empty (no mesh, no `size`, as the outpost's lever) is still a marker as before, has a `Usable` and no use area, and so
@@ -2292,13 +2292,13 @@ owns (`mover_go`, a pickup, a line of text).
   `UseProgress` is simulation state on the body (snapshots, the replay hash, co-op), and `use_view` / `you.use_progress` read it for a bar.
 - **A revive wins.** The body whose moveset binds `interact` to an action that holds this tick (the revive next to a downed ally: `ContextInputs::bound`) leaves
   the press to the machine; the use never takes it. With no ally in reach the binding does not hold and a target in reach takes the press. A moveset that binds
-  nothing to `interact` sees all its presses go to the use; `interact` presses nobody finds a target for stay where they were (the machine buffers them as always). Only a
+  nothing to `interact` sees all its presses go to the use; an `interact` press with no target in reach is left as it was (the machine buffers it as always). Only a
   context binding (`MovesetDef::context`, as the revive's) can say when its press is wanted: a moveset that binds `interact` as a plain input (`inputs`) has no condition, so a target in reach
   takes the press before the machine sees it.
 - **Content.** `locomotion` gets `use_range` (default 2, left out of the written form at the default, so no hash moves). The node properties of an
   `interactable` are `hold_s` (zero or more), `use_range` (above zero) and `prompt` (text; a Fluent `@id` or plain text, the marker's name when left
-  out); `content check` names the level, the node and the property (`node `Valve`: `hold_s` must be zero or more (seconds to hold the button), found -1`, `node `Panel`:
-  `use_range` must be above zero, found 0`), a `hold_s`, `use_range` or `prompt` on a node that is no interactable is a problem of its own, and so is an `interactable` that is also a `volume` (a look never meets a sensor). In `layers` the new word is `use`.
+  out); `content check` names the level, the node and the property (``node `Valve`: `hold_s` must be zero or more (seconds to hold the button), found -1``, ``node `Panel`:
+  `use_range` must be above zero, found 0``), a `hold_s`, `use_range` or `prompt` on a node that is no interactable is a problem of its own, and so is an `interactable` that is also a `volume` (a look never meets a sensor). In `layers` the new word is `use`.
 - **For the AI.** The player tool **`interact`**: `interact` uses what you look at; `interact target=e12` turns the look to the thing's use area and presses
   (an error leaves the look where it was: `e12 "far_panel" is 3.5m away and can be used from 2.0m: walk closer`, `e12 "behind_glass" is behind wall 1.0m ahead: a
   wall or glass blocks a use`, `e13 "near" is nearer on the same line (1.0m)`, `e13 "twin_a" is just as near on the same line (1.5m) and comes first`, `e14 has no use area, so no look can
