@@ -6,6 +6,7 @@
 
 use bevy::prelude::*;
 
+use super::accel::{air_accelerate, apply_friction, ground_accelerate, limit_air_speed, AccelModel};
 use super::mover::{clip, flat, Mover, Slide, Touch};
 use super::params::{CharacterParams, MANTLE_SLACK};
 use super::{LocomotionInput, Mantle, MotionMode, MotionState};
@@ -126,13 +127,22 @@ impl Step<'_, '_> {
         self.state.sprinting = sprinting;
         let target = wish.normalize_or_zero() * speed;
         let v0 = flat(self.state.velocity);
-        let braking = if p.brake_only_without_input {
-            wish == Vec3::ZERO
-        } else {
-            target.length_squared() < v0.length_squared()
+        let mut v = match p.accel {
+            AccelModel::Step => {
+                let braking = if p.brake_only_without_input {
+                    wish == Vec3::ZERO
+                } else {
+                    target.length_squared() < v0.length_squared()
+                };
+                let rate = if braking { self.deceleration() } else { self.acceleration() };
+                step_toward(v0, target, rate * self.dt, p.axis_stepping)
+            }
+            // Friction, then a push along the wished direction up to the wished speed (F7).
+            AccelModel::Projected { ground_accel, friction, stop_speed, .. } => {
+                let slowed = apply_friction(v0, friction, stop_speed, self.dt);
+                ground_accelerate(slowed, wish.normalize_or_zero(), speed, ground_accel, self.dt)
+            }
         };
-        let rate = if braking { self.deceleration() } else { self.acceleration() };
-        let mut v = step_toward(v0, target, rate * self.dt, p.axis_stepping);
         let delta = along_ground((v0 + v) * 0.5 * self.dt, self.state.ground_normal) + self.input.external;
         let (moved, stepped) = self.walk(feet, delta);
         for touch in moved.touches.iter().filter(|t| !t.walkable) {
@@ -282,7 +292,16 @@ impl Step<'_, '_> {
             let h = match wish.try_normalize() {
                 Some(dir) => {
                     let (speed, _) = self.modifiers.ground_speed(p, wish.length(), self.input.sprint);
-                    step_toward(h0, dir * speed, self.acceleration() * p.air_control * dt, p.axis_stepping)
+                    match p.accel {
+                        AccelModel::Step => {
+                            step_toward(h0, dir * speed, self.acceleration() * p.air_control * dt, p.axis_stepping)
+                        }
+                        // The push along the wished direction, to the capped speed; no friction in the air (F7).
+                        AccelModel::Projected { air_accel, air_speed_cap, max_air_speed, .. } => {
+                            let pushed = air_accelerate(h0, dir, speed, air_accel, air_speed_cap, dt);
+                            max_air_speed.map_or(pushed, |max| limit_air_speed(h0, pushed, max))
+                        }
+                    }
                 }
                 // No input: the air keeps its speed unless the params brake it.
                 None if p.air_deceleration > 0.0 => {

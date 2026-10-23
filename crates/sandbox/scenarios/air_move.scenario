@@ -1,0 +1,152 @@
+# Air movement in the style of Half-Life (F7, the manual's "Air movement in the style of Half-Life (F7)"): the
+# `locomotion` option `accel: Projected(..)` steers the ground by friction and a push along the wished direction, and the
+# air by a push that stops at a small cap along the wish. The body is the first-person `air_viewer`
+# (`characters/air_move.locomotion.ron`: a run of 8.13 m/s, a jump of 1.14 m, Half-Life's numbers in metres: a push of 10 a
+# second on the ground and in the air, friction 4, a stop speed of 2.54 m/s, the air adding at most 0.76 m/s along the
+# wish). It runs on the canyon floor (x 86 to 141, z within 16 m; this lane is z -12, clear of the rock, which stands within
+# 6 m of z 0, and of the rooms the other scenarios lay there). The player-scope tools `look`, `move`, `move_to` and
+# `jump` drive it (`set` gives the body a speed once, in part 4), and every check reads a speed: `move_info` says
+# `speed`, the horizontal speed now, and `MotionState.velocity` is the vector.
+#
+# At 60 ticks a second: the run speed is reached in 0.13 s, friction stops it in 0.55 s, a jump is in the air for 0.67 s (40
+# ticks, a landing the 41st).
+
+seed 42
+
+# --- setup (dev): everyone calm (the arena is 90 m from the canyon, where the player goes), the player on the canyon floor
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act look clear=true
+act god on=false
+act? level_despawn id=crouch
+act set id=e5 component=CharacterController path=params value='"air_viewer"'
+act teleport id=e5 x=90 z=-12 y=-10
+step 30
+act heal id=e5
+invariant field e5 Health.current > 0
+
+# --- 1. the model the AI is told about: the numbers, the body's own horizontal speed
+act move_info
+expect result contains "\"model\": \"projected\""
+expect result contains "\"ground_accel\": 10.0"
+expect result contains "\"air_accel\": 10.0"
+expect result contains "\"friction\": 4.0"
+expect result contains "\"max_air_speed\": null"
+expect result contains "\"speed\": 0.0"
+act look yaw=-90 pitch=0
+expect result contains "ok: looking E"
+
+# --- 2. on the ground: the run speed in a fraction of a second, no faster, and friction alone stops it
+act move dir=E meters=40
+step 20
+act move_info
+expect result contains "\"speed\": 8.13"
+step 20
+act move_info
+expect result contains "\"speed\": 8.13"
+act stop
+# 0.2 s of friction from 8.128 m/s is 8.128 * e^-0.8 = 3.65 m/s
+step 12
+expect field e5 MotionState.velocity.x > 3.5
+expect field e5 MotionState.velocity.x < 3.8
+# 0.3 s: the stop speed (2.54) passed at 0.291 s, 2.45 m/s
+step 6
+expect field e5 MotionState.velocity.x > 2.3
+expect field e5 MotionState.velocity.x < 2.6
+# at rest 0.55 s after letting go
+step 30
+act move_info
+expect result contains "\"speed\": 0.0"
+
+# --- 3. in the air: a sideways wish adds the cap, 0.76 m/s, and no more; a wish against the velocity brakes
+act teleport id=e5 x=90 z=-12 y=-10
+step 30
+act move dir=E meters=40
+step 20
+act jump
+expect result contains "ok: jumping"
+step 3
+expect field e5 MotionState.velocity.x > 8.1
+expect field e5 MotionState.velocity.z > -0.01
+# north (-z) is a right angle to the way the body flies: the first tick adds the cap along it, 0.76 m/s, and the speed is
+# sqrt(8.13^2 + 0.76^2) = 8.16
+act move dir=N meters=60
+step 1
+expect field e5 MotionState.velocity.z < -0.75
+expect field e5 MotionState.velocity.z > -0.78
+expect field e5 MotionState.velocity.x > 8.1
+# ... and holding the wish adds next to nothing (the speed along it is already the cap; the wish drifts a hair as the
+# body flies on past the point it was given)
+step 2
+expect field e5 MotionState.velocity.z < -0.75
+expect field e5 MotionState.velocity.z > -0.85
+expect field e5 MotionState.velocity.x > 8.1
+# a wish against it brakes at air_accel * wish_speed, 81 m/s^2: three ticks take 4 m/s off
+act move dir=W meters=60
+step 3
+expect field e5 MotionState.velocity.x > 3.6
+expect field e5 MotionState.velocity.x < 4.5
+act stop
+step 40
+expect field e5 Transform.translation.y < -9.9
+
+# --- 4. a bunny hop: a body that comes in faster than it runs (set here, as a knock or a strafe leaves it) and jumps
+# on landing keeps its 10 m/s through four hops (a hop is 40 ticks from jump to jump, and a press up to 7 ticks before
+# landing is kept: the presses come 36, 43 and 40 ticks apart, each a few ticks before a landing); the same body that
+# lands without a jump pays the friction
+act stop
+step 40
+act teleport id=e5 x=90 z=-12 y=-10
+step 30
+act move dir=E meters=40
+act set id=e5 component=MotionState path=velocity.x value=10.0
+act jump
+step 36
+act jump
+step 43
+act jump
+step 40
+act jump
+step 20
+expect field e5 MotionState.velocity.x > 9.95
+expect field e5 MotionState.velocity.x < 10.05
+expect field e5 Transform.translation.x < 138
+act stop
+act teleport id=e5 x=90 z=-12 y=-10
+step 30
+act move dir=E meters=40
+act set id=e5 component=MotionState path=velocity.x value=10.0
+act jump
+step 100
+act move_info
+expect result contains "\"speed\": 8.13"
+act stop
+step 30
+
+# --- 5. a strafe: a wish that stays at a right angle to the velocity (a point 1.45 m beside the path, so the wish turns
+# with the body) is a fresh sideways nudge of the cap every tick, and the speed grows by about nudge^2 / (2 speed) a tick
+act teleport id=e5 x=90 z=-12 y=-10
+step 30
+act move dir=E meters=40
+step 20
+act jump
+act move_to target='{"x": 92.4, "z": -13.45}'
+step 30
+act move_info
+expect result contains "\"speed\": 9."
+act stop
+step 60
+
+# --- the player goes back to the arena, as the game has it (nobody else was moved)
+act set id=e5 component=CharacterController path=params value='"player"'
+act look clear=true
+act teleport id=e5 x=0 z=12 y=0
+act heal id=e5
+step 30
+expect field e5 Health.current > 0
