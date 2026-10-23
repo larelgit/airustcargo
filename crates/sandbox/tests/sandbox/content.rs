@@ -64,7 +64,7 @@ fn the_player_is_the_local_player() {
 #[test]
 fn the_sandbox_content_is_clean() {
     let mut app = sandbox::test_app(42);
-    assert_eq!(text(&ok(&mut app, "content_check", json!({}))), "ok: 239 definitions in 76 files");
+    assert_eq!(text(&ok(&mut app, "content_check", json!({}))), "ok: 247 definitions in 78 files");
     let light = ok(&mut app, "content_get", json!({"kind": "action", "id": "light_1"})).result;
     assert_eq!(light["def"]["hits"][0]["damage"], json!(20.0));
     assert_eq!(light["file"], "content/combat/player.action.ron");
@@ -72,7 +72,7 @@ fn the_sandbox_content_is_clean() {
     for kind in ["action", "moveset", "prefab", "locomotion", "layout", "combat_tuning", "behavior", "perception", "director", "attack_plan", "tile", "region", "poi", "nav", "level", "sound", "music", "audio", "perf", "look", "scatter", "effect", "fx", "encounter", "encounter_rules", "hitstop", "rule_set", "rules", "prop", "flash"] {
         assert!(kinds.contains(kind), "{kind} missing: {kinds}");
     }
-    assert!(events(&app).contains(&"0 content loaded: 239 definitions in 76 files".to_owned()), "{:?}", events(&app));
+    assert!(events(&app).contains(&"0 content loaded: 247 definitions in 78 files".to_owned()), "{:?}", events(&app));
 }
 
 #[test]

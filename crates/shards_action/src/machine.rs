@@ -2374,6 +2374,7 @@ pub fn apply_effect(world: &mut World, entity: Entity, action: &str, effect: &Ef
         Effect::Spawn(spawn) => {
             crate::objects::spawn_objects(world, entity, action, spawn, None);
         }
+        Effect::Fire(fire) => crate::shot::fire(world, entity, action, fire),
         Effect::Custom(name) => {
             let hook = world.resource::<ActionEffects>().0.iter().find(|(n, _)| n == name).map(|(_, f)| *f);
             match hook {

@@ -1,0 +1,8 @@
+// The test guns of `hitscan.action.ron`, each firing on `light`: a body carries them in an `Arsenal` (the dev
+// tool `give_weapon`); holding one is having its moveset. No ammo: they fire as long as they are held.
+{
+    "hitscan_rifle": (inputs: {"light": "hitscan_rifle_shot"}, weapon: (name: "Test rifle")),
+    "hitscan_scatter": (inputs: {"light": "hitscan_scatter_shot"}, weapon: (name: "Test scatter gun")),
+    "hitscan_piercer": (inputs: {"light": "hitscan_piercer_shot"}, weapon: (name: "Test piercer")),
+    "hitscan_launcher": (inputs: {"light": "hitscan_launcher_shot"}, weapon: (name: "Test launcher")),
+}

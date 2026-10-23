@@ -127,7 +127,8 @@ pub struct DamageCtx {
     pub credit: Entity,
     pub target: Entity,
     pub action: String,
-    /// Index of the hit window in the action.
+    /// Index of the hit window in the action; for a shot's pellet (`shot` is `Some`) `usize::MAX`: a shot has no
+    /// hit window, its payload is its `Fire` effect's.
     pub hit: usize,
     /// `HitDef::damage` as written (the motion value when a game applies its own formula).
     pub base: f32,
@@ -175,6 +176,13 @@ pub struct DamageCtx {
     /// `damage * to_body` off the body's health and `damage` off the part's. A hook may change
     /// `to_body`, or set this to `None` to hit the body alone.
     pub part: Option<PartHit>,
+    /// Stamina a guard pays for this hit before its `stamina_per_damage` (`HitDef::guard_damage`, or a shot's
+    /// `FireDef::guard_damage`); `None`: the hit's damage. Read by the guard in [`modifiers`].
+    pub guard_damage: Option<f32>,
+    /// The shot this hit is a pellet of ([`crate::shot`], F3): its pellet, distance and damage share by
+    /// distance (`share` is already in `damage` and `poise`: a hook that rebuilds damage from `base` folds it
+    /// in); `None` for a hit window's hit.
+    pub shot: Option<crate::shot::ShotHit>,
 }
 
 /// A game's step in the damage pipeline: `app.add_damage_hook(crits)`.
@@ -598,52 +606,120 @@ fn resolve(world: &mut World, d: Detected) {
     if !swinging || world.get::<Dead>(d.target).is_some() || world.get::<Dead>(d.attacker).is_some() {
         return;
     }
-    // A combat object's hit is its owner's, and an owner that died (or went) earlier in the tick
-    // deals nothing.
-    let credit = match world.get::<CombatObject>(d.attacker) {
-        Some(o) => match living_owner(world, o) {
-            Some(owner) => owner,
-            None => return,
-        },
-        None => d.attacker,
-    };
     let Some(def) = world.resource::<ContentDb>().get::<ActionDef>(&d.action).cloned() else { return };
     let hit = &def.hits[d.hit];
-    let facing = world.get::<ActionState>(d.attacker).and_then(|s| s.current.as_ref()).map(|r| r.facing);
-    let dir = match (world.get::<Transform>(d.attacker), world.get::<Transform>(d.target)) {
-        (Some(a), Some(t)) => flat(t.translation - a.translation).try_normalize(),
-        _ => None,
-    }
-    .or_else(|| facing.and_then(|f| flat(f).try_normalize()))
-    .unwrap_or(Vec3::NEG_Z);
-    let pair = pair_strike(world, d.attacker, d.target, &d.action).is_some();
-    let mut ctx = DamageCtx {
+    let landing = Landing {
         attacker: d.attacker,
-        credit,
         target: d.target,
+        part: d.part,
         action: d.action,
+        instance: Some(d.instance),
         hit: d.hit,
-        base: hit.damage,
-        damage: hit.damage,
-        poise: hit.poise,
-        status: hit.status.clone(),
-        flags: hit.flags.clone(),
-        tags: hit.tags.clone(),
+        weight: def.weight,
+        payload: hit.payload(),
+        shot: None,
+    };
+    land(world, landing);
+}
+
+/// What a hit carries into the pipeline, whether a hit window ([`HitDef`](crate::HitDef)) or a shot
+/// ([`FireDef`](crate::shot::FireDef)) wrote it.
+pub(crate) struct Payload<'a> {
+    pub damage: f32,
+    pub poise: f32,
+    pub status: &'a [(String, f32)],
+    pub flags: &'a [HitFlag],
+    pub tags: &'a [String],
+    pub reaction: Option<u8>,
+    pub knockback: f32,
+    pub guard_damage: Option<f32>,
+}
+
+/// One hit to put through the pipeline: who hit whom (through which part) with what.
+pub(crate) struct Landing<'a> {
+    pub attacker: Entity,
+    pub target: Entity,
+    pub part: Option<Entity>,
+    pub action: String,
+    /// The attacker's run that hit (its `Running::instance`), for `miss_recovery`'s "it landed".
+    pub instance: Option<u32>,
+    /// The hit window's index; `usize::MAX` for a shot.
+    pub hit: usize,
+    /// The action's weight floor (`ActionDef::weight`).
+    pub weight: Option<HitWeight>,
+    pub payload: Payload<'a>,
+    /// A shot's pellet: its share by distance scales damage and poise.
+    pub shot: Option<crate::shot::ShotHit>,
+}
+
+/// What became of a hit that went through the pipeline, as the shot's journal line tells it.
+pub(crate) struct Landed {
+    pub outcome: Outcome,
+    pub ignore_reason: IgnoreReason,
+    /// What the body's health was to lose (the `amount` of `Damaged`, `Blocked`, `GuardBroken`).
+    pub body: f32,
+    /// The part it went through.
+    pub part: Option<String>,
+}
+
+/// The pipeline from a filled context on: the credit (a combat object's owner), the part's factors,
+/// the engine's modifiers, the game's hooks, the rules' outgoing factor, then `apply`. Shared by a hit
+/// window's hits ([`resolve`]) and a shot's pellets ([`crate::shot`]). `None`: nothing landed (the
+/// attacker is an object whose owner died or went).
+pub(crate) fn land(world: &mut World, l: Landing) -> Option<Landed> {
+    // A combat object's hit is its owner's, and an owner that died (or went) earlier in the tick
+    // deals nothing.
+    let credit = match world.get::<CombatObject>(l.attacker) {
+        Some(o) => living_owner(world, o)?,
+        None => l.attacker,
+    };
+    let facing = world.get::<ActionState>(l.attacker).and_then(|s| s.current.as_ref()).map(|r| r.facing);
+    // A pellet pushes along its own flight; a swing from the attacker toward the target.
+    let along = l.shot.and_then(|s| flat(s.dir).try_normalize());
+    let dir = along
+        .or_else(|| match (world.get::<Transform>(l.attacker), world.get::<Transform>(l.target)) {
+            (Some(a), Some(t)) => flat(t.translation - a.translation).try_normalize(),
+            _ => None,
+        })
+        .or_else(|| facing.and_then(|f| flat(f).try_normalize()))
+        .unwrap_or(Vec3::NEG_Z);
+    let pair = pair_strike(world, l.attacker, l.target, &l.action).is_some();
+    let p = l.payload;
+    let floor = l.weight.unwrap_or_default();
+    let mut ctx = DamageCtx {
+        attacker: l.attacker,
+        credit,
+        target: l.target,
+        action: l.action,
+        hit: l.hit,
+        base: p.damage,
+        damage: p.damage,
+        poise: p.poise,
+        status: p.status.to_vec(),
+        flags: p.flags.to_vec(),
+        tags: p.tags.to_vec(),
         outcome: Outcome::Hit,
         ignore_reason: IgnoreReason::Hook,
         dir,
-        reaction: hit.reaction,
-        reaction_armor: reaction_armor(world, d.target),
-        knockback: hit.knockback,
+        reaction: p.reaction,
+        reaction_armor: reaction_armor(world, l.target),
+        knockback: p.knockback,
         taken: 1.0,
         guard_mult: None,
         rules: 1.0,
-        weight: if pair { def.weight.unwrap_or_default().max(HitWeight::Finisher) } else { def.weight.unwrap_or_default() },
+        weight: if pair { floor.max(HitWeight::Finisher) } else { floor },
         pair,
         part: None,
+        guard_damage: p.guard_damage,
+        shot: l.shot,
     };
+    // A pellet's share by distance (its falloff), before anything else scales it.
+    if let Some(shot) = l.shot {
+        ctx.damage *= shot.share;
+        ctx.poise *= shot.share;
+    }
     // A hit through a part: its factors scale the hit before the body's own modifiers see it.
-    if let Some((part, tags)) = d.part.and_then(|p| crate::parts::part_hit(world, d.target, p)) {
+    if let Some((part, tags)) = l.part.and_then(|p| crate::parts::part_hit(world, l.target, p)) {
         ctx.damage *= part.damage;
         ctx.poise *= part.poise;
         ctx.tags.extend(tags);
@@ -665,13 +741,24 @@ fn resolve(world: &mut World, d: Detected) {
     }
     // A hit that met the target (struck it, or its guard) is no miss for `miss_recovery`.
     if matches!(ctx.outcome, Outcome::Hit | Outcome::Blocked { .. } | Outcome::Parried { .. } | Outcome::GuardBroken)
-        && let Some(mut x) = world.get_mut::<RunExtras>(d.attacker)
-        && x.instance == d.instance
+        && let Some(instance) = l.instance
+        && let Some(mut x) = world.get_mut::<RunExtras>(l.attacker)
+        && x.instance == instance
         && !x.landed
     {
         x.landed = true;
     }
+    let landed = Landed {
+        outcome: ctx.outcome,
+        ignore_reason: ctx.ignore_reason,
+        body: match ctx.outcome {
+            Outcome::Hit | Outcome::Blocked { .. } | Outcome::GuardBroken => ctx.part.as_ref().map_or(ctx.damage, |p| ctx.damage * p.to_body),
+            _ => 0.0,
+        },
+        part: ctx.part.as_ref().map(|p| p.id.clone()),
+    };
     apply(world, ctx);
+    Some(landed)
 }
 
 /// The engine's modifiers: god mode, i-frames (and perfect evades), guards, the `DamageTaken` multiplier,
@@ -714,8 +801,7 @@ pub fn modifiers(world: &World, ctx: &mut DamageCtx) {
         && !ctx.flags.contains(&HitFlag::Unblockable)
         && in_arc(world, ctx.attacker, target, run.facing, guard.arc)
     {
-        let hit_cost = db.get::<ActionDef>(&ctx.action).and_then(|d| d.hits.get(ctx.hit)).and_then(|h| h.guard_damage);
-        let cost = hit_cost.unwrap_or(ctx.damage) * guard.stamina_per_damage;
+        let cost = ctx.guard_damage.unwrap_or(ctx.damage) * guard.stamina_per_damage;
         let have = world.get::<Stamina>(target).map_or(f32::INFINITY, |s| s.current);
         if run.windows.perfect && !ctx.flags.contains(&HitFlag::NoParry) {
             let pcost = cost * guard.perfect_cost_mult;

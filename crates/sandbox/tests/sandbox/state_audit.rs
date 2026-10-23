@@ -117,6 +117,7 @@ const OUTSIDE: &[(&str, &str)] = &[
     ("shards_action::machine::PendingEffects", "effects queued and run inside one tick: empty between ticks"),
     ("shards_action::objects::MetProjectiles", "projectiles that met a target this tick, taken in the same tick: empty between ticks"),
     ("shards_action::predict::ActionPredictor", "a co-op client's predicted actions; a host or a single player never uses it"),
+    ("shards_action::shot::Shooting", "the shots fired in the tick under way (the ordinal keying their draws): emptied at the end of every tick"),
     ("shards_action::render::", "animation graphs, the threat HUD and the combat overlay: the picture"),
     ("shards_action::status::StatusEffects", "the status effect hooks, registered at build time"),
     ("shards_action::status::StatusSource", "the source of the status whose on_apply hook is running: None between calls"),

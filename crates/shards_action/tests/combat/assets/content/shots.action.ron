@@ -1,0 +1,18 @@
+// Hitscan shots (F3, tests/combat/shots.rs): one ray, a ray whose damage falls off, eight pellets, a ray that
+// passes one body, a target-aimed shot that misses by up to 10 degrees, a kick, a guarded payload, and two
+// launchers whose bolt flies along the look. Net ids 4460 and up are this file's.
+{
+    "s_shot": (net_id: 4460, phases: [("fire", 0.1), ("recover", 0.2)], effects: [(at: 0.0, effect: Fire((damage: 10, noise: 25)))]),
+    "s_falloff": (net_id: 4461, phases: [("fire", 0.1)], effects: [(at: 0.0, effect: Fire((damage: 20, falloff: [(10, 1.0), (30, 0.5)])))]),
+    "s_scatter": (net_id: 4462, phases: [("fire", 0.1)], effects: [(at: 0.0, effect: Fire((pellets: 8, spread_deg: 6, range: 30, damage: 5)))]),
+    "s_pierce": (net_id: 4463, phases: [("fire", 0.1)], effects: [(at: 0.0, effect: Fire((damage: 10, pierce: 1)))]),
+    "s_aimed": (net_id: 4464, phases: [("fire", 0.1)], effects: [(at: 0.0, effect: Fire((damage: 10, aim_error_deg: 10)))]),
+    "s_kick": (net_id: 4465, phases: [("fire", 0.1)], effects: [(at: 0.0, effect: Fire((damage: 1, kick: (2, -1))))]),
+    "s_guarded": (net_id: 4466, phases: [("fire", 0.1)], effects: [(at: 0.0, effect: Fire((damage: 10, guard_damage: 3)))]),
+    "s_launch": (net_id: 4467, phases: [("fire", 0.1)],
+                 effects: [(at: 0.0, effect: Spawn((prefab: ["t_bolt"], action: ["t_fly_plain"], aim: Look, at: (forward: 0.5))))]),
+    "s_launch_err": (net_id: 4468, phases: [("fire", 0.1)],
+                     effects: [(at: 0.0, effect: Spawn((prefab: ["t_bolt"], action: ["t_fly_plain"], aim: Look, aim_error_deg: 20)))]),
+    // A swing: no Fire, no Spawn.
+    "s_swing": (net_id: 4469, phases: [("swing", 0.2)]),
+}
