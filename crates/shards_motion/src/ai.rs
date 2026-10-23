@@ -4,7 +4,7 @@
 use ai_core::{label, AiAppExt, AiId, AiLineOfSight};
 use bevy::prelude::*;
 
-use crate::controller::{Jumped, Landed, Mantled, ModeChanged, MotionMode, MotionState};
+use crate::controller::{Crouch, Crouched, Jumped, Landed, Mantled, ModeChanged, MotionMode, MotionState, Stood};
 use crate::physics::{LayerMask, PhysicsWorld, QueryFilter, VolumeEntered, VolumeExited, VolumeKind};
 
 /// What the motion layer tells the AI, and how far its perception queries look.
@@ -30,7 +30,8 @@ pub(crate) fn plugin(app: &mut App) {
         // Rays against the physics world; `AiOccluder` boxes still block (games without
         // physics keep working, and so do boxes laid over a physics world).
         .insert_resource(AiLineOfSight(physics_line_of_sight))
-        .register_ai_component::<MotionState>(describe_motion)
+        // The key stays the component's name; the fragment reads the stance (a sibling component) too.
+        .register_ai_describer("MotionState", describe_body_motion)
         .journal_event::<Landed>(|e, w| {
             let min = w.get_resource::<MotionAi>().map_or(2.0, |m| m.landed_min_fall);
             // A tiered landing is told even from a small fall: the tiers start at a few m/s.
@@ -43,6 +44,8 @@ pub(crate) fn plugin(app: &mut App) {
             })
         })
         .journal_event::<Jumped>(|e, w| tracked(w, e.entity).map(|who| format!("{who} jumped")))
+        .journal_event::<Crouched>(|e, w| tracked(w, e.entity).map(|who| format!("{who} crouches")))
+        .journal_event::<Stood>(|e, w| tracked(w, e.entity).map(|who| format!("{who} stands up")))
         .journal_event::<Mantled>(|e, w| {
             tracked(w, e.entity).map(|who| format!("{who} climbs a {:.1}m ledge", e.height))
         })
@@ -105,6 +108,30 @@ pub fn describe_motion(s: &MotionState) -> String {
     }
 }
 
+/// The fragment of a body's line about how it moves: [`describe_motion`], and after it the stance while
+/// the body is below its standing height (`ground 2.1m/s crouched`, `air ↑3.1m/s crouched`, or just
+/// `crouched` standing still).
+fn describe_body_motion(e: EntityRef) -> Option<String> {
+    let motion = describe_motion(e.get::<MotionState>()?);
+    match e.get::<Crouch>().and_then(describe_stance) {
+        None => Some(motion),
+        Some(stance) if motion.is_empty() => Some(stance.to_owned()),
+        Some(stance) => Some(format!("{motion} {stance}")),
+    }
+}
+
+/// `crouched`, `crouching`, `standing up`, or `crouched, no room to stand` while a ceiling (or, in the
+/// air, the floor) holds a body that wants to stand; `None` for a body at its full height.
+pub fn describe_stance(c: &Crouch) -> Option<&'static str> {
+    match (c.depth > 0.0, c.wanted, c.blocked) {
+        (false, ..) => None,
+        (true, _, true) => Some("crouched, no room to stand"),
+        (true, true, false) if c.depth >= 1.0 => Some("crouched"),
+        (true, true, false) => Some("crouching"),
+        (true, false, false) => Some("standing up"),
+    }
+}
+
 /// Line of sight for `observe`: nothing solid on the world layer between the points, and
 /// no [`ai_core::AiOccluder`] either. `ignore` (the viewer and the target) never blocks.
 pub fn physics_line_of_sight(world: &World, from: Vec3, to: Vec3, ignore: &[Entity]) -> bool {
@@ -141,5 +168,29 @@ mod tests {
             ..default()
         };
         assert_eq!(describe_motion(&climbing), "mantle 40%");
+    }
+
+    #[test]
+    fn the_stance_follows_the_motion_in_the_bodys_line() {
+        let line = |motion: MotionState, crouch: Option<Crouch>| {
+            let mut world = World::new();
+            let id = {
+                let mut e = world.spawn(motion);
+                if let Some(c) = crouch {
+                    e.insert(c);
+                }
+                e.id()
+            };
+            describe_body_motion(world.entity(id))
+        };
+        let walking = MotionState { mode: MotionMode::Ground, velocity: Vec3::X * 2.1, ..default() };
+        let down = Crouch { depth: 1.0, wanted: true, blocked: false };
+        assert_eq!(line(walking.clone(), None).as_deref(), Some("ground 2.1m/s"));
+        assert_eq!(line(walking.clone(), Some(Crouch::default())).as_deref(), Some("ground 2.1m/s"), "a body that stood up says nothing");
+        assert_eq!(line(walking, Some(down)).as_deref(), Some("ground 2.1m/s crouched"));
+        assert_eq!(line(MotionState::default(), Some(down)).as_deref(), Some("crouched"), "standing still, only the stance");
+        assert_eq!(describe_stance(&Crouch { depth: 0.4, wanted: true, blocked: false }), Some("crouching"));
+        assert_eq!(describe_stance(&Crouch { depth: 0.4, wanted: false, blocked: false }), Some("standing up"));
+        assert_eq!(describe_stance(&Crouch { depth: 1.0, wanted: false, blocked: true }), Some("crouched, no room to stand"));
     }
 }

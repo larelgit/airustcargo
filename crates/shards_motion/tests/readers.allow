@@ -52,3 +52,4 @@ crates/shards_action/src/leap.rs :: pub(crate) fn radius_of(collider: Option<&Co
 crates/shards_action/src/machine.rs :: positions: Query<(&Transform, Option<&CharacterParams>, Option<&Collider>)>, :: the lock-on target is a character: its body's width sets a leap's landing
 crates/shards_action/src/machine.rs :: positions: &Query<(&Transform, Option<&CharacterParams>, Option<&Collider>)>, :: a leap at a lock-on target lands by a character (a lock point's body): its body's width
 crates/shards_action/src/predict.rs :: positions: Query<(&Transform, Option<&CharacterParams>, Option<&Collider>)>, :: the lock-on target is a character: its body's width sets a leap's landing (the prediction)
+crates/shards_motion/src/tools.rs :: stances: Query<(Option<&Crouch>, Option<&MoveModifiers>, &Collider)>, :: the layers of the caller's own body, for the same stand-up cast the controller makes (a character is never a field)

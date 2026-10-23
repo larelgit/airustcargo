@@ -81,8 +81,8 @@ pub use control_lock::{
 pub use camera::{CameraSettings, LockHooks, LockOnDef, LockOnTarget, LockPoint, ThirdPersonCamera};
 pub use eye::{aim_point_of, eye_of, look_dir, params_of};
 pub use controller::{
-    character, CharacterController, CharacterParams, ControllerPlugin, ControllerSystems, Facing, Ghost, Jumped, JumpedFlight, Landed,
-    Launch, SprintResume,
+    character, CharacterController, CharacterParams, ControllerPlugin, ControllerSystems, Crouch, Crouched, Facing, Ghost, Jumped,
+    JumpedFlight, Landed, Launch, SprintResume, Stood,
     LocomotionInput, Mantle, Mantled, ModeChanged, MotionMode, MotionState,
 };
 pub use input::{BindMode, Binding, ControlState, ControlSystems, InputContext, InputContexts, InputMap, InputSettings};

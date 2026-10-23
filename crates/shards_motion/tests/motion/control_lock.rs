@@ -65,6 +65,7 @@ fn walks_east(app: &mut App, me: Entity) {
         i.move_dir = Vec3::X;
         i.set_held(SPRINT, true);
         i.set_held("block", true);
+        i.set_held("crouch", true);
     });
 }
 
@@ -78,12 +79,12 @@ fn a_movement_lock_stops_the_walk_and_hands_the_keys_back_when_it_lifts() {
     // The readers saw a body that asks for nothing to move by; the guard (an action input) is left.
     let seen = last(&app);
     assert_eq!(seen.move_dir, Vec3::ZERO);
-    assert_eq!(seen.held, ["block"], "sprint is movement, block is not");
+    assert_eq!(seen.held, ["block"], "sprint and crouch are movement, block is not");
     assert!((feet(&app, me) - from).length() < 0.05, "it stood still: {}", feet(&app, me) - from);
     // Between ticks `Intent` is what the world wrote: the keyboard writes differences only, so nothing would put W back.
     let kept = intent(&app, me);
     assert_eq!(kept.move_dir, Vec3::X);
-    assert!(kept.is_held(SPRINT) && kept.is_held("block"), "{:?}", kept.held);
+    assert!(kept.is_held(SPRINT) && kept.is_held("block") && kept.is_held("crouch"), "{:?}", kept.held);
     assert!(app.world().resource::<LockStash>().is_empty(), "nothing is kept across a tick");
     // The lock lifts: the same Intent walks at once.
     assert!(unlock_controls(app.world_mut(), me, "scene"));

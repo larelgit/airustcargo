@@ -27,7 +27,7 @@ pub use path::{hop_allowed, plan_path, step_onto, Leg, PathPlan, PathRequest, St
 pub use terrain::{Block, Probe, Terrain};
 
 use crate::ai::MotionAi;
-use crate::controller::{CharacterController, CharacterParams, MotionMode, MotionState};
+use crate::controller::{CharacterController, CharacterParams, Crouch, MotionMode, MotionState};
 use crate::physics::{fresh, LayerMask, PhysicsWorld};
 use crate::tools::TargetArg;
 
@@ -75,6 +75,33 @@ pub struct ReachRequest<'a> {
 /// is this much shorter than the physics world's (m): its grid is coarser than the march.
 const CLOSED_MARGIN: f32 = 1.0;
 
+/// Which size of body a perception query reads the world for (F2).
+#[derive(Deserialize, JsonSchema, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StanceArg {
+    /// The size the body has now (standing, crouched, or between): the default, so what the query
+    /// answers is what walking on would find.
+    #[default]
+    Current,
+    /// The body at its full height.
+    Standing,
+    /// The body crouched (its locomotion's `crouch_height`): the gaps and ducks only a crouch passes.
+    Crouched,
+}
+
+impl StanceArg {
+    /// How far into a crouch the body is that this asks about, given the depth it has now (`crouch`);
+    /// an error says why a body that cannot crouch cannot be asked as crouched.
+    pub(crate) fn depth(self, params: &CharacterParams, crouch: Option<&Crouch>) -> Result<f32, String> {
+        match self {
+            StanceArg::Current => Ok(crouch.map_or(0.0, |c| c.depth)),
+            StanceArg::Standing => Ok(0.0),
+            StanceArg::Crouched if params.can_crouch() => Ok(1.0),
+            StanceArg::Crouched => Err("stance=crouched: this body cannot crouch (its locomotion has no `crouch_height`)".to_owned()),
+        }
+    }
+}
+
 /// The locomotion numbers of `entity` (its controller's, or the code defaults), from the
 /// world.
 pub(crate) fn params_in(world: &World, entity: Entity) -> CharacterParams {
@@ -87,16 +114,24 @@ pub(crate) fn params_in(world: &World, entity: Entity) -> CharacterParams {
 
 /// What the registered [`RoutePlanner`] answers for `me` walking toward `target`, and its
 /// name: `None` when there is none, it does not cover the walk, or the call is not one it
-/// can answer (the local planner then says what is wrong with it).
+/// can answer (the local planner then says what is wrong with it). A walk as a crouched body is
+/// not one it can answer: the navmesh is baked for one size of body, the standing one, so it knows
+/// no duct only a crouch passes, and the local grid, which measures the world for the size asked,
+/// plans it.
 pub(crate) fn planner_route(
     world: &World,
     me: Entity,
     target: &TargetArg,
     within: Option<f32>,
     max: Option<f32>,
+    stance: StanceArg,
 ) -> Option<(&'static str, Result<PathPlan, String>)> {
     let planner = world.get_resource::<RoutePlanner>()?;
     let tf = world.get::<Transform>(me)?;
+    // (A stance the body cannot be asked for is the local planner's to refuse, with its reason.)
+    if stance.depth(&params_in(world, me), world.get::<Crouch>(me)).map_or(true, |depth| depth > 0.0) {
+        return None;
+    }
     let goal = match *target {
         TargetArg::Entity(id) => {
             let entity = world.get_resource::<AiIndex>()?.resolve(id.0).ok().filter(|e| *e != me)?;
@@ -142,16 +177,25 @@ pub(crate) fn request_for(
 pub(crate) type Bodies<'w, 's> = Query<
     'w,
     's,
-    (&'static Transform, Option<&'static CharacterController>, Option<&'static CharacterParams>, Option<&'static MotionState>),
+    (
+        &'static Transform,
+        Option<&'static CharacterController>,
+        Option<&'static CharacterParams>,
+        Option<&'static MotionState>,
+        Option<&'static Crouch>,
+    ),
 >;
 
-/// The locomotion numbers of `entity` (its controller's, or the code defaults).
-pub(crate) fn params_of(bodies: &Bodies, db: Option<&ContentDb>, entity: Entity) -> CharacterParams {
-    match bodies.get(entity) {
-        Ok((_, Some(controller), own, _)) => controller.resolve(own, db).clone(),
-        Ok((_, None, Some(own), _)) => own.clone(),
-        _ => CharacterParams::default(),
-    }
+/// The locomotion numbers of `entity` (its controller's, or the code defaults), sized for `stance`:
+/// the body as it stands, crouched, or as it is now.
+pub(crate) fn params_of(bodies: &Bodies, db: Option<&ContentDb>, entity: Entity, stance: StanceArg) -> Result<CharacterParams, String> {
+    let (params, crouch) = match bodies.get(entity) {
+        Ok((_, Some(controller), own, _, crouch)) => (controller.resolve(own, db).clone(), crouch),
+        Ok((_, None, Some(own), _, crouch)) => (own.clone(), crouch),
+        _ => (CharacterParams::default(), None),
+    };
+    let depth = stance.depth(&params, crouch)?;
+    Ok(params.at_depth(depth).into_owned())
 }
 
 /// The water surface a swimming character floats in.
@@ -178,6 +222,10 @@ fn no_physics(physics: &PhysicsWorld) -> Result<(), String> {
 pub struct ClearanceArgs {
     /// Look from this entity's position instead of yours, with your body's size.
     pub around: Option<Id>,
+    /// The size of body to measure with: `current` (default: as it stands now), `standing`, or `crouched`
+    /// (the gaps and ducks only a crouch passes; the body's locomotion needs a `crouch_height`).
+    #[serde(default)]
+    pub stance: StanceArg,
 }
 
 fn clearance_tool(
@@ -195,11 +243,11 @@ fn clearance_tool(
         Some(id) => index.resolve(id.0)?,
         None => call.caller.require_subject()?,
     };
-    let (tf, _, _, state) = bodies.get(subject).map_err(|_| "that entity has no position".to_owned())?;
+    let (tf, _, _, state, _) = bodies.get(subject).map_err(|_| "that entity has no position".to_owned())?;
     // Another entity is looked at with the caller's body: its width decides the gaps. Neither
     // the body nor the subject (a crate on the world layer) stands in its own way.
     let body = me.unwrap_or(subject);
-    let params = params_of(&bodies, db.as_deref(), body);
+    let params = params_of(&bodies, db.as_deref(), body, call.args.stance)?;
     let mut reaches = clearance(&physics, &params, tf.translation, swimming_at(state), ai.clearance_range, ai.safe_drop, &[body, subject]);
     if let Some(planner) = world.get_resource::<RoutePlanner>() {
         for (reach, step) in reaches.iter_mut().zip(COMPASS_STEPS) {
@@ -231,6 +279,11 @@ pub struct PathToArgs {
     /// Longest route to accept, meters. Default 80 on the local grid, any length on a
     /// region's navmesh.
     pub max: Option<f32>,
+    /// The size of body to plan for: `current` (default: as it stands now), `standing`, or `crouched`
+    /// (a route through the ducks only a crouch passes; hold `crouch` while you follow it). A
+    /// crouched route is planned on the local grid: the navmesh is baked for the standing body.
+    #[serde(default)]
+    pub stance: StanceArg,
 }
 
 #[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
@@ -244,8 +297,8 @@ fn path_to_tool(
     bodies: Bodies,
 ) -> ToolResult<Value> {
     let me = call.caller.require_subject()?;
-    let PathToArgs { target, within, max } = call.args;
-    let (plan, provider) = match planner_route(world, me, &target, within, max) {
+    let PathToArgs { target, within, max, stance } = call.args;
+    let (plan, provider) = match planner_route(world, me, &target, within, max, stance) {
         Some((name, answer)) => {
             let plan = answer.map_err(|why| format!("{name}: {why}"))?;
             if let Some(max) = max.map(|m| m.clamp(1.0, 300.0))
@@ -258,7 +311,7 @@ fn path_to_tool(
             }
             (plan, name)
         }
-        None => (plan_for(me, &target, within, max, &index, &physics, &ai, db.as_deref(), &bodies)?, "local grid"),
+        None => (plan_for(me, &target, within, max, stance, &index, &physics, &ai, db.as_deref(), &bodies)?, "local grid"),
     };
     let mut out = plan.to_json();
     out["provider"] = provider.into();
@@ -272,6 +325,7 @@ pub(crate) fn plan_for(
     target: &TargetArg,
     within: Option<f32>,
     max: Option<f32>,
+    stance: StanceArg,
     index: &AiIndex,
     physics: &PhysicsWorld,
     ai: &MotionAi,
@@ -279,7 +333,7 @@ pub(crate) fn plan_for(
     bodies: &Bodies,
 ) -> Result<PathPlan, String> {
     no_physics(physics)?;
-    let (tf, _, _, state) = bodies.get(me).map_err(|_| "your body has no position".to_owned())?;
+    let (tf, _, _, state, _) = bodies.get(me).map_err(|_| "your body has no position".to_owned())?;
     let (goal, goal_level) = match *target {
         TargetArg::Entity(id) => {
             let entity = index.resolve(id.0)?;
@@ -292,5 +346,5 @@ pub(crate) fn plan_for(
         TargetArg::Point { x, z } => (Vec3::new(x, tf.translation.y, z), false),
     };
     let request = request_for(tf.translation, swimming_at(state), (goal, goal_level), within, max, ai.safe_drop, me);
-    plan_path(physics, &params_of(bodies, db, me), &request)
+    plan_path(physics, &params_of(bodies, db, me, stance)?, &request)
 }

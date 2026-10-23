@@ -13,7 +13,7 @@ use super::{lock_controls, unlock_controls, ControlLock, ControlLocks, LookLock}
 pub(super) fn plugin(app: &mut App) {
     app.add_ai_tool("lock_controls", Scope::Dev, lock_tool).add_ai_tool("unlock_controls", Scope::Dev, unlock_tool);
     // The player's tools act through `Intent`, so the lock already stops them; a guard says so in words.
-    for tool in ["move", "move_to", "jump", "sprint", "glide"] {
+    for tool in ["move", "move_to", "jump", "sprint", "glide", "crouch"] {
         app.add_ai_tool_guard(tool, movement_refusal);
     }
     for tool in [

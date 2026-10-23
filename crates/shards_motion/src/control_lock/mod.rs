@@ -14,7 +14,7 @@
 //!
 //! ## What a lock does to `Intent`
 //!
-//! - **`movement`**: `move_dir` is zero for the tick, the `jump` press and the `sprint` and `glide` holds are
+//! - **`movement`**: `move_dir` is zero for the tick, the `jump` press and the `sprint`, `glide` and `crouch` holds are
 //!   dropped, and the `dodge` press (a roll is a move and an action: either lock stops it). Gravity, a push and an action already under way go on (a lock does
 //!   not freeze a body, it stops it from asking).
 //! - **`actions`**: every other press and every other held input is dropped (and `dodge`) (attacks, `fire`,
@@ -39,7 +39,7 @@
 use ai_core::replay::ReplaySystems;
 use ai_core::{label, with_query, AiAppExt, AiId, AiIndex, Offenders, SimSet};
 use bevy::prelude::*;
-use shards_core::input_names::{DODGE, GLIDE, JUMP, SPRINT};
+use shards_core::input_names::{CROUCH, DODGE, GLIDE, JUMP, SPRINT};
 use shards_core::{EngineAppExt, Gaze, Intent, Target};
 
 mod tools;
@@ -323,7 +323,7 @@ pub(crate) fn mask(world: &mut World) {
         let drops = |input: &str| match input {
             // A roll is a move and an action: either lock stops it.
             DODGE => movement || actions,
-            JUMP | SPRINT | GLIDE => movement,
+            JUMP | SPRINT | GLIDE | CROUCH => movement,
             _ => actions,
         };
         if intent.held.iter().any(|h| drops(h)) {

@@ -386,6 +386,7 @@ fn a_downed_body_is_refused_the_movement_tools_and_loses_its_orders() {
         ("jump", json!({})),
         ("sprint", json!({})),
         ("glide", json!({})),
+        ("crouch", json!({})),
         ("lock_on", json!({"target": f})),
         ("use_item", json!({"item": "flask"})),
     ];

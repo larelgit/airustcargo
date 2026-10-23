@@ -10,8 +10,9 @@
 //!   way the body faces, level.
 //! - [`aim_point_of`]: the point on a body that a look at it meets (the lock-on's aim height).
 //!
-//! A stance that changes the body's height (the crouch of F2) changes the eye through its
-//! `locomotion`; these functions read whatever the body's params say now.
+//! The eye follows the stance (F2): a crouched body's eye is lower, in step with its capsule
+//! ([`CharacterParams::eye_above_feet_at`]), so a shot, the `AIM` line and a first-person camera that
+//! read [`eye_of`] see the crouch ease in and out.
 
 use bevy::prelude::*;
 use shards_content::ContentDb;
@@ -19,7 +20,7 @@ use shards_core::{flat, Intent};
 
 use crate::camera::lock::aim_of;
 use crate::camera::LockOnDef;
-use crate::controller::{CharacterController, CharacterParams};
+use crate::controller::{CharacterController, CharacterParams, Crouch};
 
 /// The numbers `entity` moves by: its own [`CharacterParams`], else the `locomotion` definition its
 /// [`CharacterController`] names, else (a controller without content) the code defaults. `None`
@@ -31,14 +32,16 @@ pub fn params_of(world: &World, entity: Entity) -> Option<&CharacterParams> {
 }
 
 /// Where the character `entity` looks from: its feet plus its `eye_height` (0.9 of its height
-/// unless its `locomotion` says). `None` for an entity with no position or no character controller.
+/// unless its `locomotion` says), lowered with its capsule while it is crouched (the eye keeps its place in
+/// the capsule). `None` for an entity with no position or no character controller.
 ///
 /// ```ignore
 /// let eye = shards::motion::eye_of(world, me).expect("a character");
 /// ```
 pub fn eye_of(world: &World, entity: Entity) -> Option<Vec3> {
     let feet = world.get::<Transform>(entity)?.translation;
-    Some(feet + Vec3::Y * params_of(world, entity)?.eye_above_feet())
+    let depth = world.get::<Crouch>(entity).map_or(0.0, |crouch| crouch.depth);
+    Some(feet + Vec3::Y * params_of(world, entity)?.eye_above_feet_at(depth))
 }
 
 /// The unit vector `entity` looks along: its [`Intent::look`] with the pitch held between the

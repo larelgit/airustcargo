@@ -6,6 +6,7 @@ mod control_lock;
 mod controller;
 mod controller_parity;
 mod course;
+mod crouch;
 mod drive;
 mod edge_cases;
 mod engine;

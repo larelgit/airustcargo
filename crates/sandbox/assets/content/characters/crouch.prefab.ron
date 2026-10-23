@@ -1,0 +1,21 @@
+// The target of the crouch tests (F2, `tests/sandbox/crouch.rs`): a standing fighter with a head and a torso of its
+// own (`combat/crouch.parts.ron`) that can crouch (the `crouch_viewer` locomotion): drive it with a player-scope agent
+// (`session --subject eN`) and the `crouch` tool, and its head and torso, its hurtbox and its eye follow the stance.
+// Not in the arena; `spawn_prefab id=crouch_dummy x=0 z=0` brings one.
+{
+    "crouch_dummy": (
+        components: {
+            "Name": "Dummy",
+            "AiKind": ("Dummy"),
+            "AiImportance": (1.0),
+            "Team": ("monsters"),
+            "Fighter": (moveset: "skeleton"),
+            "Health": (current: 100.0, max: 100.0),
+            "Poise": (current: 60.0, max: 60.0, regen: 20.0, delay: 2.0, since_hit: 2.0, broken: 0.0),
+            "CharacterController": (params: "crouch_viewer"),
+            "BodyParts": ("crouch_dummy"),
+            "Look": ("skeleton"),
+            "LockOnTarget": (),
+        },
+    ),
+}

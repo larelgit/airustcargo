@@ -243,7 +243,7 @@ fn a_dead_body_is_refused_the_movement_tools_and_loses_its_orders() {
     assert_eq!(fails(&mut app, "move_to", json!({"target": {"x": 5.0, "z": 0.0}})), dead);
     assert_eq!(fails(&mut app, "move", json!({"dir": "E", "meters": 3})), dead);
     // So do the rest of the movement tools: nothing is left held or glided on the corpse for a heal to wake.
-    for tool in ["stop", "jump", "sprint", "glide"] {
+    for tool in ["stop", "jump", "sprint", "glide", "crouch"] {
         assert_eq!(fails(&mut app, tool, json!({})), dead, "{tool}");
     }
     assert!(app.world().get::<Intent>(hero).unwrap().orders.is_empty());

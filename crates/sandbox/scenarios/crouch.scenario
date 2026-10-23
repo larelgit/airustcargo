@@ -1,0 +1,184 @@
+# Crouching (F2, the manual's "Crouching"): a body whose `locomotion` gives a `crouch_height` lowers its capsule
+# while the `crouch` input is held (the `crouch` tool holds it), its eye and hurtbox with it, and stands up again
+# only where the standing capsule has room. The body is the first-person `crouch_viewer`
+# (`characters/crouch.locomotion.ron`: 1.8 m standing, 1.0 m crouched in 0.2 s, a walk of at most 2 m/s crouched,
+# a jump of 1.2 m, no climb). The test room `crouch` (`assets/levels/crouch.gltf`, `tests/sandbox/crouch.rs`) is laid
+# on the canyon floor east of the course (its origin at x 116, y -10, z -11): a duct from x 2 to 8 whose ceiling is
+# 1.2 m up, and a ledge 1.7 m high from x 14 to 18.
+#
+# The range dummies (`crouch_dummy`, a head and a torso that follow its stance) are spawned as part of the yard
+# (`RegionPart`) so the `regen` at the end takes them away whatever ids they had; one is born crouching (its
+# `Intent` holds `crouch`). Nothing here names them: the ids of spawned bodies depend on what ran before.
+
+seed 42
+
+# --- setup (dev): the yard loaded (spawned targets belong to it), everyone stands down and away
+act regen region=yard seed=1
+expect result contains "ok: yard seed 1"
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+# (a dead player is brought back first: its own controls refuse a dead body)
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act look clear=true
+act god on=false
+# (weapons and a level a run cut short left behind go first)
+act? take_weapon id=e5 slot=1
+act? take_weapon id=e5 slot=2
+act? take_weapon id=e5 slot=3
+act? take_weapon id=e5 slot=4
+act? level_despawn id=crouch
+act set id=e5 component=CharacterController path=params value='"crouch_viewer"'
+step 150
+act heal id=e5
+act heal id=e6
+act heal id=e7
+act set id=e6 component=Boss path=phase value=1
+act teleport id=e5 x=-18 z=0 y=0
+act teleport id=e7 x=-16 z=16 y=0
+act teleport id=e8 x=14 z=16 y=0
+act teleport id=e6 x=14 z=-16 y=0
+act teleport id=e14 x=-16 z=-16 y=0
+step 2
+invariant field e5 Health.current > 0
+
+# --- 1. the dummies: a standing one 5 m east, and one 5 m east of the player's other spot that crouches. The eye
+# is 1.6 m up (1.62 with the skin the feet rest above the floor); a level look meets the standing dummy's head
+act give_weapon id=e5 moveset=hitscan_rifle
+expect result contains "e5 carries hitscan_rifle in slot 1"
+act spawn_prefab id=crouch_dummy x=-13 z=0 y=0 overrides='{"RegionPart": {}}'
+expect result contains "crouch_dummy at (-13.0, 0.0)"
+act spawn_prefab id=crouch_dummy x=-13 z=-4 y=0 overrides='{"RegionPart": {}, "Intent": {"held": ["crouch"]}}'
+expect result contains "crouch_dummy at (-13.0, -4.0)"
+step 30
+act look yaw=-90 pitch=0
+act shot_trace
+expect result contains "Dummy head 4.8m"
+# the other is crouched, 1.0 m tall: the same level ray from the same eye passes over its head and torso
+act teleport id=e5 x=-18 z=-4 y=0
+step 2
+act look yaw=-90 pitch=0
+act shot_trace
+expect result contains "\"hits\": []"
+expect result !contains "Dummy"
+# aimed down at where its head is now (0.95 m up), the ray meets the head, and a hit through it doubles 24
+act look yaw=-90 pitch=-7.7
+act shot_trace
+expect result contains "Dummy head 4.8m"
+mark
+act fire
+expect result contains "ok: hitscan_rifle_shot"
+step 2
+expect journal " head -48 hp (hp 52)"
+
+# --- 2. the player crouches too: the eye comes down with the capsule, and the shot starts from there
+act crouch
+expect result contains "ok: crouch held; you go down to 1.0m over 0.20s, walking at most 2.0m/s"
+step 30
+act look yaw=-90 pitch=0
+act shot_trace
+expect result contains "\"from\": \"(-18.0, 0.9, -4.0)\""
+act crouch hold=false
+expect result contains "ok: crouch off; you stand up over"
+step 30
+act shot_trace
+expect result contains "\"from\": \"(-18.0, 1.6, -4.0)\""
+
+# --- the dummies and the weapon go; the room comes
+act take_weapon id=e5 slot=1
+act look clear=true
+act regen region=yard seed=1
+expect result contains "ok: yard seed 1"
+act spawn_level id=crouch x=116 y=-10 z=-11
+expect result contains "spawned level `crouch`"
+act teleport id=e5 x=116 z=-11 y=-10
+step 30
+act heal id=e5
+
+# --- 3. standing, the player stops at the mouth of the duct (it starts 2 m into the room, at x 118)
+act move dir=E meters=12
+step 150
+expect field e5 Transform.translation.x < 117.7
+expect field e5 Transform.translation.x > 117.3
+act stop
+step 20
+
+# --- 4. crouched, it goes in; the ceiling is 1.2 m up and the capsule 1.0 m
+mark
+act crouch
+step 30
+expect journal "e5 crouches"
+expect field e5 Crouch.depth == 1
+observe
+expect result contains " crouched"
+act move dir=E meters=4
+step 220
+expect field e5 Transform.translation.x > 121
+expect field e5 Transform.translation.x < 122.5
+
+# --- 5. under the ceiling, letting go changes nothing: the standing capsule would be in it
+act crouch hold=false
+expect result contains "no room to stand"
+expect result contains "above your head"
+step 90
+observe
+expect result contains "crouched, no room to stand"
+expect field e5 Crouch.depth == 1
+expect !journal "e5 stands up"
+
+# --- 6. walked out at the far end (x 124) it stands, once
+act move dir=E meters=4
+step 220
+expect field e5 Transform.translation.x > 124.5
+step 30
+expect field e5 Crouch.depth == 0
+expect journal "e5 stands up"
+act stop
+
+# --- 7. the ledge is 1.7 m high and a jump peaks 1.2 m: a plain jump from 2.1 m short of its face stops at it
+act teleport id=e5 x=125 z=-11 y=-10
+step 30
+act move dir=E meters=12
+step 120 --until field:e5:Transform.translation.x>127.9
+act jump
+expect result contains "ok: jumping"
+step 100
+expect field e5 Transform.translation.x < 129.7
+expect field e5 Transform.translation.y < -9.8
+act stop
+
+# --- 8. with a crouch in the air the capsule loses 0.8 m from the bottom, the feet clear the edge, and it lands on top
+act teleport id=e5 x=125 z=-11 y=-10
+step 30
+act move dir=E meters=12
+step 120 --until field:e5:Transform.translation.x>127.9
+act jump
+step 3
+act crouch
+step 100
+expect field e5 Transform.translation.x > 130.4
+expect field e5 Transform.translation.y > -8.4
+expect field e5 Transform.translation.y < -8.2
+act stop
+act crouch hold=false
+step 60
+expect field e5 Crouch.depth == 0
+
+# --- the room goes; the player goes back to the arena, as the game has it
+act level_despawn id=crouch
+expect result contains "ok: level taken away: crouch"
+act set id=e5 component=CharacterController path=params value='"player"'
+act teleport id=e5 x=0 z=12 y=0
+act teleport id=e7 x=-12 z=2 y=0
+act teleport id=e6 x=0 z=-6 y=0
+act teleport id=e8 x=12 z=-2 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+act heal id=e5
+step 30
+observe
+expect result !contains "Dummy"
+expect result !contains "SHOT"
