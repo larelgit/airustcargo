@@ -58,6 +58,7 @@
 //! | `volume` | `water`, `updraft`, `trigger` | a sensor [`Volume`](shards_motion::Volume), shaped by `collider` (default `auto`) |
 //! | `accel`, `max_speed` | numbers | an updraft's pull (m/s²) and top speed (m/s) |
 //! | `prefab` | text | spawn the content prefab with that id at the node; component properties patch it |
+//! | `mover` | text | the node becomes a [`Mover`](shards_motion::Mover) going through the keys of that `mover` definition (F6); the nodes below it move with it as its [`MoverPart`](shards_motion::MoverPart)s, and its picture follows it; movers do not nest |
 //!
 //! Every other key is a **component**: its short name (`Health`) or full type path
 //! (`my_game::combat::Health`), and its value as JSON in the shape `inspect` and the `get`
@@ -113,7 +114,7 @@
 //! - [`check_level`]: everything wrong with a file, as `node `Props/Crate.003`: unknown
 //!   component `Helth` (did you mean `Health`?)`. `content check` runs it for every level.
 //! - Tools: `level_info` (levels, markers, checks), `spawn_level` (`id`, `x`, `y`, `z`),
-//!   `level_reload`.
+//!   `level_reload`, `level_despawn` (`id` or `instance`: a placed level taken away).
 //!
 //! ## Many levels (tiles, regions)
 //!
