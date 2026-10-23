@@ -273,3 +273,34 @@ fn a_shot_follows_a_role_where_its_body_is_drawn_between_ticks() {
     s.app.update();
     assert!(near(pose(&s).0, drawn + Vec3::new(0.0, 2.0, 4.0)), "{:?}", pose(&s));
 }
+
+#[test]
+fn a_first_person_camera_ignores_the_look_input_while_a_shot_plays_and_turns_again_after_it() {
+    use shards_core::Intent;
+    use shards_motion::camera::FirstPersonCamera;
+    let mut s = shots();
+    // The orbit camera's entity also looks through the player's eye (the mode `FirstPerson`).
+    s.app.world_mut().entity_mut(s.camera).insert(FirstPersonCamera::default());
+    let look = |s: &Scene| s.app.world().get::<Intent>(s.player).unwrap().look;
+    let mouse = |s: &mut Scene, x: f32| {
+        s.app.insert_resource(AccumulatedMouseMotion { delta: Vec2::new(x, 0.0) });
+        s.app.update();
+        s.app.insert_resource(AccumulatedMouseMotion::default());
+    };
+    mouse(&mut s, 40.0);
+    let before = look(&s).expect("the mouse turned the look");
+    assert!((before.yaw + 0.1).abs() < 1e-4, "{before:?}");
+
+    let boss = id(&s.app, s.near).to_string();
+    ok(&mut s, "play_shot", json!({"id": "intro", "role.boss": boss}));
+    frames(&mut s, 3);
+    mouse(&mut s, 400.0);
+    assert_eq!(look(&s), Some(before), "the shot holds the view: a turn made meanwhile would show when it ends");
+
+    ok(&mut s, "stop_shot", json!({}));
+    frames(&mut s, 40);
+    assert_eq!(playing(&s), None);
+    mouse(&mut s, 40.0);
+    let after = look(&s).unwrap();
+    assert!((after.yaw - (before.yaw - 0.1)).abs() < 1e-4, "after the shot the mouse turns on from where it was: {after:?}");
+}

@@ -453,3 +453,27 @@ fn a_first_person_camera_of_another_body_or_one_switched_off_leaves_the_orbit_ca
     super::tap_lock(&mut s);
     assert!(super::target(&s).is_some(), "an inactive first-person camera does not turn the local player's view off");
 }
+
+#[test]
+fn a_camera_that_is_switched_off_is_nobodys_view() {
+    let mut s = fp();
+    assert!(s.app.world().get::<FirstPersonCamera>(s.camera).unwrap().active);
+    s.app.world_mut().get_mut::<Camera>(s.camera).unwrap().is_active = false;
+    frame(&mut s);
+    assert!(!s.app.world().get::<FirstPersonCamera>(s.camera).unwrap().active, "the first-person camera knows it is off");
+    // The walk is then the orbit camera's (here none: north), not the look of a camera nobody sees through.
+    s.app.world_mut().get_mut::<Intent>(s.player).unwrap().look = Some(Gaze::from_degrees(90.0, 0.0));
+    s.app.world_mut().entity_mut(s.player).insert(CharacterParams::default());
+    s.app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyW);
+    frame(&mut s);
+    let walk = s.app.world().get::<Intent>(s.player).unwrap().move_dir;
+    assert!(walk.distance(Vec3::NEG_Z) < 1e-3, "{walk}");
+    // The own body is shown again while the camera is off.
+    let model = s.app.world_mut().spawn((Mesh3d::default(), ChildOf(s.player))).id();
+    frame(&mut s);
+    assert!(s.app.world().get::<RenderLayers>(model).is_none());
+    s.app.world_mut().get_mut::<Camera>(s.camera).unwrap().is_active = true;
+    frame(&mut s);
+    frame(&mut s);
+    assert_eq!(s.app.world().get::<RenderLayers>(model).cloned(), Some(RenderLayers::layer(OWN_BODY_LAYER)), "and hidden when it is on");
+}

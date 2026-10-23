@@ -48,6 +48,7 @@ type PlainCameras<'w, 's> = Query<'w, 's, Entity, (With<Camera3d>, Without<Rende
 
 pub(in crate::camera) fn plugin(app: &mut App) {
     app.add_observer(note_landing)
+        .add_systems(PreUpdate, mirror_active.before(ControlSystems::Read))
         // After the input map (it turned the walk by the look of the last frame: the one frame the
         // third-person camera's yaw is behind by too) and before the tick, so a turn made in this frame
         // is the look the next tick reads.
@@ -70,9 +71,19 @@ pub(in crate::camera) fn plugin(app: &mut App) {
 
 /// Run condition: an active first-person camera looks through the local player. A first-person camera of another
 /// body (a spectator's view), or one that is switched off, leaves the local player to the orbit camera.
-pub(in crate::camera) fn local_first_person_view(cameras: Query<(&Camera, &FirstPersonCamera)>, players: Query<Entity, With<LocalPlayer>>) -> bool {
+pub(in crate::camera) fn local_first_person_view(cameras: Query<&FirstPersonCamera>, players: Query<Entity, With<LocalPlayer>>) -> bool {
     let Ok(me) = players.single() else { return false };
-    cameras.iter().any(|(camera, first)| camera.is_active && first.looks_through(me, true))
+    cameras.iter().any(|first| first.looks_through(me, true))
+}
+
+/// `PreUpdate`, before the input map: whether a camera is on, as the first-person camera knows it (the input map,
+/// the orbit camera's lock-on and the ears read `FirstPersonCamera::active`, which exists without a renderer).
+fn mirror_active(mut cameras: Query<(&Camera, &mut FirstPersonCamera)>) {
+    for (camera, mut first) in &mut cameras {
+        if first.active != camera.is_active {
+            first.active = camera.is_active;
+        }
+    }
 }
 
 /// The facing of a body that has no look yet: its heading, level.
@@ -112,12 +123,15 @@ fn first_person_look(
     settings: Res<CameraSettings>,
     offsets: Res<CameraOffsets>,
     replay: Option<Res<AiReplay>>,
+    shots: Option<Res<Shots>>,
     db: Option<Res<ContentDb>>,
     cameras: Query<&FirstPersonCamera>,
     mut players: LocalBody,
 ) {
     let axis = state.axis("look");
-    if axis == Vec2::ZERO || replay.is_some_and(|r| r.is_playing()) {
+    // A scene camera shot (K3) holds the view: the look input turns nothing until it ends, as the orbit camera's
+    // does not, and a turn made meanwhile must not show when the shot is over. A replay that plays is the recording's.
+    if axis == Vec2::ZERO || replay.is_some_and(|r| r.is_playing()) || shots.is_some_and(|s| s.playing().is_some()) {
         return;
     }
     let Ok((me, mut intent, tf, controller, own)) = players.single_mut() else { return };
@@ -258,7 +272,7 @@ fn light_layers() -> RenderLayers {
 /// The bodies the first-person cameras look through.
 fn subjects(cameras: &Query<&FirstPersonCamera>, players: &Query<Entity, With<LocalPlayer>>) -> BTreeSet<Entity> {
     let player = players.single().ok();
-    cameras.iter().filter_map(|c| if c.target == Entity::PLACEHOLDER { player } else { Some(c.target) }).collect()
+    cameras.iter().filter(|c| c.active).filter_map(|c| if c.target == Entity::PLACEHOLDER { player } else { Some(c.target) }).collect()
 }
 
 /// `PostUpdate`, before visibility is worked out: every mesh under the body a first-person camera

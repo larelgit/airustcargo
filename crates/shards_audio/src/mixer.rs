@@ -364,7 +364,7 @@ pub fn listener(world: &World) -> Option<Listener> {
 }
 
 /// Where a body that is looked through in the first person hears from: its eye (F1b). It is looked
-/// through when it faces its look (`face: Look`) or when a `FirstPersonCamera` looks through it (its `target`,
+/// through when it faces its look (`face: Look`) or when an active `FirstPersonCamera` looks through it (its `target`,
 /// else the local player when it names none). `None` for any
 /// other body (it hears from its feet) and for an entity that is no character. The eye is the
 /// simulation's (`shards_motion::eye_of`), not the camera's, so a headless run and a window hear alike,
@@ -512,6 +512,8 @@ mod tests {
         let other = world.spawn_empty().id();
         let looking = world.spawn((AudioListener, shards_motion::FirstPersonCamera::looking_through(other), view)).id();
         assert_eq!(listener(&world).unwrap().position, Vec3::new(2.0, 1.0, -3.0), "a camera of another body");
+        world.entity_mut(looking).insert(shards_motion::FirstPersonCamera { active: false, ..default() });
+        assert_eq!(listener(&world).unwrap().position, Vec3::new(2.0, 1.0, -3.0), "a camera that is switched off");
         world.entity_mut(looking).insert(shards_motion::FirstPersonCamera::default());
         let ear = listener(&world).unwrap();
         assert!(ear.position.distance(Vec3::new(2.0, 2.5, -3.0)) < 1e-6, "{}", ear.position);

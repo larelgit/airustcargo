@@ -68,19 +68,23 @@ pub struct FirstPersonCamera {
     /// Where the body was drawn on the last frame (`None` until the first): a body that moved farther
     /// than `CameraTuning::body_snap_distance` since was placed, not walked, and the eye starts over.
     pub subject_seen: Option<Vec3>,
+    /// Whether the camera is on (`Camera::is_active`, which the `render` feature copies here every frame, before
+    /// the input map is read): a camera that is switched off is nobody's view, so the keyboard's walk, the
+    /// orbit camera's lock-on and the ears leave it out. A camera nobody switched is on.
+    pub active: bool,
 }
 
 impl Default for FirstPersonCamera {
     fn default() -> Self {
-        Self { target: Entity::PLACEHOLDER, eye: EyeState::default(), subject_seen: None }
+        Self { target: Entity::PLACEHOLDER, eye: EyeState::default(), subject_seen: None, active: true }
     }
 }
 
 impl FirstPersonCamera {
-    /// Whether this camera looks through `body`: it names it, or it names none (the default) and `body` is the
-    /// local player (`local`).
+    /// Whether this camera is on and looks through `body`: it names it, or it names none (the default) and
+    /// `body` is the local player (`local`).
     pub fn looks_through(&self, body: Entity, local: bool) -> bool {
-        self.target == body || (self.target == Entity::PLACEHOLDER && local)
+        self.active && (self.target == body || (self.target == Entity::PLACEHOLDER && local))
     }
 
     /// A camera looking through `target`.
