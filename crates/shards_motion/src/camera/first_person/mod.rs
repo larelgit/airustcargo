@@ -73,11 +73,15 @@ pub struct FirstPersonCamera {
     /// the input map is read): a camera that is switched off is nobody's view, so the keyboard's walk, the
     /// orbit camera's lock-on and the ears leave it out. A camera nobody switched is on.
     pub active: bool,
+    /// The body whose look this camera has seeded from its heading: the first time it looks through a body that has
+    /// no `Intent::look`, it writes one (the heading, level), so that a body that turns by its movement does not
+    /// carry the view round with it before the first mouse move. Once per body: a look cleared later is not made again.
+    pub seeded_for: Option<Entity>,
 }
 
 impl Default for FirstPersonCamera {
     fn default() -> Self {
-        Self { target: Entity::PLACEHOLDER, eye: EyeState::default(), subject_seen: None, active: true }
+        Self { target: Entity::PLACEHOLDER, eye: EyeState::default(), subject_seen: None, active: true, seeded_for: None }
     }
 }
 

@@ -105,10 +105,12 @@ fn note_landing(landed: On<Landed>, mut cameras: Query<&mut FirstPersonCamera>, 
 
 /// `PreUpdate`, after the input map: this frame's `look` axis turns the local player's look.
 ///
-/// It writes `Intent::look` only when the axis moved, and starts from whatever the intent holds
-/// (else the body's heading), so a look written by the `look` tool or a recorded input is the one
-/// the mouse turns on from, and no look is written on a frame nothing moved. A replay that plays
-/// back (`AiReplay`) is the recording's, whatever the mouse does.
+/// It writes `Intent::look` when the axis moved, and starts from whatever the intent holds (else the
+/// body's heading), so a look written by the `look` tool or a recorded input is the one the mouse turns
+/// on from, and no look is written on a frame nothing moved. The one other write: the first time the camera
+/// looks through a body that has no look, it seeds one from the body's heading (once per body), so that a
+/// body that turns by its movement does not carry the view and the walk round with it before the first mouse
+/// move. A replay that plays back (`AiReplay`) is the recording's, whatever the mouse does.
 #[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
 fn first_person_look(
     state: Res<ControlState>,
@@ -117,21 +119,28 @@ fn first_person_look(
     replay: Option<Res<AiReplay>>,
     shots: Option<Res<Shots>>,
     db: Option<Res<ContentDb>>,
-    cameras: Query<&FirstPersonCamera>,
+    mut cameras: Query<&mut FirstPersonCamera>,
     mut players: LocalBody,
 ) {
     let axis = state.axis("look");
     // A scene camera shot (K3) holds the view: the look input turns nothing until it ends, as the orbit camera's
     // does not, and a turn made meanwhile must not show when the shot is over. A replay that plays is the recording's.
-    if axis == Vec2::ZERO || replay.is_some_and(|r| r.is_playing()) || shots.is_some_and(|s| s.playing().is_some()) {
+    if replay.is_some_and(|r| r.is_playing()) || shots.is_some_and(|s| s.playing().is_some()) {
         return;
     }
     let Ok((me, mut intent, tf, controller, own)) = players.single_mut() else { return };
     // Only a camera that looks through the local player turns its look.
-    if !cameras.iter().any(|c| c.looks_through(me, true)) {
+    let Some(mut camera) = cameras.iter_mut().find(|c| c.looks_through(me, true)) else { return };
+    let params = controller.map(|c| c.resolve(own, db.as_deref()));
+    if camera.seeded_for != Some(me) {
+        camera.seeded_for = Some(me);
+        if intent.look.is_none() {
+            intent.look = Some(look_through(None, params, Some(tf)));
+        }
+    }
+    if axis == Vec2::ZERO {
         return;
     }
-    let params = controller.map(|c| c.resolve(own, db.as_deref()));
     let limits = params.map_or_else(|| CharacterParams::default().pitch_limits(), CharacterParams::pitch_limits);
     // Aiming turns by its own speed (K1): the game says when the player aims.
     let speed = if offsets.aiming { settings.aim_sensitivity } else { settings.sensitivity };

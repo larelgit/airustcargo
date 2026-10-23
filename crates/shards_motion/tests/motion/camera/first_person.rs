@@ -84,7 +84,7 @@ fn set_look(fp: &mut Fp, look: Option<Gaze>) {
 #[test]
 fn the_mouse_turns_the_look_and_the_camera_looks_along_it() {
     let mut s = fp();
-    assert_eq!(look(&s), None, "a run that has not moved the mouse has no look");
+    assert_eq!(look(&s), Some(Gaze::default()), "a body with no look gets its heading (north, level) the first time a camera looks through it, and nothing more");
     // 100 px right at the map's 0.0025 rad/px: a quarter radian to the right.
     mouse(&mut s, Vec2::new(100.0, 0.0));
     let turned = look(&s).expect("the mouse wrote a look");
@@ -103,7 +103,7 @@ fn a_still_mouse_writes_nothing_and_a_look_somebody_else_wrote_is_the_one_drawn(
     for _ in 0..5 {
         frame(&mut s);
     }
-    assert_eq!(look(&s), None, "no mouse motion, no look");
+    assert_eq!(look(&s), Some(Gaze::default()), "no mouse motion: the seed, and nothing written since");
     // An agent's `look` tool (or a recorded input) writes the look; the camera turns to it.
     let written = Gaze::from_degrees(90.0, 20.0);
     set_look(&mut s, Some(written));
@@ -124,7 +124,7 @@ fn a_still_mouse_writes_nothing_and_a_look_somebody_else_wrote_is_the_one_drawn(
     for _ in 0..3 {
         frame(&mut s);
     }
-    assert_eq!(look(&s), None);
+    assert_eq!(look(&s), None, "seeded once: a look cleared later is not made again");
     let forward = camera_at(&s).rotation * Vec3::NEG_Z;
     assert!(forward.distance(Vec3::NEG_Z) < 1e-4, "the body's heading, level: {forward}");
 }
@@ -479,20 +479,30 @@ fn a_camera_that_is_switched_off_is_nobodys_view() {
 }
 
 #[test]
-fn before_the_first_mouse_move_forward_is_the_way_the_camera_already_looks() {
+fn before_the_first_mouse_move_forward_is_the_way_the_camera_already_looks_and_stays_so() {
     // An active first-person camera over a body that faces east and has no look yet: the camera draws by the
     // body's heading, and the keys walk the same way, not by an orbit camera's yaw or by north.
     let mut s = fp();
     s.app.world_mut().entity_mut(s.player).insert(CharacterParams::default());
     s.app.world_mut().get_mut::<Transform>(s.player).unwrap().rotation = Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2);
     s.app.world_mut().spawn(ThirdPersonCamera::following(s.player));
-    assert_eq!(look(&s), None);
+    // As on the first frame of a body the camera has not looked through yet.
+    set_look(&mut s, None);
+    s.app.world_mut().get_mut::<FirstPersonCamera>(s.camera).unwrap().seeded_for = None;
     s.app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyW);
     frame(&mut s);
     let forward = camera_at(&s).rotation * Vec3::NEG_Z;
     let walk = s.app.world().get::<Intent>(s.player).unwrap().move_dir;
     assert!(forward.distance(Vec3::X) < 1e-4, "the view looks east: {forward}");
     assert!(walk.distance(Vec3::X) < 1e-4, "and W walks east, as the view looks: {walk}");
+    assert_eq!(look(&s).map(|l| l.dir().distance(Vec3::X) < 1e-4), Some(true), "the camera seeded the look from the heading: {:?}", look(&s));
+
+    // A body that turns by its movement (a strafe) no longer carries the view round: the look is the camera's now.
+    s.app.world_mut().get_mut::<Transform>(s.player).unwrap().rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+    frame(&mut s);
+    frame(&mut s);
+    let forward = camera_at(&s).rotation * Vec3::NEG_Z;
+    assert!(forward.distance(Vec3::X) < 1e-4, "the view stays east though the body turned west: {forward}");
 }
 
 #[test]

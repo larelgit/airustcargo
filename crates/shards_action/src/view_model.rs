@@ -88,6 +88,18 @@ pub struct ViewModelDef {
     pub scale: f32,
 }
 
+/// Whether `path` is not a relative path inside the assets folder on every platform: it climbs (`..`), is rooted or
+/// has a drive (`/arms.glb`, `\arms.glb`, `C:\arms.glb`, `C:arms.glb`), however this machine's `Path` reads it (a
+/// content file is checked on one machine and played on another).
+fn leaves_the_assets(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    let drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    drive
+        || path.starts_with(['/', '\\'])
+        || path.split(['/', '\\']).any(|part| part == "..")
+        || std::path::Path::new(path).components().any(|c| !matches!(c, std::path::Component::Normal(_) | std::path::Component::CurDir))
+}
+
 impl ContentDef for ViewModelDef {
     const KIND: &'static str = "view_model";
     // A picture: a headless game never reads it, so it is outside the replay's content check.
@@ -98,8 +110,8 @@ impl ContentDef for ViewModelDef {
             refs.error("model is empty; name the glTF, e.g. `model: \"models/arms.glb\"`");
         } else if !(self.model.ends_with(".glb") || self.model.ends_with(".gltf")) {
             refs.error(format!("model `{}` is not a glTF file (.gltf or .glb)", self.model));
-        } else if self.model.split(['/', '\\']).any(|part| part == "..") {
-            refs.error(format!("model `{}` leaves the assets folder", self.model));
+        } else if leaves_the_assets(&self.model) {
+            refs.error(format!("model `{}` leaves the assets folder: give a path inside it, without `..`, a drive or a leading slash", self.model));
         } else if let Some(root) = refs.asset_root()
             && !root.join(&self.model).is_file()
         {
@@ -185,6 +197,11 @@ mod tests {
                     "arms": (model: "models/arms.glb", animset: "arms", look: Some("stone")),
                     "wrong": (model: "models/arms.png", animset: "legs", look: Some("moss"), fov_deg: 3.0, near: 2.0, scale: 0.0, offset: (9.0, 0.0, 0.0)),
                     "up": (model: "../arms.glb", animset: "arms"),
+                    "root": (model: "/arms.glb", animset: "arms"),
+                    "back": (model: "\\arms.glb", animset: "arms"),
+                    "drive": (model: "C:/arms.glb", animset: "arms"),
+                    "win": (model: "C:\\arms.glb", animset: "arms"),
+                    "inside": (model: "models/./arms.glb", animset: "arms"),
                 }"#,
             ),
             source("content/m.moveset.ron", r#"{ "good": (inputs: {}, view_model: Some("arms")), "bad": (inputs: {}, view_model: Some("legs")) }"#),
@@ -196,7 +213,11 @@ mod tests {
         let expected = [
             "content/c.camera.ron: camera `default`: first_person.view_model -> unknown view_model `hands`",
             "content/m.moveset.ron: moveset `bad`: view_model -> unknown view_model `legs`",
-            "content/v.view_model.ron: view_model `up`: model `../arms.glb` leaves the assets folder",
+            "content/v.view_model.ron: view_model `back`: model `\\arms.glb` leaves the assets folder: give a path inside it, without `..`, a drive or a leading slash",
+            "content/v.view_model.ron: view_model `drive`: model `C:/arms.glb` leaves the assets folder: give a path inside it, without `..`, a drive or a leading slash",
+            "content/v.view_model.ron: view_model `root`: model `/arms.glb` leaves the assets folder: give a path inside it, without `..`, a drive or a leading slash",
+            "content/v.view_model.ron: view_model `up`: model `../arms.glb` leaves the assets folder: give a path inside it, without `..`, a drive or a leading slash",
+            "content/v.view_model.ron: view_model `win`: model `C:\\arms.glb` leaves the assets folder: give a path inside it, without `..`, a drive or a leading slash",
             "content/v.view_model.ron: view_model `wrong`: model `models/arms.png` is not a glTF file (.gltf or .glb)",
             "content/v.view_model.ron: view_model `wrong`: animset -> unknown animset `legs`",
             "content/v.view_model.ron: view_model `wrong`: look -> unknown look `moss`",
