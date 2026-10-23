@@ -1,0 +1,6 @@
+// The movers' test room (F6), written by the sandbox's tests (`tests/sandbox/movers.rs`): a floor
+// 10 x 30 m with a lift and the deck it serves, a gate, a crusher and a turntable
+// (`movers.mover.ron`). `scenarios/movers.scenario` lays it on the canyon floor and takes it away.
+{
+    "movers": (file: "levels/movers.gltf"),
+}

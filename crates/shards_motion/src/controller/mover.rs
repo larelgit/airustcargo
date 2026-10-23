@@ -28,6 +28,8 @@ pub(crate) struct Ground {
     /// The surface stood on (see [`Mover::surface_normal`]).
     pub normal: Vec3,
     pub walkable: bool,
+    /// What the probe met: the collider or voxel field stood on (a mover carries what stands on it).
+    pub entity: Entity,
 }
 
 /// Something a slide ran into.
@@ -181,7 +183,40 @@ impl<'a> Mover<'a> {
         let hit = self.physics.sweep(&self.probe, &self.pose(feet), Vec3::NEG_Y, reach, &self.filter, StartOverlap::LetOut)?;
         let normal = self.surface_normal(feet, &hit);
         let drop = stop_short(&hit, Vec3::NEG_Y, self.skin - grown);
-        Some(Ground { drop, normal, walkable: self.walkable(normal) })
+        Some(Ground { drop, normal, walkable: self.walkable(normal), entity: hit.entity })
+    }
+
+    /// The same capsule, its casts passing through `others` as well: what a mover carries or
+    /// pushes slides against the world, not against the mover.
+    pub fn excluding(&self, others: &[Entity]) -> Self {
+        let mut filter = self.filter.clone();
+        filter.exclude.extend_from_slice(others);
+        Self {
+            physics: self.physics,
+            filter,
+            geom: self.geom,
+            probe: self.probe,
+            center: self.center,
+            radius: self.radius,
+            skin: self.skin,
+            min_ground_y: self.min_ground_y,
+        }
+    }
+
+    /// The deepest of `of` that the capsule at `feet` sits nearer to than the minimum gap (the gap
+    /// [`depenetrate`](Self::depenetrate) restores): `depth` is how far short of a full skin it
+    /// is, `normal` the way out. `None` when it is clear of all of them.
+    pub fn inside(&self, feet: Vec3, of: &[Entity]) -> Option<Penetration> {
+        let near = self.physics.closer_than(&self.geom, &self.pose(feet), &self.filter, self.skin);
+        // A rounding's worth nearer than the gap is still clear.
+        let tolerance = self.skin * 1e-3;
+        near.into_iter().filter(|p| of.contains(&p.entity) && self.skin - p.depth < self.min_gap() - tolerance).fold(
+            None,
+            |best: Option<Penetration>, p| match best {
+                Some(b) if b.depth >= p.depth => Some(b),
+                _ => Some(p),
+            },
+        )
     }
 
     /// The surface the capsule rests on. Resting on an edge (a stair nosing, a ledge)

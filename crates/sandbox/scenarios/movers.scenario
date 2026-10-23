@@ -1,0 +1,99 @@
+# Movers (F6): the test room `movers` (`content/world/movers.*.ron`, `assets/levels/movers.gltf`) laid on
+# the canyon floor east of the course (its origin at x 112, y -10, z 0). The player rides the lift up 4 m
+# to the deck and back down, is pushed along by the gate as it slides shut, is pinned and hurt by the
+# crusher, and rides the turntable half a turn. The room goes again at the end.
+#
+# The room's ids depend on what was spawned before it, so the movers are called by name. A turntable
+# turns by itself; the others go only where `mover_go` sends them.
+
+seed 42
+
+# --- the arena as the game spawns it, whatever was played in it before: everyone stands down
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god on=false
+act? level_despawn id=movers
+step 60
+act heal id=e5
+
+# --- the room, on the canyon floor
+act spawn_level id=movers x=112 y=-10 z=0
+expect result contains "spawned level `movers`"
+expect result contains "8 entities (7 solids, 0 volumes, 0 markers)"
+act teleport id=e5 x=112 z=-10 y=-9.7
+step 30
+expect field e5 Transform.translation.y > -9.85
+expect field e5 Transform.translation.y < -9.75
+invariant field e5 Health.current > 0
+
+# --- 1. the lift: 4 m up at 1.2 m/s, then down again; the body stands on it all the way
+mark
+act mover_go name=Lift key=1
+expect result contains "Lift goes to key 1 (3.3s)"
+step 400 --until named:mover_arrived
+expect stopped "mover_arrived"
+expect journal "Lift leaves key 0 for key 1"
+expect journal "Lift at key 1"
+expect field e5 Transform.translation.y > -5.85
+expect field e5 Transform.translation.y < -5.75
+expect field e5 Transform.translation.x > 111.9
+expect field e5 Transform.translation.x < 112.1
+act mover_go name=Lift key=0
+expect result contains "Lift goes to key 0 (3.3s)"
+step 400 --until named:mover_arrived
+expect journal "Lift at key 0"
+expect field e5 Transform.translation.y > -9.85
+expect field e5 Transform.translation.y < -9.75
+expect field e5 Transform.translation.z > -10.1
+expect field e5 Transform.translation.z < -9.9
+
+# --- 2. the gate slides 3 m west to shut (its edge from x 114 to 111) and pushes the body ahead of it
+act teleport id=e5 x=113.3 z=0 y=-10
+step 10
+act mover_go name=Gate key=1
+step 300 --until named:mover_arrived
+expect journal "Gate at key 1"
+expect field e5 Transform.translation.x < 111
+expect field e5 Transform.translation.x > 110
+expect field e5 Transform.translation.z > -0.1
+expect field e5 Transform.translation.z < 0.1
+act mover_go name=Gate key=0
+step 300 --until named:mover_arrived
+
+# --- 3. the crusher comes down from 3 m on the body (1.8 m tall) and hurts it when the hold begins and
+# every second after: three times in 222 ticks; sent back up, it lets go
+act teleport id=e5 x=114.5 z=8 y=-10
+step 10
+act heal id=e5
+mark
+act mover_go name=Crusher key=1
+step 222
+expect journal "Crusher crushes e5"
+expect field e5 Health.current < 100
+act mover_go name=Crusher key=0
+step 400 --until named:mover_arrived
+expect journal "Crusher at key 0"
+act heal id=e5
+
+# --- 4. the turntable (3 m across, a turn every 8 s) carries the body round: half a turn takes it from 1 m
+# east of the middle (x 114.5) to 1 m west of it
+act teleport id=e5 x=115.5 z=-4 y=-9.75
+step 10
+step 240
+expect field e5 Transform.translation.x > 113.3
+expect field e5 Transform.translation.x < 113.7
+expect field e5 Transform.translation.z > -4.3
+expect field e5 Transform.translation.z < -3.7
+
+# --- the room goes; the player goes back to the arena
+act level_despawn id=movers
+expect result contains "ok: level taken away: movers"
+act teleport id=e5 x=0 z=0 y=0
+act heal id=e5
+step 30
