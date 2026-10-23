@@ -21,6 +21,13 @@
 //!   heard; a sound with `max_instances` takes its own oldest voice. A spatial sound is heard from
 //!   where it happens, fading from `near` to `far` from the listener (the body this machine plays,
 //!   facing with the camera) and panned; past `far` it is not started at all.
+//! - **Placed sounds** ([`SoundEmitter`], `looped: true` in a [`SoundDef`]): a looped sound plays only from
+//!   an emitter, a component a level node, a prefab or code puts at a `Transform`. The mixer holds one
+//!   voice for it while the listener is within `far` (under the normal priority rules: a one-shot of a
+//!   lower priority never takes a loop's voice), lets it go beyond and takes one again on the way back.
+//! - **Walls** ([`OcclusionDef`], [`SoundTransmission`]): off unless the mixer asks (`occlusion`). A ray from
+//!   the listener to each spatial voice through the physics world's `WORLD` colliders takes a share of the
+//!   voice's gain for every collider on the way (its `SoundTransmission`, else the mixer's `gain`).
 //! - **Music** ([`Music`], [`MusicDef`]): a track's stems loop together, and its layers (calm to
 //!   intense: `explore`, `tension`, `combat`) each turn some of them up. The most intense layer
 //!   whose condition holds is played (conditions by name, as `step --until named:…` takes them:
@@ -47,9 +54,11 @@
 //!   with a sound, or actions that play one, that no `*.sound.ron` defines.
 
 pub mod def;
+pub mod emitter;
 pub mod length;
 pub mod mixer;
 pub mod music;
+pub mod occlusion;
 pub mod subtitles;
 #[cfg(feature = "playback")]
 mod playback;
@@ -65,21 +74,23 @@ use shards_content::{ContentAppExt, ContentDb};
 use shards_core::EngineAppExt;
 use shards_ui::{Layer, ScreenDef, UiAppExt, UiChanged, UiFocusMoved, UiPressed, UiScreenChanged};
 
-pub use def::{AudioDef, Bus, Falloff, LayerDef, MusicDef, SoundDef, StemDef, EVENTS};
+pub use def::{AudioDef, Bus, Falloff, LayerDef, MusicDef, OcclusionDef, SoundDef, StemDef, EVENTS};
+pub use emitter::{check_sound, emitter_play, emitter_stop, SoundEmitter};
 pub use mixer::{
     bus_volume, listener, play, play_scaled, refresh, voice_limit, AudioListener, Dropped, Listener, Mixer, PlaySound, Played,
     SoundAt, Voice,
 };
 pub use music::{force_layer, set_track, Music, Stem};
+pub use occlusion::{Blocker, Occluded, SoundTransmission};
 pub use subtitles::{LineVoice, SubtitleLine, Subtitles};
-pub use tools::{AudioArgs, MusicSetArgs, SoundPlayArgs};
+pub use tools::{AudioArgs, EmitterArgs, MusicSetArgs, SoundPlayArgs};
 
 /// Version of the engine crates (they share one).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The types a game module uses most.
 pub mod prelude {
-    pub use crate::{AudioListener, Bus, Music, PlaySound, SoundAt};
+    pub use crate::{AudioListener, Bus, Music, PlaySound, SoundAt, SoundEmitter};
 }
 
 /// The audio systems other modules order against.
@@ -106,13 +117,20 @@ impl Plugin for AudioPlugin {
         app.add_content::<SoundDef>()
             .add_content::<MusicDef>()
             .add_content::<AudioDef>()
+            .add_content_check::<shards_content::PrefabDef>("sound emitters", emitter::check_prefab)
             .init_resource::<Mixer>()
             .init_resource::<Music>()
             .init_resource::<music::UnknownConditions>()
             .init_resource::<Subtitles>()
             .add_ui_source("subtitles", subtitles::source)
             .register_type::<Music>()
+            .register_type::<SoundEmitter>()
+            .register_type::<SoundTransmission>()
             .add_snapshot_resource::<Music>()
+            // Placed sound is this machine's: not in the replay hash, wherever an emitter or a muffling collider
+            // stands (a level's have no `AiId`; a prefab body's would).
+            .replay_ignore::<SoundEmitter>()
+            .replay_ignore::<SoundTransmission>()
             .add_engine_module("audio", VERSION)
             .add_ai_status("audio", status)
             .register_ai_observe_section(observe_section)

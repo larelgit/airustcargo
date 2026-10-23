@@ -1,0 +1,35 @@
+// The pieces of a room for the placed sounds (content kind `prefab`), for `scenarios/ambient_audio.scenario`:
+// a wall along x, a pane of glass along z that lets 0.6 of a sound through (`SoundTransmission`), and a hum
+// (`SoundEmitter`) heard to 18 m. Each has an `AiKind`, so it has an id and `despawn` takes it away again.
+{
+    "audio_wall": (
+        components: {
+            "Name": "Wall",
+            "AiKind": ("Wall"),
+            "Collider": (
+                shape: Cuboid(half: (5.0, 1.5, 0.2)),
+                offset: (0.0, 1.5, 0.0),
+                layers: (memberships: (1), filters: (4294967295)),
+            ),
+        },
+    ),
+    "audio_pane": (
+        components: {
+            "Name": "Glass",
+            "AiKind": ("Pane"),
+            "SoundTransmission": (0.6),
+            "Collider": (
+                shape: Cuboid(half: (0.05, 1.5, 3.0)),
+                offset: (0.0, 1.5, 0.0),
+                layers: (memberships: (1), filters: (4294967295)),
+            ),
+        },
+    ),
+    "audio_hum": (
+        components: {
+            "Name": "Hum",
+            "AiKind": ("Hum"),
+            "SoundEmitter": (sound: "room_hum"),
+        },
+    ),
+}

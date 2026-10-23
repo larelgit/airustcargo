@@ -73,6 +73,7 @@ impl Falloff {
 ///     ),
 ///     "ui_press": (files: ["sounds/ui_press.wav"], bus: Ui, volume: 0.6),
 ///     "warden_gate": (files: ["voice/warden_gate.ogg"], bus: Voice, subtitle: "@warden-gate", speaker: "@warden"),
+///     "vent_hum": (files: ["sounds/vent_hum.wav"], priority: 40, spatial: (near: 2.0, far: 18.0), looped: true),
 /// }
 /// ```
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -104,6 +105,18 @@ pub struct SoundDef {
     /// Who says it, before the line (`Warden: …`): text or `@id`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speaker: Option<String>,
+    /// Plays over and over until its [`SoundEmitter`](crate::SoundEmitter) lets it go (a hum, dripping
+    /// water, a radio). Only an emitter plays a looped sound: an action, an event, a telegraph or the
+    /// `sound_play` tool refuses it, and the content check finds a mixer event, a telegraph or a
+    /// `Sound` effect that names one. With `spatial` it is heard while its emitter is within `far` and
+    /// let go beyond; without, it is heard everywhere (rain). It takes no `subtitle` and no
+    /// `max_instances`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub looped: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// The priority of a sound that names none.
@@ -149,6 +162,17 @@ impl ContentDef for SoundDef {
         }
         let texts = [(self.subtitle.as_deref(), "`subtitle`"), (self.speaker.as_deref(), "`speaker`")];
         shards_locale::check_messages(refs, texts.into_iter().filter_map(|(t, field)| Some((t?, field.to_owned()))));
+        if self.looped {
+            if self.subtitle.is_some() || self.speaker.is_some() {
+                refs.error("looped: a sound that never ends has no line to show; leave out `subtitle` and `speaker`");
+            }
+            if self.max_instances.is_some() {
+                refs.error(
+                    "looped: its voices belong to its emitters, and a limit would have them take each other's every tick; \
+                     leave out `max_instances` (`priority` and the mixer's `voices` decide who is heard)",
+                );
+            }
+        }
     }
 }
 
@@ -358,6 +382,41 @@ pub struct AudioDef {
     /// An engine event ([`EVENTS`]: `damaged`, `ui_pressed`, …) → the sound it plays.
     #[serde(default)]
     pub sounds: BTreeMap<String, String>,
+    /// Walls between the listener and a sound muffle it (off when left out): a ray from the ears to
+    /// each spatial voice, through the physics world's `WORLD` colliders, takes a share of its volume
+    /// for every collider in the way ([`OcclusionDef`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occlusion: Option<OcclusionDef>,
+}
+
+/// What a collider between the ears and a sound takes from it (the mixer's `occlusion`).
+///
+/// ```ron
+/// { "mixer": (voices: 24, occlusion: Some((gain: 0.3))) }
+/// ```
+///
+/// A collider that carries a [`SoundTransmission`](crate::SoundTransmission) lets that share through
+/// instead (glass 0.6, a curtain 0.8, a slab 0.1). Colliders in a row multiply.
+#[derive(Serialize, Deserialize, Reflect, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct OcclusionDef {
+    /// The share of a sound a collider with no `SoundTransmission` lets through: 0 (nothing) to 1
+    /// (all, which turns the wall into air).
+    #[serde(default = "default_through")]
+    pub gain: f32,
+}
+
+/// What an ordinary collider lets through when the mixer names no `gain`.
+pub const DEFAULT_THROUGH: f32 = 0.3;
+
+fn default_through() -> f32 {
+    DEFAULT_THROUGH
+}
+
+impl Default for OcclusionDef {
+    fn default() -> Self {
+        Self { gain: DEFAULT_THROUGH }
+    }
 }
 
 /// Voices when the game has no [`AudioDef`].
@@ -372,7 +431,7 @@ fn default_voices() -> u32 {
 
 impl Default for AudioDef {
     fn default() -> Self {
-        Self { voices: DEFAULT_VOICES, music: None, sounds: BTreeMap::new() }
+        Self { voices: DEFAULT_VOICES, music: None, sounds: BTreeMap::new(), occlusion: None }
     }
 }
 
@@ -389,12 +448,22 @@ impl ContentDef for AudioDef {
         if !(1..=MAX_VOICES).contains(&self.voices) {
             refs.error(format!("voices: 1 to {MAX_VOICES}, not {}", self.voices));
         }
+        if let Some(occlusion) = self.occlusion
+            && !(0.0..=1.0).contains(&occlusion.gain)
+        {
+            refs.error(format!("occlusion.gain: 0 to 1, not {}", occlusion.gain));
+        }
         if let Some(music) = &self.music {
             refs.require::<MusicDef>(music, "music");
         }
         for (event, sound) in &self.sounds {
             if EVENTS.iter().any(|(name, _)| name == event) {
                 refs.require::<SoundDef>(sound, &format!("sounds.{event}"));
+                if refs.iter::<SoundDef>().any(|(id, def)| id == sound && def.looped) {
+                    refs.error(format!(
+                        "sounds.{event}: `{sound}` loops, and an event plays a sound once; only a `SoundEmitter` plays a looped sound"
+                    ));
+                }
             } else {
                 let names = EVENTS.iter().map(|(name, _)| *name);
                 let hint = closest(event, names.clone()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default();
@@ -404,24 +473,31 @@ impl ContentDef for AudioDef {
         // What the game's attacks warn with and its actions play is heard only if it is a sound:
         // every telegraph's `sound` and every `Sound` effect is checked here, where the mixer is.
         let sounds: Vec<&str> = refs.iter::<SoundDef>().map(|(sound, _)| sound).collect();
+        let looped: BTreeSet<&str> = refs.iter::<SoundDef>().filter(|(_, def)| def.looped).map(|(sound, _)| sound).collect();
         let hint = |sound: &str| {
             closest(sound, sounds.iter().copied()).map(|c| format!(" (did you mean `{c}`?)")).unwrap_or_default()
         };
         let mut missing = Vec::new();
         for (action, def) in refs.iter::<ActionDef>() {
-            if let Some(sound) = def.telegraph.as_ref().and_then(|t| t.sound.as_deref())
-                && !sounds.contains(&sound)
-            {
-                missing.push(format!("action `{action}` warns with sound `{sound}`, which no `*.sound.ron` defines{}", hint(sound)));
+            if let Some(sound) = def.telegraph.as_ref().and_then(|t| t.sound.as_deref()) {
+                if !sounds.contains(&sound) {
+                    missing.push(format!("action `{action}` warns with sound `{sound}`, which no `*.sound.ron` defines{}", hint(sound)));
+                } else if looped.contains(sound) {
+                    missing.push(format!("action `{action}` warns with sound `{sound}`, which loops; only a `SoundEmitter` plays a looped sound"));
+                }
             }
             for (i, effect) in def.effects.iter().enumerate() {
-                if let Effect::Sound(sound) = &effect.effect
-                    && !sounds.contains(&sound.as_str())
-                {
-                    missing.push(format!(
-                        "action `{action}` effects[{i}] plays sound `{sound}`, which no `*.sound.ron` defines{}",
-                        hint(sound)
-                    ));
+                if let Effect::Sound(sound) = &effect.effect {
+                    if !sounds.contains(&sound.as_str()) {
+                        missing.push(format!(
+                            "action `{action}` effects[{i}] plays sound `{sound}`, which no `*.sound.ron` defines{}",
+                            hint(sound)
+                        ));
+                    } else if looped.contains(sound.as_str()) {
+                        missing.push(format!(
+                            "action `{action}` effects[{i}] plays sound `{sound}`, which loops; only a `SoundEmitter` plays a looped sound"
+                        ));
+                    }
                 }
             }
         }
