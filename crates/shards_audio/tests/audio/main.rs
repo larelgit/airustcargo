@@ -2,6 +2,7 @@
 //! player's volumes, the engine's events and cues, snapshots, the tools, and the content check.
 //! Every test writes its own asset folder (short tones, made here) and removes it after.
 
+mod ambient;
 mod content;
 mod mixer;
 mod music;
