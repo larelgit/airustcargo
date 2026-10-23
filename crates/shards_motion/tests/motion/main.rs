@@ -13,6 +13,7 @@ mod input;
 mod launch;
 mod modifiers;
 mod modifiers_parity;
+mod movers;
 mod orders;
 mod perception;
 mod physics;
