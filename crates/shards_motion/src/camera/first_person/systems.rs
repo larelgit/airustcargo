@@ -142,7 +142,9 @@ fn first_person_look(
 /// own checks still let go of one that is no longer valid, and the `lock_on` tool still releases.
 fn first_person_unlock(world: &mut World, players: &mut QueryState<Entity, (With<LocalPlayer>, With<Intent>)>) {
     // A replay that plays is the recording's: a live press is no input of it, and the lock would only come back.
+    // A scene shot (K3) holds the view and the orbit camera's lock-on waits for it too.
     if world.get_resource::<AiReplay>().is_some_and(AiReplay::is_playing)
+        || world.get_resource::<Shots>().is_some_and(|shots| shots.playing().is_some())
         || !world.get_resource::<ControlState>().is_some_and(|state| state.just_pressed(LOCK_ON))
     {
         return;
@@ -336,21 +338,25 @@ fn share_lights(
 
 /// `PostUpdate`: while a first-person camera exists, a 3D camera that carries no `RenderLayers` (not
 /// the first-person camera, which draws the world alone, and not the view-model camera, which has its
-/// own) also draws [`OWN_BODY_LAYER`]: another view of the world, a mirror, a minimap, shows the body.
+/// own) also draws [`OWN_BODY_LAYER`]: another view of the world, a mirror, a minimap, shows the body. What
+/// such a camera was given is taken back when the first-person cameras are gone, and when the camera becomes a
+/// first-person one itself (`mode: FirstPerson` on an orbit camera): that one draws the world alone.
 fn other_cameras_see_the_body(
     mut commands: Commands,
     first: Query<(), With<FirstPersonCamera>>,
     plain: PlainCameras,
-    seeing: Query<(Entity, &RenderLayers), With<SeesOwnBody>>,
+    seeing: Query<(Entity, &RenderLayers, Has<FirstPersonCamera>), With<SeesOwnBody>>,
 ) {
-    if first.is_empty() {
-        let ours = RenderLayers::from_layers(&[0, OWN_BODY_LAYER]);
-        for (entity, layers) in &seeing {
+    let ours = RenderLayers::from_layers(&[0, OWN_BODY_LAYER]);
+    for (entity, layers, is_first_person) in &seeing {
+        if first.is_empty() || is_first_person {
             if *layers == ours {
                 commands.entity(entity).remove::<RenderLayers>();
             }
             commands.entity(entity).remove::<SeesOwnBody>();
         }
+    }
+    if first.is_empty() {
         return;
     }
     for entity in &plain {

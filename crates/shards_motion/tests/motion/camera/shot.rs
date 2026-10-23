@@ -296,6 +296,14 @@ fn a_first_person_camera_ignores_the_look_input_while_a_shot_plays_and_turns_aga
     frames(&mut s, 3);
     mouse(&mut s, 400.0);
     assert_eq!(look(&s), Some(before), "the shot holds the view: a turn made meanwhile would show when it ends");
+    // The lock-on button waits too, as the orbit camera's does: a press during the shot lets go of nothing.
+    let held = id(&s.app, s.near);
+    s.app.world_mut().get_mut::<Intent>(s.player).unwrap().target = Some(held);
+    s.app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::Tab);
+    s.app.update();
+    s.app.world_mut().resource_mut::<ButtonInput<KeyCode>>().release(KeyCode::Tab);
+    s.app.update();
+    assert_eq!(s.app.world().get::<Intent>(s.player).unwrap().target, Some(held), "no release while the shot plays");
 
     ok(&mut s, "stop_shot", json!({}));
     frames(&mut s, 40);

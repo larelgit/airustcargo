@@ -494,3 +494,25 @@ fn before_the_first_mouse_move_forward_is_the_way_the_camera_already_looks() {
     assert!(forward.distance(Vec3::X) < 1e-4, "the view looks east: {forward}");
     assert!(walk.distance(Vec3::X) < 1e-4, "and W walks east, as the view looks: {walk}");
 }
+
+#[test]
+fn a_plain_camera_that_becomes_a_first_person_one_gives_the_own_body_layer_back() {
+    let mut s = fp();
+    // A second view of the world (a mirror) given the layer while the first-person camera exists.
+    let mirror = s.app.world_mut().spawn(Camera3d::default()).id();
+    frame(&mut s);
+    frame(&mut s);
+    let both = RenderLayers::from_layers(&[0, OWN_BODY_LAYER]);
+    assert_eq!(s.app.world().get::<RenderLayers>(mirror).cloned(), Some(both));
+    // The game (or `mode: FirstPerson`) makes it a first-person camera: it draws the world alone, and so never the body.
+    s.app.world_mut().entity_mut(mirror).insert(FirstPersonCamera::default());
+    frame(&mut s);
+    frame(&mut s);
+    assert_eq!(s.app.world().get::<RenderLayers>(mirror).cloned(), None, "it must not see the body it hides");
+    // The camera that carries its own layers is left alone.
+    let own = s.app.world_mut().spawn((Camera3d::default(), RenderLayers::layer(7))).id();
+    s.app.world_mut().entity_mut(own).insert(FirstPersonCamera::default());
+    frame(&mut s);
+    frame(&mut s);
+    assert_eq!(s.app.world().get::<RenderLayers>(own).cloned(), Some(RenderLayers::layer(7)));
+}
