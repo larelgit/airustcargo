@@ -63,7 +63,9 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   `npc_schedule` (why each option of an NPC's attack plan is eligible or refused now, by the director's and the planner's own judge; `angle=`, `players=`, `distance=`, `target=` ask what-ifs; a dev caller also gets the planner's next draw; the host answers, a client is refused), `npc_state` (`nav.routes`: over the navmesh of which body class the NPC plans, or why it plans over the local grid), `npc_set_state`, `npc_plan_reset` and `npc_plan_cooldown` (dev: forget an NPC's attack history and cooldowns, or set one option's cooldown, `mode=exactly|at_least`; the calls a game makes, N8c), `plan_audit` (dev query: the pairs of an attack plan's options with the gap between one's danger and the next one's first hit, `min_gap=` lists the short ones, every hit with `times`; content only, N8e),
   `nav_path` (`body=large` — over the navmesh of a body class), `nav_info` (`bodies` — the body classes and their navmeshes), `nav_bake`, the overlays
   `world_overlay` and `nav_overlay` (window),
-  `npc_overlay` (a line on each NPC near the players: state, target, token, leash, what it sees and hears; in the window — F7); **rules** —
+  `npc_overlay` (a line on each NPC near the players: state, target, token, leash, what it sees and hears; in the window — F7), `turret_active`
+  (dev: `on=true|false`, `id=eN` or every turret; F11; a turret's line says `turret tracking e5 (yaw 12°/60°)`, and an NPC's `hiding`,
+  `cowering`, `keeping range 8–14m`, `no line of fire: e9 in the way`; `npc_state` adds `threats`, `hiding`, `range`, `turret`); **rules** —
   `assert_add`, `assert_list`, `assert_remove`, `assert_reset` (`shards assert`); **UI** — `ui_read` (the screen tree: widget ids,
   values, focus), `ui_open`, `ui_close`, `ui_navigate`, `ui_click`, `ui_set` (for a key-binding row — `value=Key(KeyK)`);
   the main menu (in a game that has one, without a window — with `--menu`) — `new_game`, `continue_game`; **language** — `locale` (the languages, which one
@@ -86,7 +88,8 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   `region_check`), `console line="speed x=0.25"` (a line as for `shards act`); in the window this is F10 and `` ` ``, `open=true` shows
   the panel for `shot`. The game puts its own items in content (`*.devmenu.ron`), and a module does it with `add_dev_entry`. **Exit** — `quit`
   (`shards quit`: exit hooks run, the token and the port file are removed). Conditions for
-  `step --until named:…`: `near_poi`, `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_avoiding`,
+  `step --until named:…`: `near_poi`, `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_avoiding`, `npc_hidden` (an NPC
+  reached its hiding spot, F11), `npc_line_blocked` (a ranged NPC has an ally or a wall in its line of fire, F11),
   `npc_engaged`, `npc_near`, `reacting` (a fighter runs one of its moveset's reaction actions, not a stagger), `pair_ready` (a fighter's context binds a paired action on a victim, B3), `paired` (a pair runs), `downed` (some fighter is down, B5), `charging`, `in_water` (the player's feet are in a water
   volume, any region kind), `in_current` (the water there pushes: a `Current`), `near_grid_edge` (within the voxel region's `near_edge` of the
   region's edge, or past it; on tiles, past it), `mover_arrived` (a mover stopped at a key this tick, F6; a looping mover with no `wait` never stops, so it never arrives); the game adds its own (in the sandbox `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`; in the template

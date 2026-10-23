@@ -1,0 +1,5 @@
+// F11's tests (`ranged.rs`): a silent shot (seen, not heard) and a loud one. Net ids 9500-9509.
+{
+    "silent_shot": (net_id: 9500, phases: [("fire", 0.05), ("recover", 0.4)], effects: [(at: 0.0, effect: Fire((range: 30, damage: 1, noise: 0)))]),
+    "loud_shot": (net_id: 9501, phases: [("fire", 0.05), ("recover", 0.4)], effects: [(at: 0.0, effect: Fire((range: 30, damage: 1, noise: 20)))]),
+}

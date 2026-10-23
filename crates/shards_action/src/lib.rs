@@ -216,7 +216,10 @@ pub use parts::{
 };
 pub use look::{view_hit, ViewHit, AIM_RANGE};
 pub use view_model::{ShowsBody, ViewModelDef};
-pub use shot::{cone_dir, fire, shot_aim, shot_ray, trace_shot, AimedBy, FireDef, ShotAim, ShotFired, ShotHit, ShotImpact, ShotPath};
+pub use shot::{
+    cone_dir, fire, fire_effects, line_of_fire, shot_aim, shot_ray, trace_shot, AimedBy, FireDef, FireLine, ShotAim, ShotFired, ShotHit,
+    ShotImpact, ShotPath,
+};
 pub use zone::{action_zones, hit_zones, threat_indicators, HitZone, Indicator, WorldShape};
 
 /// Version of the action module.

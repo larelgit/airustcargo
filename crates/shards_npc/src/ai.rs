@@ -28,10 +28,18 @@ use crate::perception::Perceived;
 use crate::planner::{repeats_of, NpcOptions, NpcPlan};
 use crate::schedule::{schedule_report, ScheduleParams, WhatIf};
 use crate::strike::{wait_of, NpcStrike};
+use crate::hide::{hide_status, threat_eye};
+use crate::brain::NpcCtx;
+use crate::ranged::{band_text, NpcFireLine};
+use crate::threat::NpcThreats;
+use crate::turret::{set_turret_active, turret_line, Turret, TurretSwitched};
 
 pub(crate) fn register(app: &mut App) {
     app.add_rules_guard("npc_engaged", rules_guard)
         .register_ai_describer("npc", describe_npc)
+        // F11: `hiding`, `cowering`, `keeping range 8–14m · no line of fire: e9 in the way`, `turret tracking e5 (yaw 12°/60°)`.
+        .register_ai_world_describer("npc_ranged", describe_ranged)
+        .journal_event::<TurretSwitched>(|e, w| Some(format!("{} turret {}", label(w, e.entity), if e.active { "on" } else { "off" })))
         .journal_event::<NpcStateChanged>(|e, w| {
             let target = e.target.map(|t| format!(" {t}")).unwrap_or_default();
             let forced = if e.forced { " (npc_set_state)" } else { "" };
@@ -70,6 +78,11 @@ pub(crate) fn register(app: &mut App) {
         .add_ai_tool("npc_set_state", Scope::Dev, npc_set_state)
         .add_ai_tool("npc_plan_reset", Scope::Dev, npc_plan_reset)
         .add_ai_tool("npc_plan_cooldown", Scope::Dev, npc_plan_cooldown)
+        .add_ai_tool("turret_active", Scope::Dev, turret_active)
+        // `step --until named:npc_hidden`: a hiding NPC (F11) stands at its hiding spot.
+        .add_ai_condition("npc_hidden", npc_hidden)
+        // `step --until named:npc_line_blocked`: a ranged NPC (F11) has an ally or a wall in its line of fire.
+        .add_ai_condition("npc_line_blocked", npc_line_blocked)
         // `step --until named:npc_attacking`: until an NPC's attack (by its token) is under way.
         .add_ai_condition("npc_attacking", |w| {
             w.try_query::<&AttackToken>().is_some_and(|mut q| q.iter(w).any(|t| t.held.as_ref().is_some_and(|g| g.started)))
@@ -193,6 +206,84 @@ pub(crate) fn npc_line(brain: &NpcBrain, token: Option<&AttackToken>, home: Opti
         line.push_str(&format!(" · leash {:.0}/{:.0}m", flat(tf.translation - at).length(), home.leash));
     }
     Some(line)
+}
+
+/// What F11 puts on an NPC's mind, for its describer and `npc_overlay`: `hiding` or `cowering` (a
+/// `hide` or `cower` state), `keeping range 8–14m` and `no line of fire: e9 in the way` (a plan that
+/// keeps a range, while it fights), `turret tracking e5 (yaw 12°/60°)`. Content is read with `peek`.
+pub fn ranged_parts(world: &World, entity: Entity) -> Vec<String> {
+    let mut parts = Vec::new();
+    let (Some(npc), Some(brain)) = (world.get::<Npc>(entity), world.get::<NpcBrain>(entity)) else { return parts };
+    if !brain.active || brain.state.is_empty() {
+        return parts;
+    }
+    if let Some((spot, cowering)) = hide_status(world, entity) {
+        parts.push(if cowering { "cowering" } else if spot.is_some() { "hiding" } else { "looking for cover" }.to_owned());
+    }
+    if let Some(line) = turret_line(world, entity) {
+        parts.push(line);
+    }
+    let fighting = world.get::<NpcDrive>(entity).is_some_and(|d| d.strike || d.waiting);
+    if fighting
+        && let Some(db) = world.get_resource::<shards_content::ContentDb>()
+        && let Some(band) = band_text(db, npc)
+    {
+        parts.push(band);
+        let target = world.get::<AttackToken>(entity).and_then(|t| t.held.as_ref()).map(|g| g.target).or(brain.target);
+        if let Some(block) = target.and_then(|t| world.get::<NpcFireLine>(entity).and_then(|l| l.blocking(t))) {
+            parts.push(format!("no line of fire: {}", block.text()));
+        }
+    }
+    parts
+}
+
+/// The `npc_ranged` describer: [`ranged_parts`], joined.
+fn describe_ranged(world: &World, entity: Entity) -> Option<String> {
+    let parts = ranged_parts(world, entity);
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+/// Dev: switches a turret on or off ([`set_turret_active`]), or every turret; journaled (`e9 turret on`).
+#[derive(Deserialize, JsonSchema)]
+pub struct TurretActiveArgs {
+    /// The turret: 42 or "e42". Default: every turret.
+    pub id: Option<Id>,
+    /// On (it tracks its target and fires) or off (it turns back to its rest and holds fire).
+    pub on: bool,
+}
+
+fn turret_active(In(call): In<Call<TurretActiveArgs>>, world: &mut World) -> ToolResult {
+    if let Some(id) = &call.args.id {
+        let entity = id.entity(world)?;
+        return set_turret_active(world, entity, call.args.on).map_err(|e| format!("{id}: {e}; `npc_state` says which NPCs are turrets"));
+    }
+    let mut turrets: Vec<(AiId, Entity)> = match world.try_query::<(Entity, &AiId, &Turret)>() {
+        Some(mut q) => q.iter(world).map(|(e, id, _)| (*id, e)).collect(),
+        None => Vec::new(),
+    };
+    turrets.sort();
+    if turrets.is_empty() {
+        return Err("there is no turret (no entity has a Turret component)".to_owned());
+    }
+    let lines: Vec<String> = turrets.into_iter().filter_map(|(_, e)| set_turret_active(world, e, call.args.on).ok()).collect();
+    Ok(lines.join("\n"))
+}
+
+/// `npc_hidden`: an active NPC in a `hide` state stands at the hiding spot it found (F11).
+fn npc_hidden(w: &World) -> bool {
+    let Some(mut npcs) = w.try_query::<(Entity, &NpcBrain, &Transform)>() else { return false };
+    npcs.iter(w).filter(|(_, b, _)| b.active).any(|(e, _, tf)| {
+        matches!(hide_status(w, e), Some((Some(spot), false)) if flat(tf.translation - spot).length() <= HIDDEN_WITHIN)
+    })
+}
+
+/// How near its spot a hiding NPC stands for `npc_hidden` (m).
+pub const HIDDEN_WITHIN: f32 = 0.6;
+
+/// `npc_line_blocked`: an active NPC whose plan keeps a range has an ally or a wall in its line of fire to
+/// its target (F11).
+fn npc_line_blocked(w: &World) -> bool {
+    w.try_query::<(&NpcBrain, &NpcFireLine)>().is_some_and(|mut q| q.iter(w).any(|(b, l)| b.active && l.blocked.is_some()))
 }
 
 /// Everything about an NPC's mind: its state and timers, its target and what it knows of
@@ -410,9 +501,44 @@ fn extras(world: &World, entity: Entity, npc: &Npc, perceived: &Perceived, here:
     {
         out["plan"]["repeats"] = json!({"name": newest.0, "times": newest.1});
     }
+    // F11: what it holds for a threat, where it hides, the band it keeps and its line of fire, its turret.
+    if let Some(t) = e.get::<NpcThreats>() {
+        out["threats"] = json!(t.known.iter().map(|t| json!({"id": t.id.to_string(), "since": round(t.age)})).collect::<Vec<_>>());
+    }
+    if let Some((spot, cowering)) = hide_status(world, entity) {
+        let brain = e.get::<NpcBrain>();
+        let from = brain.and_then(|b| NpcCtx::new(world, entity, b, 0.0)).and_then(|c| threat_eye(&c));
+        out["hiding"] = json!({
+            "spot": spot.map(fmt_pos),
+            "where": spot.map(|s| relative(here, s)),
+            "cowering": cowering,
+            "from": from.map(|(id, eye)| id.map_or_else(|| fmt_pos(eye), |id| id.to_string())),
+        });
+    }
+    if let Some((min, max)) = world
+        .get_resource::<shards_content::ContentDb>()
+        .and_then(|db| npc.plan.as_deref().and_then(|p| db.peek::<crate::def::AttackPlanDef>(p)))
+        .and_then(|p| p.keep_range)
+    {
+        let line = e.get::<NpcFireLine>();
+        out["range"] = json!({
+            "keep": [min, max],
+            "line_of_fire": line.map(|l| json!({
+                "target": l.target.map(|t| t.to_string()),
+                "blocked": l.blocked.map(|b| b.text()),
+            })),
+        });
+    }
+    if let Some(t) = e.get::<Turret>() {
+        out["turret"] = json!({"def": t.def, "active": t.active, "line": turret_line(world, entity)});
+    }
     let def = perception_of(world, npc);
+    if def.notice != crate::def::Notice::Hostile {
+        out["perception"]["notice"] = json!(format!("{:?}", def.notice));
+    }
     if let Some(keep) = def.keep_range {
-        out["perception"] = json!({"sight_range": def.sight_range, "keep_range": keep});
+        out["perception"]["sight_range"] = json!(def.sight_range);
+        out["perception"]["keep_range"] = json!(keep);
         let kept: Vec<String> = kept(&def, perceived, here).map(|k| k.id.to_string()).collect();
         if let Some(list) = out["perceived"].as_array_mut() {
             for entry in list {
@@ -440,6 +566,7 @@ pub(crate) fn extra_parts(world: &World, entity: Entity, npc: &Npc, perceived: &
     }
     let def = perception_of(world, npc);
     parts.extend(kept(&def, perceived, here).map(|k| format!("keeps {} {}", k.id, relative(here, k.pos))));
+    parts.extend(ranged_parts(world, entity));
     parts
 }
 
