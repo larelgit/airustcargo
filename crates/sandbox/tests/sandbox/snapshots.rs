@@ -1285,6 +1285,34 @@ fn a_body_with_parts_comes_back_mid_swing() {
     });
 }
 
+/// Look as input (F1a): a body that faces its look and has one set comes back looking, and goes on
+/// turning to it, as the game it was taken in does. A snapshot of a run that never looks has no
+/// `look` in it (`Intent` leaves the field out while it is `None`).
+#[test]
+fn a_look_and_the_body_that_faces_it_come_back() {
+    use shards::core::Gaze;
+    let mut app = sandbox::test_app(42);
+    calm_skeletons(&mut app);
+    calm_warden(&mut app);
+    let plain = snapshot::capture(app.world()).unwrap();
+    assert!(!shards::serde_json::to_string(&plain).unwrap().contains("\"look\""), "no look, no field in the file");
+    ok(&mut app, "set", json!({"id": PLAYER, "component": "CharacterController", "path": "params", "value": "viewer"}));
+    ok(&mut app, "look", json!({"yaw": 135, "pitch": -20}));
+    step(&mut app, 3);
+    let want = Some(Gaze::from_degrees(135.0, -20.0));
+    assert_eq!(get::<Intent>(&app, PLAYER).look, want);
+    let saved = shards::serde_json::to_string(&snapshot::capture(app.world()).unwrap()).unwrap();
+    assert!(saved.contains("\"look\":{"), "the look is in the file");
+    assert_continues_alike("a body that faces its look", app, |app| {
+        assert_eq!(get::<Intent>(app, PLAYER).look, want, "the look comes back");
+        ok(app, "look", json!({"yaw": -45}));
+        step(app, 10);
+        ok(app, "look", json!({"clear": true}));
+        step(app, 10);
+        assert_eq!(get::<Intent>(app, PLAYER).look, None);
+    });
+}
+
 #[test]
 fn a_barrier_a_timed_multiplier_and_a_proc_gate_come_back() {
     use shards::action::{Barrier, DamageTaken, ProcGates};

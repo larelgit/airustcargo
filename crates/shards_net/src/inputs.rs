@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use ai_core::AiId;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
-use shards_core::{Intent, Order, Press};
+use shards_core::{Gaze, Intent, Order, Press};
 
 /// Frames further ahead of the host than this are dropped.
 pub const MAX_AHEAD: u64 = 120;
@@ -70,20 +70,24 @@ pub struct IntentState {
     pub aim: Option<Vec3>,
     pub target: Option<AiId>,
     pub held: Vec<String>,
+    /// Where the player looks (F1a). Left out of the frame while it is `None`, so a frame of a
+    /// player that never looks is what it was before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look: Option<Gaze>,
 }
 
 impl IntentState {
     pub fn of(intent: &Intent) -> Self {
-        Self { move_dir: intent.move_dir, aim: intent.aim, target: intent.target, held: intent.held.clone() }
+        Self { move_dir: intent.move_dir, aim: intent.aim, target: intent.target, held: intent.held.clone(), look: intent.look }
     }
 
     /// Writes the state into `intent`; whether anything changed.
     ///
     /// The host does not trust a client's numbers: a `move_dir` that is not finite becomes
     /// zero, one longer than 1 (beyond rounding) is cut to length 1, and an `aim` that is not
-    /// finite is dropped. An honest client already sends `move_dir` clamped, so its frames
-    /// pass unchanged; a bad frame cannot put garbage in `Intent` (the engine rule
-    /// `core.intent_sane` would stop the host on it).
+    /// finite is dropped, and so is a `look` whose angles are not. An honest client already
+    /// sends `move_dir` clamped, so its frames pass unchanged; a bad frame cannot put garbage
+    /// in `Intent` (the engine rule `core.intent_sane` would stop the host on it).
     pub fn write(&self, intent: &mut Intent) -> bool {
         let move_dir = if !self.move_dir.is_finite() {
             Vec3::ZERO
@@ -95,12 +99,18 @@ impl IntentState {
             self.move_dir
         };
         let aim = self.aim.filter(|a| a.is_finite());
-        let changed = intent.move_dir != move_dir || intent.aim != aim || intent.target != self.target || intent.held != self.held;
+        let look = self.look.filter(|l| l.is_finite());
+        let changed = intent.move_dir != move_dir
+            || intent.aim != aim
+            || intent.target != self.target
+            || intent.held != self.held
+            || intent.look != look;
         if changed {
             intent.move_dir = move_dir;
             intent.aim = aim;
             intent.target = self.target;
             intent.held = self.held.clone();
+            intent.look = look;
         }
         changed
     }
@@ -376,6 +386,40 @@ mod tests {
 
 
     #[test]
+    fn a_look_travels_in_the_frame_and_the_host_cleans_it() {
+        let mut intent = Intent::default();
+        let mut capture = InputCapture::starting_from(&intent);
+        assert_eq!(capture.capture(1, &mut intent, 32), None, "no look, nothing to send");
+        intent.look = Some(Gaze::new(1.25, -0.5));
+        let frame = capture.capture(2, &mut intent, 32).expect("a turn of the view is a change");
+        assert_eq!(frame.state.as_ref().and_then(|s| s.look), Some(Gaze::new(1.25, -0.5)));
+        assert_eq!(capture.capture(3, &mut intent, 32), None, "the same look again sends nothing");
+        // The wire form: JSON through the codec, as a packet carries it, and back.
+        let sent = crate::msg::encode(&frame);
+        let text = String::from_utf8(sent).unwrap();
+        assert!(text.contains(r#""look":{"yaw":1.25,"pitch":-0.5}"#), "{text}");
+        let back: InputFrame = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, frame);
+        let mut host = Intent::default();
+        assert!(apply_frame(&mut host, &back));
+        assert_eq!(host.look, Some(Gaze::new(1.25, -0.5)));
+        // Looking away clears it: `None` is a change too.
+        intent.look = None;
+        let cleared = capture.capture(4, &mut intent, 32).expect("clearing is a change");
+        assert!(apply_frame(&mut host, &cleared));
+        assert_eq!(host.look, None);
+        // A frame without the field (a client built before it) is what a player who never looks sends.
+        let plain = serde_json::to_string(&InputFrame { tick: 5, state: Some(IntentState::default()), ..default() }).unwrap();
+        assert!(!plain.contains("look"), "{plain}");
+        // A bad angle never reaches `Intent` (`core.intent_sane` would stop the host on it).
+        let bad = IntentState { look: Some(Gaze::new(f32::NAN, 0.0)), ..default() };
+        let mut intent = Intent { look: Some(Gaze::new(1.0, 0.0)), ..default() };
+        assert!(bad.write(&mut intent));
+        assert_eq!(intent.look, None);
+        assert!(!bad.write(&mut intent), "the same bad frame again changes nothing");
+    }
+
+    #[test]
     fn presses_apply_exactly_once_and_state_is_last_wins() {
         let mut queue = InputQueue::default();
         let mut intent = Intent::default();
@@ -516,7 +560,13 @@ mod tests {
         let far = Vec3::splat(-1.234_567_9e-38);
         let frame = InputFrame {
             tick: u64::MAX,
-            state: Some(IntentState { move_dir: far, aim: Some(far), target: Some(AiId(u32::MAX)), held: vec![name.clone(); MAX_HELD] }),
+            state: Some(IntentState {
+                move_dir: far,
+                aim: Some(far),
+                target: Some(AiId(u32::MAX)),
+                held: vec![name.clone(); MAX_HELD],
+                look: Some(Gaze::new(far.x, far.x)),
+            }),
             presses: vec![Press { input: name.clone(), dir: Some(far) }; MAX_PRESSES_PER_FRAME],
             orders: Some(vec![Order::Attack { target: AiId(u32::MAX), input: name, repeat: false }; MAX_ORDERS]),
         };

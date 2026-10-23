@@ -129,6 +129,7 @@ pub mod draw;
 pub mod fighter;
 pub mod leap;
 pub mod lock;
+pub mod look;
 pub mod machine;
 mod invariants;
 pub mod objects;
@@ -210,6 +211,7 @@ pub use parts::{
     body_of, body_takes_lock, break_part, lock_points_of, part_of, parts_of, set_part, BodyParts, Part, PartBroken, PartDef, PartHealth,
     PartHit, PartTurn, PartsDef, SpawnedParts,
 };
+pub use look::{view_hit, ViewHit, AIM_RANGE};
 pub use zone::{action_zones, hit_zones, threat_indicators, HitZone, Indicator, WorldShape};
 
 /// Version of the action module.
@@ -516,6 +518,7 @@ impl Plugin for ActionPlugin {
         context::plugin(app);
         predict::plugin(app);
         lock::plugin(app);
+        look::plugin(app);
         ai::register(app);
         tools::register(app);
         animtool::register(app);

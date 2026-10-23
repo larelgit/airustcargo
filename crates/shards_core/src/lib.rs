@@ -29,7 +29,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 pub use exit::{run_exit_hooks, ExitHook, ExitHooks};
-pub use intent::{flat, follow_orders, input_names, Intent, Order, Press, Target};
+pub use intent::{flat, follow_orders, input_names, Gaze, Intent, Order, Press, Target};
 pub use loading::{statuses as loading_statuses, LoadCheck, LoadStatus, LoadingGate};
 pub use menu::{can_start_game, start_game};
 pub use seed::{adopt_seed, hold_seed, seed_ready, SeedLock};
@@ -532,6 +532,7 @@ impl Plugin for CorePlugin {
         // Explicitly, for apps built without `reflect_auto_register`: replay checks and
         // `inspect` read components through the type registry.
         app.register_type::<Intent>()
+            .register_type::<Gaze>()
             .register_type::<PlayerId>()
             .register_type::<LocalPlayer>()
             .register_type::<Predicted>()
@@ -619,7 +620,8 @@ impl Plugin for CorePlugin {
     }
 
     fn finish(&self, app: &mut App) {
-        // After the game's describers: an entity's orders end its line.
+        // After the game's describers: where an entity looks, then its orders, which end its line.
+        app.register_ai_describer("look", intent::describe_look);
         app.register_ai_describer("orders", intent::describe_orders);
     }
 }
