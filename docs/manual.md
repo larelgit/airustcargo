@@ -2370,7 +2370,7 @@ owns (`mover_go`, a pickup, a line of text).
 - **Content.** `locomotion` gets `use_range` (default 2, left out of the written form at the default, so no hash moves). The node properties of an
   `interactable` are `hold_s` (zero or more), `use_range` (above zero) and `prompt` (text; a Fluent `@id` or plain text, the marker's name when left
   out); `content check` names the level, the node and the property (``node `Valve`: `hold_s` must be zero or more (seconds to hold the button), found -1``, ``node `Panel`:
-  `use_range` must be above zero, found 0``), a `hold_s`, `use_range` or `prompt` on a node that is no interactable is a problem of its own, and so is an `interactable` that is also a `volume` (a look never meets a sensor). In `layers` the new word is `use`.
+  `use_range` must be above zero, found 0``), a `hold_s`, `use_range` or `prompt` on a node that is no interactable is a problem of its own, and so is an `interactable` that is also a `volume` (a look never meets a sensor). In `layers` the new word is `use`; `layers` on an interactable names more of its use area, and `layers = world` makes it solid as a `collider` does (the `USE` layer is added whatever it says).
 - **For the AI.** The player tool **`interact`**: `interact` uses what you look at; `interact target=e12` turns the look to the thing's use area and presses
   (an error leaves the look where it was: `e12 "far_panel" is 3.5m away and can be used from 2.0m: walk closer`, `e12 "behind_glass" is behind wall 1.0m ahead: a
   wall or glass blocks a use`, `e13 "near" is nearer on the same line (1.0m)`, `e13 "twin_a" is just as near on the same line (1.5m) and comes first`, `e14 has no use area, so no look can
