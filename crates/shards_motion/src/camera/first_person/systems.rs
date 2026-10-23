@@ -3,12 +3,13 @@
 
 use std::collections::BTreeSet;
 
-use ai_core::AiReplay;
+use ai_core::{journal, label, AiReplay, JournalKind};
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{Camera3d, Projection};
 use bevy::light::{DirectionalLight, PointLight, SpotLight};
 use bevy::prelude::*;
 use shards_content::ContentDb;
+use shards_core::input_names::LOCK_ON;
 use shards_core::{flat, Gaze, Intent, LocalPlayer};
 
 use super::{
@@ -51,6 +52,7 @@ pub(in crate::camera) fn plugin(app: &mut App) {
         // third-person camera's yaw is behind by too) and before the tick, so a turn made in this frame
         // is the look the next tick reads.
         .add_systems(PreUpdate, first_person_look.after(ControlSystems::Read).run_if(any_with_component::<FirstPersonCamera>))
+        .add_systems(PreUpdate, first_person_unlock.after(ControlSystems::Read).run_if(any_with_component::<FirstPersonCamera>))
         .add_systems(
             PostUpdate,
             first_person_camera
@@ -126,6 +128,24 @@ fn first_person_look(
     if next.is_finite() && intent.look != Some(next) {
         intent.look = Some(next);
     }
+}
+
+/// `PreUpdate`, after the input map: the `lock_on` button lets go of a lock the local player holds, as it does
+/// under the orbit camera (a local line `e5 lock released: e6`). A first-person camera picks and switches
+/// nothing, the lock-on machinery of the orbit camera being off, but a lock that is there (one the orbit camera
+/// took before the mode changed, one a tool or a brain set) must not be stuck to the player: the simulation's
+/// own checks still let go of one that is no longer valid, and the `lock_on` tool still releases.
+fn first_person_unlock(world: &mut World, players: &mut QueryState<Entity, (With<LocalPlayer>, With<Intent>)>) {
+    if !world.get_resource::<ControlState>().is_some_and(|state| state.just_pressed(LOCK_ON)) {
+        return;
+    }
+    let Ok(me) = players.single(world) else { return };
+    let Some(held) = world.get::<Intent>(me).and_then(|intent| intent.target) else { return };
+    if let Some(mut intent) = world.get_mut::<Intent>(me) {
+        intent.target = None;
+    }
+    let line = format!("{} lock released: {held}", label(world, me));
+    journal::emit(world, JournalKind::Local, line);
 }
 
 /// A number a game system wrote into [`CameraOffsets`] that is not finite counts as 0.

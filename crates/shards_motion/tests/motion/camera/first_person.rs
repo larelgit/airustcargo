@@ -404,3 +404,29 @@ fn the_camera_mode_tool_chooses_the_mode_for_the_session() {
     let (ok, said) = tool(&mut app, serde_json::json!({"mode": "orbit"}));
     assert!(!ok && said.contains("no mode `orbit`: say `first`, `third` or `content`"), "{said}");
 }
+
+#[test]
+fn the_lock_on_button_only_lets_go_under_a_first_person_camera() {
+    let mut s = fp();
+    let enemy = s.app.world_mut().spawn((AiKind::new("Enemy"), LockOnTarget, Transform::from_xyz(0.0, 0.0, -10.0))).id();
+    s.app.update();
+    let enemy_id = *s.app.world().get::<ai_core::AiId>(enemy).unwrap();
+    let tap = |s: &mut Fp| {
+        s.app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::Tab);
+        frame(s);
+        s.app.world_mut().resource_mut::<ButtonInput<KeyCode>>().release(KeyCode::Tab);
+        frame(s);
+    };
+    let target = |s: &Fp| s.app.world().get::<Intent>(s.player).unwrap().target;
+    // Nothing is picked: the orbit camera's lock-on is not there, though a body that could be locked is in front.
+    tap(&mut s);
+    assert_eq!(target(&s), None);
+    // A lock that is held (a tool's, or the orbit camera's before the mode changed) is let go of.
+    s.app.world_mut().get_mut::<Intent>(s.player).unwrap().target = Some(enemy_id);
+    frame(&mut s);
+    assert_eq!(target(&s), Some(enemy_id), "the camera does not take it away by itself");
+    tap(&mut s);
+    assert_eq!(target(&s), None);
+    let lines: Vec<String> = s.app.world().resource::<ai_core::AiJournal>().after(0).0.map(|e| e.text.clone()).collect();
+    assert!(lines.iter().any(|l| l.contains("lock released")), "{lines:?}");
+}

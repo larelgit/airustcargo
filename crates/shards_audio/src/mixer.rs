@@ -364,16 +364,18 @@ pub fn listener(world: &World) -> Option<Listener> {
 }
 
 /// Where a body that is looked through in the first person hears from: its eye (F1b). It is looked
-/// through when it faces its look (`face: Look`) or when a `FirstPersonCamera` exists. `None` for any
+/// through when it faces its look (`face: Look`) or when a `FirstPersonCamera` looks through it (its `target`,
+/// else the local player when it names none). `None` for any
 /// other body (it hears from its feet) and for an entity that is no character. The eye is the
 /// simulation's (`shards_motion::eye_of`), not the camera's, so a headless run and a window hear alike,
 /// and a shaking or bobbing view does not move the ears.
 fn first_person_ears(world: &World, body: Entity) -> Option<Vec3> {
     let params = shards_motion::params_of(world, body)?;
+    let local = world.get::<shards_core::LocalPlayer>(body).is_some();
     let looked_through = params.face == shards_motion::Facing::Look
-        || world
-            .try_query_filtered::<(), With<shards_motion::FirstPersonCamera>>()
-            .is_some_and(|mut cameras| cameras.iter(world).next().is_some());
+        || world.try_query_filtered::<&shards_motion::FirstPersonCamera, ()>().is_some_and(|mut cameras| {
+            cameras.iter(world).any(|camera| camera.target == body || (camera.target == Entity::PLACEHOLDER && local))
+        });
     looked_through.then(|| shards_motion::eye_of(world, body)).flatten()
 }
 
@@ -506,7 +508,11 @@ mod tests {
         world.entity_mut(body).insert(CharacterParams { eye_height: Some(1.5), ..default() });
         assert_eq!(listener(&world).unwrap().position, Vec3::new(2.0, 1.0, -3.0), "no camera, no first person");
         let view = Transform::from_xyz(2.0, 2.5, -3.0).with_rotation(Quat::from_rotation_y(1.0));
-        world.spawn((AudioListener, shards_motion::FirstPersonCamera::default(), view));
+        // A first-person camera that looks through another body (a spectator's) does not move this body's ears.
+        let other = world.spawn_empty().id();
+        let looking = world.spawn((AudioListener, shards_motion::FirstPersonCamera::looking_through(other), view)).id();
+        assert_eq!(listener(&world).unwrap().position, Vec3::new(2.0, 1.0, -3.0), "a camera of another body");
+        world.entity_mut(looking).insert(shards_motion::FirstPersonCamera::default());
         let ear = listener(&world).unwrap();
         assert!(ear.position.distance(Vec3::new(2.0, 2.5, -3.0)) < 1e-6, "{}", ear.position);
         assert!(ear.rotation.abs_diff_eq(view.rotation, 1e-6), "faces the way the camera faces");
