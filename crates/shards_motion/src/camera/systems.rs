@@ -18,7 +18,9 @@ use super::math::{
     pick_lock_target, pitch_limits, resolve_camera_collision, shake_offset_with, wrap_angle, FlickState, LockCandidate, LockView,
 };
 use super::shot::{shot_playing, Shots};
-use super::{CameraOffsets, CameraSettings, CameraShake, CameraSystems, CameraTuning, LockOnTarget, LockPoint, ThirdPersonCamera};
+use super::{
+    CameraOffsets, CameraSettings, CameraShake, CameraSystems, CameraTuning, FirstPersonCamera, LockOnTarget, LockPoint, ThirdPersonCamera,
+};
 use crate::input::{ControlState, ControlSystems};
 use crate::interp::{shown_translation, InterpSystems, Interpolated};
 use crate::physics::{LayerMask, PhysicsWorld, QueryFilter};
@@ -35,13 +37,18 @@ type RulePlayer = (With<LocalPlayer>, With<Intent>, Without<ThirdPersonCamera>);
 pub(super) fn plugin(app: &mut App) {
     // Without a `lock_on` definition the camera picks and lets go as it always did; with one it
     // picks by the definition's rules and leaves the checking of a lock to the simulation.
-    // While a scene camera shot plays (K3) a lock-on picks and switches nothing.
+    // While a scene camera shot plays (K3) a lock-on picks and switches nothing, and a first-person camera
+    // (F1b) has no lock-on: the orbit camera it may share its entity with stands still.
     app.add_systems(
         PreUpdate,
-        (lock_on.run_if(not(lock_rules)), lock_by_rules.run_if(lock_rules)).run_if(not(shot_playing)).after(ControlSystems::Read),
+        (lock_on.run_if(not(lock_rules)), lock_by_rules.run_if(lock_rules))
+            .run_if(not(shot_playing))
+            .run_if(not(super::first_person::systems::local_first_person_view))
+            .after(ControlSystems::Read),
     )
     .add_systems(PostUpdate, orbit_camera.in_set(CameraSystems::Orbit).after(InterpSystems::Blend).before(TransformSystems::Propagate))
     .add_systems(Update, (apply_motion_blur, super::picture::apply_picture));
+    super::first_person::systems::plugin(app);
 }
 
 /// `Update`: the accessibility setting `motion_blur` (0 none, 1 full) on every camera that
@@ -291,7 +298,7 @@ fn pick_in_view(world: &World, me: Entity, def: &LockOnDef, camera: &Transform, 
 /// `PostUpdate`, before transforms propagate: look, follow, frame the lock-on, keep out of
 /// walls, shake, field of view.
 #[allow(clippy::too_many_arguments, reason = "a Bevy system: one parameter per thing it reads")]
-fn orbit_camera(
+pub(in crate::camera) fn orbit_camera(
     time: Res<Time<Real>>,
     settings: Res<CameraSettings>,
     tuning: Res<CameraTuning>,
@@ -307,7 +314,7 @@ fn orbit_camera(
     points: Query<(), With<LockPoint>>,
     children: Query<&Children>,
     visuals: Query<&Interpolated>,
-    mut cameras: Query<(&mut ThirdPersonCamera, &mut Transform, Option<&mut Projection>)>,
+    mut cameras: Query<(&mut ThirdPersonCamera, &mut Transform, Option<&mut Projection>), Without<FirstPersonCamera>>,
 ) {
     let dt = time.delta_secs();
     if !settings.shake {

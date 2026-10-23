@@ -1,0 +1,12 @@
+// The sandbox's view model (F1b, content kind `view_model`): the arms and the slab of a weapon of
+// `models/view_model.glb`, moved by the animset `arms`, drawn by the first-person camera's second camera
+// at a field of view of its own (so it never clips into a wall), in the materials of the file (a `look`
+// would dress it in one of the sandbox's, as a body is). The camera content names it for a body whose
+// moveset names none (`combat/camera.camera.ron`).
+{
+    "arms": (
+        model: "models/view_model.glb",
+        animset: "arms",
+        fov_deg: 60.0,
+    ),
+}

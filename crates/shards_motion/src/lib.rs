@@ -13,7 +13,8 @@
 //! - [`control_lock`] (F12): a scene takes movement, actions or the freedom of the look from a body, for a reason
 //!   (`lock_controls`, `ControlLocks`): a filter on `Intent` inside the tick, given back before the replay check.
 //! - [`camera`]: the third-person camera (orbit, wall collision, lock-on, aim assist,
-//!   shake) — presentation only; its field of view, shake and look speed follow the player's
+//!   shake) and the first-person one (at the eye of a body that looks, `Intent::look`, F1b) —
+//!   presentation only; its field of view, shake and look speed follow the player's
 //!   accessibility and control settings.
 //! - AI tools for agents: `move_to` (with `path`), `move`, `stop`, `jump`, `sprint`,
 //!   `glide`, and the perception queries `clearance` and `path_to` ([`perception`]);
@@ -78,7 +79,7 @@ pub use control_lock::{
     control_line, control_lock_sane, lock_controls, unlock_controls, within_cone, ControlLock, ControlLocks, ControlsLocked, ControlsUnlocked,
     LockStash, LookLock, CONTROL_LOCK_SANE,
 };
-pub use camera::{CameraSettings, LockHooks, LockOnDef, LockOnTarget, LockPoint, ThirdPersonCamera};
+pub use camera::{CameraSettings, FirstPersonCamera, LockHooks, LockOnDef, LockOnTarget, LockPoint, ThirdPersonCamera};
 pub use eye::{aim_point_of, eye_of, look_dir, params_of};
 pub use controller::{
     character, CharacterController, CharacterParams, ControllerPlugin, ControllerSystems, Crouch, Crouched, Facing, Ghost, Jumped,
@@ -109,7 +110,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod prelude {
     pub use crate::{
         character, CameraSettings, CharacterController, CharacterParams, Collider, CollisionLayers, ControlState,
-        InputContexts, InputMap, LayerMask, LocomotionInput, LockOnTarget, MotionAi, MotionMode, MotionPlugin,
+        FirstPersonCamera, InputContexts, InputMap, LayerMask, LocomotionInput, LockOnTarget, MotionAi, MotionMode, MotionPlugin,
         MotionState, MotionSystems, PhysicsWorld, QueryFilter, SpatialQuery, ThirdPersonCamera,
     };
 }

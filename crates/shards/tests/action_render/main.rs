@@ -18,4 +18,5 @@ mod fixtures;
 mod headless;
 mod modes;
 mod sockets;
+mod view_model;
 mod window;
