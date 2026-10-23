@@ -201,7 +201,9 @@ fn number(props: &Map<String, Value>, key: &str) -> Result<Option<f32>, String> 
         Some(_) => None,
     };
     match value {
-        Some(v) if v.is_finite() => Ok(Some(v as f32)),
+        Some(v) if v.is_finite() && (v as f32).is_finite() => Ok(Some(v as f32)),
+        // A number too big for an f32 would be infinity once read: it is no number the level can use.
+        Some(v) if v.is_finite() => Err(format!("`{key}` is too big for a number here (found {v})")),
         _ => Err(format!("`{key}` must be a number, found {}", props.get(key).map_or("nothing", json_kind))),
     }
 }

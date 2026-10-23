@@ -83,6 +83,9 @@ pub struct UseView {
 
 /// What `viewer` would use now, for a prompt: `None` when its look meets nothing in reach.
 pub fn use_view(world: &World, viewer: Entity) -> Option<UseView> {
+    if !may_use(world, viewer) {
+        return None;
+    }
     let t = use_target(world, viewer)?;
     let held = world.get::<UseProgress>(viewer).zip(world.get::<AiId>(t.entity)).filter(|(p, id)| p.what == **id).map(|(p, _)| p.elapsed);
     Some(UseView {
@@ -92,6 +95,11 @@ pub fn use_view(world: &World, viewer: Entity) -> Option<UseView> {
         distance: t.distance,
         progress: held.filter(|_| t.hold_s > 0.0).map(|e| (e.min(t.hold_s), t.hold_s)),
     })
+}
+
+/// Whether `who` may use things: the dead and the downed use nothing, and a HUD shows them no prompt.
+fn may_use(world: &World, who: Entity) -> bool {
+    world.get::<Dead>(who).is_none() && world.get::<Downed>(who).is_none()
 }
 
 /// `ActionSystems::Use`: the `interact` presses and the holds of every body, in `AiId` order.
@@ -115,7 +123,7 @@ fn step_body(world: &mut World, body: Entity, dt: f32) {
         return;
     }
     // The dead and the downed use nothing, and what they held is let go.
-    if world.get::<Dead>(body).is_some() || world.get::<Downed>(body).is_some() {
+    if !may_use(world, body) {
         if progress.is_some() {
             world.entity_mut(body).remove::<UseProgress>();
         }
@@ -358,7 +366,7 @@ fn press_use(world: &mut World, me: Entity, t: &UseTarget, hold: Option<bool>) -
 /// The `USE` line under `YOU` while the subject's look meets something in reach: `USE e12 "door"
 /// 1.4m`, with `hold 1.0s` for a thing that takes time and `using 0.4/1.0s` while it is held.
 fn use_lines(world: &World, viewer: Entity) -> Vec<String> {
-    if world.get::<Dead>(viewer).is_some() {
+    if !may_use(world, viewer) {
         return Vec::new();
     }
     let Some(t) = use_target(world, viewer) else { return Vec::new() };

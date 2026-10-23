@@ -277,6 +277,8 @@ fn how_an_interactable_is_used_comes_from_its_properties() {
     assert!(err.contains("node `Thing`: `hold_s` must be zero or more (seconds to hold the button), found -1"), "{err}");
     let err = spawn(&mut app, &one(json!({"marker": "interactable", "use_range": 0}))).unwrap_err();
     assert!(err.contains("node `Thing`: `use_range` must be above zero, found 0"), "{err}");
+    let err = spawn(&mut app, &one(json!({"marker": "interactable", "hold_s": 1e300}))).unwrap_err();
+    assert!(err.contains("node `Thing`: `hold_s` is too big for a number here"), "{err}");
     let err = spawn(&mut app, &one(json!({"marker": "interactable", "use_range": 150}))).unwrap_err();
     assert!(err.contains("node `Thing`: `use_range` must be at most 100 (metres, how far a use is looked for), found 150"), "{err}");
     let err = spawn(&mut app, &one(json!({"marker": "interactable", "hold_s": "long", "prompt": 3}))).unwrap_err();

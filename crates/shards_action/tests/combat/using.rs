@@ -118,12 +118,14 @@ fn the_dead_and_the_downed_use_nothing() {
     press(&mut app, hero, "interact");
     step(&mut app, 2);
     assert!(seen(&app).is_empty(), "a downed body uses nothing");
+    assert!(use_view(app.world(), hero).is_none(), "and its HUD shows no prompt");
     let (mut app, hero) = arena();
     thing(&mut app, "lever", Usable::default(), 1.1);
     kill(app.world_mut(), hero, None, None);
     press(&mut app, hero, "interact");
     step(&mut app, 2);
     assert!(seen(&app).is_empty(), "nor a dead one");
+    assert!(use_view(app.world(), hero).is_none());
 }
 
 #[test]
