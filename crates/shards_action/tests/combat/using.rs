@@ -291,6 +291,10 @@ fn without_an_ally_to_revive_the_press_is_a_use() {
     // The mate went down after the use was seen to: now the revive wins.
     let _mate = downed_mate(&mut app);
     let out = ok(&mut app, "interact", json!({}));
+    // With a target named, the tool says the revive has the button instead of promising a use.
+    let lever_id = id(&app, lever);
+    let err = fails(&mut app, "interact", json!({"target": lever_id}));
+    assert!(err.contains("a revive is in reach and takes the button"), "{err}");
     assert!(out.contains("l_revive"), "{out}");
 }
 

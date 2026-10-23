@@ -2277,7 +2277,7 @@ owns (`mover_go`, a pickup, a line of text).
   does not push with it. A level's `interactable` marker makes both from its node (see "Levels from Blender"): `Usable` named by the marker, and a
   collider with the node's shape. A node with a `collider` of its own keeps it, solid, and adds the `USE` layer (a door); a node with a mesh or a `size` and no
   `collider` gets a box (`auto`) on `USE` alone; a bare empty (no mesh, no `size`, as the outpost's lever) is still a marker as before, has a `Usable` and no use area, and so
-  cannot be looked at (`interact target=` says so). A prefab can carry `"Usable": (name: "tablet")` and a collider on `USE` by hand.
+  cannot be looked at (`interact target=` says so). A prefab can carry `"Usable": (name: "tablet")` and a collider on `USE` by hand. A button on a wall needs a use area that stands out of the wall's face: one inside the wall is behind it, and the wall blocks the use.
 - **The press** (`ActionSystems::Use`, `SimSet::Act`, after the context is resolved and before the machine; `shards::action::using`), in `AiId`
   order: a body's `interact` press that finds a target takes the press and, for a thing with no `hold_s`, triggers
   `Used { who, what, name }` at once (journalled: `e5 uses e12 "door"`). Dead and downed bodies use nothing. The event happens where the simulation
@@ -2296,7 +2296,7 @@ owns (`mover_go`, a pickup, a line of text).
 - **For the AI.** The player tool **`interact`**: `interact` uses what you look at; `interact target=e12` turns the look to the thing's use area and presses
   (an error leaves the look where it was: `e12 "far_panel" is 3.5m away and can be used from 2.0m: walk closer`, `e12 "behind_glass" is behind wall 1.0m ahead: a
   wall or glass blocks a use`, `e13 "near" is nearer on the same line (1.0m)`, `e13 "twin_a" is just as near on the same line (1.5m) and comes first`, `e14 has no use area, so no look can
-  meet it`); a thing with a `hold_s` must be held: `interact hold=true`, step the time, `interact hold=false` (a tap is refused with `takes 1.0s to use`). With
+  meet it`, and `a revive is in reach and takes the button` while a downed ally is next to you); a thing with a `hold_s` must be held: `interact hold=true`, step the time, `interact hold=false` (a tap is refused with `takes 1.0s to use`). With
   nothing in reach the old press stays for the moveset (a revive); a moveset that binds nothing there gets `nothing to use: you look at wall 1.0m ahead and nothing usable
   is in front of it (reach 2.0m)`. The tool needs a `Fighter` (as every action tool does); the system itself needs only an `Intent` and an eye. **`observe`** adds a
   `USE` line under `YOU` while something is in reach: `USE e12 "door" 1.4m`, `USE e12 "valve" 1.2m hold 1.0s`, with `, using 0.5/1.0s` while it is held; `step --until

@@ -207,6 +207,9 @@ pub(crate) fn interact(world: &mut World, caller: &Caller, args: InteractArgs) -
         return Err(Blocker::Downed.message());
     }
     if let Some(id) = target {
+        if revive_would_win(world, me) {
+            return Err("a revive is in reach and takes the button (a downed ally next to you): `interact` without a target starts it".into());
+        }
         return use_named(world, me, id, hold);
     }
     match use_target(world, me) {
