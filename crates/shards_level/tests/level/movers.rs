@@ -169,7 +169,8 @@ fn level_despawn_takes_a_placed_level_away() {
 
 /// The picture (`render`): the mover's node in the level's scene is drawn where the mover stands,
 /// and the scene's nodes below it come along. The scene is built here by hand, as Bevy's glTF
-/// loader builds it (named nodes under the level's picture root): this app has no loader.
+/// loader builds it (the scene's own root, `Scene0`, under the level's picture root, and the file's
+/// named nodes below it): this app has no loader.
 #[cfg(feature = "render")]
 #[test]
 fn a_movers_picture_follows_the_mover() {
@@ -194,7 +195,8 @@ fn a_movers_picture_follows_the_mover() {
     ok(&mut app, "spawn_level", json!({"id": "movers", "x": 10.0}));
     let root = app.world().resource::<LevelInstances>().get(1).and_then(|i| i.visual).expect("the picture's root");
     let world = app.world_mut();
-    let lifts = world.spawn((Name::new("Lifts"), Transform::from_xyz(3.0, 0.0, 0.0), ChildOf(root))).id();
+    let scene = world.spawn((Name::new("Scene0"), Transform::default(), ChildOf(root))).id();
+    let lifts = world.spawn((Name::new("Lifts"), Transform::from_xyz(3.0, 0.0, 0.0), ChildOf(scene))).id();
     let lift = world.spawn((Name::new("Lift"), Transform::from_xyz(0.0, 0.1, 0.0).with_scale(Vec3::new(2.0, 0.2, 2.0)), ChildOf(lifts))).id();
     let rail = world.spawn((Name::new("Rail"), Transform::from_xyz(0.2, 25.0, 0.0), ChildOf(lift))).id();
     for _ in 0..3 {
@@ -211,4 +213,62 @@ fn a_movers_picture_follows_the_mover() {
     let now = (global(&app, lift), global(&app, rail));
     assert!((now.0 - pose(&app, mover).translation).length() < 1e-4, "drawn where the mover is: {now:?}");
     assert!((now.1 - rest.1 - Vec3::Y * 4.0).length() < 1e-4, "the rail's picture comes along: {rest:?} -> {now:?}");
+}
+
+/// Two movers whose paths end alike, `A/Mover` and `B/A/Mover`: each picture is the node of the
+/// mover's whole path. B's branch comes first, alone at first: `A/Mover` has no node there yet,
+/// so it has no picture (a path's tail would take B's node), and once A's branch is in, it gets
+/// its own.
+#[cfg(feature = "render")]
+#[test]
+fn movers_whose_paths_end_alike_each_find_their_own_picture() {
+    use bevy::world_serialization::WorldAsset;
+    use shards_level::{LevelInstances, MoverPicture};
+
+    let mut g = Gltf::new();
+    let cube = g.cube();
+    let b = g.root(NodeSpec::new("B").at([0.0, 0.0, 6.0]));
+    let ba = g.child(b, NodeSpec::new("A"));
+    g.child(ba, NodeSpec::new("Mover").scale([2.0, 0.2, 2.0]).mesh(cube).props(json!({"mover": "slide", "collider": "box"})));
+    let a = g.root(NodeSpec::new("A"));
+    g.child(a, NodeSpec::new("Mover").scale([2.0, 0.2, 2.0]).mesh(cube).props(json!({"mover": "lift", "collider": "box"})));
+    let dir = temp_assets(
+        "movers_alike",
+        &[
+            ("movers.gltf", g.gltf().as_bytes()),
+            ("content/levels/movers.level.ron", br#"{ "movers": (file: "movers.gltf") }"#),
+            ("content/test.mover.ron", MOVERS.as_bytes()),
+        ],
+    );
+    let mut app = app_with(&dir, |app| {
+        app.init_asset::<WorldAsset>();
+    });
+    ok(&mut app, "spawn_level", json!({"id": "movers"}));
+    let nodes = by_node(&mut app);
+    assert!(nodes.contains_key("A/Mover") && nodes.contains_key("B/A/Mover"), "{nodes:?}");
+    let root = app.world().resource::<LevelInstances>().get(1).and_then(|i| i.visual).expect("the picture's root");
+    let mover = |name: &str| (Name::new(name.to_owned()), Transform::from_scale(Vec3::new(2.0, 0.2, 2.0)));
+    let world = app.world_mut();
+    let scene = world.spawn((Name::new("Scene0"), Transform::default(), ChildOf(root))).id();
+    let b = world.spawn((Name::new("B"), Transform::from_xyz(0.0, 0.0, 6.0), ChildOf(scene))).id();
+    let ba = world.spawn((Name::new("A"), Transform::default(), ChildOf(b))).id();
+    let deep = world.spawn((mover("Mover"), ChildOf(ba))).id();
+    let shown = |app: &mut App| -> Vec<(Entity, String)> {
+        let world = app.world_mut();
+        world.query::<(Entity, &MoverPicture)>().iter(world).map(|(e, p)| (e, p.node.clone())).collect()
+    };
+    for frame in 0..4 {
+        app.update();
+        assert_eq!(shown(&mut app), [(deep, "B/A/Mover".to_owned())], "frame {frame}: only B's mover has its node");
+    }
+
+    let world = app.world_mut();
+    let a = world.spawn((Name::new("A"), Transform::default(), ChildOf(scene))).id();
+    let shallow = world.spawn((mover("Mover"), ChildOf(a))).id();
+    for _ in 0..3 {
+        app.update();
+    }
+    let mut now = shown(&mut app);
+    now.sort_by(|x, y| x.1.cmp(&y.1));
+    assert_eq!(now, [(shallow, "A/Mover".to_owned()), (deep, "B/A/Mover".to_owned())]);
 }

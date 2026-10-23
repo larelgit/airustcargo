@@ -139,6 +139,42 @@ fn a_client_rides_a_hosts_lift_as_the_host_has_it() {
 
 /// The room's scenario on a fresh game, and nothing of the room is left after it (the scenarios
 /// run one after another in one game).
+/// Each of the room's movers finds its picture in the scene Bevy's glTF loader really builds (the
+/// headless engine loads scenes as a window does): its own node, below the scene's own root
+/// (named after the file's scene, `Scene`), below the level's picture root.
+#[test]
+fn each_movers_picture_is_its_own_node_in_the_loaded_scene() {
+    use std::time::{Duration, Instant};
+
+    use shards::level::{LevelVisual, MoverPicture};
+
+    let mut app = sandbox::test_app(42);
+    crate::common::ok(&mut app, "spawn_level", json!({"id": "movers", "x": 112.0, "y": -10.0, "z": 0.0}));
+    let started = Instant::now();
+    let pictures = loop {
+        app.update();
+        let world = app.world_mut();
+        let found: Vec<(Entity, String)> = world.query::<(Entity, &MoverPicture)>().iter(world).map(|(e, p)| (e, p.node.clone())).collect();
+        if found.len() == 4 {
+            break found;
+        }
+        assert!(started.elapsed() < Duration::from_secs(30), "the movers' pictures: {found:?}");
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    let world = app.world();
+    let name = |e: Entity| world.get::<Name>(e).map(|n| n.as_str().to_owned());
+    let parent = |e: Entity| world.get::<ChildOf>(e).map(ChildOf::parent).expect("a parent");
+    let mut nodes: Vec<&str> = pictures.iter().map(|(_, node)| node.as_str()).collect();
+    nodes.sort_unstable();
+    assert_eq!(nodes, ["Crusher", "Gate", "Lift", "Turntable"]);
+    for (entity, node) in &pictures {
+        assert_eq!(name(*entity).as_deref(), Some(node.as_str()));
+        let scene = parent(*entity);
+        assert_eq!(name(scene).as_deref(), Some("Scene"), "{node}: the scene's own root");
+        assert!(world.get::<LevelVisual>(parent(scene)).is_some(), "{node}: under the level's picture root");
+    }
+}
+
 #[test]
 fn the_movers_scenario_rides_pushes_crushes_and_leaves_nothing_behind() {
     let mut app = sandbox::test_app(42);

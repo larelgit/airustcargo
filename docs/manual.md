@@ -827,7 +827,7 @@ Tests:
 **Movers (F6): doors, lifts, platforms.** A mover is an entity with `Mover { def }` that goes through the keys of a `mover`
 definition (content kind `mover`, `*.mover.ron`), carries the characters that stand on it and pushes the ones in its way.
 A level node with `mover=<id>` makes one (its children in the file move with it, as its `MoverPart`s, and its picture follows
-it); so does a prefab or a spawn with the `Mover` component and a `Collider`.
+it: the node in the level's scene with the same whole path below the scene's own root); so does a prefab or a spawn with the `Mover` component and a `Collider`.
 
 ```ron
 // assets/content/world/movers.mover.ron
@@ -897,9 +897,10 @@ Tests: `shards_motion` `tests/motion/movers.rs` (a body rides a lift up and down
 turntable carries a body and turns it; a door pushes a body; `Stop`, `Reverse` and `Crush`; ping-pong and cycle; a snapshot taken
 mid-ride plays on the same; the describer, the tool, the condition; bad definitions); `shards_level` `tests/level/movers.rs` (a node
 and its children move together, in the frame they were put in; a snapshot keeps the parts; an unknown and a nested mover;
-`level_despawn`; the picture follows, with `render`); `shards_action` `tests/combat/crush.rs`; `shards_npc` `tests/npc/navmesh.rs`
-(a closed door is carved, an open one where it rests); the sandbox's `movers.rs` (the room's file, its scenario on a fresh game
-leaving nothing behind, a client riding a lift the host moves), `engine_rules.rs` (`motion.mover_sane` fires), the scenario
+`level_despawn`; the picture follows, with `render`, and two movers whose paths end alike, `A/Mover` and `B/A/Mover`, each
+find their own node); `shards_action` `tests/combat/crush.rs`; `shards_npc` `tests/npc/navmesh.rs`
+(a closed door is carved, an open one where it rests); the sandbox's `movers.rs` (the room's file, each mover's picture on its own node of the scene Bevy
+loads, its scenario on a fresh game leaving nothing behind, a client riding a lift the host moves), `engine_rules.rs` (`motion.mover_sane` fires), the scenario
 `movers.scenario` and its reference replay `movers.json`.
 
 **Parameters are content.** Content kind `locomotion`, a map from id to numbers; missing fields take default values, a typo is an error with its line.

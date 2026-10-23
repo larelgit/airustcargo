@@ -115,18 +115,25 @@ mod follow {
                 if nodes.get(e).map(|(name, _)| name.as_str()) != Ok(last) {
                     return false;
                 }
-                // The names from the picture's root down to the entity end with the node's path.
+                // The names from the scene's root down to the entity are the node's whole path.
+                // The picture's root holds the glTF scene's own root (Bevy names it after the
+                // scene, `Scene0` for one without a name), and the file's top nodes hang below
+                // it. A path's tail is not enough: `B/A/Mover` ends with `A/Mover` too.
                 let mut names = Vec::new();
                 let mut at = e;
-                while at != root {
+                loop {
+                    let Ok(parent) = parents.get(at) else { return false };
+                    if parent.parent() == root {
+                        // `at` is the scene's root, not a node of the file.
+                        break;
+                    }
                     if let Ok((name, _)) = nodes.get(at) {
                         names.push(name.as_str());
                     }
-                    let Ok(parent) = parents.get(at) else { break };
                     at = parent.parent();
                 }
                 names.reverse();
-                names.ends_with(&path)
+                names == path
             });
             if let Some(entity) = found
                 && let Ok((_, rest)) = nodes.get(entity)
