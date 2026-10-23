@@ -85,7 +85,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 218 definitions in 65 files
+cargo shards content check                 # ok: 223 definitions in 67 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -108,7 +108,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 218 definitions in 65 files
+# ok: 223 definitions in 67 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -598,7 +598,7 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 218 definitions in 65 files
+content: 223 definitions in 67 files
   action  70
   animset  1
   attack_plan  3
@@ -4247,6 +4247,7 @@ rule, an engine rule cannot be removed, replaced or shadowed (`assert_add` and `
 | `core.intent_sane` | every `Intent` has a finite `move_dir` of length at most 1 (+ 1e-4) and a finite `aim`. The movement code survives garbage, so the rule names the writer that forgot to clamp. The host cleans a network client's input before it reaches `Intent`, so a bad frame cannot stop the host |
 | `motion.finite` | every `AiVisible` entity has a finite `Transform` translation and a finite rotation of length 1 ± 1e-3, and a finite `MotionState` (velocity, ground normal, timers, mantle, fall height, water surface, updraft, placed position). Scale is not judged |
 | `voxel.body_in_solid` | no character has its capsule centre in a solid cell of a voxel field it collides with, except on the tick something other than the controller placed it (`MotionState::placed`). On by default since the fuzz runs on the voxel arena (see "Voxel fields") |
+| `motion.mover_sane` | every `MoverState` (F6) has a finite `t` in `0..1` (0 at rest), goes between neighbouring keys, holds finite `wait` and `blocked` times `>= 0` and a finite origin, and names no key past its definition's last (a mover whose definition content does not have is not judged by keys). The movers' step keeps all of it, so a violation names a writer that set the state by hand |
 | `rules.mode_known` | while `ActiveRules` exists, its `mode` is empty (neutral) or names a rule set that is in `rules/default` `modes` and in content: `ActiveRules plays \`nope\`, which content does not have`. A content change that takes the mode away falls back to `start` inside the call, so a violation names a writer that set the mode by hand (see "Rules (C3)") |
 | `action.resources_in_range` | `Health`, `Stamina` and `Poise` are finite with `max > 0` and `0 <= current <= max`. Dead bodies are checked too (`current` is 0). A game that wants a buff above `max` raises `max` with it |
 | `action.running_sane` | a running action of a fighter or a combat object (B4) exists in content, its phase is one of the action's phases (an action with no phases has nothing to compare), and its clock is between 0 and its length plus one tick. The length is the run's own when that is longer than the definition's (miss recovery and `extend_recovery` lengthen a run, B2a). Without a content database the rule passes |
@@ -4292,12 +4293,13 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-35 rules, checked after every tick
+36 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
   motion.launch_sane  engine rule  armed
   voxel.body_in_solid  engine rule  armed
+  motion.mover_sane  engine rule  armed
   rules.mode_known  engine rule  armed
   action.resources_in_range  engine rule  armed
   action.running_sane  engine rule  armed

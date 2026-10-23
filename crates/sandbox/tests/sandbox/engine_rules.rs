@@ -156,6 +156,26 @@ fn a_body_in_a_solid_voxel_cell_stops_the_game() {
 }
 
 #[test]
+fn a_mover_state_its_definition_does_not_allow_stops_the_game() {
+    use shards::motion::{Mover, MoverState, MOVER_SANE};
+    // Written by hand past the end of its way (the step keeps `t` below 1).
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        world.spawn((Mover { def: "lift".into() }, MoverState { from: 0, to: 1, t: 1.5, ..default() }, Transform::default()));
+    });
+    let line = stops_on(&mut app, MOVER_SANE, 2);
+    assert!(line.contains("MoverState.t = 1.5 outside 0..1"), "{line}");
+
+    // A key the definition does not have (the lift has two).
+    let mut app = sandbox::test_app(42);
+    plant(&mut app, 2, |world| {
+        world.spawn((Mover { def: "lift".into() }, MoverState { from: 5, to: 5, ..default() }, Transform::default()));
+    });
+    let line = stops_on(&mut app, MOVER_SANE, 2);
+    assert!(line.contains("MoverState names key 5, past its definition's last (1)"), "{line}");
+}
+
+#[test]
 fn an_id_written_in_place_breaks_the_index() {
     let mut app = sandbox::test_app(42);
     let boss = body(app.world(), 6);
