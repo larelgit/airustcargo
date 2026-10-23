@@ -307,6 +307,51 @@ fn a_crouched_body_rides_a_lift_as_a_standing_one_does() {
     ok(&mut app, "level_despawn", json!({"id": "movers"}));
 }
 
+/// A client crouches its own body (the host gave it the `crouch_viewer` locomotion): the client predicts the stance and
+/// the capsule, the host's state agrees with it, nothing snaps or desyncs, and the host's recording plays the same alone.
+#[test]
+fn a_client_crouches_its_own_body_and_the_host_agrees() {
+    use crate::net::{body as body_of, desyncs, entity as entity_of, lossy, stand_with, verify_host, C1, HOST};
+
+    let mut stand = stand_with(1, lossy());
+    for id in ["e6", "e7", "e8", "e14"] {
+        let out = stand.call(HOST, "npc_set_state", json!({"id": id, "state": "calm"}));
+        assert!(out.ok, "{}", out.result);
+    }
+    let id = body_of(&stand, C1);
+    let set = stand.call(HOST, "set", json!({"id": id, "component": "CharacterController", "path": "params", "value": "crouch_viewer"}));
+    assert!(set.ok, "{}", set.result);
+    stand.run(60);
+    let states = |stand: &shards::net::Stand| -> Vec<(f32, f32)> {
+        [HOST, C1]
+            .into_iter()
+            .map(|member| {
+                let world = stand.world(member);
+                let e = entity_of(stand, member, &id).expect("the body");
+                let height = match world.get::<shards::motion::Collider>(e).unwrap().shape {
+                    shards::motion::Shape::Capsule { half_height, radius } => 2.0 * (half_height + radius),
+                    other => panic!("not a capsule: {other:?}"),
+                };
+                (world.get::<Crouch>(e).map_or(0.0, |c| c.depth), height)
+            })
+            .collect()
+    };
+    let said = stand.call(C1, "crouch", json!({}));
+    assert!(said.ok, "{}", said.result);
+    stand.run(150);
+    for (member, (depth, height)) in states(&stand).into_iter().enumerate() {
+        assert!(depth == 1.0 && (height - 1.0).abs() < 1e-4, "member {member} is crouched: depth {depth}, height {height}");
+    }
+    let up = stand.call(C1, "crouch", json!({"hold": false}));
+    assert!(up.ok, "{}", up.result);
+    stand.run(150);
+    for (member, (depth, height)) in states(&stand).into_iter().enumerate() {
+        assert!(depth == 0.0 && (height - 1.8).abs() < 1e-4, "member {member} stands: depth {depth}, height {height}");
+    }
+    assert_eq!(desyncs(&stand, C1), 0);
+    verify_host(&stand);
+}
+
 #[test]
 fn the_crouch_replay_continues_alike_from_its_snapshots() {
     let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/replays/crouch.json");
@@ -326,4 +371,5 @@ fn the_crouch_replay_continues_alike_from_its_snapshots() {
     let checked: u64 = verdict.split("heavy: ").nth(1).and_then(|r| r.split(' ').next()).and_then(|n| n.parse().ok()).unwrap_or(0);
     assert!(checked >= 30, "a twin every 10 ticks: {verdict}");
 }
+
 

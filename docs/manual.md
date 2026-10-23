@@ -621,7 +621,7 @@ content: 272 definitions in 90 files
   level  4
   locale  2
   lock_on  1
-  locomotion  6
+  locomotion  7
   look  15
   mover  4
   moveset  21
@@ -1342,7 +1342,7 @@ A body without a `crouch_height` ignores the input.
   body stays as it is (`Crouch::blocked`), whether it is a ceiling over a duct or the floor under a jump's feet, and nothing is ever half stood in geometry. It stands the tick the
   cast is clear, at the same rate. A crouched body can always walk out from under the ceiling at its crouch pace.
 - **The stance is state, in `Crouch`.** `Crouch { depth, wanted, blocked }` (`depth` 0 standing to 1 crouched; a body is *crouched* while it is above 0) is a reflected component,
-  so snapshots, the replay hash, `inspect` and co-op replication hold it, and a client predicts it for its own body (`net_predicted`). **It lives next to `MotionState`, not in
+  so snapshots, the replay hash, `inspect` and co-op replication hold it, and a client predicts it for its own body (`net_predicted`; a predicting client leaves the capsule's shape, the `Collider`, to the host's replicated state: a predicted body may change only predicted components, or the desync check sees the difference, so the client's controller does not fit its own collider). **It lives next to `MotionState`, not in
   it, on purpose**: the replay hash serializes every field of every gameplay component through reflection, so a new field of `MotionState` (or of `LocomotionInput`) would
   change the hash of every body in every recording, crouching or not. The controller puts `Crouch` on a body the first time it crouches (the `JumpedFlight` pattern); a body
   that cannot crouch, or never did, carries nothing, and the reference replays recorded before the stance verify unchanged. The crouch input is read from `Intent::held` in the
@@ -1380,7 +1380,7 @@ A body without a `crouch_height` ignores the input.
   (`levels/crouch.gltf`, written by `room()` in `tests/sandbox/crouch.rs`, and `world/crouch.level.ron`): a duct 6 m long whose ceiling is 1.2 m up, and a ledge 1.7 m high (a jump peaks
   1.2 m). The scenario `crouch.scenario` stops a standing player at the duct, walks it crouched, shows that letting go under the ceiling changes nothing and that it stands out the far end,
   jumps the ledge plain and with a crouch in the air, and shoots a standing and a crouched dummy from a standing and a crouched eye (also the reference replay `crouch.json`).
-  `tests/sandbox/crouch.rs` checks the duct, the ledge, the dummy's hurtbox, eye and head, a crouched body riding a lift, and the replay in heavy mode (`--heavy 10`);
+  `tests/sandbox/crouch.rs` checks the duct, the ledge, the dummy's hurtbox, eye and head, a crouched body riding a lift, a co-op client crouching its own body (the host agrees, no desync), and the replay in heavy mode (`--heavy 10`);
   `tests/motion/crouch.rs` the stance, the ceiling and floor casts, the air shift, the speed cap and the queries on bare worlds.
 
 ## Actions and combat (E3)

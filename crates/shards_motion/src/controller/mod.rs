@@ -43,7 +43,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shards_content::{ContentAppExt, ContentDb};
 use shards_core::input_names::CROUCH;
-use shards_core::{Intent, NetSet, Predicted};
+use shards_core::{Intent, NetRole, NetSet, Predicted};
 
 pub use params::{CharacterParams, Facing, SprintResume, DEFAULT_EYE_FRACTION, DEFAULT_PITCH_LIMITS_DEG};
 pub use stance::{Crouch, Crouched, Stood};
@@ -369,6 +369,7 @@ pub fn move_characters<F: QueryFilter + 'static>(
     time: Res<Time>,
     physics: Res<PhysicsWorld>,
     db: Option<Res<ContentDb>>,
+    role: Option<Res<NetRole>>,
     mut commands: Commands,
     mut characters: CharacterQuery<F>,
     mut dangling: Local<HashSet<String>>,
@@ -443,7 +444,11 @@ pub fn move_characters<F: QueryFilter + 'static>(
         let depth = settled.map_or(0.0, |s| s.crouch.depth);
         let sized = params.at_depth(depth);
         let params: &CharacterParams = &sized;
-        fit(&mut collider, &params.collider());
+        // The collider is the host's to size: a client predicts the stance (`Crouch`, the feet) and leaves the shape the
+        // host replicates, or the prediction would change a component that is not predicted and the desync check would see it.
+        if role.as_deref().is_none_or(|role| role.simulates()) {
+            fit(&mut collider, &params.collider());
+        }
         let mover = Mover::new(&physics, params, entity, collider.layers);
         let facing = flat(*tf.forward()).try_normalize().unwrap_or(Vec3::NEG_Z);
         let mut step = Step {
