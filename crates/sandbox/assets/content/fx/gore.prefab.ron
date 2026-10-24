@@ -1,0 +1,40 @@
+// The pieces of the gore test room (content kind `prefab`; F9), for `scenarios/gore.scenario` and
+// `tests/sandbox/gore.rs`: a floor, a wall and a ceiling, each a 12 m slab of `WORLD` collider with an `AiKind`, so
+// it has an id and `despawn` takes it away again. The floor's top is at the prefab's y, the wall stands on its y and
+// reaches 3.5 m, the ceiling lies on its y. Marks and chunks land on what they are made of: shots leave holes on the
+// wall, the floor and the ceiling, blood on the floor and the wall behind a dummy.
+{
+    "gore_floor": (
+        components: {
+            "Name": "Gore floor",
+            "AiKind": ("Floor"),
+            "Collider": (
+                shape: Cuboid(half: (6.0, 0.25, 6.0)),
+                offset: (0.0, -0.25, 0.0),
+                layers: (memberships: (1), filters: (4294967295)),
+            ),
+        },
+    ),
+    "gore_wall": (
+        components: {
+            "Name": "Gore wall",
+            "AiKind": ("Wall"),
+            "Collider": (
+                shape: Cuboid(half: (6.0, 1.75, 0.25)),
+                offset: (0.0, 1.75, 0.0),
+                layers: (memberships: (1), filters: (4294967295)),
+            ),
+        },
+    ),
+    "gore_ceiling": (
+        components: {
+            "Name": "Gore ceiling",
+            "AiKind": ("Ceiling"),
+            "Collider": (
+                shape: Cuboid(half: (6.0, 0.25, 6.0)),
+                offset: (0.0, 0.25, 0.0),
+                layers: (memberships: (1), filters: (4294967295)),
+            ),
+        },
+    ),
+}

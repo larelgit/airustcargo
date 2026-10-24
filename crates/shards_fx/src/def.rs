@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use shards_content::db::closest;
 use shards_content::{parse_color, ContentDef, Refs};
 
+use crate::mark::{validate_links, MarkLink};
+
 /// The most particles one effect keeps alive at once.
 pub const MAX_LIVE: u32 = 4096;
 /// The most particles one play starts at once.
@@ -147,6 +149,30 @@ pub enum Aim {
     /// hit, a block, a parry: the effect plays on that side of the body); up for the rest. Tilted
     /// up by `lift`.
     Hit,
+    /// The other way: out of the far side, away from the attacker (what a body that was hit sprays
+    /// out of its back, the chunks of a part that broke), tilted up by `lift`.
+    Away,
+    /// Along the surface's normal, for an event that has a surface (`shot_impact`: sparks leave a wall
+    /// at right angles to it); up for the rest. `lift` does not apply.
+    Surface,
+}
+
+/// What a particle that lands (`collide: true`) does once it has come to rest.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Rest {
+    /// It lies there as long as its `lifetime` says and fades as any particle does (the default).
+    #[default]
+    Fade,
+    /// It lies there until the effect is cleared (`shards_fx::clear`, a region change) or the pool
+    /// recycles it for a newer one. Its `lifetime` is then how long it may fly before it lands, and
+    /// the time it takes to reach its look at the end (`color_end`, `size_end`), which it keeps.
+    UntilCleared,
+}
+
+impl Rest {
+    pub fn is_default(&self) -> bool {
+        *self == Rest::Fade
+    }
 }
 
 /// An effect (kind `effect`; its id is what the game's [`FxDef`], a clip's cue or
@@ -241,9 +267,51 @@ pub struct EffectDef {
     /// How a play's strength changes the particles' number, speed and size ([`StrengthResponse`]).
     #[serde(skip_serializing_if = "StrengthResponse::is_default")]
     pub strength: StrengthResponse,
+    /// A glTF mesh drawn for each particle in place of its `shape`: `"models/chunk.glb"` is the first primitive of
+    /// the file's first mesh (`"models/chunk.glb#Mesh1/Primitive0"` another). The mesh is drawn at `size` times its own
+    /// size, so make it about a unit across; it is shaded as a cube is (or lit by itself with `glow` and `unlit`), takes
+    /// the particle's colour for its own, and tumbles. Leave `shape` out with it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<String>,
+    /// A picture (a PNG inside the assets folder) a `Quad` particle wears: its colour times the picture's, its shape the
+    /// picture's alpha (a leaf, a feather, a scrap), in place of the soft round spot.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    /// The particles land: each is stepped, a ray a step against the world's colliders (the `WORLD` layer, read-only), and
+    /// bounces, slides and comes to rest on what it meets (debris). Without it a particle flies free and goes through
+    /// everything, as it always did.
+    #[serde(skip_serializing_if = "is_false")]
+    pub collide: bool,
+    /// The share of its speed along the surface a landing particle keeps on bouncing, 0 (it lands dead) to 1 (it keeps it
+    /// all). Only with `collide`.
+    #[serde(skip_serializing_if = "is_default_restitution")]
+    pub restitution: f32,
+    /// How much of its speed along a surface a landing particle loses to it, and how hard a sliding one is held back: 0
+    /// slides for ever, 1 and more stops it at once. Only with `collide`.
+    #[serde(skip_serializing_if = "is_default_friction")]
+    pub friction: f32,
+    /// What becomes of a landing particle at rest: [`Rest::Fade`] (as any particle) or [`Rest::UntilCleared`] (it stays).
+    #[serde(skip_serializing_if = "Rest::is_default")]
+    pub rest: Rest,
+    /// Words `shards_fx::clear` takes the effect's particles away by (`"gore"`, `"level"`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     /// Particles of this effect alive at once at most: its pool, made once. One more takes the
     /// place of the oldest.
     pub max_live: u32,
+}
+
+/// What a landing particle's `restitution` is when the content says nothing.
+pub const DEFAULT_RESTITUTION: f32 = 0.4;
+/// What a landing particle's `friction` is when the content says nothing.
+pub const DEFAULT_FRICTION: f32 = 0.6;
+
+fn is_default_restitution(v: &f32) -> bool {
+    *v == DEFAULT_RESTITUTION
+}
+
+fn is_default_friction(v: &f32) -> bool {
+    *v == DEFAULT_FRICTION
 }
 
 impl Default for EffectDef {
@@ -274,6 +342,13 @@ impl Default for EffectDef {
             spin: 360.0,
             push: (1.0, 1.0),
             strength: StrengthResponse::default(),
+            mesh: None,
+            image: None,
+            collide: false,
+            restitution: DEFAULT_RESTITUTION,
+            friction: DEFAULT_FRICTION,
+            rest: Rest::Fade,
+            tags: Vec::new(),
             max_live: 64,
         }
     }
@@ -312,7 +387,7 @@ impl EffectDef {
     /// `18 quad glow #fff2b3 → #ff6a1a00 · 0.18-0.35 s · aim hit` (the pool is the tool's to say).
     pub fn describe(&self) -> String {
         let mut parts = Vec::new();
-        let mut what = format!("{} {}", self.count, self.shape.name());
+        let mut what = format!("{} {}", self.count, if self.mesh.is_some() { "mesh" } else { self.shape.name() });
         if self.rate > 0.0 && self.duration > 0.0 {
             what.push_str(&format!(" + {}/s for {}s", self.rate, self.duration));
         }
@@ -331,8 +406,11 @@ impl EffectDef {
         } else {
             format!("{}-{} s", self.lifetime.0, self.lifetime.1)
         });
-        if self.aim == Aim::Hit {
-            parts.push("aim hit".into());
+        match self.aim {
+            Aim::Up => {}
+            Aim::Hit => parts.push("aim hit".into()),
+            Aim::Away => parts.push("aim away".into()),
+            Aim::Surface => parts.push("aim surface".into()),
         }
         if self.gravity != 0.0 {
             parts.push(format!("gravity {}", self.gravity));
@@ -349,6 +427,16 @@ impl EffectDef {
         if !self.strength.is_default() {
             parts.push(self.strength.describe());
         }
+        if let Some(mesh) = &self.mesh {
+            parts.push(format!("mesh {mesh}"));
+        }
+        if let Some(image) = &self.image {
+            parts.push(format!("image {image}"));
+        }
+        if self.collide {
+            let stays = if self.rest == Rest::UntilCleared { ", stays" } else { "" };
+            parts.push(format!("lands (bounce {}, friction {}{stays})", self.restitution, self.friction));
+        }
         parts.join(" · ")
     }
 }
@@ -359,6 +447,80 @@ fn range(refs: &mut Refs, field: &str, (min, max): (f32, f32), positive: bool) {
     if !(min.is_finite() && max.is_finite() && low_ok && min <= max) {
         let low = if positive { "above 0" } else { "0 or more" };
         refs.error(format!("{field}: (min, max) with min {low} and at most max, not ({min}, {max})"));
+    }
+}
+
+/// What is wrong with the asset file `path` a definition names, if anything: it ends in one of `extensions`, lies inside
+/// the assets folder and exists. `label` lets a glTF path carry a `#Mesh1/Primitive0` suffix, which is set aside before the
+/// file is looked for.
+pub(crate) fn asset_problem(refs: &Refs, path: &str, extensions: &[&str], label: bool) -> Option<String> {
+    let file = if label { path.split_once('#').map_or(path, |(file, _)| file) } else { path };
+    let lower = file.to_ascii_lowercase();
+    if file.is_empty() {
+        Some("is empty; name a file inside the assets folder".to_owned())
+    } else if !extensions.iter().any(|ext| lower.ends_with(ext)) {
+        Some(format!("`{path}` is not a {} file", extensions.join(" or ")))
+    } else if shards_action::view_model::leaves_the_assets(file) {
+        Some(format!("`{path}` leaves the assets folder: give a path inside it, without `..`, a drive or a leading slash"))
+    } else if let Some(root) = refs.asset_root()
+        && !root.join(file).is_file()
+    {
+        Some(format!("`{path}` is no file in the assets folder"))
+    } else {
+        None
+    }
+}
+
+/// The check of the `tags` of an effect or a mark: words `clear` takes them away by.
+pub(crate) fn check_tags(refs: &mut Refs, tags: &[String]) {
+    for (i, tag) in tags.iter().enumerate() {
+        if tag.is_empty() || tag.len() > 64 || tag.chars().any(char::is_control) {
+            refs.error(format!("tags[{i}]: a word of 1 to 64 characters without control characters, not `{tag}`"));
+        } else if tags[..i].contains(tag) {
+            refs.error(format!("tags[{i}]: `{tag}` twice"));
+        }
+    }
+}
+
+impl EffectDef {
+    /// The checks of what draws a particle from a file and what makes it land.
+    fn validate_landing(&self, refs: &mut Refs) {
+        if let Some(mesh) = &self.mesh {
+            if let Some(why) = asset_problem(refs, mesh, &[".glb", ".gltf"], true) {
+                refs.error(format!("mesh {why}"));
+            }
+            if self.shape != ParticleShape::Quad {
+                refs.error("mesh replaces `shape`: leave `shape` out of an effect that has a mesh");
+            }
+            if self.image.is_some() {
+                refs.error("mesh and image: a particle is a mesh or a picture, not both");
+            }
+        }
+        if let Some(image) = &self.image {
+            if let Some(why) = asset_problem(refs, image, &[".png"], false) {
+                refs.error(format!("image {why}"));
+            }
+            if self.shape != ParticleShape::Quad {
+                refs.error("image: only a `Quad` particle wears a picture; leave `shape` out");
+            }
+        }
+        if !(0.0..=1.0).contains(&self.restitution) {
+            refs.error(format!("restitution: 0 (it lands dead) to 1 (it keeps all its speed), not {}", self.restitution));
+        }
+        if !(self.friction >= 0.0 && self.friction.is_finite()) {
+            refs.error(format!("friction: 0 or more, not {}", self.friction));
+        }
+        if !self.collide {
+            if self.restitution != DEFAULT_RESTITUTION || self.friction != DEFAULT_FRICTION {
+                refs.error("restitution and friction act on a particle that lands: add `collide: true`, or take them out");
+            }
+            if self.rest != Rest::Fade {
+                refs.error("rest: UntilCleared is for a particle that lands: add `collide: true`, or take it out");
+            }
+        } else if self.rest == Rest::UntilCleared && self.gravity >= 0.0 {
+            refs.error(format!("rest: UntilCleared needs `gravity` below 0: a particle that does not fall never comes to rest (gravity is {})", self.gravity));
+        }
+        check_tags(refs, &self.tags);
     }
 }
 
@@ -434,11 +596,12 @@ impl ContentDef for EffectDef {
         {
             refs.error(format!("color_end: {e}"));
         }
+        self.validate_landing(refs);
     }
 }
 
 /// The engine's events a game can give an effect in its [`FxDef`], and where each plays.
-pub const EVENTS: [(&str, &str); 9] = [
+pub const EVENTS: [(&str, &str); 12] = [
     ("damaged", "a hit landed: on the side of the one hit facing the attacker"),
     ("blocked", "a hit met a guard: on the side of the defender facing the attacker"),
     ("parried", "a hit was parried: on the side of the defender facing the attacker"),
@@ -448,6 +611,9 @@ pub const EVENTS: [(&str, &str); 9] = [
     ("died", "someone died: at them"),
     ("healed", "someone was healed: at them"),
     ("telegraph", "an attack warns: at the attacker"),
+    ("shot_impact", "a shot stopped at a world surface: at the point, out along its normal (`aim: Surface`)"),
+    ("shot_hit", "a shot went through a body: at the point, back towards the shooter"),
+    ("part_broken", "a body part broke off: at the part, back towards the attacker"),
 ];
 
 /// The game's effects (kind `fx`; one per game, any id): the effect each engine event plays, and
@@ -470,6 +636,10 @@ pub struct FxDef {
     /// A clip's cue (`AnimationCue`: `footstep`, `swoosh`) → the effect it plays: from the body's feet, or
     /// from the cue's bone when it names one (`CueDef::bone`), at the cue's `strength` (fewer, smaller particles).
     pub cues: BTreeMap<String, String>,
+    /// An event ([`MARK_EVENTS`]: `shot_impact`, `shot_hit`, `damaged`, `died`, `part_broken`) → the marks it lays on
+    /// surfaces ([`MarkLink`]).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub marks: BTreeMap<String, Vec<MarkLink>>,
 }
 
 impl ContentDef for FxDef {
@@ -497,6 +667,7 @@ impl ContentDef for FxDef {
             }
             refs.require::<EffectDef>(effect, &format!("cues.{cue}"));
         }
+        validate_links(&self.marks, refs);
     }
 }
 
@@ -564,7 +735,7 @@ mod tests {
             (1.0, 0.0, false, 1.0, (1.0, 1.0), StrengthResponse::default())
         );
         let written = ron::to_string(&old).unwrap();
-        for field in ["size_ease", "swell", "unlit", "intensity", "push", "strength"] {
+        for field in ["size_ease", "swell", "unlit", "intensity", "push", "strength", "mesh", "image", "collide", "restitution", "friction", "rest", "tags"] {
             assert!(!written.contains(field), "{field} written: {written}");
         }
         assert_eq!(old.describe(), "6 cube #ffffff → transparent · 0.4-0.8 s");

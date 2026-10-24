@@ -91,7 +91,7 @@ pub struct ViewModelDef {
 /// Whether `path` is not a relative path inside the assets folder on every platform: it climbs (`..`), is rooted or
 /// has a drive (`/arms.glb`, `\arms.glb`, `C:\arms.glb`, `C:arms.glb`), however this machine's `Path` reads it (a
 /// content file is checked on one machine and played on another).
-fn leaves_the_assets(path: &str) -> bool {
+pub fn leaves_the_assets(path: &str) -> bool {
     let bytes = path.as_bytes();
     let drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
     drive

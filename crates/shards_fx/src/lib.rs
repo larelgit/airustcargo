@@ -1,4 +1,4 @@
-//! # shards_fx — effects and telegraph decals (E10.3)
+//! # shards_fx — effects, telegraph decals (E10.3), marks and debris (F9)
 //!
 //! What an effect looks like is content: `content/**/*.effect.ron` names effects ([`EffectDef`]:
 //! how many particles, how long they live, how fast and which way they fly, gravity and drag,
@@ -29,21 +29,42 @@
 //!   the decal's (`TelegraphStyle::decals`). Decals need a depth prepass: the module gives one to
 //!   every camera with `AiCamera` while decals are on. `telegraph_decals on=false` goes back to
 //!   the gizmo fill.
-//! - **Agents**: `effects` lists the effects, their pools and the decals; `effect_play` plays one
-//!   at an entity or a point; `telegraph_decals` switches the decals (the developer menu has
-//!   `effects` under world and the switch under combat); `ai/status` has
-//!   `fx: {effects, live, decals, telegraph_decals}`.
+//! - **Marks (F9)**: the content kind `mark` (`*.mark.ron`, [`MarkDef`]) says what a spot on a surface looks
+//!   like: a colour or a PNG, a size range, a random turn, a fade in and out, a `lifetime` (`Secs` or
+//!   `UntilCleared`) and a cap per kind. A mark is a decal (Bevy's `ForwardDecal` with a `StandardMaterial`, so it
+//!   is lit) whose quad is turned along the surface's normal, so it lies on a wall, a ceiling or a floor; a
+//!   pool per kind recycles the oldest at its cap. The game lays one with [`spawn_mark`] or [`PlayMark`], and the
+//!   `fx` table's `marks` ([`MarkLink`]) lays them from `shot_impact` (a hole where a shot stopped), `shot_hit`
+//!   (blood on the wall behind a body a shot went through, found by a ray along the shot), `damaged`, `died` and
+//!   `part_broken`. See [`mark`] and [`gore`].
+//! - **Debris (F9)**: an effect with `collide: true` has particles that are stepped against the world (a ray a
+//!   step through the physics world's `WORLD` colliders, read-only): they bounce (`restitution`), slide
+//!   (`friction`) and come to rest, and with `rest: UntilCleared` stay, past the 30 s every other particle's life
+//!   is held to, until [`clear`] or a new world; a `mesh` (a glTF) or an `image` takes the place of the shape. The
+//!   pool's `max_live` is the cap of what lies there. See [`debris`].
+//! - **Agents**: `effects` lists the effects, their pools (and how many chunks lie at rest), the marks alive per
+//!   kind and the rays the debris cast; `effect_play` plays one at an entity or a point; `mark_spawn` lays a
+//!   mark, at a point or where a ray finds a surface; `fx_clear` takes marks and chunks away by tag;
+//!   `telegraph_decals` switches the decals (the developer menu has `effects` under world and the switch under
+//!   combat); `ai/status` has `fx: {effects, live, decals, telegraph_decals, marks, debris, rays}`.
 //! - **The picture's, not the simulation's**: nothing here changes the world. Only while
 //!   something is drawn (a window or `--offscreen`, feature `render`); headless no particle
-//!   starts and the tools say so. Pools and decals are entities without `AiId`: replays,
-//!   snapshots and co-op do not see them, and a co-op client plays the effects of the events
-//!   its host forwards, as it sees them.
+//!   starts, no mark is laid and the tools say so. Pools, decals and marks are entities without `AiId`:
+//!   replays, snapshots and co-op do not see them, and a co-op client plays the effects and lays the marks of
+//!   the events its host forwards (`ShotFired`, `ShotImpact`, `Damaged`, `Died`; not `PartBroken`), as it
+//!   sees them.
 //! - **Checks**: `--check-content` finds ranges that are upside down or out of bounds, colours
 //!   that are not `#rrggbb` or `#rrggbbaa`, a pool smaller than one play, an event the engine
-//!   does not have, and events and cues that name an effect no file defines.
+//!   does not have, and events and cues that name an effect no file defines; marks with sizes, fades, caps and
+//!   picture paths out of bounds, and links that name no mark.
 
+pub mod debris;
 pub mod decal;
 pub mod def;
+pub mod gore;
+pub mod mark;
+#[cfg(feature = "render")]
+pub mod marks_render;
 #[cfg(feature = "render")]
 pub mod render;
 pub mod sim;
@@ -62,11 +83,18 @@ use shards_core::EngineAppExt;
 
 use crate::def::{in_proportion, MAX_COUNT, MAX_LIVE};
 pub use decal::{DecalShape, ZoneDecal};
-pub use def::{Aim, EffectDef, FxDef, ParticleShape, StrengthResponse, EVENTS};
+pub use def::{Aim, EffectDef, FxDef, ParticleShape, Rest, StrengthResponse, EVENTS};
+pub use gore::{
+    clear, clear_all, mark_seed, seed_of, spawn_mark, spawn_mark_quietly, spawn_mark_seeded, surface_along, Cleared, GoreStats, Marked, Marks, PlayMark,
+    RAYS_PER_FRAME,
+};
+pub use mark::{Mark, MarkDef, MarkLife, MarkLink, MarkPool, Place, MARK_EVENTS};
+#[cfg(feature = "render")]
+pub use marks_render::MarkDecal;
 #[cfg(feature = "render")]
 pub use render::{FxParticle, FxPrepass, ParticleMaterial, TelegraphDecal, ZoneDecalMaterial, ZoneMaterial};
 pub use sim::{Particle, Pool, Shown};
-pub use tools::{EffectPlayArgs, EffectsArgs, TelegraphDecalsArgs};
+pub use tools::{EffectPlayArgs, EffectsArgs, FxClearArgs, MarkSpawnArgs, TelegraphDecalsArgs};
 
 /// Version of the engine crates (they share one).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -253,8 +281,11 @@ impl Plugin for FxPlugin {
         );
         app.add_content::<EffectDef>()
             .add_content::<FxDef>()
+            .add_content::<MarkDef>()
             .init_resource::<FxSettings>()
             .init_resource::<Particles>()
+            .init_resource::<Marks>()
+            .init_resource::<GoreStats>()
             .add_engine_module("fx", VERSION)
             .add_ai_status("fx", status)
             .add_dev_entry("world", "effects", "Effects, their pools and decals", ai_core::DevCommand::Run("effects".into()))
@@ -274,7 +305,16 @@ impl Plugin for FxPlugin {
             .add_observer(|e: On<Staggered>, c: Commands| event_effect(c, "staggered", e.entity, None))
             .add_observer(|e: On<Died>, c: Commands| event_effect(c, "died", e.entity, None))
             .add_observer(|e: On<Healed>, c: Commands| event_effect(c, "healed", e.entity, None))
-            .add_observer(|e: On<Telegraph>, c: Commands| event_effect(c, "telegraph", e.attacker, None));
+            .add_observer(|e: On<Telegraph>, c: Commands| event_effect(c, "telegraph", e.attacker, None))
+            .add_observer(gore::on_play_mark)
+            .add_observer(gore::on_shot_fired)
+            .add_observer(gore::on_shot_impact)
+            .add_observer(gore::on_damaged)
+            .add_observer(gore::on_died)
+            .add_observer(gore::on_part_broken)
+            // A world built again (a region, a snapshot) and the main menu take the old one's marks and debris with them.
+            .add_observer(|_: On<ai_core::WorldRebuilt>, mut commands: Commands| commands.queue(gore::clear_on_new_world))
+            .add_systems(OnExit(shards_core::EngineState::InGame), |mut commands: Commands| commands.queue(gore::clear_on_new_world));
         tools::register(app.world_mut());
         #[cfg(feature = "render")]
         render::plugin(app);
@@ -502,12 +542,33 @@ pub fn decals(world: &World) -> usize {
     }
 }
 
-/// `ai/status` → `fx: {effects, live, decals, telegraph_decals}`.
+/// Particles of the effects that land (`collide: true`), at rest and still moving.
+pub fn debris_counts(world: &World) -> (usize, usize) {
+    let Some(particles) = world.get_resource::<Particles>() else { return (0, 0) };
+    let mut counts = (0, 0);
+    for body in particles.effects.values().filter(|p| p.def.collide).flat_map(|p| p.pool.slots.iter().flatten()).filter_map(|p| p.body) {
+        if body.rested {
+            counts.0 += 1;
+        } else {
+            counts.1 += 1;
+        }
+    }
+    counts
+}
+
+/// `ai/status` → `fx: {effects, live, decals, telegraph_decals, marks, debris, rays}`: `marks` the marks alive, `debris` the
+/// landing particles at rest and in flight, `rays` the rays of the last frame and the most in any (the performance counters
+/// of the gore).
 fn status(world: &World) -> Value {
+    let (resting, flying) = debris_counts(world);
+    let stats = world.get_resource::<GoreStats>().copied().unwrap_or_default();
     json!({
         "effects": world.get_resource::<ContentDb>().map_or(0, |db| db.ids::<EffectDef>().count()),
         "live": world.get_resource::<Particles>().map_or(0, Particles::live),
         "decals": decals(world),
         "telegraph_decals": world.get_resource::<FxSettings>().is_none_or(|s| s.decals),
+        "marks": world.get_resource::<Marks>().map_or(0, Marks::live),
+        "debris": {"resting": resting, "flying": flying},
+        "rays": {"last": stats.rays, "max": stats.rays_max, "total": stats.rays_total, "budget": stats.budget},
     })
 }

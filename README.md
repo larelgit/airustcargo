@@ -142,7 +142,7 @@ The roll is an ordinary player input: the agent's tools go through the same `Int
 
 - Stylised materials from content: toon bands, flat low-poly faces, outlines, glow.
 - Foliage and small props scattered over region tiles from content, with levels of detail.
-- Particle effects from pools, and attack telegraphs drawn as decals on the ground.
+- Particle effects from pools, attack telegraphs drawn as decals on the ground, and gore from content: marks (blood, holes) laid on any wall, floor or ceiling, and chunks of debris that bounce and stay where they land.
 - Performance budgets: tick time in every `step` reply, frame time in `shards status`, and an autotest (`--perf`) that checks the budgets of a reference scene.
 - Crash reports with the stack, the machine, the log and a replay of the session.
 - `shards package` builds a game for players and checks the result (Windows and Linux).
@@ -164,7 +164,7 @@ cargo shards observe                       # a text snapshot of the world + the 
 cargo shards tools                         # what can be done (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 277 definitions in 95 files
+cargo shards content check                 # ok: 286 definitions in 98 files
 cargo shards save-replay                   # the session from tick 0 → replays/tick<T>.json
 kill 4242                                  # the pid from `wait`; not kill -9: the game removes its token and port file
 
@@ -256,7 +256,7 @@ The rules that keep a game deterministic (gameplay in `FixedUpdate`, randomness 
 | `shards_audio` | Buses, voices with priorities, positional sounds, music in layers that follow the game |
 | `shards_look` | Stylised materials as content: colours, toon bands, flat faces, outlines |
 | `shards_scatter` | Foliage and small props strewn over region tiles from content, with levels of detail |
-| `shards_fx` | Particle effects from pools, and attack telegraphs as ground decals |
+| `shards_fx` | Particle effects from pools, attack telegraphs as ground decals, marks on any surface, and debris that lands and stays |
 | `shards_hitstop` | Hit stop: a brief hold of the picture (and of the real-time clock when playing alone) when a blow lands, from a table in content |
 | `shards_rules` | Rule sets as content: the mode a world plays (difficulty), by class of body and by session size, changed only by the host and out of combat |
 | `shards_dev` | The in-game developer menu and console |
