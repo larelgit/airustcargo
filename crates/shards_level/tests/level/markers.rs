@@ -4,7 +4,7 @@ use ai_core::{AiKind, AiLandmark, AiVisible};
 use bevy::prelude::*;
 use serde_json::json;
 use shards_level::{check_level, LevelAsset, LevelMarker, MarkerKind, RequiredMarker};
-use shards_motion::{Collider, CollisionLayers, Volume, VolumeKind};
+use shards_motion::{Collider, CollisionLayers, LayerMask, Usable, Volume, VolumeKind};
 
 use crate::asset::close;
 use crate::common::*;
@@ -215,4 +215,103 @@ fn required_markers_that_are_missing_are_found() {
         "required marker missing: `spawn` named `finish` in `arena.gltf` (found 0, need 1); add the custom property marker = \"spawn\" and name = \"finish\" to an object in Blender"
     );
     assert!(problems[1].contains("`socket` named `road`") && problems[1].contains("(found 2, need 3)"), "{}", problems[1]);
+}
+
+#[test]
+fn an_interactable_is_usable_and_its_node_is_its_use_area() {
+    let mut app = app();
+    // A mesh and nothing more: a use area on the USE layer, which collides with nothing.
+    let lever = spawn(&mut app, &one(json!({"marker": "interactable", "name": "lever"}))).unwrap()[0];
+    assert_eq!(app.world().get::<Usable>(lever), Some(&Usable { name: "lever".into(), ..default() }));
+    assert_eq!(app.world().get::<Collider>(lever).unwrap().layers, CollisionLayers::USE);
+    assert!(!CollisionLayers::USE.interacts_with(&CollisionLayers::CHARACTER) && !CollisionLayers::USE.interacts_with(&CollisionLayers::WORLD));
+    // With a collider of its own it is solid and usable: a door is a wall and a target.
+    let nodes = spawn_arena(&mut app);
+    let gate = app.world().get::<Collider>(nodes["Gate"]).unwrap().layers;
+    assert_eq!((gate.memberships, gate.filters), (LayerMask::WORLD | LayerMask::USE, LayerMask::ALL));
+    assert_eq!(app.world().get::<Usable>(nodes["Gate"]).map(|u| u.name.as_str()), Some("gate"));
+    // The shape comes from the node as a volume's does: `size` shapes a node with no mesh.
+    let panel = spawn(&mut app, &bare(NodeSpec::new("Panel").props(json!({"marker": "interactable", "size": [0.5, 0.4, 0.1]})))).unwrap()[0];
+    let panel = app.world().get::<Collider>(panel).unwrap();
+    assert_eq!((panel.layers, panel.shape.half_extents()), (CollisionLayers::USE, Vec3::new(0.25, 0.2, 0.05)));
+    // `layers` names more of it; the USE layer is added whatever it says.
+    let both = spawn(&mut app, &one(json!({"marker": "interactable", "collider": "box", "layers": ["game0"]}))).unwrap()[0];
+    assert_eq!(app.world().get::<Collider>(both).unwrap().layers.memberships, LayerMask::game(0) | LayerMask::USE);
+    // The other markers are not usable and keep their colliders.
+    let nodes = by_node(&mut app);
+    assert!(app.world().get::<Usable>(nodes["GoalPad"]).is_none() && app.world().get::<Usable>(nodes["Shrine"]).is_none());
+}
+
+#[test]
+fn a_bare_empty_interactable_is_a_marker_without_a_use_area() {
+    // The committed exports have one (the outpost's lever): it loads as it always did, and nothing can look at it.
+    let mut app = app();
+    let e = spawn(&mut app, &bare(NodeSpec::new("Lever").props(json!({"marker": "interactable", "name": "lever"})))).unwrap()[0];
+    assert!(app.world().get::<Usable>(e).is_some() && app.world().get::<Collider>(e).is_none());
+    // `observe` says so, so an agent does not wait for a look to meet it.
+    let facts = ai_core::describe::facts(app.world(), e).unwrap();
+    assert_eq!(facts.fragment("usable"), Some("usable (no use area)"), "{facts:?}");
+}
+
+#[test]
+fn how_an_interactable_is_used_comes_from_its_properties() {
+    let mut app = app();
+    let valve = spawn(
+        &mut app,
+        &one(json!({"marker": "interactable", "name": "valve", "hold_s": 1.5, "use_range": "3", "prompt": "Turn the valve"})),
+    )
+    .unwrap()[0];
+    let usable = app.world().get::<Usable>(valve).unwrap();
+    assert_eq!((usable.hold_s, usable.use_range, usable.prompt.as_str()), (1.5, Some(3.0), "Turn the valve"));
+    assert_eq!(usable.prompt_text(), "Turn the valve");
+    // `observe` says what a look would not: that it takes time, and from how far.
+    let facts = ai_core::describe::facts(app.world(), valve).unwrap();
+    assert_eq!(facts.fragment("usable"), Some("usable (hold 1.5s, reach 3.0m)"), "{facts:?}");
+    // Left out, a press, the body's reach and the name.
+    let plain = spawn(&mut app, &one(json!({"marker": "interactable", "name": "switch"}))).unwrap()[0];
+    let usable = app.world().get::<Usable>(plain).unwrap();
+    assert_eq!((usable.hold_s, usable.use_range, usable.prompt_text()), (0.0, None, "switch"));
+    // Zero seconds is a press; every number is checked, and the error names the node and the property.
+    spawn(&mut app, &one(json!({"marker": "interactable", "hold_s": 0}))).unwrap();
+    let err = spawn(&mut app, &one(json!({"marker": "interactable", "hold_s": -1}))).unwrap_err();
+    assert!(err.contains("node `Thing`: `hold_s` must be zero or more (seconds to hold the button), found -1"), "{err}");
+    let err = spawn(&mut app, &one(json!({"marker": "interactable", "use_range": 0}))).unwrap_err();
+    assert!(err.contains("node `Thing`: `use_range` must be above zero, found 0"), "{err}");
+    let err = spawn(&mut app, &one(json!({"marker": "interactable", "hold_s": 1e300}))).unwrap_err();
+    assert!(err.contains("node `Thing`: `hold_s` is too big for a number here"), "{err}");
+    let err = spawn(&mut app, &one(json!({"marker": "interactable", "use_range": 150}))).unwrap_err();
+    assert!(err.contains("node `Thing`: `use_range` must be at most 100 (metres, how far a use is looked for), found 150"), "{err}");
+    let err = spawn(&mut app, &one(json!({"marker": "interactable", "hold_s": "long", "prompt": 3}))).unwrap_err();
+    assert!(err.contains("`hold_s` must be a number, found text") && err.contains("`prompt` must be text, found a number"), "{err}");
+    // They say how a thing is used: on a node that is no interactable they do nothing, and the check says so.
+    for key in ["hold_s", "use_range", "prompt"] {
+        let err = spawn(&mut app, &one(json!({"marker": "camp", key: 1.0}))).unwrap_err();
+        assert!(err.contains(&format!("`{key}` does nothing on this node: it says how an `interactable` is used")), "{key}: {err}");
+    }
+}
+
+/// A level of the one node `node`, no mesh.
+fn bare(node: NodeSpec) -> Gltf {
+    let mut g = Gltf::new();
+    g.root(node);
+    g
+}
+
+#[test]
+fn a_usable_thing_can_also_be_made_by_naming_the_component() {
+    // A node that is no `interactable` marker names the component and the layer itself, as a prefab would: the fields it leaves
+    // out are the defaults.
+    let mut app = app();
+    let e = spawn(&mut app, &one(json!({"Usable": {"name": "tablet", "hold_s": 2.0}, "collider": "box", "layers": ["use"]}))).unwrap()[0];
+    assert_eq!(app.world().get::<Usable>(e), Some(&Usable { name: "tablet".into(), hold_s: 2.0, ..default() }));
+    assert_eq!(app.world().get::<Collider>(e).unwrap().layers.memberships, LayerMask::USE);
+    assert!(app.world().get::<LevelMarker>(e).is_none());
+}
+
+#[test]
+fn an_interactable_cannot_also_be_a_sensor_volume() {
+    // A look never meets a sensor (a ray skips them unless it asks), so the thing could not be used: the check says so.
+    let mut app = app();
+    let err = spawn(&mut app, &one(json!({"marker": "interactable", "volume": "water"}))).unwrap_err();
+    assert!(err.contains("node `Thing`: an `interactable` cannot also be a `volume`"), "{err}");
 }

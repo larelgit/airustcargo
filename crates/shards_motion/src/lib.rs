@@ -14,6 +14,8 @@
 //!   shake) and the first-person one (at the eye of a body that looks, `Intent::look`, F1b) —
 //!   presentation only; its field of view, shake and look speed follow the player's
 //!   accessibility and control settings.
+//! - use by looking (F5): [`Usable`], the `USE` layer and the pure ray [`use_target`] from the eye along the look; the
+//!   press that uses what it meets is the action module's (`ActionSystems::Use`).
 //! - AI tools for agents: `move_to` (with `path`), `move`, `stop`, `jump`, `sprint`,
 //!   `glide`, and the perception queries `clearance` and `path_to` ([`perception`]);
 //!   `input_bindings` and `rebind`; `physics_overlay` with a window.
@@ -64,6 +66,7 @@ pub mod perception;
 pub mod physics;
 mod predict;
 mod tools;
+mod usable;
 
 use bevy::prelude::*;
 use shards_core::EngineAppExt;
@@ -94,6 +97,7 @@ pub use physics::{
     VolumeExited, VolumeKind, VoxelCollider, VoxelField,
 };
 pub use tools::TargetArg;
+pub use usable::{use_point, use_probe, use_target, Usable, UseHit, UseProbe, UseTarget, DEFAULT_USE_RANGE, PROBE_RANGE};
 
 /// Version of the engine crates (they share one).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -133,6 +137,7 @@ impl Plugin for MotionPlugin {
         app.add_engine_invariant(BODY_IN_SOLID, body_in_solid);
         ai::plugin(app);
         movers::plugin(app);
+        usable::plugin(app);
         coverage::plugin(app);
         intent::plugin(app);
         orders::plugin(app);

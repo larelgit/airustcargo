@@ -1,0 +1,8 @@
+// The use room (F5), written by the sandbox's tests (`tests/sandbox/using.rs`): eight stations in a row along
+// z, each a thing to look at from x 0 (east of it) and use, one for each rule of using by looking: a panel in
+// reach, two past it (one the marker's own `use_range` brings back), a panel behind a pane of glass, a valve held
+// for a second, two switches on one line, two at one distance, and a door that is solid, usable and a mover.
+// `scenarios/use.scenario` lays it on the canyon floor (its origin at x 100, y -10, z 0) and takes it away.
+{
+    "use": (file: "levels/use.gltf"),
+}

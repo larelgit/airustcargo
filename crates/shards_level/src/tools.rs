@@ -10,7 +10,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use shards_content::db::closest;
 use shards_content::ContentDb;
-use shards_motion::{Collider, Volume};
+use shards_motion::{Collider, LayerMask, Volume};
 
 use crate::def::LevelDef;
 use crate::library::{held_change, level_asset};
@@ -118,19 +118,24 @@ fn spawn_level_tool(In(call): In<Call<SpawnLevelArgs>>, world: &mut World) -> To
 /// `spawned level `arena` as instance 1 at (0.0, 0.0): 18 entities (7 solids, 3 volumes, 9 markers)`
 /// and a line per marker.
 fn summarize(world: &World, id: &str, at: Vec3, spawned: &SpawnedLevel) -> String {
-    let (mut colliders, mut volumes) = (0, 0);
+    let (mut colliders, mut volumes, mut areas) = (0, 0, 0);
     let mut markers = Vec::new();
     for &entity in &spawned.entities {
         let Ok(entity) = world.get_entity(entity) else { continue };
-        colliders += usize::from(entity.contains::<Collider>() && !entity.contains::<Volume>());
+        // A use area (an interactable's, on the `USE` layer alone) is no solid.
+        let layers = entity.get::<Collider>().map(|c| c.layers.memberships);
+        let area = layers.is_some_and(|m| m.intersects(LayerMask::USE) && !m.intersects(LayerMask::WORLD));
+        colliders += usize::from(layers.is_some() && !area && !entity.contains::<Volume>());
+        areas += usize::from(area);
         volumes += usize::from(entity.contains::<Volume>());
         if let Some(marker) = entity.get::<LevelMarker>() {
             let pos = entity.get::<Transform>().map_or(Vec3::ZERO, |t| t.translation);
             markers.push(format!("  {} at {}", marker_text(marker), fmt_pos(pos)));
         }
     }
+    let areas = if areas > 0 { format!(", {areas} use areas") } else { String::new() };
     let mut out = format!(
-        "spawned level `{id}` as instance {} at {}: {} entities ({colliders} solids, {volumes} volumes, {} markers)",
+        "spawned level `{id}` as instance {} at {}: {} entities ({colliders} solids, {volumes} volumes{areas}, {} markers)",
         spawned.instance,
         fmt_pos(at),
         spawned.entities.len(),
