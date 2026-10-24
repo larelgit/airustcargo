@@ -143,6 +143,7 @@ The roll is an ordinary player input: the agent's tools go through the same `Int
 - Stylised materials from content: toon bands, flat low-poly faces, outlines, glow.
 - Foliage and small props scattered over region tiles from content, with levels of detail.
 - Particle effects from pools, and attack telegraphs drawn as decals on the ground.
+- Lights from content (point and spot, colour or temperature, flicker, a shadow budget) and colour-grading volumes that blend the picture's palette where the player stands.
 - Performance budgets: tick time in every `step` reply, frame time in `shards status`, and an autotest (`--perf`) that checks the budgets of a reference scene.
 - Crash reports with the stack, the machine, the log and a replay of the session.
 - `shards package` builds a game for players and checks the result (Windows and Linux).
