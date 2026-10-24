@@ -323,7 +323,7 @@ pub struct CharacterParams {
     /// `acceleration`, `deceleration` and `air_control`) or `Projected(..)` (ground friction and a push along the wished
     /// direction limited by the speed already projected on it, as in *Quake* and *Half-Life*: strafing and air turns).
     /// See [`AccelModel`]. Under `Projected` the ground and the air ignore `acceleration`, `deceleration`,
-    /// `air_control`, `axis_stepping` and `brake_only_without_input`; every other mode and feature is as it was.
+    /// `air_control` and `brake_only_without_input` (and `axis_stepping`, which still shapes the optional `air_deceleration` drag); every other mode and feature is as it was.
     #[serde(skip_serializing_if = "AccelModel::is_step")]
     pub accel: AccelModel,
 }

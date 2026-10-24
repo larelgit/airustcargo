@@ -429,3 +429,66 @@ fn move_info_names_the_model_and_its_numbers_and_the_content_loads_it() {
     let after = info(&mut app, &qid);
     assert!((after["speed"].as_f64().unwrap() - 8.1).abs() < 1e-3, "{after}");
 }
+
+/// What the test's source adds to every character's modifiers each tick.
+#[derive(Resource, Default, Clone, Copy)]
+struct Source(Option<fn(&mut MoveModifiers)>);
+
+#[test]
+fn the_modifiers_rate_overrides_steer_nothing_under_the_model_and_the_air_drag_is_the_params() {
+    let rates = |params: CharacterParams| {
+        let mut app = app_at(60.0);
+        app.init_resource::<Source>().add_systems(
+            FixedUpdate,
+            (|source: Res<Source>, mut q: Query<&mut MoveModifiers>| {
+                if let Some(add) = source.0 {
+                    for mut m in &mut q {
+                        add(&mut m);
+                    }
+                }
+            })
+            .in_set(ModifierSystems::Contribute)
+            .after(ModifierSystems::Wade),
+        );
+        floor(app.world_mut());
+        // High in the air with 4 m/s east and no input, then 0.1 s with a source that overrides both rates.
+        let e = hero_with(app.world_mut(), Vec3::new(0.0, 20.0, 0.0), params);
+        step(&mut app, 1);
+        app.world_mut().get_mut::<MotionState>(e).unwrap().velocity = Vec3::X * 4.0;
+        app.world_mut().resource_mut::<Source>().0 = Some(|m| {
+            m.decelerate_at(25.0).accelerate_at(1.0);
+        });
+        step(&mut app, 6);
+        Vec2::new(state(&app, e).velocity.x, state(&app, e).velocity.z).length()
+    };
+    // `Step`: the override brakes the air (25 m/s² for 0.1 s takes 2.5 m/s off: the params' 10 would take 1).
+    let step_model = rates(CharacterParams { air_deceleration: 10.0, ..default() });
+    assert!((step_model - 1.5).abs() < 0.02, "{step_model}");
+    // `Projected`: the drag is the params' `air_deceleration`, 10 m/s² for 0.1 s.
+    let projected = rates(CharacterParams { air_deceleration: 10.0, accel: projected(None), ..default() });
+    assert!((projected - 3.0).abs() < 0.02, "{projected}");
+
+    // On the ground the override of the speed-up changes nothing under the model: the run speed in the same 0.25 s.
+    let mut app = app_at(60.0);
+    app.init_resource::<Source>().add_systems(
+        FixedUpdate,
+        (|source: Res<Source>, mut q: Query<&mut MoveModifiers>| {
+            if let Some(add) = source.0 {
+                for mut m in &mut q {
+                    add(&mut m);
+                }
+            }
+        })
+        .in_set(ModifierSystems::Contribute)
+        .after(ModifierSystems::Wade),
+    );
+    floor(app.world_mut());
+    let e = hero_with(app.world_mut(), Vec3::ZERO, runner());
+    app.world_mut().resource_mut::<Source>().0 = Some(|m| {
+        m.accelerate_at(1.0);
+    });
+    step(&mut app, 3);
+    set_input(app.world_mut(), e, input(Vec3::X));
+    step(&mut app, 15);
+    assert!((state(&app, e).velocity.x - RUN).abs() < 1e-3, "{}", state(&app, e).velocity);
+}

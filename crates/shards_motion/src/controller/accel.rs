@@ -67,8 +67,9 @@ pub enum AccelModel {
     #[default]
     Step,
     /// *Quake*'s and *Half-Life*'s ground friction and push along the wished direction (see the [module](self) docs).
-    /// The params' `acceleration`, `deceleration`, `air_control`, `axis_stepping` and `brake_only_without_input` do not
-    /// steer the ground and the air under it (a swimmer still reads `acceleration`); the run, walk, sprint and crouch
+    /// The params' `acceleration`, `deceleration`, `air_control` and `brake_only_without_input`, and the modifiers' rate
+    /// overrides, do not steer the ground and the air under it (`axis_stepping` only shapes the optional
+    /// `air_deceleration` drag, and a swimmer still reads `acceleration`); the run, walk, sprint and crouch
     /// speeds and the modifiers' caps and factors still say what speed the body *wishes*.
     Projected {
         /// How fast the ground pushes toward the wished speed, per second as a multiple of that speed: the push of a

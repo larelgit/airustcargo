@@ -303,9 +303,13 @@ impl Step<'_, '_> {
                         }
                     }
                 }
-                // No input: the air keeps its speed unless the params brake it.
+                // No input: the air keeps its speed unless the params brake it. The modifiers' `deceleration` override
+                // changes that braking for a `Step` body; under `Projected` it steers nothing (F7).
                 None if p.air_deceleration > 0.0 => {
-                    let rate = self.modifiers.deceleration.unwrap_or(p.air_deceleration);
+                    let rate = match p.accel {
+                        AccelModel::Step => self.modifiers.deceleration.unwrap_or(p.air_deceleration),
+                        AccelModel::Projected { .. } => p.air_deceleration,
+                    };
                     step_toward(h0, Vec3::ZERO, rate * dt, p.axis_stepping)
                 }
                 None => h0,
