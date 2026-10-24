@@ -137,6 +137,10 @@ pub fn play_sequence(world: &mut World, id: &str, roles: &[(&str, Entity)]) -> R
         if world.get::<Npc>(entity).is_none() || world.get::<NpcBrain>(entity).is_none() || world.get::<NpcDrive>(entity).is_none() {
             return Err(format!("{ai} (`{role}`) is no NPC: only NPCs (bodies with a brain) act in a sequence; a role that is only looked at (`Face(at: Role(..))`) may be any body"));
         }
+        let needs_place = def.steps.iter().any(|s| matches!(s, Step::MoveTo { role: r, .. } | Step::Face { role: r, .. } | Step::Play { role: r, .. } if r == role));
+        if needs_place && world.get::<Transform>(entity).is_none() {
+            return Err(format!("{ai} (`{role}`) has no `Transform`, and a step walks, turns or plays an action for it"));
+        }
         if world.get::<Dead>(entity).is_some() || world.get::<Downed>(entity).is_some() {
             return Err(format!("{ai} (`{role}`) is {}", if world.get::<Dead>(entity).is_some() { "dead" } else { "down" }));
         }

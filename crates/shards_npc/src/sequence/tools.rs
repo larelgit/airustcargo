@@ -26,6 +26,10 @@ pub(super) fn register(app: &mut App) {
         .register_ai_world_describer("sequence", describe_held)
         .register_ai_observe_section(observe_section)
         .add_engine_invariant("npc.sequence_holds", sequence_holds)
+        // The tools that give a body an order (an agent that possessed a held NPC): the scene drives it, and says so.
+        .add_ai_tool_guard("move", held_refusal)
+        .add_ai_tool_guard("move_to", held_refusal)
+        .add_ai_tool_guard("attack", held_refusal)
         .journal_event::<SequenceStarted>(|e, _| {
             let roles: Vec<String> = e.roles.iter().map(|(r, id)| format!("{r}={id}")).collect();
             Some(format!("sequence {} ({}) starts: {}", e.sequence, e.def, roles.join(" ")))
@@ -117,6 +121,13 @@ pub struct StopArgs {
     /// Every run.
     #[serde(default)]
     pub all: bool,
+}
+
+fn held_refusal(world: &World, caller: &Caller) -> Result<(), String> {
+    let Some(me) = caller.subject else { return Ok(()) };
+    let Some(hold) = world.get::<SequenceHold>(me) else { return Ok(()) };
+    let who = world.get::<AiId>(me).map_or_else(|| "this body".to_owned(), ToString::to_string);
+    Err(format!("{who} is in sequence {} ({}) as `{}`: the scene drives it; `sequence_stop run={}` ends it", hold.run, hold.def, hold.role, hold.run))
 }
 
 fn sequence_stop(In(call): In<Call<StopArgs>>, world: &mut World) -> ToolResult {

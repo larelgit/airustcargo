@@ -3,7 +3,8 @@
 //! with a voiced line and a subtitle (`tests/sandbox/sequence.rs`).
 
 use ai_core::snapshot::{self, differences};
-use ai_core::{AiAppExt, AiJournal, JournalKind, SimTick};
+use ai_core::{AiAppExt, AiId, AiJournal, JournalKind, SimTick};
+use serde_json::json;
 use bevy::prelude::*;
 use shards_action::{ActionSound, Dead};
 use shards_content::db::{read_dir, Source};
@@ -241,6 +242,10 @@ fn a_run_that_cannot_be_played_says_what_to_fix_and_changes_nothing() {
     assert!(e.contains("e1 (`actor`) is no NPC"), "{e}");
     let e = play(&mut app, "scene", &[("actor", dead), ("listener", listener)]);
     assert!(e.contains("(`actor`) is dead"), "{e}");
+    let placeless = npc(app.world_mut(), "grunt", Npc::new("watcher", "grunt"), Vec3::new(-6.0, 0.0, 0.0), E);
+    app.world_mut().entity_mut(placeless).remove::<Transform>();
+    let e = play(&mut app, "scene", &[("actor", placeless), ("listener", listener)]);
+    assert!(e.contains("(`actor`) has no `Transform`"), "{e}");
     let nobody = app.world_mut().spawn_empty().id();
     let e = play(&mut app, "scene", &[("actor", actor), ("listener", nobody)]);
     assert!(e.contains("has no `AiId`"), "{e}");
@@ -284,6 +289,33 @@ fn an_order_an_agent_gave_the_actor_is_dropped_when_the_scene_takes_it() {
     let here = feet(&app, actor);
     step(&mut app, 30);
     assert!(flat_distance(feet(&app, actor), here) < 0.3, "it stands for the scene: {} -> {}", here, feet(&app, actor));
+    // An order given while the scene has it (code, or a client's input) is dropped by the next tick, not followed.
+    {
+        let mut intent = app.world_mut().get_mut::<Intent>(actor).unwrap();
+        intent.orders.push_back(Order::MoveTo { target: Target::Point(Vec3::new(-20.0, 0.0, 0.0)), within: 0.5 });
+    }
+    step(&mut app, 30);
+    assert!(app.world().get::<Intent>(actor).unwrap().orders.is_empty(), "the order was dropped");
+    assert!(flat_distance(feet(&app, actor), here) < 0.3, "the scene still has it: {} -> {}", here, feet(&app, actor));
+}
+
+#[test]
+fn the_tools_that_give_orders_refuse_a_body_a_scene_holds_and_say_how_to_free_it() {
+    let mut app = scene_app();
+    let (actor, _) = stage(&mut app);
+    let id = app.world().get::<AiId>(actor).unwrap().to_string();
+    ok(&mut app, "possess", json!({"id": id}));
+    ok(&mut app, "move", json!({"dir": "N", "meters": 1}));
+    ok(&mut app, "stop", json!({}));
+    step(&mut app, 2);
+    play_sequence(app.world_mut(), "stand", &[("actor", actor)]).unwrap();
+    for (tool, args) in [("move", json!({"dir": "N", "meters": 1})), ("move_to", json!({"target": {"x": 3, "z": 3}})), ("attack", json!({"target": "e1"}))] {
+        let e = fails(&mut app, tool, args);
+        assert!(e.contains(&format!("{id} is in sequence 1 (stand) as `actor`")) && e.contains("`sequence_stop run=1`"), "{tool}: {e}");
+    }
+    assert!(app.world().get::<shards_core::Intent>(actor).unwrap().orders.is_empty());
+    assert!(stop_sequence(app.world_mut(), SequenceId(1)));
+    ok(&mut app, "move", json!({"dir": "N", "meters": 1}));
 }
 
 #[test]
