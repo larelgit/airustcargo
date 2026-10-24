@@ -275,3 +275,24 @@ fn a_glide_the_tool_latched_that_ends_under_the_lock_is_not_given_back() {
     step(&mut app, 3);
     assert!(intent(&app, me).is_held(GLIDE), "a held key survives the lock");
 }
+
+#[test]
+fn an_order_the_body_holds_through_a_movement_lock_is_not_ended_as_blocked() {
+    let (mut app, me) = arena();
+    ok(&mut app, "move_to", json!({"target": {"x": 30, "z": 0}}));
+    step(&mut app, 10);
+    assert_eq!(intent(&app, me).orders.len(), 1);
+    lock(&mut app, me, "scene", ControlLock { movement: true, ..default() });
+    // It brakes from its run, then stands: far past the 2 s a body may stand without coming closer.
+    step(&mut app, 60);
+    let from = feet(&app, me);
+    step(&mut app, 300);
+    assert_eq!(intent(&app, me).orders.len(), 1, "the order waits: {:?}", journal(&app));
+    assert!(!journal(&app).iter().any(|l| l.contains("ended: blocked")), "{:#?}", journal(&app));
+    assert!((feet(&app, me) - from).length() < 0.1, "held still");
+    // The lock lifts and the walk goes on to the goal.
+    unlock_controls(app.world_mut(), me, "scene");
+    step(&mut app, 600);
+    assert!(intent(&app, me).orders.is_empty(), "arrived: {:?}", intent(&app, me).orders);
+    assert!((feet(&app, me).x - 30.0).abs() < 1.0, "{}", feet(&app, me));
+}
