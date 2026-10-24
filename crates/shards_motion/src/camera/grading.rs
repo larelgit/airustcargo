@@ -243,6 +243,9 @@ pub fn picture_clock(fixed: &Time<Fixed>) -> f64 {
     fixed.elapsed_secs_f64() + fixed.overstep().as_secs_f64()
 }
 
+/// The cameras that look through the world, for a game with no local player.
+type WorldCameras<'w, 's> = Query<'w, 's, &'static Transform, Or<(With<super::ThirdPersonCamera>, With<super::FirstPersonCamera>)>>;
+
 /// The volume the local player (else the camera) is in that grades the picture: the last of the
 /// volumes it touches, in collider id order.
 fn graded_volume<'a>(touching: impl Iterator<Item = Entity>, volumes: &'a Query<&GradingVolume>) -> Option<&'a str> {
@@ -258,7 +261,7 @@ fn track_volumes(
     db: Option<Res<ContentDb>>,
     tuning: Res<CameraTuning>,
     players: Query<&MotionState, With<LocalPlayer>>,
-    cameras: Query<&Transform, Or<(With<super::ThirdPersonCamera>, With<super::FirstPersonCamera>)>>,
+    cameras: WorldCameras,
     world: Option<Res<crate::physics::PhysicsWorld>>,
     volumes: Query<&GradingVolume>,
     mut blend: ResMut<GradingBlend>,
