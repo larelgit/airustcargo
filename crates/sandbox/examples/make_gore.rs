@@ -49,7 +49,7 @@ fn smooth(edge0: f32, edge1: f32, x: f32) -> f32 {
 /// A crater: a dark pit with a ragged rim, a pale ring of dust round it and four hairline cracks. RGBA, white
 /// where it is dark (the mark's colour tints it) with the alpha carrying the shape. The edge is clear, as a decal's must be.
 fn bullet_hole(side: usize) -> Vec<u8> {
-    let mut rng = Rng(0xB011_E7);
+    let mut rng = Rng(0x00B0_11E7);
     let cracks: Vec<(f32, f32)> = (0..4).map(|i| (i as f32 * 1.57 + rng.between(-0.4, 0.4), rng.between(0.55, 0.9))).collect();
     let mut data = Vec::with_capacity(side * side * 4);
     for y in 0..side {
@@ -80,7 +80,7 @@ fn bullet_hole(side: usize) -> Vec<u8> {
 /// A splatter: a blot of overlapping discs with a few droplets thrown from it, soft at the edge. White with the
 /// alpha carrying the shape: the mark's colour makes it blood.
 fn blood_splat(side: usize) -> Vec<u8> {
-    let mut rng = Rng(0xB100D);
+    let mut rng = Rng(0x000B_100D);
     // (x, y, radius) in -1..1: a heavy middle, lobes round it, and droplets out on rays from the middle.
     let mut discs = vec![(0.0, 0.0, 0.34)];
     for i in 0..7 {
@@ -117,7 +117,7 @@ fn png(path: &Path, side: usize, rgba: &[u8]) {
 /// A rock-like chunk: a box about a unit across whose eight corners are pulled in and out, flat-shaded (four
 /// vertices a face, each face its own normal), as a binary glTF with one mesh and no material.
 fn chunk(path: &Path) {
-    let mut rng = Rng(0xC4_0C);
+    let mut rng = Rng(0xC40C);
     let corner = |sx: f32, sy: f32, sz: f32, rng: &mut Rng| [sx * rng.between(0.34, 0.5), sy * rng.between(0.3, 0.46), sz * rng.between(0.34, 0.5)];
     let mut corners = Vec::new();
     for (sx, sy, sz) in [(-1.0, -1.0, -1.0), (1.0, -1.0, -1.0), (1.0, 1.0, -1.0), (-1.0, 1.0, -1.0), (-1.0, -1.0, 1.0), (1.0, -1.0, 1.0), (1.0, 1.0, 1.0), (-1.0, 1.0, 1.0)] {
@@ -140,7 +140,7 @@ fn chunk(path: &Path) {
     }
     let (mut bin, mut views, mut accessors) = (Vec::<u8>::new(), Vec::new(), Vec::new());
     let mut push = |bytes: Vec<u8>, target: u32, component: u32, count: usize, kind: &str, bounds: Option<([f32; 3], [f32; 3])>| {
-        while bin.len() % 4 != 0 {
+        while !bin.len().is_multiple_of(4) {
             bin.push(0);
         }
         views.push(json!({"buffer": 0, "byteOffset": bin.len(), "byteLength": bytes.len(), "target": target}));
@@ -174,10 +174,10 @@ fn chunk(path: &Path) {
         "accessors": accessors,
     });
     let mut text = document.to_string().into_bytes();
-    while text.len() % 4 != 0 {
+    while !text.len().is_multiple_of(4) {
         text.push(b' ');
     }
-    while bin.len() % 4 != 0 {
+    while !bin.len().is_multiple_of(4) {
         bin.push(0);
     }
     let total = 12 + 8 + text.len() + 8 + bin.len();
