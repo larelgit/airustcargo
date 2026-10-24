@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use shards_content::{ContentDb, ContentDef, Refs};
 use shards_core::{Gaze, Intent};
 
+use super::accel::AccelModel;
 use super::{CharacterController, MotionMode};
 use crate::physics::{Collider, CollisionLayers, Shape};
 use crate::usable::{DEFAULT_USE_RANGE, PROBE_RANGE};
@@ -318,6 +319,13 @@ pub struct CharacterParams {
     /// between the two heights at an even rate. 0: at once.
     #[serde(skip_serializing_if = "is_zero")]
     pub crouch_time: f32,
+    /// How the ground and the air steer the body (F7): `Step` (the default: the velocity steps toward the target at
+    /// `acceleration`, `deceleration` and `air_control`) or `Projected(..)` (ground friction and a push along the wished
+    /// direction limited by the speed already projected on it, as in *Quake* and *Half-Life*: strafing and air turns).
+    /// See [`AccelModel`]. Under `Projected` the ground and the air ignore `acceleration`, `deceleration`,
+    /// `air_control` and `brake_only_without_input` (and `axis_stepping`, which still shapes the optional `air_deceleration` drag); every other mode and feature is as it was.
+    #[serde(skip_serializing_if = "AccelModel::is_step")]
+    pub accel: AccelModel,
 }
 
 /// The pitch limits a body has unless its `locomotion` says (degrees): just short of straight up
@@ -395,6 +403,7 @@ impl Default for CharacterParams {
             crouch_height: None,
             crouch_speed: None,
             crouch_time: 0.0,
+            accel: AccelModel::Step,
         }
     }
 }
@@ -778,6 +787,7 @@ impl CharacterParams {
         if !(self.crouch_time >= 0.0 && self.crouch_time.is_finite()) {
             errors.push(format!("crouch_time must be >= 0 (is {})", self.crouch_time));
         }
+        errors.extend(self.accel.problems());
         if self.buoyancy_omega <= 0.0 && (self.water_max_vertical_speed > 0.0 || self.water_fall_drag > 0.0) {
             errors.push("water_max_vertical_speed and water_fall_drag are set but buoyancy_omega is 0, so they never apply".to_string());
         }
