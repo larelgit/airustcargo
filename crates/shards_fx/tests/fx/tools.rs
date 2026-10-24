@@ -20,7 +20,11 @@ fn effects_lists_every_effect_and_the_table_and_headless_nothing_plays() {
          events: damaged → spark · died → dust · healed → glow\n\
          cues: swoosh → glow"
     );
-    assert_eq!(status(&app), json!({"effects": 3, "live": 0, "decals": 0, "telegraph_decals": true}));
+    assert_eq!(
+        status(&app),
+        json!({"effects": 3, "live": 0, "decals": 0, "telegraph_decals": true, "marks": 0, "debris": {"resting": 0, "flying": 0},
+               "rays": {"last": 0, "max": 0, "total": 0, "budget": 2048}})
+    );
     let modules = &shards::ai_core::status::status(app.world())["engine"]["modules"];
     assert!(modules.as_array().unwrap().iter().any(|m| m["name"] == "fx"), "{modules}");
 

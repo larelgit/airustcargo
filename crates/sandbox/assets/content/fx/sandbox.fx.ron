@@ -2,6 +2,12 @@
 // event plays. A hit plays at the one hit, away from the attacker; a guard's, a parry's, a broken guard's at the
 // defender; a death's, a heal's at who died or healed. A clip's cue plays from the body: the
 // walk's and the run's `footstep` (content/anim/humanoid.animset.ron) a puff of dust.
+//
+// The gore (F9, `gore.mark.ron` and `gore.effect.ron`): a shot that stops at a world surface chips it
+// (`shot_impact`) and leaves a hole; one that goes through a body sprays (`shot_hit`) and throws blood on the wall
+// behind it; a part that breaks off throws chunks that stay (`part_broken`). `marks` lays spots from an event: a
+// shot fires both `shot_hit` and `damaged`, so they lay different marks (the splatter on the wall from the shot's
+// own direction, the pool under the body from the blow), never the same one twice.
 {
     "sandbox": (
         effects: {
@@ -11,7 +17,16 @@
             "died": "death_dust",
             "healed": "heal_glow",
             "guard_broken": "guard_ring",
+            "shot_impact": "wall_chips",
+            "shot_hit": "blood_spray",
+            "part_broken": "meat_chunk",
         },
         cues: {"footstep": "step_dust"},
+        marks: {
+            "shot_impact": [(mark: "bullet_hole")],
+            "shot_hit": [(mark: "blood_splat", place: Behind(8.0), count: 2, spread: 14.0)],
+            "damaged": [(mark: "blood_pool", place: Below(2.5), offset: (0.0, 1.0, 0.0))],
+            "part_broken": [(mark: "blood_splat", place: Behind(8.0), offset: (0.0, 0.2, 0.0))],
+        },
     ),
 }
