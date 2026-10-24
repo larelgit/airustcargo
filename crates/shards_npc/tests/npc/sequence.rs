@@ -257,12 +257,15 @@ fn a_run_that_cannot_be_played_says_what_to_fix_and_changes_nothing() {
     marker(app.world_mut(), "mark_a", Vec3::new(6.0, 0.0, 0.0));
     // A condition nobody registered: the registered ones (the game's `scene_go` among them) are listed.
     let kinds = app.world().resource::<ContentKinds>().clone();
-    let source = Source { path: "content/x.sequence.ron".into(), text: r#"{"waits": (roles: ["actor"], steps: [Face(role: "actor", at: Marker("mark_a")), WaitFor(condition: "scene_gone")])}"#.into() };
+    let source = Source { path: "content/x.sequence.ron".into(), text: r#"{"waits": (roles: ["actor"], steps: [Face(role: "actor", at: Marker("mark_a")), WaitFor(condition: "scene_gone")]), "speaks": (roles: ["actor"], steps: [Sound(role: "actor", sound: "line")])}"#.into() };
     let mut sources = vec![source];
     sources.extend(read_dir(std::path::Path::new(ASSETS)).unwrap());
     app.world_mut().insert_resource(ContentDb::build(&kinds, &sources));
     let e = play(&mut app, "waits", &[("actor", actor)]);
     assert!(e.contains("waits on condition `scene_gone`") && e.contains("did you mean `scene_go`?"), "{e}");
+    // A role that only speaks needs a place for the sound to come from.
+    let e = play(&mut app, "speaks", &[("actor", placeless)]);
+    assert!(e.contains("(`actor`) has no `Transform`") && e.contains("or speaks"), "{e}");
     // Nothing was started by any of it.
     assert!(app.world().get_resource::<Sequences>().is_none(), "no run, no resource");
     assert!(!app_has_hold(&app, actor));
