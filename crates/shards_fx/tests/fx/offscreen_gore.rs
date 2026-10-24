@@ -157,3 +157,35 @@ fn offscreen_chunks_of_a_mesh_without_uvs_lie_on_the_floor_where_they_landed() {
     ok(&mut app, "fx_clear", json!({"all": true}));
     capture_until(&mut app, "the chunks gone", |p| p.find(green).is_empty());
 }
+
+/// A white quad, plain and with a picture (the sandbox's bullet hole: a dark pit in the middle), 1 m across, that stay put.
+const STAMPS: &str = r##"{
+    "plain": (count: 1, speed: (0.0, 0.0), lifetime: (30.0, 30.0), size: (1.0, 1.0), size_end: 1.0, color: "#ffffff",
+        color_end: "#ffffff", spin: 0.0, max_live: 1),
+    "stamp": (count: 1, image: "textures/hole.png", speed: (0.0, 0.0), lifetime: (30.0, 30.0), size: (1.0, 1.0), size_end: 1.0,
+        color: "#ffffff", color_end: "#ffffff", spin: 0.0, max_live: 1),
+}"##;
+
+#[test]
+#[ignore = "needs a GPU, or a software one (WGPU_FORCE_FALLBACK_ADAPTER=1): cargo test -p shards_fx --test fx -- --ignored offscreen"]
+fn offscreen_a_quad_wears_its_picture_and_a_plain_one_stays_a_white_spot() {
+    let hole: &[u8] = include_bytes!("../../../sandbox/assets/textures/marks/bullet_hole.png");
+    let (mut app, _assets) = gore_app("offscreen_stamps", &[("content/fx/stamps.effect.ron", STAMPS)], &[("textures/hole.png", hole)]);
+    let world = app.world_mut();
+    let grey = grey(world);
+    let plane = world.resource_mut::<Assets<Mesh>>().add(Plane3d::default().mesh().size(40.0, 40.0));
+    world.spawn((Mesh3d(plane), MeshMaterial3d(grey), Transform::default()));
+    let camera = (Camera3d::default(), AiCamera, Msaa::Off, Tonemapping::None, DebandDither::Disabled);
+    let camera = world.spawn((camera, Transform::from_xyz(0.0, 5.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y))).id();
+    ok(&mut app, "effect_play", json!({"effect": "plain", "point": [-1.5, 0.5, 0.0]}));
+    ok(&mut app, "effect_play", json!({"effect": "stamp", "point": [1.5, 0.5, 0.0]}));
+    let bright = |p: &Picture, at: Vec2| p.pixels[(at.y as u32 * p.width + at.x as u32) as usize][0];
+    capture(&mut app);
+    let (plain_at, stamp_at) = (on_screen(&mut app, camera, Vec3::new(-1.5, 0.5, 0.0)), on_screen(&mut app, camera, Vec3::new(1.5, 0.5, 0.0)));
+    // The picture loads and its pipeline compiles a few frames in: until then the quad is the plain spot or nothing.
+    let drawn = capture_until(&mut app, "the picture", |p| bright(p, plain_at) > 240 && bright(p, stamp_at) < 80);
+    eprintln!("the plain spot's middle {}, the stamp's {}", bright(&drawn, plain_at), bright(&drawn, stamp_at));
+    // Round the pit the picture's dust ring is faint, so the stamp has far less white than the plain spot.
+    let white = |p: &Picture, at: Vec2| p.find(|[r, g, b]| r > 200 && g > 200 && b > 200).iter().filter(|q| q.distance(at) < 40.0).count();
+    assert!(white(&drawn, stamp_at) * 2 < white(&drawn, plain_at), "{} against {}", white(&drawn, stamp_at), white(&drawn, plain_at));
+}
