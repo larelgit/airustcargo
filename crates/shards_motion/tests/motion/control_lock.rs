@@ -200,7 +200,7 @@ fn the_lock_is_told_in_the_journal_and_in_observe_and_the_tools_say_why_they_ref
     assert!(fails(&mut app, "lock_controls", json!({})).contains("nothing to lock"));
     assert!(fails(&mut app, "lock_controls", json!({"at": "e1"})).contains("needs `deg`"));
     assert!(fails(&mut app, "lock_controls", json!({"at": "nowhere", "deg": 10})).contains("a body (`e9`) or a point"));
-    assert!(fails(&mut app, "lock_controls", json!({"movement": true, "at": "e1", "deg": 400})).contains("0 to 180"));
+    assert!(fails(&mut app, "lock_controls", json!({"movement": true, "at": "e1", "deg": 400})).contains("above 0 and at most 180"));
     assert!(fails(&mut app, "unlock_controls", json!({"reason": "nope"})).contains("holds: listen, scene"));
     let said = ok(&mut app, "unlock_controls", json!({"reason": "listen"}));
     assert!(said.contains("still locked by 1 other"), "{said}");
@@ -242,7 +242,7 @@ fn a_lock_needs_a_reason_a_body_with_controls_and_a_cone_that_means_something() 
     assert!(lock_controls(app.world_mut(), me, " ", ControlLock::LOOKING_ONLY).unwrap_err().contains("needs a reason"));
     for deg in [0.0, -5.0, 181.0, f32::NAN, f32::INFINITY] {
         let cone = ControlLock { look: LookLock::Cone { at: Target::Point(Vec3::ZERO), deg }, ..default() };
-        assert!(lock_controls(app.world_mut(), me, "x", cone).unwrap_err().contains("0 to 180"), "{deg}");
+        assert!(lock_controls(app.world_mut(), me, "x", cone).unwrap_err().contains("above 0 and at most 180"), "{deg}");
     }
     let cone = ControlLock { look: LookLock::Cone { at: Target::Point(Vec3::NAN), deg: 10.0 }, ..default() };
     assert!(lock_controls(app.world_mut(), me, "x", cone).is_err());

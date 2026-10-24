@@ -845,7 +845,7 @@ fn case_table() -> [Case; 5] {
         (|| vec![("a", ControlLock::default())], "the lock `a` takes nothing away"),
         (
             || vec![("a", ControlLock { movement: true, look: LookLock::Cone { at: Target::Point(Vec3::ZERO), deg: 270.0 }, ..default() })],
-            "the lock `a` has a look cone 270 degrees wide",
+            "the lock `a` has a look cone with a half-angle of 270 degrees",
         ),
         (
             || vec![("a", ControlLock { movement: true, look: LookLock::Cone { at: Target::Point(Vec3::NAN), deg: 20.0 }, ..default() })],

@@ -192,7 +192,7 @@ pub struct ControlsUnlocked {
 
 /// Locks `entity`'s controls for `reason` ([`ControlLock`]). Locking again under the same reason
 /// replaces that reason's lock. `Err` says what is wrong: no `Intent` on the body, an empty reason, a
-/// cone that is not finite or not within 0..180 degrees.
+/// cone whose half-angle is not above 0 and at most 180 degrees.
 ///
 /// Call it where the simulation runs (a tool, a system in a tick): the lock is state. It takes
 /// effect on the next tick.
@@ -205,7 +205,7 @@ pub fn lock_controls(world: &mut World, entity: Entity, reason: &str, lock: Cont
     }
     if let LookLock::Cone { at, deg } = lock.look {
         if !(deg.is_finite() && deg > 0.0 && deg <= 180.0) {
-            return Err(format!("a look cone is 0 to 180 degrees wide, not {deg}"));
+            return Err(format!("a look cone's half-angle is above 0 and at most 180 degrees, not {deg}"));
         }
         if let Target::Point(p) = at
             && !p.is_finite()
@@ -409,7 +409,7 @@ pub const CONTROL_LOCK_SANE: &str = "motion.control_lock_sane";
 
 /// The engine rule `motion.control_lock_sane`: every [`ControlLocks`] is one [`lock_controls`] could have made. It
 /// holds at least one reason, the reasons are named and ascend without repeats, every lock takes something away,
-/// and a look cone is 0 to 180 degrees wide (finite) and points at a finite place. The call keeps all of it (and
+/// and a look cone's half-angle is finite, above 0 and at most 180 degrees and points at a finite place. The call keeps all of it (and
 /// takes the component away with the last reason); a violation names a writer that put a lock together by hand.
 pub fn control_lock_sane(world: &World) -> Option<String> {
     let mut bad = Offenders::default();
@@ -441,7 +441,7 @@ fn problem(locks: &ControlLocks) -> Option<String> {
         }
         if let LookLock::Cone { at, deg } = lock.look {
             if !(deg.is_finite() && deg > 0.0 && deg <= 180.0) {
-                return Some(format!("the lock `{reason}` has a look cone {deg} degrees wide (0 to 180)"));
+                return Some(format!("the lock `{reason}` has a look cone with a half-angle of {deg} degrees (above 0, at most 180)"));
             }
             if let Target::Point(p) = at
                 && !p.is_finite()

@@ -58,7 +58,7 @@ pub struct LockArgs {
     pub actions: bool,
     /// Hold the look within `deg` degrees of this: a body ("e9") or a point ("x,y,z").
     pub at: Option<String>,
-    /// The cone's half-angle in degrees (0 to 180), with `at`.
+    /// The cone's half-angle in degrees (above 0, at most 180), with `at`.
     pub deg: Option<f32>,
 }
 
