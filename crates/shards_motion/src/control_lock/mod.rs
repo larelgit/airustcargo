@@ -31,7 +31,8 @@
 //! into `Intent` (a held `W` is written once), so a `move_dir` the lock zeroed for good would not
 //! come back when the lock clears until the key was pressed again. Taking and returning it within one
 //! tick leaves `Intent` between ticks as the world wrote it (and so the recorded inputs of a replay
-//! too), and the stash that carries it is empty between ticks.
+//! too), and the stash that carries it is empty between ticks. A press (`Intent.pressed`, one tick's edge)
+//! that a lock masks is dropped, not given back: a button pressed during a lock does not fire when it lifts.
 //!
 //! A body that was never locked has no [`ControlLocks`] (the component goes when its last reason
 //! does), so a run that never locks anything hashes and records as before.

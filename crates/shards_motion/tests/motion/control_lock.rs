@@ -126,7 +126,12 @@ fn a_jump_press_is_movement_an_attack_press_is_an_action_and_a_roll_is_both() {
     press(&mut app);
     step(&mut app, 1);
     assert_eq!(last(&app).pressed, ["light"], "b still holds movement");
+    // A press is one tick's edge: what a lock masked is dropped, not given back when it lifts.
+    press(&mut app);
+    step(&mut app, 1);
     assert!(unlock_controls(app.world_mut(), me, "b"));
+    step(&mut app, 1);
+    assert!(last(&app).pressed.is_empty(), "a press masked by the lock does not fire when it lifts");
 }
 
 #[test]
