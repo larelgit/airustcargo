@@ -1,0 +1,36 @@
+// A first-person body with Half-Life's air movement (F7, the manual's "Air movement (F7)"): the `viewer` of
+// `viewer.locomotion.ron` (its yaw is the yaw of its look, its eye 1.6 m up) whose ground and air are steered by
+// `accel: Projected(..)` instead of the default step toward a target speed. The numbers are Half-Life's in metres
+// (1 unit = 0.0254 m): a run of 320 units a second (8.13 m/s), a jump of 45 units (1.14 m) under 800 units a second
+// squared (20.3 m/s²), a push of 10 per second on the ground and in the air, the air adding at most 30 units a second
+// (0.76 m/s) along the way the body wishes to go, a ground friction of 4 per second and a stop speed of 100 units a
+// second (2.54 m/s). They are the defaults of `Projected`, written out here so a reader sees them.
+//
+// `max_air_speed` is left out: strafing in the air may take the body above its run speed, as in the original (a
+// bunny hop). A game that wants a hard ceiling on a strafe writes `max_air_speed: Some(9.5)`.
+//
+// `mantle_height` is the step's (0.35): a ledge is jumped, never climbed, as in a first-person shooter.
+{
+    "air_viewer": (
+        radius: 0.4,
+        height: 1.8,
+        walk_speed: 4.06,
+        run_speed: 8.13,
+        sprint_speed: 8.13,
+        jump_height: 1.14,
+        gravity: 20.32,
+        mantle_height: 0.35,
+        mantle_time: 0.45,
+        turn_speed_deg: 720.0,
+        face: Look,
+        pitch_limits_deg: (-85.0, 85.0),
+        eye_height: Some(1.6),
+        accel: Projected(
+            ground_accel: 10.0,
+            air_accel: 10.0,
+            air_speed_cap: 0.76,
+            friction: 4.0,
+            stop_speed: 2.54,
+        ),
+    ),
+}

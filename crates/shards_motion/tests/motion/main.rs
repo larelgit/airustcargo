@@ -1,5 +1,6 @@
 //! `shards_motion` integration tests, one binary: headless worlds driven tick by tick.
 
+mod air_move;
 mod camera_content;
 mod common;
 mod control_lock;
