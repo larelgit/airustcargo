@@ -23,6 +23,7 @@ render = [
     "shards_look/render",
     "shards_scatter/render",
     "shards_fx/render",
+    "shards_light/render",
     "bevy/3d_bevy_render",
     "bevy/ui_bevy_render",
     "bevy/bevy_winit",
@@ -80,6 +81,7 @@ shards_scatter.workspace = true
 shards_voxel.workspace = true
 shards_fx.workspace = true
 shards_hitstop.workspace = true
+shards_light.workspace = true
 shards_rules.workspace = true
 shards_steam = { workspace = true, optional = true }
 bevy = { workspace = true, features = ["default_app", "std", "multi_threaded", "serialize"] }

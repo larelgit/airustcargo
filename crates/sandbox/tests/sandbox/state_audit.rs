@@ -153,6 +153,8 @@ const OUTSIDE: &[(&str, &str)] = &[
     // shards_level
     ("shards_level::library::LevelLibrary", "loaded level files: what the world is built around, which a snapshot check guards"),
     ("shards_level::spawn::LevelInstances", "the levels spawned, made again by the snapshot prepares `levels` and `placed levels`"),
+    // shards_light
+    ("shards_light::", "lights from content: the picture's state (`LightState`), on the simulation's clock but never changing the world"),
     // shards_locale
     ("shards_locale::", "languages and their texts: content and the player's setting"),
     // shards_look

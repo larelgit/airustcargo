@@ -14,6 +14,8 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use super::grading::Grading;
+
 /// How a camera turns the light it draws into the picture's colours: Bevy's tone mapping operators,
 /// by name. `TonyMcMapface` is Bevy's default.
 #[derive(Reflect, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,6 +99,11 @@ pub struct PictureTuning {
     /// A bloom, drawn in HDR; `None` keeps the camera's own (none, unless the game gave it one).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bloom: Option<BloomTuning>,
+    /// A colour grade of the whole picture (F13, [`Grading`]); `None` keeps the camera's own. A trigger volume with a
+    /// `grading` blends the picture away from it and back (`GradingVolume`). Bevy grades just before tone mapping, so a
+    /// camera whose `tone_mapping` is `None` shows none of it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grading: Option<Grading>,
 }
 
 impl PictureTuning {
@@ -107,6 +114,9 @@ impl PictureTuning {
     /// What is wrong with these numbers, one line each; empty when they are fine.
     pub fn problems(&self) -> Vec<String> {
         let mut out = Vec::new();
+        if let Some(grading) = &self.grading {
+            out.extend(grading.problems("picture.grading"));
+        }
         let Some(bloom) = &self.bloom else { return out };
         let at_least_zero = [
             ("intensity", bloom.intensity),
@@ -289,7 +299,7 @@ mod render {
         fn the_contents_bloom_draws_in_hdr_and_taking_it_out_gives_the_camera_back() {
             let (mut app, camera) = app();
             let bloom = BloomTuning { intensity: 0.4, threshold: 1.2, threshold_softness: 0.1, composite: BloomComposite::Additive, ..default() };
-            set(&mut app, PictureTuning { tone_mapping: Some(ToneMapping::AgX), bloom: Some(bloom) });
+            set(&mut app, PictureTuning { tone_mapping: Some(ToneMapping::AgX), bloom: Some(bloom), ..default() });
             let world = app.world();
             let drawn = world.get::<Bloom>(camera).expect("a bloom");
             assert_eq!((drawn.intensity, drawn.prefilter.threshold, drawn.prefilter.threshold_softness), (0.4, 1.2, 0.1));

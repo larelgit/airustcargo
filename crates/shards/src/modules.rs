@@ -33,6 +33,7 @@ pub const OPTIONAL_MODULES: &[OptionalModule] = &[
     OptionalModule { name: "voxel", needs: &[], what: "voxel terrain" },
     OptionalModule { name: "fx", needs: &[], what: "particle effects and telegraph decals" },
     OptionalModule { name: "hitstop", needs: &[], what: "hit stop (a brief hold when a blow lands)" },
+    OptionalModule { name: "light", needs: &[], what: "lights from content: types, flicker and the shadow budget" },
     OptionalModule { name: "steam", needs: &["net"], what: "Steam (feature `steam`)" },
     OptionalModule { name: "dev", needs: &[], what: "the developer's menu and console" },
 ];

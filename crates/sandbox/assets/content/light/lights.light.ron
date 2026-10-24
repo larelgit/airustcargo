@@ -1,0 +1,20 @@
+// Lights from content (F13): what a lamp is, apart from where it stands. A level node says `light = "sodium"`
+// (see `lit_room.level.ron`), a prefab `"ContentLight": (id: "sodium")`, code `ContentLight::new("sodium")`.
+// `intensity` is Bevy's lumens at the default camera exposure: 20000 a dim bulb, 100000 a lamp that lights a
+// room, 1000000 a floodlight. `shadows: true` asks for a shadow; `graphics.shadow_lights` (4) says how many of
+// the asking lights, nearest the camera first, get one. A flicker is a pattern of letters (`a` dark, `m` as
+// written, `z` about twice, `rate` steps a second) or smooth noise (brightness between `1 - depth` and 1).
+{
+    // A steady lamp with a shadow.
+    "lamp": (color: "#ffe6bf", intensity: 150000.0, range: 12.0, shadows: true),
+    // Sodium orange that wanders a quarter down and up, six times a second.
+    "sodium": (color: "#ffb347", intensity: 120000.0, range: 14.0, shadows: true, flicker: Noise(rate: 6.0, depth: 0.25)),
+    // A fluorescent tube that is failing: the classic pattern, ten steps a second.
+    "tube": (kelvin: 6500.0, intensity: 80000.0, range: 12.0, flicker: Pattern(pattern: "mmamammmmammamamaaamammma", rate: 10.0)),
+    // On for a second, off for a second: two states far apart, for tests that compare pictures.
+    "flasher": (color: "#ffffff", intensity: 400000.0, range: 14.0, flicker: Pattern(pattern: "ma", rate: 1.0)),
+    // Half the light, always: a pattern of one letter (`g` is 6/12), so a test can name its brightness.
+    "dimmer": (intensity: 100000.0, range: 10.0, flicker: Pattern(pattern: "g", rate: 1.0)),
+    // A cone of 25 degrees full, 50 where it ends, along the node's -Z.
+    "torch": (kind: Spot(inner_deg: 25.0, outer_deg: 50.0), color: "#e8f0ff", intensity: 300000.0, range: 20.0, shadows: true),
+}

@@ -1,0 +1,9 @@
+// Colour grades a trigger volume blends the picture toward (F13): a level node with `marker = trigger` and
+// `grading = "rust"` (see `lit_room.level.ron`) while the local player is inside it. `blend_s` is the time to
+// reach the grade on entering and to come back on leaving. Bevy grades just before tone mapping:
+// `temperature` and `tint` move the white balance (red/blue, magenta/green), `saturation`, `contrast`,
+// `lift`/`gamma`/`gain` and `exposure` (stops) shape the rest. The neutral grade changes nothing.
+{
+    "rust": (blend_s: 1.5, grading: (temperature: 0.1, tint: 0.05, saturation: 0.8, contrast: 1.1)),
+    "cold": (blend_s: 2.0, grading: (temperature: -0.4, tint: -0.1, exposure: -0.5, saturation: 0.7)),
+}

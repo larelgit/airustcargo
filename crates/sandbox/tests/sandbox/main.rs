@@ -28,6 +28,7 @@ mod heavy_saves;
 mod hitscan;
 mod engine_rules;
 mod invariants;
+mod lights;
 mod look;
 mod movers;
 mod net;

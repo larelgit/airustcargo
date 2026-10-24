@@ -19,6 +19,7 @@ members = [
     "crates/shards_voxel",
     "crates/shards_fx",
     "crates/shards_hitstop",
+    "crates/shards_light",
     "crates/shards_rules",
     "crates/shards_npc",
     "crates/shards_encounter",
@@ -139,6 +140,7 @@ shards_scatter = { path = "crates/shards_scatter" }
 shards_voxel = { path = "crates/shards_voxel" }
 shards_fx = { path = "crates/shards_fx" }
 shards_hitstop = { path = "crates/shards_hitstop" }
+shards_light = { path = "crates/shards_light" }
 shards_rules = { path = "crates/shards_rules" }
 shards_world = { path = "crates/shards_world" }
 shards_net = { path = "crates/shards_net" }

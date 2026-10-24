@@ -17,6 +17,8 @@ use ai_core::prelude::*;
 use bevy::prelude::*;
 use serde_json::Value;
 use shards_content::{spawn_prefab, ContentDb};
+use shards_light::ContentLight;
+use shards_motion::camera::GradingVolume;
 use shards_motion::{CharacterController, Collider, Mover, MoverPart, Shape, Usable, Volume};
 
 use crate::asset::{Bounds, Fnv, LevelAsset};
@@ -279,6 +281,12 @@ fn spawn_node(
     }
     if let Some(def) = &plan.mover {
         e.insert(Mover { def: def.clone() });
+    }
+    if let Some(id) = &plan.light {
+        e.insert(ContentLight::new(id.clone()));
+    }
+    if let Some(id) = &plan.grading {
+        e.insert(GradingVolume { id: id.clone() });
     }
     // The file's own components come last: what an artist wrote beats what the engine
     // derived from the same node.
