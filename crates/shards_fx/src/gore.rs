@@ -36,7 +36,7 @@ pub struct Marks {
     pub laid: u64,
     /// Where each shooter's last shot started: a shot that went through a body has the point it hit and
     /// not its direction, which is the way from here.
-    shots: BTreeMap<Entity, Vec3>,
+    shots: Vec<(Entity, Vec3)>,
     /// Marks named that no content defines, journaled once each.
     unknown: BTreeSet<String>,
 }
@@ -47,11 +47,22 @@ impl Marks {
         self.kinds.values().map(MarkPool::live).sum()
     }
 
+    /// Notes where `shooter`'s shot started: the last of each shooter, the oldest forgotten past 64.
     fn note_shot(&mut self, shooter: Entity, from: Vec3) {
-        if self.shots.len() >= 64 && !self.shots.contains_key(&shooter) {
-            self.shots.clear();
+        match self.shots.iter_mut().find(|(who, _)| *who == shooter) {
+            Some((_, at)) => *at = from,
+            None => {
+                if self.shots.len() >= 64 {
+                    self.shots.remove(0);
+                }
+                self.shots.push((shooter, from));
+            }
         }
-        self.shots.insert(shooter, from);
+    }
+
+    /// Where `shooter`'s last shot started.
+    fn shot_from(&self, shooter: Entity) -> Option<Vec3> {
+        self.shots.iter().find(|(who, _)| *who == shooter).map(|(_, from)| *from)
     }
 }
 
@@ -276,7 +287,7 @@ fn lay_marks(world: &mut World, happened: &Happened) {
 fn search(world: &mut World, from: Vec3, way: Vec3, spread: f32, reach: f32, seed: u64) -> Option<(Vec3, Vec3)> {
     let dir = if spread > 0.0 { sim::Rng::new(seed ^ 0x5eed).in_cone(way, spread) } else { way };
     if let Some(mut stats) = world.get_resource_mut::<GoreStats>() {
-        stats.searches += 1;
+        stats.searches = stats.searches.saturating_add(1);
     }
     surface_along(world, from, dir, reach)
 }
@@ -312,7 +323,7 @@ fn shot_impact(world: &mut World, impact: &ShotImpact) {
             );
         }
         Some(_) => {
-            let from = world.resource::<Marks>().shots.get(&impact.shooter).copied();
+            let from = world.resource::<Marks>().shot_from(impact.shooter);
             let way = from.and_then(|from| (impact.point - from).try_normalize()).unwrap_or(-impact.normal);
             play_event_effect(world, "shot_hit", EffectAt::Point(impact.point), Some(-way));
             lay_marks(

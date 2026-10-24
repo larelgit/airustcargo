@@ -56,7 +56,7 @@ expect result contains "marks on shot_impact: bullet_hole At"
 expect result contains "3 marks · nothing is drawn headless: marks are laid in a window or with --offscreen"
 expect result contains "  blood_pool   spot #5c0b0e · 0.4-0.8 m · until cleared · fade in 1.5 s · tags gore, blood · up to 32"
 expect result contains "  blood_splat  textures/marks/blood_splat.png #7a1014 · 0.25-0.6 m · until cleared · fade in 0.25 s · tags gore, blood · up to 64"
-expect result contains "  bullet_hole  textures/marks/bullet_hole.png #ffffff · 0.07-0.11 m · 120 s · fade out 30 s · tags gore · up to 96"
+expect result contains "  bullet_hole  textures/marks/bullet_hole.png #ffffff · 0.1-0.16 m · 120 s · fade out 30 s · tags gore · up to 96"
 expect result !contains "debris:"
 act content_get kind=mark id=bullet_hole
 expect result contains "gore.mark.ron"

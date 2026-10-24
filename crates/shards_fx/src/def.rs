@@ -735,7 +735,7 @@ mod tests {
             (1.0, 0.0, false, 1.0, (1.0, 1.0), StrengthResponse::default())
         );
         let written = ron::to_string(&old).unwrap();
-        for field in ["size_ease", "swell", "unlit", "intensity", "push", "strength"] {
+        for field in ["size_ease", "swell", "unlit", "intensity", "push", "strength", "mesh", "image", "collide", "restitution", "friction", "rest", "tags"] {
             assert!(!written.contains(field), "{field} written: {written}");
         }
         assert_eq!(old.describe(), "6 cube #ffffff → transparent · 0.4-0.8 s");

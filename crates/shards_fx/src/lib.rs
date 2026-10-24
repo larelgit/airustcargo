@@ -1,4 +1,4 @@
-//! # shards_fx — effects and telegraph decals (E10.3)
+//! # shards_fx — effects, telegraph decals (E10.3), marks and debris (F9)
 //!
 //! What an effect looks like is content: `content/**/*.effect.ron` names effects ([`EffectDef`]:
 //! how many particles, how long they live, how fast and which way they fly, gravity and drag,
@@ -29,23 +29,39 @@
 //!   the decal's (`TelegraphStyle::decals`). Decals need a depth prepass: the module gives one to
 //!   every camera with `AiCamera` while decals are on. `telegraph_decals on=false` goes back to
 //!   the gizmo fill.
-//! - **Agents**: `effects` lists the effects, their pools and the decals; `effect_play` plays one
-//!   at an entity or a point; `telegraph_decals` switches the decals (the developer menu has
-//!   `effects` under world and the switch under combat); `ai/status` has
-//!   `fx: {effects, live, decals, telegraph_decals}`.
+//! - **Marks (F9)**: the content kind `mark` (`*.mark.ron`, [`MarkDef`]) says what a spot on a surface looks
+//!   like: a colour or a PNG, a size range, a random turn, a fade in and out, a `lifetime` (`Secs` or
+//!   `UntilCleared`) and a cap per kind. A mark is a decal (Bevy's `ForwardDecal` with a `StandardMaterial`, so it
+//!   is lit) whose quad is turned along the surface's normal, so it lies on a wall, a ceiling or a floor; a
+//!   pool per kind recycles the oldest at its cap. The game lays one with [`spawn_mark`] or [`PlayMark`], and the
+//!   `fx` table's `marks` ([`MarkLink`]) lays them from `shot_impact` (a hole where a shot stopped), `shot_hit`
+//!   (blood on the wall behind a body a shot went through, found by a ray along the shot), `damaged`, `died` and
+//!   `part_broken`. See [`mark`] and [`gore`].
+//! - **Debris (F9)**: an effect with `collide: true` has particles that are stepped against the world (a ray a
+//!   step through the physics world's `WORLD` colliders, read-only): they bounce (`restitution`), slide
+//!   (`friction`) and come to rest, and with `rest: UntilCleared` stay, past the 30 s every other particle's life
+//!   is held to, until [`clear`] or a new world; a `mesh` (a glTF) or an `image` takes the place of the shape. The
+//!   pool's `max_live` is the cap of what lies there. See [`debris`].
+//! - **Agents**: `effects` lists the effects, their pools (and how many chunks lie at rest), the marks alive per
+//!   kind and the rays the debris cast; `effect_play` plays one at an entity or a point; `mark_spawn` lays a
+//!   mark, at a point or where a ray finds a surface; `fx_clear` takes marks and chunks away by tag;
+//!   `telegraph_decals` switches the decals (the developer menu has `effects` under world and the switch under
+//!   combat); `ai/status` has `fx: {effects, live, decals, telegraph_decals, marks, debris, rays}`.
 //! - **The picture's, not the simulation's**: nothing here changes the world. Only while
 //!   something is drawn (a window or `--offscreen`, feature `render`); headless no particle
-//!   starts and the tools say so. Pools and decals are entities without `AiId`: replays,
-//!   snapshots and co-op do not see them, and a co-op client plays the effects of the events
-//!   its host forwards, as it sees them.
+//!   starts, no mark is laid and the tools say so. Pools, decals and marks are entities without `AiId`:
+//!   replays, snapshots and co-op do not see them, and a co-op client plays the effects and lays the marks of
+//!   the events its host forwards (`ShotFired`, `ShotImpact`, `Damaged`, `Died`; not `PartBroken`), as it
+//!   sees them.
 //! - **Checks**: `--check-content` finds ranges that are upside down or out of bounds, colours
 //!   that are not `#rrggbb` or `#rrggbbaa`, a pool smaller than one play, an event the engine
-//!   does not have, and events and cues that name an effect no file defines.
+//!   does not have, and events and cues that name an effect no file defines; marks with sizes, fades, caps and
+//!   picture paths out of bounds, and links that name no mark.
 
 pub mod debris;
 pub mod decal;
 pub mod def;
-mod gore;
+pub mod gore;
 pub mod mark;
 #[cfg(feature = "render")]
 pub mod marks_render;
