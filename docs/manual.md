@@ -86,7 +86,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 285 definitions in 96 files
+cargo shards content check                 # ok: 286 definitions in 97 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -109,7 +109,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 285 definitions in 96 files
+# ok: 286 definitions in 97 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -391,6 +391,7 @@ FixedUpdate
                    NpcSystems::Drive             avoiding bodies, then what the NPC decided → Intent, then the turrets' look and fire (F11)
   SimSet::Think    game brains: decide what to do and write to Intent (they see NpcBrain and may add to it)
   SimSet::Act      MotionSystems::Intent         Intent → LocomotionInput
+                   ActionSystems::Use            interact presses and holds use what the body looks at (F5; a revive in reach keeps its press)
                    ActionSystems::Machine        input buffer, start and run of actions (offset, i-frames, block)
                    ActionSystems::Effects        healing, stamina, statuses, game effects
   SimSet::Move     ControllerSystems::Move       the controller is the only one that moves bodies
@@ -601,7 +602,7 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 285 definitions in 96 files
+content: 286 definitions in 97 files
   action  80
   animset  2
   attack_plan  5
@@ -658,7 +659,7 @@ content: 285 definitions in 96 files
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 274 definitions in 92
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 275 definitions in 93
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -696,7 +697,7 @@ ledge`, `e5 air → water`, `e5 reached goal`).
 
 - `Collider` (shape: box, sphere, capsule, cylinder, cone; offset; layers), `Body` (`Static` | `Kinematic`),
   `Volume` (sensor: water, updraft, named trigger) and the events `VolumeEntered`/`VolumeExited`.
-- Layers are a bit mask: `WORLD`, `CHARACTER`, `HURTBOX`, `HITBOX`, `VOLUME`, `PROJECTILE`; bits 16..32 are the game's layers
+- Layers are a bit mask: `WORLD`, `CHARACTER`, `HURTBOX`, `HITBOX`, `VOLUME`, `PROJECTILE`, `USE` (F5: the use areas; a collider on it collides with nothing, and a query meets it only when its mask has `USE`); bits 16..32 are the game's layers
   (`LayerMask::game(n)`).
 - Queries are `PhysicsWorld::{raycast, shapecast, overlaps, volumes_at}` and the system parameter `SpatialQuery`; they work from
   systems and from `&World` (AI tools). A hit that starts inside a shape gives distance 0.
@@ -1288,6 +1289,7 @@ headless run, a replay and a window agree. `None` (the default) is a character t
   | `face` | `Move` | `Move`: the body turns toward where it walks, its lock-on, its aim point or its action, at its turn rates, as always. `Look`: its yaw is the look's yaw **every tick, with no turn rate**, whatever it walks, climbs or runs (an action included) |
   | `pitch_limits_deg` | `(-89, 89)` | `(lowest, highest)`, within -90..90; readers of the look hold the pitch between them (`look_dir`, the `look` tool) |
   | `eye_height` | 0.9 of `height` | metres from the feet to the eye (the lock-on's own `eye_height` fraction); checked: above 0 and at most `height` |
+  | `use_range` | 2 | metres from the eye at which a thing can be used by looking at it (F5, "Use by looking"), unless the thing says its own `use_range`; checked: above 0 and at most 100 |
 
   A `Look` body without an `Intent.look` turns as a `Move` one does. **Movement input is relative to the look, not to a camera**: the keyboard and the stick
   (the input map, `ControlSystems::Read`) turn their axes by the yaw of the local player's look when its body faces its look, by the third-person camera's yaw
@@ -2162,8 +2164,8 @@ none it dies on the next tick (a `Health` death, which the sandbox's hook never 
 **What the AI sees.** Describe: `downed 14.2s` (`downed` without a bleed-out), `grace 0.80s`. Journal: `e7 is down (bleeds
 out in 20.0s)` / `e7 is down`, `e7 revived by e5` / `e7 revived`, `e5 survived a lethal hit (hp 1)`, a bleed-out's usual
 `e7 died (killed by e6)`, and `-0 (hp 0, downed)` or `(hp 1, grace)` on a hit that passed over. Condition `named:downed`
-(some fighter is down). Tools: `interact hold=true|false` (player: the interact button; it starts only what the moveset binds
-to it), `down id= bleed=` (dev: lays a fighter down now, as a hook's `Down` does), and `heal`, which also stands a downed body
+(some fighter is down). Tools: `interact hold=true|false` (player: the interact button; it starts what the moveset binds
+to it, and uses the thing the look meets when no revive is in reach, F5: "Use by looking"), `down id= bleed=` (dev: lays a fighter down now, as a hook's `Down` does), and `heal`, which also stands a downed body
 up at full health. The engine rules `action.downed_sane` and `action.grace_sane` (see "Invariants (E11)") stop the game on a
 bad write.
 
@@ -2383,6 +2385,60 @@ stops at a pillar but passes one dummy into the one behind it, the scatter gun f
 eye. Not built: hit markers and tracers in a window (a game draws them from the events), a co-op guest's kick, ballistic drop (a
 projectile, B4).
 
+### Use by looking (F5)
+
+A character uses a thing by looking at it and pressing `interact` (E). The thing carries `Usable` and a use area; the ray is cast from the
+character's eye along its look ([`Look as input (F1a)`](#look-as-input-f1a)), so a headless run, a replay and a window agree. What a use *does*
+(open a door, take a tablet, refuse a locked door) is the game's: the engine tells that something was used, and the game answers with what it
+owns (`mover_go`, a pickup, a line of text).
+
+- **The ray** (`shards::motion::use_target(world, user) -> Option<UseTarget>`, pure, and `use_probe` for everything it passes): from `eye_of` along
+  `look_dir`, against the `WORLD` layer (the first solid on the ray is the wall) and the new `USE` layer (the use areas). A thing counts when it is
+  nearer than the wall, or at its distance (to a tenth of a millimetre: a button flush with its wall; a door is a wall and a target at once), and within its reach: the marker's own
+  `use_range`, else the body's (`locomotion` `use_range`, above 0, 2 m by default). A glass pane or a wall in between blocks the use, a body in
+  between does not (bodies are on no layer the ray asks for). Of the things that count the **nearest wins; two at one distance go to the lower
+  `ColliderId`**, never to an entity order. `use_probe` also lists what is out of its reach (up to 100 m, `PROBE_RANGE`), so a refusal can say how far a thing is.
+- **`Usable`** (`shards::motion`, `name`, `prompt`, `hold_s`, `use_range`) and **the `USE` layer** (`LayerMask::USE`, `CollisionLayers::USE`: memberships `USE`, filters
+  nothing). A collider on it collides with nothing: no body is stopped by it, a query meets it only when its mask has `USE` (the engine's own queries name the layers they want; `QueryFilter::default()` takes every layer, so a game's ray against solid geometry names `WORLD`), the navmesh does not carve it, a mover
+  does not push with it. A level's `interactable` marker makes both from its node (see "Levels from Blender"): `Usable` named by the marker, and a
+  collider with the node's shape. A node with a `collider` of its own keeps it, solid, and adds the `USE` layer (a door); a node with a mesh or a `size` and no
+  `collider` gets a box (`auto`) on `USE` alone; a bare empty (no mesh, no `size`, as the outpost's lever) is still a marker as before, has a `Usable` and no use area, and so
+  cannot be looked at (`interact target=` says so). A prefab can carry `"Usable": (name: "tablet")` and a collider on `USE` by hand. A button on a wall needs a use area that stands out of the wall's face: one inside the wall is behind it, and the wall blocks the use.
+- **The press** (`ActionSystems::Use`, `SimSet::Act`, after the context is resolved and before the machine; `shards::action::using`), in `AiId`
+  order: a body's `interact` press that finds a target takes the press and, for a thing with no `hold_s`, triggers
+  `Used { who, what, name }` at once (journalled: `e5 uses e12 "door"`). Dead and downed bodies use nothing. The event happens where the simulation
+  runs (single player and a co-op host); it is **not a net event**: a co-op client is not told (a game that wants a sound there forwards its own).
+- **A hold** (`hold_s` above 0, a valve or a lever): the press starts `UseProgress { what, elapsed }` on the body, which grows by a tick while `interact` stays
+  held *and* the look stays on the same thing in reach, and ends with `Used` at `hold_s` (the use is over: holding on does not start another, a new
+  press does). Letting go, looking away, going out of reach, going down or dying, or the thing going away, cancels it silently (the component is gone).
+  `UseProgress` is simulation state on the body (snapshots, the replay hash, co-op), and `use_view` / `you.use_progress` read it for a bar.
+- **A revive wins.** The body whose moveset binds `interact` to an action that holds this tick (the revive next to a downed ally: `ContextInputs::bound`) leaves
+  the press to the machine; the use never takes it. With no ally in reach the binding does not hold and a target in reach takes the press. A moveset that binds
+  nothing to `interact` sees all its presses go to the use; an `interact` press with no target in reach is left as it was (the machine buffers it as always). Only a
+  context binding (`MovesetDef::context`, as the revive's) can say when its press is wanted: a moveset that binds `interact` as a plain input (`inputs`) has no condition, so a target in reach
+  takes the press before the machine sees it.
+- **Content.** `locomotion` gets `use_range` (default 2, above 0 and at most 100, the distance a use is looked for; left out of the written form at the default, so no hash moves). The node properties of an
+  `interactable` are `hold_s` (zero or more), `use_range` (above zero, at most 100) and `prompt` (text; a Fluent `@id` or plain text, the marker's name when left
+  out); `content check` names the level, the node and the property (``node `Valve`: `hold_s` must be zero or more (seconds to hold the button), found -1``, ``node `Panel`:
+  `use_range` must be above zero, found 0``), a `hold_s`, `use_range` or `prompt` on a node that is no interactable is a problem of its own, and so is an `interactable` that is also a `volume` (a look never meets a sensor). In `layers` the new word is `use`; `layers` on an interactable names more of its use area, and `layers = world` makes it solid as a `collider` does (the `USE` layer is added whatever it says).
+- **For the AI.** The player tool **`interact`**: `interact` uses what you look at; `interact target=e12` turns the look to the thing's use area and presses (the first-person camera writes the look only on a frame the mouse moved, so that turn stands until the player moves it)
+  (an error leaves the look where it was: `e12 "far_panel" is 3.5m away and can be used from 2.0m: walk closer`, `e12 "behind_glass" is behind wall 1.0m ahead: a
+  wall or glass blocks a use`, `e13 "near" is nearer on the same line (1.0m)`, `e13 "twin_a" is just as near on the same line (1.5m) and comes first`, `e14 has no use area, so no look can
+  meet it`, and `a revive is in reach and takes the button` while a downed ally is next to you); a thing with a `hold_s` must be held: `interact hold=true`, step the time, `interact hold=false` (a tap is refused with `takes 1.0s to use`). With
+  nothing in reach the old press stays for the moveset (a revive); a moveset that binds nothing there gets `nothing to use: you look at wall 1.0m ahead and nothing usable
+  is in front of it (reach 2.0m)`. The tool needs a `Fighter` (as every action tool does); the system itself needs only an `Intent` and an eye. **`observe`** adds a
+  `USE` line under `YOU` while something is in reach: `USE e12 "door" 1.4m`, `USE e12 "valve" 1.2m hold 1.0s`, with `, using 0.5/1.0s` while it is held; `step --until
+  journal:uses` waits for a use. The line of a usable thing in `observe` says what a look would not, when it is not the plain case: `usable (hold 1.0s, reach 4.0m)`, and `usable (no use area)` for a marker no look can meet. For a HUD, the UI sources **`you.use_target`** (the prompt, a Fluent `@id` resolved in the language played, no value when nothing is in reach) and **`you.use_progress`**
+  (a ratio while a hold runs).
+- **In the sandbox**: the test room `use` (`levels/use.gltf`, written by `tests/sandbox/using.rs`; `content/world/use.level.ron`): eight stations on the canyon floor, one rule each (a panel in
+  reach, one past the body's 2 m and one that its own `use_range` of 4 brings back, a panel behind glass, a valve held for a second, two switches on one line, two
+  things at one distance, a solid usable door that is a `gate` mover, and a bare marker); `use.scenario` plays it with the viewer body (held, let go, looked away from, held to the end);
+  `tests/sandbox/using.rs` names the ids a scenario cannot (`interact target=` and its refusals, a game observer that sends the used door to its key 1 and the door's use area sliding with it,
+  a hold in a snapshot that completes after the load, the reference replay `use.json` in heavy mode, a twin every 10 ticks, some in the middle of a hold);
+  `shards_action/tests/combat/using.rs` (a press, a hold and its cancels, `AiId` order against entity order, the revive that keeps its press, the tool) and
+  `shards_motion`'s `usable` tests (the ray: reach, glass, nearest, ties by collider, a door).
+  Not in F5: a use by an NPC (a brain presses `interact` the same way and the system serves it; none does), a sphere cast or an aim assist for small things, a use progress told as events, `Used` as a net event.
+
 ### Body parts (R1)
 
 One body hit through several volumes, each with its own numbers and, when it has some, its own health that breaks it: the
@@ -2534,12 +2590,13 @@ Blender (.blend) ── export glTF ──► tiles/ruin.gltf ──► LevelAss
 | `to` | text or an object (*Data-Block*) | for `navlink`: the node where the link ends |
 | `collider` | `box`, `sphere`, `capsule`, `cylinder`, `cone`, `auto` | a solid `Collider`; `auto` is a box around the mesh |
 | `size`, `radius`, `height`, `offset` | numbers and lists | the shape's size and centre; without them, the mesh bounds are used |
-| `layers`, `collides_with` | `world`, `character`, `volume`, `game0`…`game15` (a name or a list) | the collider's layers |
+| `layers`, `collides_with` | `world`, `character`, `hurtbox`, `hitbox`, `volume`, `projectile`, `use`, `game0`…`game15` (a name or a list) | the collider's layers |
 | `volume` | `water`, `updraft`, `trigger` | a `Volume` sensor with the `collider` shape (default `auto`); `accel` and `max_speed` are for the flow |
 | `prefab` | text | spawns a prefab from the content at the node; component properties edit its fields |
 | `mover` | text | the node is a mover (F6) that goes through the keys of that `mover` definition, and the nodes below it move with it (see "Movers (F6)") |
 | `light` | text | the node shines by that `light` definition (F13, `shards_light::ContentLight`) from where it stands: a Blender lamp, whose own glTF light is taken out of the picture and replaced, or an empty; a spot points along the node's -Z (see "Lights and colour grading (F13)") |
 | `grading` | text | on a `marker` = `trigger` node: the picture blends toward that `grading` definition (F13, `GradingVolume`) while the local player is inside, and back when it leaves |
+| `hold_s`, `use_range`, `prompt` | seconds (zero or more), metres (above zero, at most 100), text | for an `interactable` (F5, see "Use by looking"): the seconds the button is held for a use (0, the default, is a press), how far from the eye it can be used (without it, the body's own `use_range`), and the text a HUD shows (a Fluent `@id` or plain text; without it, the marker's name) |
 
 Any other key is a **component**: a short name (`Health`) or the full type path. The value is JSON in the form that `inspect` and `get` show:
 
@@ -2559,7 +2616,7 @@ A JSON object can be typed in as text (the *String* type): text that holds a JSO
 | `socket` | `LevelMarker` named after the socket type | no |
 | `navlink` | `LevelMarker`, with `to` as the world position of the end | no |
 | `trigger` | `LevelMarker`, a `Volume` sensor, and its collider | `Trigger "goal"` |
-| `interactable` | `LevelMarker` | `Interactable "door"` |
+| `interactable` | `LevelMarker`, `Usable`, and a use area: the node's collider on the `USE` layer | `Interactable "door"` |
 | `camp` | `LevelMarker` | `Camp "bandits"` |
 | `landmark` | `LevelMarker`, `AiLandmark`, `AiKind` from the marker's name | in the LANDMARKS line; a `LandmarkCategory = "shrine"` property gives it a compass category |
 | `custom:<name>` | `LevelMarker` | no (needs an `AiKind`; add it as a component) |
@@ -2646,7 +2703,7 @@ spawned level `ruin` as instance 1 at (60.0, -40.0): 11 entities (5 solids, 0 vo
 - A reloaded tile file gets its region tags inside the reload: the replay runs without frames, and a tag applied a frame later would diverge from the recording.
 
 **Determinism.** A spawn is a pure function of the file and the place, in a fixed order, so `AiId` and `ColliderId` are the same in every
-run. `spawn_level` and `level_reload` are actions; the replay records them. The replay check `level` hashes where each level is placed, and the digest of its file: a replay recorded on another version of the file diverges at the first check (after a change to a level, the reference replays are recorded again). While no level is placed, the check adds nothing to the hash (`add_optional_replay_check`): games without levels keep their old hashes, and the hash does not remember levels that were there and went away (a snapshot taken before the first level still loads exactly, even after a region with level tiles). The snapshot checks the same placed levels (`levels`), keeps the instance counter (`LevelCounter`) and the levels placed by id (`PlacedLevels`): loading places them again under the same numbers (see "Snapshots (E11.4)"). `LevelInstances` are ordered by number.
+run. A level goes the same way: `level_despawn` (and a reload) removes the entities in the order of the file's nodes, not of a query, because the ones with an `AiId` leave tombstones in the order they go and a snapshot's twin spawns them in another table order. `spawn_level` and `level_reload` are actions; the replay records them. The replay check `level` hashes where each level is placed, and the digest of its file: a replay recorded on another version of the file diverges at the first check (after a change to a level, the reference replays are recorded again). While no level is placed, the check adds nothing to the hash (`add_optional_replay_check`): games without levels keep their old hashes, and the hash does not remember levels that were there and went away (a snapshot taken before the first level still loads exactly, even after a region with level tiles). The snapshot checks the same placed levels (`levels`), keeps the instance counter (`LevelCounter`) and the levels placed by id (`PlacedLevels`): loading places them again under the same numbers (see "Snapshots (E11.4)"). `LevelInstances` are ordered by number.
 
 ## World and generation (E5)
 
@@ -5242,7 +5299,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify -
 # replay finished at tick 1010: identical to the recording (17 checks) [1010 ticks in 3.00s, 22 frames]
 ```
 
-**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`), the voxel arena (`voxel_arena`) and its navmesh (`voxel_nav`), the timeline (`timeline`), the context and paired actions (`context`), the body replays (`body_motion`, `body_state`), the encounter (`encounter`), the spawned combat objects (`objects`), the downed state and the revive (`downed`), the boss scheduler (`boss_schedule`), the body parts (`parts`), a first-person look (`look`), the weapons (`weapons`), the movers' room (`movers`), the hitscan shots (`hitscan`), the NPCs and gunfire (`npc_ranged`) and crouching (`crouch`): 25 files, each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
+**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`), the voxel arena (`voxel_arena`) and its navmesh (`voxel_nav`), the timeline (`timeline`), the context and paired actions (`context`), the body replays (`body_motion`, `body_state`), the encounter (`encounter`), the spawned combat objects (`objects`), the downed state and the revive (`downed`), the boss scheduler (`boss_schedule`), the body parts (`parts`), a first-person look (`look`), the weapons (`weapons`), the movers' room (`movers`), the hitscan shots (`hitscan`), the NPCs and gunfire (`npc_ranged`), crouching (`crouch`) and use by looking (`use`): 26 files, each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
 (for the template: `cargo test --test game record_reference_replays -- --ignored`).
 
 - Game data follows the same rule as `inspect`: everything except the `bevy_*` types and the internal markers of `ai_core`, plus `Transform` and `Name`. So components that only the window adds (`Visibility`, `GlobalTransform`, meshes) do not change the hash, and an `Entity` inside a component is hashed as its `AiId`. Labels and describe fragments are text for the AI and are not part of the hash: a new wording or a new describer does not break old replays.
@@ -5921,7 +5978,7 @@ app.add_ui_action("give_up", |world, press| {          // press: widget, screen,
 ```
 
 Engine sources (`shards`): `you.health`, `you.stamina`, `you.poise` (a bar), `you.charges:<charge>`, `you.cooldown:<action>`,
-`you.ammo` (the magazine of the weapon in the hands, a bar), `you.reserve` (the rounds in its reserve, a number), `you.weapon` (its `weapon.name`, a Fluent `@id` resolved in the language played; none of the three for a body that holds no weapon, F4), `you.heading` (the compass), `you.nearest:<category>` (how far the nearest landmark of a category is, m; no value without one), `allies`, `input.bindings:<context>.<action>` (the inputs of an action in the input map, as the `controls`
+`you.ammo` (the magazine of the weapon in the hands, a bar), `you.reserve` (the rounds in its reserve, a number), `you.weapon` (its `weapon.name`, a Fluent `@id` resolved in the language played; none of the three for a body that holds no weapon, F4), `you.use_target` (what the look would use, F5: its prompt, a Fluent `@id` resolved in the language played; no value when nothing is in reach), `you.use_progress` (a ratio while a hold-to-use runs), `you.heading` (the compass), `you.nearest:<category>` (how far the nearest landmark of a category is, m; no value without one), `allies`, `input.bindings:<context>.<action>` (the inputs of an action in the input map, as the `controls`
 settings make it at that moment; `Binding` reads it). The audio module adds `subtitles` and `subtitles:<lines>` (the lines of voices playing; see "Audio", "Subtitles"). "You" is the body this machine controls (`LocalPlayer`), otherwise the body
 the agent plays (`AiPlayer`). An unknown source writes one warning to the journal, and the widget stays empty.
 
@@ -7644,8 +7701,8 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
   generated`), the hash is `7bbfdc3b62623fbc` again, and `save_check` agrees.
 
 The scenarios start with `heal`/`teleport`/`set`/`npc_set_state … calm`, so they run on a fresh game and after other scenarios, in any order:
-CI runs them forward and then backward in one game. Sessions of twenty-five of them are recorded as reference replays in `tests/replays/`
-(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`, `parts`, `look`, `weapons`, `movers`, `hitscan`, `npc_ranged`, `crouch`; see "Replays").
+CI runs them forward and then backward in one game. Sessions of twenty-six of them are recorded as reference replays in `tests/replays/`
+(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`, `parts`, `look`, `weapons`, `movers`, `hitscan`, `npc_ranged`, `crouch`, `use`; see "Replays").
 
 ## Tests and CI
 

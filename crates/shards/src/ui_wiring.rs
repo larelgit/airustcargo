@@ -19,7 +19,7 @@ use ai_core::{AiId, AiLandmark, LandmarkCategory};
 use bevy::prelude::*;
 use serde_json::json;
 use shards_action::fighter::{Charges, Cooldowns, Dead, Health, Poise, Stamina};
-use shards_action::weapon_in_hands;
+use shards_action::{use_view, weapon_in_hands};
 use shards_content::ContentDb;
 use shards_core::{EngineState, PlayerId};
 use shards_motion::input::InputDefaults;
@@ -71,6 +71,12 @@ impl Plugin for EngineUiPlugin {
             })
             .add_ui_source("you.weapon", |w, _| {
                 viewer(w).and_then(|e| weapon_in_hands(w, e)).and_then(|v| rules_text(w, &v.name))
+            })
+            // What the viewer would use by looking (F5): the prompt of the thing its look meets in reach (a Fluent
+            // `@id` is resolved in the language played), and, while it holds a button for one, how far along it is.
+            .add_ui_source("you.use_target", |w, _| viewer(w).and_then(|e| use_view(w, e)).and_then(|v| rules_text(w, &v.prompt)))
+            .add_ui_source("you.use_progress", |w, _| {
+                viewer(w).and_then(|e| use_view(w, e)).and_then(|v| v.progress).map(|(held, of)| ratio(held, of))
             })
             .add_ui_source("you.heading", heading)
             .add_ui_source("you.nearest", nearest)
