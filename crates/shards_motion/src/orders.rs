@@ -25,6 +25,7 @@ use ai_core::{label, AiAppExt, AiId, AiIndex, SimSet};
 use bevy::prelude::*;
 use shards_core::{flat, CoreSystems, Intent, Order, Target};
 
+use crate::control_lock::ControlLocks;
 use crate::controller::LocomotionInput;
 use crate::intent::MotionSystems;
 
@@ -103,7 +104,7 @@ fn describe_progress(entity: EntityRef) -> Option<String> {
 }
 
 /// What [`end_stalled_orders`] reads and writes of a body.
-type Walkers = (Entity, &'static mut Intent, &'static Transform, Option<&'static LocomotionInput>, Option<&'static mut OrderProgress>, Option<&'static AiId>);
+type Walkers = (Entity, &'static mut Intent, &'static Transform, Option<&'static LocomotionInput>, Option<&'static mut OrderProgress>, Option<&'static AiId>, Option<&'static ControlLocks>);
 
 /// `SimSet::Input`, after `follow_orders`: ends the front `move_to` order of a body that has made
 /// no progress for [`STALL_SECONDS`] (see the module).
@@ -117,7 +118,7 @@ pub fn end_stalled_orders(
     let dt = time.timestep().as_secs_f32().max(1e-4);
     let limit = bevy::math::ops::round(STALL_SECONDS / dt).max(1.0) as u32;
     let mut ended_orders: Vec<(u32, OrderEnded)> = Vec::new();
-    for (entity, mut intent, tf, input, progress, id) in &mut bodies {
+    for (entity, mut intent, tf, input, progress, id, locks) in &mut bodies {
         let front = intent.orders.front().cloned();
         let Some(order @ Order::MoveTo { target, .. }) = front else {
             if let Some(mut p) = progress
@@ -144,8 +145,9 @@ pub fn end_stalled_orders(
             *p = OrderProgress { order: Some(order), best: dist, from: here, goal_at: goal, quiet: 0, ended: None };
             continue;
         }
-        // An action holds the body, or something pushes it: it is not walking, so it is not stuck.
-        if input.is_some_and(|i| i.locked || i.external != Vec3::ZERO) {
+        // An action holds the body, something pushes it, or a control lock (F12) keeps it from walking: it is not
+        // walking, so it is not stuck, and its order waits for the lock to lift.
+        if locks.is_some_and(ControlLocks::movement) || input.is_some_and(|i| i.locked || i.external != Vec3::ZERO) {
             continue;
         }
         let closer = dist <= p.best - STALL_PROGRESS;

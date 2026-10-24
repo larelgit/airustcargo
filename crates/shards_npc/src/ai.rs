@@ -529,6 +529,9 @@ fn extras(world: &World, entity: Entity, npc: &Npc, perceived: &Perceived, here:
             })),
         });
     }
+    if let Some(sequence) = crate::sequence::state_of(world, entity) {
+        out["sequence"] = sequence;
+    }
     if let Some(t) = e.get::<Turret>() {
         out["turret"] = json!({"def": t.def, "active": t.active, "line": turret_line(world, entity)});
     }

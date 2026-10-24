@@ -132,7 +132,7 @@ pub(crate) fn plugin(app: &mut App) {
         .configure_sets(
             FixedUpdate,
             (
-                LockSystems::Switch.in_set(SimSet::Act).before(MotionSystems::Intent),
+                LockSystems::Switch.in_set(SimSet::Act).after(MotionSystems::Lock).before(MotionSystems::Intent),
                 // After the presses are cleared: whatever goes before `ClearPresses` (the co-op
                 // despawn of a body whose rejoin grace is over) is gone when the check looks.
                 LockSystems::Check.in_set(SimSet::Cleanup).after(CoreSystems::ClearPresses),

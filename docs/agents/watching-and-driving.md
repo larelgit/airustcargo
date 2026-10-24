@@ -65,7 +65,7 @@ cargo run -p sandbox --release -- --perf reference --offscreen   # performance t
   `world_overlay` and `nav_overlay` (window),
   `npc_overlay` (a line on each NPC near the players: state, target, token, leash, what it sees and hears; in the window — F7), `turret_active`
   (dev: `on=true|false`, `id=eN` or every turret; F11; a turret's line says `turret tracking e5 (yaw 12°/60°)`, and an NPC's `hiding`,
-  `cowering`, `keeping range 8–14m`, `no line of fire: e9 in the way`; `npc_state` adds `threats`, `hiding`, `range`, `turret`); **rules** —
+  `cowering`, `keeping range 8–14m`, `no line of fire: e9 in the way`; `npc_state` adds `threats`, `hiding`, `range`, `turret`); `sequence_play id=NAME role.ROLE=eN|name` (dev: a scripted scene, F12; `role.guide=Guide` names a body that has a name only it has), `sequence_stop` (dev: `run=N`, `id=NAME` or `all=true`), `sequences` (the definitions and the runs; `run=N` for the steps) and the condition `named:sequence_playing`; `lock_controls` and `unlock_controls` (dev: a scene's lock on the player, `movement=true actions=true at=eN|x,y,z deg=N`; `observe` says `CONTROL looking only (scene)`);  **rules** —
   `assert_add`, `assert_list`, `assert_remove`, `assert_reset` (`shards assert`); **UI** — `ui_read` (the screen tree: widget ids,
   values, focus), `ui_open`, `ui_close`, `ui_navigate`, `ui_click`, `ui_set` (for a key-binding row — `value=Key(KeyK)`);
   the main menu (in a game that has one, without a window — with `--menu`) — `new_game`, `continue_game`; **language** — `locale` (the languages, which one

@@ -1,0 +1,5 @@
+// The line the guide of the scene says (`scene.sequence.ron`): a voice with a subtitle and a speaker, heard
+// from where the guide stands. The text is literal here; a game writes `@message` ids (the locale files).
+{
+    "scene_line": (files: ["sounds/heal.wav"], bus: Voice, priority: 200, spatial: (near: 2.0, far: 30.0), subtitle: "The way is clear.", speaker: "Guide"),
+}

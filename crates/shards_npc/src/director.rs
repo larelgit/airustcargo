@@ -41,6 +41,7 @@ use crate::chain::NpcChain;
 use crate::planner::{feasible, resolve, InFlight, NpcOptions, NpcPlan};
 use crate::ranged::{keep_band, NpcFireLine};
 use crate::schedule::{grant_notes, inputs, living_players, FightCx, LiveZones, Players};
+use crate::sequence::SequenceHold;
 use crate::strike::{pool, NpcStrike};
 
 /// An NPC's attack token, while it holds one, and its place in the queue while it asks.
@@ -159,6 +160,8 @@ pub(crate) struct Fighting {
     pub dead: Has<Dead>,
     /// Orders in it: an agent took the NPC over (`move_to`, `attack`), it is out of the fight.
     pub intent: Option<&'static Intent>,
+    /// A sequence holds it (F12): its brain is dormant, it is out of the fight like a body under orders.
+    pub held: Has<SequenceHold>,
     /// Its rule class: what the rules make its actions cost ([`npc_rules`]).
     pub class: Option<&'static RuleClass>,
     /// Its line of fire, traced this tick: only an NPC whose plan keeps a range has one (F11).
@@ -172,9 +175,9 @@ pub(crate) fn npc_rules<'a>(db: &'a ContentDb, rules: Option<&ActiveRules>, clas
 }
 
 impl FightingItem<'_, '_> {
-    /// An agent's orders drive it now: it neither asks for tokens nor presses.
+    /// An agent's orders drive it now, or a sequence holds it (F12): it neither asks for tokens nor presses.
     pub(crate) fn under_orders(&self) -> bool {
-        self.intent.is_some_and(|i| !i.orders.is_empty())
+        self.held || self.intent.is_some_and(|i| !i.orders.is_empty())
     }
 }
 

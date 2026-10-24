@@ -1,0 +1,4 @@
+// What the guide of the scene (`scene.sequence.ron`) does with its body: a nod.
+{
+    "scene_nod": (net_id: 9610, phases: [("nod", 0.6)]),
+}

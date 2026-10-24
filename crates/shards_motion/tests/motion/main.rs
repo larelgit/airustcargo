@@ -3,6 +3,7 @@
 mod air_move;
 mod camera_content;
 mod common;
+mod control_lock;
 mod controller;
 mod controller_parity;
 mod course;

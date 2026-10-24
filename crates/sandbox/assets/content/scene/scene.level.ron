@@ -1,0 +1,6 @@
+// The test room of F12 (`scenarios/sequence.scenario`, `tests/sandbox/sequence.rs`, which writes the file): a
+// marker for the guide to walk to (`scene_stand`) and the guide itself, placed by the level. No floor of its own: the
+// scenario lays it on the canyon floor. `level_despawn` takes the guide away with it.
+{
+    "scene": (file: "levels/scene.gltf"),
+}

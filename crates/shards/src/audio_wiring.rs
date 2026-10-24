@@ -23,6 +23,10 @@ impl Plugin for EngineAudioPlugin {
         if app.is_plugin_added::<LevelPlugin>() {
             app.add_content_check::<LevelDef>("sound emitters", check_level_emitters);
         }
+        // A sequence's `Sound` step plays through the same event an action's sound does: a sound that exists, and does not loop.
+        if app.is_plugin_added::<shards_npc::NpcPlugin>() {
+            app.add_content_check::<shards_npc::SequenceDef>("sequence sounds", check_sequence_sounds);
+        }
     }
 }
 
@@ -49,5 +53,21 @@ fn check_level_emitters(def: &LevelDef, _id: &str, refs: &mut Refs) {
     }
     for (path, sound) in found {
         shards_audio::check_sound(refs, &sound, &format!("node `{path}`: SoundEmitter.sound"));
+    }
+}
+
+/// The `Sound` steps of a sequence name sounds some file defines, and none that loops (a looped sound is an
+/// emitter's: a step would never hear it end).
+fn check_sequence_sounds(def: &shards_npc::SequenceDef, _id: &str, refs: &mut Refs) {
+    if !refs.db().has_kind("sound") {
+        return;
+    }
+    for (i, step) in def.steps.iter().enumerate() {
+        let shards_npc::Step::Sound { sound, .. } = step else { continue };
+        let field = format!("steps[{i}].sound");
+        refs.require::<shards_audio::SoundDef>(sound, &field);
+        if refs.iter::<shards_audio::SoundDef>().any(|(id, sound_def)| id == sound && sound_def.looped) {
+            refs.error(format!("{field}: `{sound}` loops: a sound that never ends belongs to an emitter, not to a step that says a line"));
+        }
     }
 }

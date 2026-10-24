@@ -1,0 +1,5 @@
+// F12's tests: an action a sequence plays (a gesture), and a long one.
+{
+    "gesture": (net_id: 9600, phases: [("do", 0.3)]),
+    "long_gesture": (net_id: 9601, phases: [("do", 2.0)]),
+}

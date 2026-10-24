@@ -31,6 +31,7 @@ use shards_motion::{aim_point_of, eye_of};
 
 use crate::brain::{Npc, NpcBrain};
 use crate::perception::Perceived;
+use crate::sequence::SequenceHold;
 
 /// How a turret turns and fires (content kind `turret`, F11). Missing fields keep their defaults.
 ///
@@ -210,7 +211,7 @@ pub(crate) fn turrets(world: &mut World) {
         for (_, entity) in list {
             let Some(turret) = world.get::<Turret>(entity) else { continue };
             let standing = world.get::<Dead>(entity).is_none() && world.get::<Downed>(entity).is_none();
-            let awake = world.get::<NpcBrain>(entity).is_none_or(|b| b.active) && world.get::<Npc>(entity).is_some();
+            let awake = world.get::<NpcBrain>(entity).is_none_or(|b| b.active) && world.get::<Npc>(entity).is_some() && world.get::<SequenceHold>(entity).is_none();
             if !standing || !awake {
                 continue;
             }

@@ -103,6 +103,7 @@ use shards_motion::{
 
 use crate::brain::{npcs_in_order, Home, Npc, NpcBrain, NpcDrive, LEASH_ROOM};
 use crate::def::{BehaviorDef, NpcTuning};
+use crate::sequence::SequenceHold;
 use avoid::{steer, Ask, Body};
 
 /// Pluggable routes: `find(world, from, to, body) -> waypoints` (the last one at `to`), `None`
@@ -719,18 +720,24 @@ fn keep_on_leash(vel: Vec3, here: Vec3, home: Vec3, leash: f32) -> Vec3 {
 }
 
 /// What `drive_intents` reads and writes per NPC (`AimTarget` is optional: a body restored without it gets it).
-type DriveData = (Entity, &'static NpcBrain, &'static NavAgent, &'static mut NpcDrive, &'static mut Intent, Option<&'static mut AimTarget>);
+type DriveData = (Entity, &'static NpcBrain, &'static NavAgent, &'static mut NpcDrive, &'static mut Intent, Option<&'static mut AimTarget>, Has<SequenceHold>);
 
 /// `NpcSystems::Drive`: what NPCs decided goes into their `Intent`, like a keyboard's: the
 /// movement, the point to face, the presses, the held inputs, and its brain's target for `AimTarget`. An NPC with orders of its own
-/// (an agent took it over with `move_to` or `attack`) follows those instead.
+/// (an agent took it over with `move_to` or `attack`) follows those instead, unless a sequence (F12) holds it: the scene
+/// drives a held body, so an order given to it meanwhile is dropped.
 pub(crate) fn drive_intents(
     index: Res<AiIndex>,
     standing: Query<(), Standing>,
     mut npcs: Query<DriveData, With<Npc>>,
     mut commands: Commands,
 ) {
-    for (entity, brain, agent, mut drive, mut intent, aim_target) in &mut npcs {
+    for (entity, brain, agent, mut drive, mut intent, aim_target, held_by_scene) in &mut npcs {
+        // The scene has this body (`play_sequence` dropped its orders when it took it): an order given since would win over
+        // the run's `NpcDrive`, so it goes too.
+        if held_by_scene && !intent.orders.is_empty() {
+            intent.orders.clear();
+        }
         // The brain's target is what its spawned objects aim at (`SpawnAim::Target`, `AtTarget`): the brain never writes
         // `Intent::target` (a lock-on), so `shards_action` reads this mirror after it. A body that has none yet (one restored
         // from an older snapshot) gets it when there is something to mirror. Only a body that stands (B5: neither dead nor

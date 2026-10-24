@@ -1,0 +1,17 @@
+// The scene of F12 (`scenarios/sequence.scenario`): the player is held (`lock_controls`: looking only, in a
+// cone), and the guide walks to a marker beside them, turns to face them, nods, says its line and signals.
+// The marker `scene_stand` is in the level `scene` (`levels/scene.gltf`), and so is the guide (its prefab).
+{
+    "scene_intro": (
+        roles: ["guide", "visitor"],
+        steps: [
+            MoveTo(role: "guide", marker: "scene_stand", speed: 0.5, within: 0.4),
+            Face(role: "guide", at: Role("visitor")),
+            Play(role: "guide", action: "scene_nod"),
+            Sound(role: "guide", sound: "scene_line"),
+            // As long as the line (the audio module's, whose length the simulation never waits for).
+            Wait(secs: 1.5),
+            Signal(name: "scene_over"),
+        ],
+    ),
+}

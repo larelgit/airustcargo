@@ -29,6 +29,7 @@ use crate::brain::{clamp_to_leash, npcs_in_order, Npc, NpcBrain};
 use crate::def::{AttackPlanDef, WaitRole};
 use crate::director::{wait_in_role, AttackToken, FightingItem};
 use crate::planner::reach;
+use crate::sequence::SequenceHold;
 
 /// What stands in an NPC's line of fire ([`NpcFireLine::blocked`]).
 #[derive(Reflect, Clone, Copy, Debug, PartialEq)]
@@ -101,7 +102,7 @@ pub(crate) fn fire_lines(world: &mut World) {
             .filter_map(|(_, entity)| {
                 let had = world.get::<NpcFireLine>(entity).is_some();
                 let brain = world.get::<NpcBrain>(entity)?;
-                let plan = world.get::<Npc>(entity)?.plan.as_deref().filter(|_| brain.active);
+                let plan = world.get::<Npc>(entity)?.plan.as_deref().filter(|_| brain.active && world.get::<SequenceHold>(entity).is_none());
                 let ranged = plan.and_then(|p| db.get::<AttackPlanDef>(p)).is_some_and(|p| p.keep_range.is_some());
                 if !ranged {
                     return had.then_some((entity, None));

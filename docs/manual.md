@@ -86,7 +86,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 297 definitions in 102 files
+cargo shards content check                 # ok: 304 definitions in 109 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -109,7 +109,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 297 definitions in 102 files
+# ok: 304 definitions in 109 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -317,13 +317,13 @@ and it calls their tools by name. `shards_look` (how meshes are drawn) knows onl
 | `crates/shards` | **The game's only dependency.** `EnginePlugins`, `EngineConfig`, `run` (the standard `main`; also `--worldgen-report`, `--bake-nav` and `--bake-motion`), `testing` (test apps), `TileLevelsPlugin` (levels as tiles), `coop` (networking and saves together: the character travels with the player, the host keeps the world), `prelude`, a re-export of `bevy`, `serde`, `schemars`, `serde_json` and the modules (`shards::world`, `shards::npc`, …) |
 | `crates/shards_core` | the core (E1): `EngineConfig`, states, the main menu (`new_game`), the loading gate, `Intent`, `PlayerId`/`LocalPlayer`/`NetRole`, the module registry |
 | `crates/shards_content` | content (E4): `ContentDef`, the database, loading and hot reload, prefabs, content tools, `check_dir` |
-| `crates/shards_motion` | movement (E2): physics on parry3d, the controller, the input map, the camera, movement tools and queries |
+| `crates/shards_motion` | movement (E2): physics on parry3d, the controller, the input map, the camera, movement tools and queries; the control lock (F12): a scene takes movement, actions or the look from the player for a reason |
 | `crates/shards_action` | combat (E3): actions, movesets, the state machine, hits, resources, statuses, telegraphs, the animation bridge, baking offsets from clips, overlays |
 | `crates/shards_level` | levels from Blender (E4.2): glTF with custom properties → colliders, sensors, markers, prefabs, components; the `level` kind, tools |
 | `crates/shards_world` | the world (E5): tiles, regions and dungeons in the content, the generator with a socket solver and checks, the manifest, batch reports, loading and changing a region, active zones, streaming of the visuals |
 | `crates/shards_net` | networking and co-op (E7). The channel layer (E7.2), without Bevy: `Transport` transports (in memory: `MemoryHub`, deterministic; UDP for LAN), simulated delay and loss (`LinkConditions`, `--net-sim`), `Link` for reliable and unreliable messages, blobs, compression, acknowledgements, RTT and statistics. On top of it, on Bevy: a co-op session (`NetPlugin`: host, client, replication, `net_*` tools) and the stand, a host plus its clients in one process (`Stand`) |
 | `crates/shards_save` | saves (E8.1–5): sections and their registry, slots, the `shards-save/1` envelope, migrations, atomic writes with three copies and recovery, `save_now` and autosave, the `save_*` tools, `load_game` and `continue_game` ("Continue" in the main menu); the umbrella crate registers the engine sections (`region`, `rules`, `encounters`, `position`, `vitals`) |
-| `crates/shards_npc` | enemies (E6): the behaviour state machine, perception, the combat director (tokens), the attack planner, the navmesh per tile (`nav`: baking, stitching, routes), agents and leash; gunfire (F11): threats, hiding spots, ranged fighters and their line of fire, turrets |
+| `crates/shards_npc` | enemies (E6): the behaviour state machine, perception, the combat director (tokens), the attack planner, the navmesh per tile (`nav`: baking, stitching, routes), agents and leash; gunfire (F11): threats, hiding spots, ranged fighters and their line of fire, turrets; scripted scenes (F12): the `sequence` content kind, `play_sequence`, the NPCs' brains dormant while a scene holds them |
 | `crates/shards_encounter` | encounters (G9): waves of enemies at an anchor, started by a volume or a distance, counted level by level, rewound on a wipe and reset when the players leave; the `encounter` and `encounter_rules` content kinds, `EncounterAnchor`, `EncounterRole`, `EncounterRuns`, the events, the `encounter*` tools and the `encounter.*` invariants (see "Encounters (G9)") |
 | `crates/shards_settings` | player settings (E8.6): groups for graphics, audio, controls and accessibility, built on Bevy's settings (`bevy_settings`), `settings.toml`, the `settings`/`settings_set` tools, a window for the graphics settings |
 | `crates/shards_ui` | UI (E9): screens and themes in the content (`screen`, `theme`), the screen stack, focus and navigation, value sources and button actions, the `ui_*` tools, the `UI` section in `observe`, the main menu (`main_menu`); with the `render` feature, drawing on Bevy UI with AccessKit labels and the loading image |
@@ -384,13 +384,14 @@ FixedUpdate
                    CoreSystems::FollowOrders     Order::MoveTo → Intent
                    ActionSystems::Orders         Order::Attack → Intent (after FollowOrders)
                    NpcSystems::Sense             who is active; sight, hearing, memory (after Orders and Zones)
-                   NpcSystems::Decide            behaviour state machine: transitions, state hook; then the ranged NPCs' line of fire (F11)
+                   NpcSystems::Decide            behaviour state machine: transitions, state hook; then sequences (F12), then the ranged NPCs' line of fire (F11)
                    NpcSystems::Direct            attack tokens, roles of the waiting ones
                    NpcSystems::Plan              planner: pick an attack, approach, press
                    NpcSystems::Navigate          routes over the navmesh, following, leash → route speed
                    NpcSystems::Drive             avoiding bodies, then what the NPC decided → Intent, then the turrets' look and fire (F11)
   SimSet::Think    game brains: decide what to do and write to Intent (they see NpcBrain and may add to it)
-  SimSet::Act      MotionSystems::Intent         Intent → LocomotionInput
+  SimSet::Act      MotionSystems::Lock           control lock (F12): takes what is locked out of Intent for the tick, holds the look in its cones
+                   MotionSystems::Intent         Intent → LocomotionInput
                    ActionSystems::Use            interact presses and holds use what the body looks at (F5; a revive in reach keeps its press)
                    ActionSystems::Machine        input buffer, start and run of actions (offset, i-frames, block)
                    ActionSystems::Effects        healing, stamina, statuses, game effects
@@ -401,6 +402,7 @@ FixedUpdate
                    ActionSystems::Statuses       accumulation and duration of statuses
                    ActionSystems::Deaths         spent combat objects go, bleed-outs, then a fighter at 0 health dies (or a lethal hook spares it)
   SimSet::Cleanup  CoreSystems::ClearPresses     presses nobody took are cleared
+FixedLast        MotionSystems::Unlock: the control lock gives back what it took (before the replay check)
 FixedLast        ai_core: replay checks (world hash), record inputs, journal, failure queue
 ```
 
@@ -602,12 +604,12 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 297 definitions in 102 files
-  action  80
+content: 304 definitions in 109 files
+  action  81
   animset  2
   attack_plan  5
   audio  1
-  behavior  6
+  behavior  7
   bounds  1
   camera  1
   combat_tuning  1
@@ -623,7 +625,7 @@ content: 297 definitions in 102 files
   hitstop  1
   input_map  0
   layout  3
-  level  6
+  level  7
   light  6
   locale  2
   lock_on  1
@@ -631,7 +633,7 @@ content: 297 definitions in 102 files
   look  15
   mark  3
   mover  4
-  moveset  21
+  moveset  22
   music  1
   nav  1
   net  0
@@ -640,7 +642,7 @@ content: 297 definitions in 102 files
   perception  6
   perf  2
   poi  4
-  prefab  34
+  prefab  35
   prop  1
   region  3
   room  0
@@ -649,9 +651,10 @@ content: 297 definitions in 102 files
   save  0
   scatter  6
   screen  3
+  sequence  1
   shot  0
   socket_rules  1
-  sound  17
+  sound  18
   status  2
   theme  0
   tile  16
@@ -662,7 +665,7 @@ content: 297 definitions in 102 files
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 297 definitions in 102
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 304 definitions in 109
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -1229,10 +1232,11 @@ lock pick and the flick read the camera's `Transform`, so with a tilt they measu
 | tool | what it does |
 |---|---|
 | `move_to` | walk to an entity or to a point `{x, z}`; `within`, `queue`; `path=true` follows the route from `path_to` |
-| `move`, `stop` | walk N metres by compass (N = −Z, E = +X); stop. `move`, `move_to`, `stop`, `jump`, `sprint` and `glide` refuse a dead body with the text every action tool gives (`you are dead; a dev agent can `heal` you`), and a death drops the orders the body held (`Intent.orders`, and the `move_dir` they set; a body with no orders keeps its `Intent`, which its keyboard or brain rewrites every tick), so nothing runs after a `heal`; a downed body (B5) is refused them with its own words (`you are down: ...`) and drops its orders when it goes down, so nothing runs after a revive |
+| `move`, `stop` | walk N metres by compass (N = −Z, E = +X); stop. `move`, `move_to`, `stop`, `jump`, `sprint` and `glide` refuse a dead body with the text every action tool gives (``you are dead; a dev agent can `heal` you``), and a death drops the orders the body held (`Intent.orders`, and the `move_dir` they set; a body with no orders keeps its `Intent`, which its keyboard or brain rewrites every tick), so nothing runs after a `heal`; a downed body (B5) is refused them with its own words (`you are down: ...`) and drops its orders when it goes down, so nothing runs after a revive |
 | `jump`, `sprint`, `glide` | jump (out of water, onto the shore); sprint and glide as a state that is on (`on=false` turns it off) |
 | `crouch` | hold the crouch, or let go with `hold=false` (F2, "Crouching (F2)"): the capsule comes down (up from the feet in the air), the answer says how far and over how long, and a stand-up under a ceiling says that it waits; a body whose `locomotion` has no `crouch_height` is refused with that reason. A dead or downed body is refused it as it is the rest of the movement tools |
 | `look` | where you look (F1a, "Look as input"): `yaw=` and/or `pitch=` in degrees, `at=eN [part=NAME]`, `clear=true`; `observe` then has an `AIM` line |
+| `lock_controls`, `unlock_controls` (developer) | the control lock (F12, "Control lock"): `lock_controls [id=] [reason=] [movement=true] [actions=true] [at= deg=]`, `unlock_controls [id=] [reason=NAME or all=true]` |
 | `clearance` | query: how far in the eight directions, and what will stop you; `stance=` (F2: `standing`, `crouched` or `current`, the default) measures with that size of body |
 | `move_info` | query: what modifies a character's movement (slow, caps, root, stance, rates, sprint cost), the walk, run, sprint and swim speeds they leave, and the wading depth |
 | `path_to` | query: the route over what can be walked, swum and climbed; `stance=` as `clearance` (a crouched route is planned on the local grid: the navmesh is baked for the standing body) |
@@ -1240,7 +1244,7 @@ lock pick and the flick read the camera's `Transform`, so with a tilt they measu
 | `physics_overlay` (developer, window) | colliders and volumes |
 | `camera_mode` (developer, a query) | `mode=first`, `third` or `content` (F1b): look through the first-person camera or the orbit one for this session, or leave it to the `camera` content; without `mode`, says which |
 
-**An order that makes no progress ends** (`shards_motion::orders`). A `move` or `move_to` order whose body has not come closer to its goal (flat distance) by 0.1 m (`STALL_PROGRESS`) for 2 s (`STALL_SECONDS`) is dropped as `blocked`: the steering is zeroed, the event `OrderEnded` is triggered, the journal says `e1 move_to (20.0, 0.0) ended: blocked (no closer than 0.10 m in 2.0 s)`, and `observe` shows `last order ended: move_to (20.0, 0.0): blocked` on the body until its next order starts (the lazy component `OrderProgress`; snapshots keep it, replay checks leave it out since the queue itself is checked). The orders behind it run on. A sprint order against a wall no longer drains the stamina for ever. The count waits while the body is not free to walk (an action holds it: `LocomotionInput.locked`, or a push moves it: `external`), and restarts at every 0.1 m gained, so a slow walk (a crawl of 0.05 m/s is enough), a guard, a stagger, a walk round a corner and a route (`path=true` is one order per leg, each with its own count) are never ended. An order to an *entity* also counts a body that moves at least 0.1 m while its target moves at least 0.1 m too (a chase of a target that runs away is not blocked; a body that circles a target that stands still, or one that is wedged while its target runs, is). When several bodies stall on the same tick the journal lines come in `AiId` order. It runs in the simulation only; a client's orders are ended by its host. The movement tools also refuse a dead body (`you are dead; a dev agent can `heal` you`), and a death drops the orders.
+**An order that makes no progress ends** (`shards_motion::orders`). A `move` or `move_to` order whose body has not come closer to its goal (flat distance) by 0.1 m (`STALL_PROGRESS`) for 2 s (`STALL_SECONDS`) is dropped as `blocked`: the steering is zeroed, the event `OrderEnded` is triggered, the journal says `e1 move_to (20.0, 0.0) ended: blocked (no closer than 0.10 m in 2.0 s)`, and `observe` shows `last order ended: move_to (20.0, 0.0): blocked` on the body until its next order starts (the lazy component `OrderProgress`; snapshots keep it, replay checks leave it out since the queue itself is checked). The orders behind it run on. A sprint order against a wall no longer drains the stamina for ever. The count waits while the body is not free to walk (an action holds it: `LocomotionInput.locked`, or a push moves it: `external`, or a control lock takes its movement away: F12, the order waits for the lock to lift), and restarts at every 0.1 m gained, so a slow walk (a crawl of 0.05 m/s is enough), a guard, a stagger, a walk round a corner and a route (`path=true` is one order per leg, each with its own count) are never ended. An order to an *entity* also counts a body that moves at least 0.1 m while its target moves at least 0.1 m too (a chase of a target that runs away is not blocked; a body that circles a target that stands still, or one that is wedged while its target runs, is). When several bodies stall on the same tick the journal lines come in `AiId` order. It runs in the simulation only; a client's orders are ended by its host. The movement tools also refuse a dead body (``you are dead; a dev agent can `heal` you``), and a death drops the orders.
 
 Errors teach too (`jump` in the water by the shore: `ok: jumping out of the water onto the ledge 0.4m ahead (+1.3m)`; far from the shore: `the ledge is 2.1m ahead (+1.3m), out of reach from the water: swim within … and jump, or keep swimming into it`).
 
@@ -1439,6 +1443,37 @@ A body without a `crouch_height` ignores the input.
   jumps the ledge plain and with a crouch in the air, and shoots a standing and a crouched dummy from a standing and a crouched eye (also the reference replay `crouch.json`).
   `tests/sandbox/crouch.rs` checks the duct, the ledge, the dummy's hurtbox, eye and head, a crouched body riding a lift, a co-op client crouching its own body (the host agrees, no desync), and the replay in heavy mode (`--heavy 10`);
   `tests/motion/crouch.rs` the stance, the ceiling and floor casts, the air shift, the speed cap and the queries on bare worlds.
+### Control lock (F12)
+
+A scene that keeps the player's camera takes movement, or actions, or the freedom of the look away for a while and gives them back. `ControlLocks` (`shards::motion`) is simulation state on the body, one lock for each **reason** (a name for whoever holds it, so two systems can each lock and each let go of its own):
+
+```rust
+use shards::motion::{lock_controls, unlock_controls, ControlLock, LookLock};
+use shards::core::Target;
+
+// The player looks only: movement and actions locked, the look kept within 35 degrees of a point.
+lock_controls(world, player, "intro", ControlLock {
+    movement: true,
+    actions: true,
+    look: LookLock::Cone { at: Target::Point(Vec3::new(4.0, 1.6, -3.0)), deg: 35.0 },
+})?;
+// ... the scene plays ...
+unlock_controls(world, player, "intro");
+```
+
+| field | takes away |
+|---|---|
+| `movement` | `move_dir`, the `jump` press, the `sprint`, `glide` and `crouch` holds (a crouched body stands up, as soon as there is room), and `dodge` |
+| `actions` | every other press and every other held input: attacks, `fire`, `reload`, weapon switches, `interact`, `lock_on`, `block`, and `dodge` (a roll is a move and an action: either lock stops it); a use (F5) is an `interact` press or hold, so an actions lock stops it and cancels a hold under way (the button is let go for the body); a movement lock does not |
+| `look` | `Free` (the default) leaves `Intent.look` alone; `Cone { at, deg }` holds it within `deg` degrees (above 0 and at most 180, in yaw and in pitch, as a disc in angles) of the direction from the body's eye to `at`: a point, or a body (`Target::Entity`, its aim point; a body that is gone leaves the cone with nothing to point at, and the look is free of it) |
+
+The effective lock is the union of the reasons: movement or actions are locked while any reason locks them, and every cone holds the look in turn (reason order). Locking again under the same reason replaces that reason's lock. `lock_controls` refuses a body with no `Intent`, an empty reason and a cone whose half-angle is not above 0 and at most 180 degrees (or not finite), or that points at a place that is not finite; the component goes with the last reason, so a run that never locks anything hashes and records as before.
+
+**How it is applied.** The lock is a filter on `Intent` inside the tick, not on the keyboard: `MotionSystems::Lock` (`SimSet::Act`, before everything that reads `Intent`: the lock-on switch, `MotionSystems::Intent`, the weapons, the action machine) takes what is locked out of the body's `Intent` for the tick, and `MotionSystems::Unlock` (`FixedLast`, before the replay check) gives it back. The movement and the **held** inputs (`move_dir`, `sprint`, `crouch`, a held attack, `interact`...) are **taken and returned within the tick** because the input map writes only differences into `Intent` (a held `W` is written once): a `move_dir` that the lock zeroed for good would not come back when the lock lifts until the key was pressed again. A **press** (`Intent.pressed`, one tick's edge that the intent clears at the end of the tick anyway) that a lock masks is **dropped, not given back**: a button pressed during a lock does not fire when the lock lifts. So between ticks `Intent` is what the world wrote, the recorded inputs of a replay are the keyboard's and the tools' own, and the stash (`LockStash`) is empty between ticks (it is listed outside snapshots in `state_audit.rs`). A glide the `glide` tool latched (`GlideUntilLanded`) that ends in a tick the lock holds (the body landed) is not given back. The look is the exception: the clamped look is **kept** in `Intent.look`, and it is clamped whatever wrote it: the first-person camera (F1b, between ticks, from the mouse), the `look` tool, a brain, a replay's recorded input. The camera turns on from whatever the intent holds, so it never winds up outside the cone, and `look_dir`, the `AIM` line and a shot read the same look. A body with no look (`None`) has none clamped. A look outside the cone when the lock begins lands on its edge on the first tick (there is no turn rate). A lock does not freeze the body: gravity, pushes and an action already under way go on; it stops the body from asking.
+
+**For the AI.** `observe` shows a line under `YOU` while the subject is locked: `CONTROL looking only (intro)` (movement and actions), `CONTROL locked: movement (door)`, `CONTROL looking only, look within 35° of (4.0, 1.6, -3.0) (intro)`. The dev tools `lock_controls [id=eN] [reason=NAME] [movement=true] [actions=true] [at=eN|x,y,z deg=N]` and `unlock_controls [id=eN] [reason=NAME | all=true]` do the same through a tool (the default reason is `dev`; their errors say what to give). The player's own tools say why they do nothing: `move`, `move_to`, `jump`, `sprint`, `glide` and `crouch` answer `` your movement is locked (intro): a scene has the controls; a dev agent can `unlock_controls` ``, and the combat tools (`attack`, `light_attack`, `heavy_attack`, `block`, `parry`, `dodge`, `fire`, `reload`, `use_item`, `use_technique`, `weapon`, `interact`, `lock_on`) `your actions are locked (...)`; `look` is never refused. The journal says `e5 controls locked (intro): movement, actions, look within 35° of ...` and `e5 controls unlocked (intro)`. The engine rule `motion.control_lock_sane` (with a control test) stops the game on a `ControlLocks` that `lock_controls` could not have made: no reason, reasons out of order, a lock that takes nothing, a cone whose half-angle is not above 0 and at most 180 degrees, or that points at a place that is not finite.
+
+**Not built**: the lock does not apply to a co-op client's own prediction (`NetSet::Predict`): the host filters its `Intent`, a client that predicts its own body walks until the host's state corrects it (the first-person game this was built for is solo); the gentle look nudge toward a point (optional in the spec, picture only).
 
 ### Air movement in the style of Half-Life (F7)
 
@@ -3616,11 +3651,65 @@ Every tick, after the NPCs' intents (`NpcSystems::Drive`), every turret in `AiId
 
 **Not built**: guards that move between cover points (F11's fifth item, waiting for a design that asks for it); hiding off the navmesh (such an NPC cowers); a turret has no invariant of its own (a kick may push its look past its limits for a tick).
 
+### Sequences: scripted scenes for NPCs (F12)
+
+A `sequence` (`*.sequence.ron`, `shards::npc::SequenceDef`) names **roles** and **steps** that run one after another, each on a role's NPC: walk to a marker, turn, play an action, say a line, wait, wait for a condition, signal. The scene itself, its lines and when it plays are the game's; the sandbox's neutral example is `content/scene/`, played by `scenarios/sequence.scenario` (reference replay `sequence.json`) and checked by `tests/sandbox/sequence.rs`.
+
+```ron
+// content/scene/scene.sequence.ron
+{
+    "scene_intro": (
+        roles: ["guide", "visitor"],
+        steps: [
+            MoveTo(role: "guide", marker: "scene_stand", speed: 0.5, within: 0.4),
+            Face(role: "guide", at: Role("visitor")),
+            Play(role: "guide", action: "scene_nod"),
+            Sound(role: "guide", sound: "scene_line"),
+            Wait(secs: 1.5),
+            Signal(name: "scene_over"),
+        ],
+    ),
+}
+```
+
+| step | what it does | ends when |
+|---|---|---|
+| `MoveTo(role, marker, within = 0.5, speed = 1, timeout)` | the NPC walks to the level marker (`LevelMarker::name`; when several have the name, the first of the lowest level instance) by its own navigation: the navmesh route, avoiding bodies; `speed` is the movement input, 0.5 walks, 1 runs. It frees the facing | within `within` m (flat), or the `timeout` (default 60 s) |
+| `Face(role, at: Marker(name) or Role(name), timeout)` | the body turns to a marker or to another role's body (any body: the player), and keeps facing it, following a body that moves, until a `MoveTo` or another `Face` | it faces it within 5 degrees, or the `timeout` (default 5 s) |
+| `Play(role, action, timeout)` | `shards_action::force_action`: the action runs now | that run is over (finished, or cut short by a stagger or another action), or the `timeout` (default 60 s) |
+| `Sound(role, sound)` | triggers `shards_action::ActionSound`, the event an action's `Sound` effect triggers: the audio module plays the sound from the body with its subtitle and speaker, as for any action (and the host forwards it in co-op) | at once: the simulation never waits for audio (a machine's), so follow it with a `Wait` as long as the line |
+| `Wait(secs)` | nothing | `secs` seconds, counted in ticks (rounded to the nearest) |
+| `WaitFor(condition, timeout)` | nothing | the condition holds: a name from the registry (`add_ai_condition`, the names `step --until named:` takes), `!name` for its opposite; no `timeout` by default (it waits for ever) |
+| `Signal(name)` | triggers `SequenceSignal { sequence, def, name }` for the game | at once |
+
+A step that is done lets the next begin on the same tick. A role is **bound** when the game plays the sequence: to an NPC if some step acts on it (`MoveTo`, `Face`, `Play`, `Sound`: its *actor* roles), to any body if the steps only look at it.
+
+```rust
+let run = shards::npc::play_sequence(world, "scene_intro", &[("guide", guide), ("visitor", player)])?;   // SequenceId
+shards::npc::stop_sequence(world, run);
+```
+
+`play_sequence` refuses, with a message that says what to change and changes nothing: an unknown sequence (with the closest id), a role the definition lacks or leaves unbound, a body bound twice, an actor that is not an NPC (no `Npc`, `NpcBrain` and `NpcDrive`), dead or down, or held by another run already (`sequence_stop run=N` ends it), an action step on a body with no action state, a marker the world lacks (with the closest name and the list), a condition nobody registered. The first step begins on the next tick the NPC systems run. It also drops the `Intent.orders` of the NPCs it holds (an agent's `move_to` would take the NPC over from the run: `drive_intents` follows orders first), and `drive_intents` drops one given later, while the run has the body; the tools `move`, `move_to` and `attack` refuse a subject a run holds (``e7 is in sequence 1 (greeting) as `guard`: the scene drives it; `sequence_stop run=1` ends it``), and `play_sequence` refuses a role that walks, turns, plays an action or speaks and has no `Transform`.
+
+**It runs in the simulation.** `run_sequences` (`NpcSystems::Decide`, after the behaviour system) visits the runs in number order (`SequenceId`: ascending, never used twice) and writes what each run wants of the bodies it holds into their `NpcDrive` (the goal of a `MoveTo`, the point to keep facing; no token, no strike, no press), so the NPC's own navigation, avoidance and steering carry it out. State: the resource `Sequences { next, runs }` (snapshot state, created by the first `play_sequence`; a snapshot taken before that removes it on load; the replay check `sequences`) and the component `SequenceHold { run, def, role }` on each actor (reflected). Every step keeps `begun`, ages in whole ticks and, for a marker, the place it looked up when it began, so a game loaded in the middle of a step goes on with it and does not force the action or say the line twice (`tests/npc/sequence.rs` loads a snapshot at the start and part-way through every step; `tests/sandbox/sequence.rs` does it on the sandbox's scene). It lives in `shards_npc` because it needs the NPC's own movement and brain (`NpcDrive`, the navmesh, the director), the action machine, levels (markers) and the condition registry, and nothing above the NPC module needs to know it: `shards_audio` is reached through the event an action's sound already uses.
+
+**The brain is dormant while a run holds the NPC.** A held NPC's behaviour does not choose: `decide` leaves its brain, plan, decision timer and drive exactly as they are (the state, `since`, `timer`, `step` and `target` freeze); it asks for no attack token and presses nothing (the director, the planner and the combo continuation count it as *under orders*, as when an agent drives it, and a token it held is returned); its turret does not track or fire and its ranged fighter traces no line of fire. Its perception goes on: what it sees and hears is remembered, and a shot heard is still a threat. A held NPC is awake wherever it stands, even where the world module would have put it to sleep. When the run ends the hold goes, its drive is cleared and the brain takes up from the state it was in (the sandbox's guide follows the player from `idle` once the scene is over).
+
+**A step that cannot finish ends the run** with `skipped: true` and a warning (`sequence 1 (scene_intro) abandoned at step 3/6: e16 (guide) is dead`): a marker the world lacks, a body that is dead, down or gone, a condition nobody registers anymore, a definition taken out of content, a step past its `timeout`, an action that cannot be played. A game that locks the player for a scene unlocks on `SequenceEnded` whatever `skipped` says, and never leaves it locked.
+
+**Events** (global triggers, in the simulation; an observer that changes gameplay returns at once unless `shards::core::simulates`): `SequenceStarted { sequence, def, roles }`, `SequenceStep { sequence, def, index, of, kind, actor, text }` (a step began), `SequenceSignal { sequence, def, name }`, `SequenceEnded { sequence, def, step, of, skipped, why }`. `why` is `None` for a run that finished and for one a game stopped.
+
+**Content checks** (`--check-content`): a sequence has steps; every role is a word with no blanks, dots or `=`, declared once; every step's role (and a role it faces) is declared, with the closest name; every declared role is named by some step; the numbers (`within`, `speed` in 0..1, `secs`, `timeout`) mean something; a `Play` names an action that exists; a `Sound` names a sound that exists and does not loop (the umbrella checks it, `EngineAudioPlugin`: the audio module is not the NPC module's to see); a `WaitFor` names a condition by its shape. Markers and condition names are checked when the sequence is played (they live in levels and in code).
+
+**For the AI.** Dev tools `sequence_play id=NAME role.ROLE=eN ...` (a body is its id, or its name when only one body has it: `role.guide=Guide`; or JSON `{"id": ..., "roles": {"guide": "e7"}}`) and `sequence_stop run=N | id=NAME | all=true`; the query `sequences` (the definitions and the runs; `run=N` for one run's steps with an arrow at the one under way); the condition `sequence_playing` for `step --until named:`. The journal says a line for each step (`` sequence 1 (scene_intro) 3/6: e16 plays `scene_nod` ``), at the start (`... starts: guide=e16 visitor=e5`) and at the end (`... ended`, `... stopped at step 3/6`). `observe` adds a line `` SEQUENCE 1 scene_intro step 3/6: e16 plays `scene_nod` `` for each run; an NPC's line says `in sequence 1 scene_intro (guide), step 3/6`; `npc_state` has `sequence: {run, def, role, step, of, doing, age_ticks}`. The engine rule `npc.sequence_holds` (with a control test) stops the game on a hold that names no run, a run whose actor in the world has no hold, a run numbered past the counter or out of order, or a step past the end of its definition.
+
+**Co-op**: sequences run where the simulation runs, the host (`NpcSystems` are in `SimSet::Input`, which a client does not run); a client is sent `Sequences` and the holds as state and runs no step, and the events are the host's. **Not built**: steps that run side by side on two NPCs (the steps run one after another, so a scene with two walkers walks them in turn); a `Sound` that waits for its line to end; a `MoveTo` to a body (markers only).
+
 ### Leash, home and zones
 
 `Home { pos, leash }`: where the NPC's home is and how far it can go from it, in metres. The NPC's targets stay inside the leash, with a 0.5 m margin for the body. When that margin pulls an attack's approach goal short of the target (a target at the leash's edge), the planner walks that much nearer the goal, so the NPC still stops inside the window it walks to (`planner::reach`; at least 0.3 m from the goal: a target too far beyond is faced from the edge). The conditions `target_in_leash`, `beyond_leash` and `at_home` let the behaviour turn the NPC back home. The arena skeletons in the sandbox have a 30 m leash, the guard 26 m, the camp skeletons in the wilds 12 m, and the lair's guard 10 m. An NPC in `Dormant` (farther than the active radius from every player, see "World and generation (E5)") does not think or move. It wakes up on the tick a player comes close. A group of enemies spawned by an encounter ("Encounters (G9)") goes back to its home the same way when the players leave or are wiped: the encounter's `pull_back` heals the survivors of a placed wave and forces the behaviour state it names, and the NPC condition `encounter_returning` is true until they are home.
 
-Conditions for `step --until`: `named:npc_hidden` (F11: an active NPC in a `hide` state stands within 0.6 m of the hiding spot it found), `named:npc_line_blocked` (F11: an active NPC whose plan keeps a range has an ally or a wall in its line of fire), `named:npc_attacking` (someone's attack is under way), `named:npcs_calm` (no one has a target), `named:npc_beyond_leash` (an active NPC is a metre beyond its leash; the step meant to keep the NPC in its zone must not stop on this), `named:npc_detour` (the NPC walks a route of several legs because the target is out of sight), `named:npc_avoiding` (an active NPC leaves its route to go around another body; see "Avoiding bodies"), `named:npc_engaged` (an active NPC with a target in one of the states `chase`, `attack` or `wait_token` is fighting; a calm NPC that sees someone is not), `named:npc_near` (a living player is closer than one and a half times the active NPC's sight range: the NPC is about to notice them). The last two are what the music listens for (see "Audio").
+Conditions for `step --until`: `named:sequence_playing` (F12: a sequence is under way), `named:npc_hidden` (F11: an active NPC in a `hide` state stands within 0.6 m of the hiding spot it found), `named:npc_line_blocked` (F11: an active NPC whose plan keeps a range has an ally or a wall in its line of fire), `named:npc_attacking` (someone's attack is under way), `named:npcs_calm` (no one has a target), `named:npc_beyond_leash` (an active NPC is a metre beyond its leash; the step meant to keep the NPC in its zone must not stop on this), `named:npc_detour` (the NPC walks a route of several legs because the target is out of sight), `named:npc_avoiding` (an active NPC leaves its route to go around another body; see "Avoiding bodies"), `named:npc_engaged` (an active NPC with a target in one of the states `chase`, `attack` or `wait_token` is fighting; a calm NPC that sees someone is not), `named:npc_near` (a living player is closer than one and a half times the active NPC's sight range: the NPC is about to notice them). The last two are what the music listens for (see "Audio").
 
 ### Navmesh
 
@@ -4132,10 +4221,10 @@ A tool is an argument struct (serde + schemars) and an ordinary Bevy system, `In
 
 | scope | tools |
 |---|---|
-| **Player** (plays fair, only through `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; movement: move_to (`path=true`), move, stop, jump, sprint, glide, crouch (F2), look, clearance, path_to, input_bindings; combat: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack, combat_objects, reload, weapon (F4), fire, shot_trace (F3); world: region_info, level_info, nav_path, npc_state; settings: settings, settings_set (like the settings menu for a human); sound: audio; Steam (feature `steam`): steam, steam_invite |
-| **Dev** (everything, including time) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, give_weapon, take_weapon, give_ammo (F4), content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset, motion_bake, animation; world: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, level_despawn, mover_go, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; sound: sound_play, music_set, emitter_play, emitter_stop; mesh looks: looks, look_outlines; foliage: scatter, scatter_set; effects: effects, effect_play, telegraph_decals, mark_spawn, fx_clear; Steam (feature `steam`): steam_host, steam_join, achievement_unlock; developer menu and console: dev_menu, console |
+| **Player** (plays fair, only through `Intent`) | observe, inspect, nearby, line_of_sight, journal, tools, highlight, overlay, content_list, content_get; movement: move_to (`path=true`), move, stop, jump, sprint, glide, crouch (F2), look, clearance, path_to, input_bindings; combat: light_attack, heavy_attack, block, parry, dodge, use_item, use_technique, lock_on, attack, combat_objects, reload, weapon (F4), fire, shot_trace (F3); world: region_info, level_info, nav_path, npc_state, sequences (F12); settings: settings, settings_set (like the settings menu for a human); sound: audio; Steam (feature `steam`): steam, steam_invite |
+| **Dev** (everything, including time) | + pause, resume, speed, step, possess, teleport, despawn, get, set (reflection), spawn_prefab, heal, god, stagger, give_weapon, take_weapon, give_ammo (F4), lock_controls, unlock_controls, sequence_play, sequence_stop (F12), content_check, content_reload, content_apply, rebind, physics_overlay, combat_overlay, shot, replay_save, snapshot_save, snapshot_load, crash_report, quit, assert_add, assert_list, assert_remove, assert_reset, motion_bake, animation; world: regen, region_load, goto_tile, worldgen_report, world_overlay, spawn_level, level_reload, level_despawn, mover_go, npc_set_state, nav_bake, nav_info, nav_overlay, npc_overlay; sound: sound_play, music_set, emitter_play, emitter_stop; mesh looks: looks, look_outlines; foliage: scatter, scatter_set; effects: effects, effect_play, telegraph_decals, mark_spawn, fx_clear; Steam (feature `steam`): steam_host, steam_join, achievement_unlock; developer menu and console: dev_menu, console |
 
-The game adds its own (in the template, `taunt` and the conditions `arena_cleared`, `foe_near`, `in_fight`; in the sandbox, the conditions `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`). Modules add conditions for `step --until named:…`: `near_poi` (world, appears with the first region), `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_avoiding`, `npc_engaged`, `npc_near` (NPC), `objects_live`, `projectile_flying` (combat objects), `mover_arrived` (movers, F6). Each
+The game adds its own (in the template, `taunt` and the conditions `arena_cleared`, `foe_near`, `in_fight`; in the sandbox, the conditions `boss_phase_2`, `boss_dead`, `player_dead`, `three_attacking`). Modules add conditions for `step --until named:…`: `near_poi` (world, appears with the first region), `npc_attacking`, `npcs_calm`, `npc_beyond_leash`, `npc_detour`, `npc_avoiding`, `npc_engaged`, `npc_near` (NPC), `objects_live`, `projectile_flying` (combat objects), `mover_arrived` (movers, F6), `sequence_playing` (sequences, F12). Each
 tool has a kind (`kind` in `shards tools`):
 
 - `query` only reads the world: no journal entry and no diff;
@@ -4963,13 +5052,14 @@ added hp: the game halts when field:e6:Health.current<500
 $ shards assert add calm error                            # … on the first [error] entry in the journal
 added calm: the game halts when error
 $ shards assert list
-37 rules, checked after every tick
+39 rules, checked after every tick
   ai.index_consistent  engine rule  armed
   core.intent_sane  engine rule  armed
   motion.finite  engine rule  armed
   motion.launch_sane  engine rule  armed
   voxel.body_in_solid  engine rule  armed
   motion.mover_sane  engine rule  armed
+  motion.control_lock_sane  engine rule  armed
   rules.mode_known  engine rule  armed
   action.resources_in_range  engine rule  armed
   action.running_sane  engine rule  armed
@@ -4993,6 +5083,7 @@ $ shards assert list
   npc.strike_spacing  engine rule  armed
   npc.tokens_within_limit  engine rule  armed
   npc.plan_sequence  engine rule  armed
+  npc.sequence_holds  engine rule  armed
   encounter.members_tracked  engine rule  armed
   encounter.state_sane  engine rule  armed
   encounter.lock_matches  engine rule  armed
@@ -5379,7 +5470,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify -
 # replay finished at tick 1010: identical to the recording (17 checks) [1010 ticks in 3.00s, 22 frames]
 ```
 
-**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`), the voxel arena (`voxel_arena`) and its navmesh (`voxel_nav`), the timeline (`timeline`), the context and paired actions (`context`), the body replays (`body_motion`, `body_state`), the encounter (`encounter`), the spawned combat objects (`objects`), the downed state and the revive (`downed`), the boss scheduler (`boss_schedule`), the body parts (`parts`), a first-person look (`look`), the weapons (`weapons`), the movers' room (`movers`), the hitscan shots (`hitscan`), the NPCs and gunfire (`npc_ranged`), crouching (`crouch`) and use by looking (`use`) and Half-Life's air movement (`air_move`): 27 files, each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
+**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`), the voxel arena (`voxel_arena`) and its navmesh (`voxel_nav`), the timeline (`timeline`), the context and paired actions (`context`), the body replays (`body_motion`, `body_state`), the encounter (`encounter`), the spawned combat objects (`objects`), the downed state and the revive (`downed`), the boss scheduler (`boss_schedule`), the body parts (`parts`), a first-person look (`look`), the weapons (`weapons`), the movers' room (`movers`), the hitscan shots (`hitscan`), the NPCs and gunfire (`npc_ranged`), crouching (`crouch`) and use by looking (`use`), Half-Life's air movement (`air_move`) and the scene that holds the player (`sequence`): 28 files, each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
 (for the template: `cargo test --test game record_reference_replays -- --ignored`).
 
 - Game data follows the same rule as `inspect`: everything except the `bevy_*` types and the internal markers of `ai_core`, plus `Transform` and `Name`. So components that only the window adds (`Visibility`, `GlobalTransform`, meshes) do not change the hash, and an `Entity` inside a component is hashed as its `AiId`. Labels and describe fragments are text for the AI and are not part of the hash: a new wording or a new describer does not break old replays.
@@ -7807,6 +7898,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 | `combat/objects.prefab.ron`, `combat/objects.action.ron`, `combat/caster.moveset.ron` | spawned combat objects (B4): the prefabs `bolt`, `bolt_homing` (`Projectile`) and `zone`; the `caster` moveset's volley (three bolts in a fan at the lock-on target, the middle one homing; each bursts where it stops and lays a chilling puddle that hits every 0.8 s), line (six zones ahead, landing one after another) and rings (eight lines of four zones, turned at random, landing from the inside out); net ids 170-185 |
 | `characters/colossus.prefab.ron`, `combat/colossus.parts.ron` | body parts (R1): the prefab `colossus` (6 m tall, 1200 health, no brain, the locomotion `colossus`) and its five parts (two legs that double poise, a hand with 60 health that passes half a hit on, a horn out of reach, a core that starts closed and triples a hit), all five lock points (R3) and the body none; only `parts.scenario` spawns it |
 | `characters/viewer.locomotion.ron`, `characters/look.prefab.ron`, `combat/dummy.parts.ron` | look as input (F1a): the locomotion `viewer` (the player's numbers with `face: Look`, pitch -85..85, eye 1.6 m), the prefabs `viewer` (a fighter with the player's moves that faces its look) and `range_dummy` (no brain; a `head` and a `torso` part inside a 1.8 m capsule); spawned by `tests/sandbox/look.rs`, never by the arena |
+| `scene/scene.*.ron`, `levels/scene.gltf` | scenes that keep the player's camera and NPC sequences (F12): the sequence `scene_intro` (walk to a marker, face the player, nod, say a line, wait, signal), the prefab `scene_guide` (a fighter with no moves that follows what it sees, the behaviour `scene_guide`), the action `scene_nod` (net id 9610), the sound `scene_line` (the Voice bus, a subtitle and a speaker), and the level `scene` (the room `tests/sandbox/sequence.rs` writes: a marker `scene_stand` and the guide); laid on the canyon floor by `sequence.scenario`, taken away with `level_despawn` |
 | `combat/camera.camera.ron` | the camera's numbers (C7): the code defaults, and the fit (R4) that keeps a high lock point on the colossus in frame with the player |
 | `anim/arms.view_model.ron`, `anim/view_model.animset.ron`, `models/view_model.glb` | the first-person view model (F1b): the view model `arms` (the model, its animset, the field of view), the animset `arms` (idle, walk and run by speed; the test weapons' shots and reloads play `fire` and `reload`) and the glTF, a pair of arms and a weapon slab made of boxes on named nodes (`cargo run -p sandbox --example make_view_model` writes it); the camera content (`combat/camera.camera.ron`) names `arms` for a body whose moveset names none; look through it with `camera_mode mode=first` |
 | `combat/sparring.action.ron`, `combat/sparring.moveset.ron` | the hit-outcome mechanics (B1) on neutral numbers: the `spar_*` actions (a jab chain asking a light reaction, a slam asking a heavy one with a push and a wall check, a roll with a perfect-evade window that starts on any stamina, a guard that prices the hit and costs half when perfect) and the movesets `sparring` (reactions, immunity, protection, a guard-broken action) and `duelist`, which `reactions.scenario` lends to two arena fighters; for the action timeline (B2a), `spar_heavy` (charges into `spar_heavy_full` when held 0.25 s; a light or a dodge pressed in its windup waits for its recovery), `spar_lunge` and `spar_lunge_far` (one `lunge` cooldown slot; the lunge turns at 360°/s within 45°, at most 0.4 m closer for the turning and not toward a target behind a wall, recovers 0.6 s longer on a whiff and keeps 40% of its cooldown when cut in its windup), `spar_channel` (`while_held`), `spar_roll_keep` (`face: Keep`), and the moveset `timeline` (a single slot by priority), which `timeline.scenario` lends to the player; for body state (B2b), `spar_ward` (a barrier of half the caster's health for 8 s), `spar_frost` and `spar_zap` (jabs that carry a full bar of chill or jolt), the moveset `bodystate`, and in `combat/sparring.status.ron` the statuses `spar_chill` (a 2 s proc gate, no cooling and a restart while active, a refused proc empties the bar) and `spar_jolt` (an instant status outside the cap), which `body_state.scenario` lends to the player |
@@ -7856,6 +7948,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
   (`npc_detour`; the player's `nav_path` shows the same 16.8 m instead of the straight 10, the player's `path_to` to the lair also goes by the navmesh, and `npc_overlay` shows the guard's line: fight, leash, detour), strikes, and never goes past its leash
   (`npc_beyond_leash`); when the player goes north, it reaches the edge of the zone and returns to the lair;
 - `npc_ranged.scenario` (F11) — in the yard's gate, with the bodies of `content/characters/ranged.prefab.ron` (nothing names their ids): two bystanders (`notice: Threats`) ignore the unarmed player, hear its shot and run behind two walls out of its sight (`idle → hide e5`, `npc_hidden`, the overlay's ` · hiding`) and stay there; a gunner closes in to its band and holds its fire while a body of its own side stands in its line (`npc_line_blocked`, `keeping range 8–14m · no line of fire: e… in the way`), fires its bursts once the player steps aside, and backs off when the player walks up; a turret turns to the player (`turret tracking e5 (yaw 31°/60°)`), stops at its limit and holds its fire (`(yaw -60°/60°, at its limit)`), turns back to its rest when switched off (`turret_active on=false`) and fires again when on; `npc_ranged.json` is its reference replay;
+- `sequence.scenario` (F12, a reference replay) — scenes that keep the player's camera: `lock_controls` holds the player looking only (`CONTROL looking only, look within 35° of (…) (scene)`), the look is held in the cone (north lands at `yaw -55.`, west at `yaw -125.`, `yaw -80` is untouched), and `move`, `light_attack` and `jump` say `your movement is locked (scene)` and `your actions are locked (scene)`; `sequence_play id=scene_intro role.guide=Guide role.visitor=e5` binds the guide by its name, a second play of it is refused (`is already in sequence`), the guide walks to the marker (`` walks to `scene_stand` ``) and its brain chooses nothing meanwhile (no `idle → follow` in the journal), turns to the player, nods, says its line (`[local] subtitle: Guide: The way is clear.`, `audio` shows it), waits, signals and the scene ends; `unlock_controls` gives the player its feet back, the guide's brain goes on from where it was (`idle → follow`), and the room goes with `level_despawn`; `sequence.json` is its reference replay;
 - `npc_avoidance.scenario` (E6) — three arena skeletons run single file toward the player: the rear ones go round the front ones (`npc_avoiding`,
   `npc_overlay` writes `avoiding e7`), five seconds of combat, and the journal stays silent about the avoidance;
 - `voxel_nav.scenario` (A2e) — the voxel arena's navmesh, baked in memory when the region loads: `nav_info` (`in memory, 16 chunks`), `nav_path` through the cave (37.4 m, a drop at its end, across the seam of two chunks) and up the four steps (mantles), the large body class refused in the tunnel, and a skeleton that chases the player up the steps and through the cave on the navmesh;
@@ -7888,8 +7981,8 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
   generated`), the hash is `7bbfdc3b62623fbc` again, and `save_check` agrees.
 
 The scenarios start with `heal`/`teleport`/`set`/`npc_set_state … calm`, so they run on a fresh game and after other scenarios, in any order:
-CI runs them forward and then backward in one game. Sessions of twenty-seven of them are recorded as reference replays in `tests/replays/`
-(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`, `parts`, `look`, `weapons`, `movers`, `hitscan`, `npc_ranged`, `crouch`, `use`, `air_move`; see "Replays").
+CI runs them forward and then backward in one game. Sessions of twenty-eight of them are recorded as reference replays in `tests/replays/`
+(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`, `parts`, `look`, `weapons`, `movers`, `hitscan`, `npc_ranged`, `crouch`, `use`, `air_move`, `sequence`; see "Replays").
 
 ## Tests and CI
 

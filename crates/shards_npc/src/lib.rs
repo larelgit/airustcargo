@@ -40,6 +40,11 @@
 //!   elsewhere), path following, the leash around [`Home`], avoidance between bodies
 //!   (sampled reciprocal velocity obstacles, numbers in content: [`AvoidanceDef`]). Dormant
 //!   NPCs (the world module's active zones) do nothing.
+//! - **Sequences** ([`sequence`], F12): scripted scenes as content (`*.sequence.ron`: `MoveTo`, `Face`, `Play`, `Sound`, `Wait`,
+//!   `WaitFor`, `Signal`, each on a role's NPC), played by [`play_sequence`] and stopped by [`stop_sequence`]. A run holds
+//!   the NPCs that act in it ([`SequenceHold`]): their brains are dormant, the run writes their `NpcDrive`, and when it ends
+//!   they go on from where they were. State in [`Sequences`] (snapshots, replay check); tools `sequence_play`,
+//!   `sequence_stop`, `sequences`.
 //!
 //! ```ron
 //! // content/npc/grunt.behavior.ron
@@ -73,7 +78,7 @@
 //!
 //! ```text
 //! NpcSystems::Sense     who is active (NpcActivity), perception: sight, hearing, memory, focus
-//! NpcSystems::Decide    each NPC: one transition at most, its state hook → NpcDrive; its decision timer and the plan options its conditions open
+//! NpcSystems::Decide    each NPC: one transition at most, its state hook → NpcDrive; its decision timer and the plan options its conditions open; then the sequences' steps (a held NPC is theirs)
 //! NpcSystems::Direct    tokens: started attacks remembered, finished ones back, grants; waiting roles
 //! NpcSystems::Plan      combo continuations at the start of a recovery, then token holders: choose an attack, close in, press it (budget, combinations)
 //! NpcSystems::Navigate  routes (NavPaths), following, leash → the velocity the route asks for
@@ -111,6 +116,7 @@ pub mod perception;
 pub mod planner;
 pub mod ranged;
 pub mod schedule;
+pub mod sequence;
 pub mod strike;
 pub mod threat;
 pub mod turret;
@@ -151,6 +157,10 @@ pub use overlay::NpcOverlay;
 pub use perception::{sees, sees_within, sight_clear, HeardAt, Noise, Perceived, Sensed, Sound};
 pub use planner::{banned, choose, pick_weighted, resolve, NpcOptions, NpcPlan, PastAttack, PlanCooldown, Resolved};
 pub use schedule::{schedule_report, target_angle, LiveZones, OptionReport, PickReport, Refusal, ScheduleParams, ScheduleReport, WhatIf};
+pub use sequence::{
+    condition_holds, marker_names, marker_point, play_sequence, sequence_hash, stop_sequence, FaceTarget, Facing, Run, SequenceDef, SequenceEnded, SequenceHold,
+    SequenceId, SequenceSignal, SequenceStarted, SequenceStep, Sequences, Step,
+};
 pub use strike::{spacing_ticks, wait_of, NpcStrike};
 
 /// Version of the NPC module.
@@ -287,7 +297,7 @@ impl Plugin for NpcPlugin {
                 FixedUpdate,
                 (
                     (brain::update_activity, perception::perceive).chain().in_set(NpcSystems::Sense),
-                    (brain::decide, ranged::fire_lines).chain().in_set(NpcSystems::Decide),
+                    (brain::decide, sequence::run_sequences, ranged::fire_lines).chain().in_set(NpcSystems::Decide),
                     director::direct.in_set(NpcSystems::Direct),
                     (chain::chain_press, planner::plan_attacks).chain().in_set(NpcSystems::Plan),
                     (nav::nav_paths, nav::nav_steer).chain().in_set(NpcSystems::Navigate),
@@ -315,6 +325,7 @@ impl Plugin for NpcPlugin {
             app.insert_resource(nav::ROUTE_PLANNER);
         }
         ai::register(app);
+        sequence::plugin(app);
         nav::tools::register(app.world_mut());
         overlay::plugin(app);
         #[cfg(feature = "render")]
