@@ -165,7 +165,7 @@ cargo shards observe                       # a text snapshot of the world + the 
 cargo shards tools                         # what can be done (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 286 definitions in 97 files
+cargo shards content check                 # ok: 288 definitions in 99 files
 cargo shards save-replay                   # the session from tick 0 → replays/tick<T>.json
 kill 4242                                  # the pid from `wait`; not kill -9: the game removes its token and port file
 

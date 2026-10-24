@@ -429,12 +429,38 @@ fn glide(In(call): In<Call<GlideArgs>>, mut commands: Commands, db: Option<Res<C
 }
 
 /// What moves a character, and how fast it can go right now: its modifiers (slow, caps, root,
-/// sprint cost), the walk, run and sprint speeds they leave (m/s), the swim speeds, and the
-/// wading factor. Read-only.
+/// sprint cost), the walk, run and sprint speeds they leave (m/s), the swim speeds, the
+/// wading factor, how the ground and the air steer the body (`accel`: the model and its numbers)
+/// and its horizontal speed now (`speed`). Read-only.
 #[derive(Deserialize, JsonSchema)]
 pub struct MoveInfoArgs {
     /// The character: 42 or "e42". Default: you.
     pub id: Option<Id>,
+}
+
+/// How the ground and the air steer the body (F7), with the numbers the model reads: `step`
+/// (`acceleration`, `deceleration`, `air_control`, `air_deceleration`) or `projected` (`ground_accel`, `air_accel`,
+/// `air_speed_cap`, `friction`, `stop_speed`, `max_air_speed`: null for no cap).
+fn accel_info(params: &CharacterParams) -> serde_json::Value {
+    use crate::controller::AccelModel;
+    match params.accel {
+        AccelModel::Step => serde_json::json!({
+            "model": params.accel.name(),
+            "acceleration": params.acceleration,
+            "deceleration": params.deceleration,
+            "air_control": params.air_control,
+            "air_deceleration": params.air_deceleration,
+        }),
+        AccelModel::Projected { ground_accel, air_accel, air_speed_cap, friction, stop_speed, max_air_speed } => serde_json::json!({
+            "model": params.accel.name(),
+            "ground_accel": ground_accel,
+            "air_accel": air_accel,
+            "air_speed_cap": air_speed_cap,
+            "friction": friction,
+            "stop_speed": stop_speed,
+            "max_air_speed": max_air_speed,
+        }),
+    }
 }
 
 fn move_info(In(call): In<Call<MoveInfoArgs>>, world: &World) -> ToolResult<serde_json::Value> {
@@ -494,5 +520,7 @@ fn move_info(In(call): In<Call<MoveInfoArgs>>, world: &World) -> ToolResult<serd
         "crouch_speed": params.crouch_speed,
         "crouch_time": params.can_crouch().then_some(params.crouch_time),
         "crouch_depth": e.get::<Crouch>().map(|c| round(c.depth)),
+        "accel": accel_info(params),
+        "speed": e.get::<MotionState>().map(|s| round(crate::controller::mover::flat(s.velocity).length())),
     }))
 }

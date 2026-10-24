@@ -81,6 +81,7 @@ pub use controller::{
     JumpedFlight, Landed, Launch, SprintResume, Stood,
     LocomotionInput, Mantle, Mantled, ModeChanged, MotionMode, MotionState,
 };
+pub use controller::AccelModel;
 pub use input::{BindMode, Binding, ControlState, ControlSystems, InputContext, InputContexts, InputMap, InputSettings};
 pub use intent::{intent_to_locomotion, GlideUntilLanded, MotionSystems};
 pub use interp::{adopt_visuals, shown_translation, InterpSystems, Interpolated, NotInterpolated, Pose, visual_offset};

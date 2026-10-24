@@ -86,7 +86,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 286 definitions in 97 files
+cargo shards content check                 # ok: 288 definitions in 99 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -109,7 +109,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 286 definitions in 97 files
+# ok: 288 definitions in 99 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -602,7 +602,7 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 286 definitions in 97 files
+content: 288 definitions in 99 files
   action  80
   animset  2
   attack_plan  5
@@ -627,7 +627,7 @@ content: 286 definitions in 97 files
   light  6
   locale  2
   lock_on  1
-  locomotion  7
+  locomotion  8
   look  15
   mover  4
   moveset  21
@@ -639,7 +639,7 @@ content: 286 definitions in 97 files
   perception  6
   perf  2
   poi  4
-  prefab  30
+  prefab  31
   prop  1
   region  3
   room  0
@@ -661,7 +661,7 @@ content: 286 definitions in 97 files
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 286 definitions in 97
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 288 definitions in 99
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -972,6 +972,8 @@ keeps its horizontal speed with no input. Options, all off by default: `axis_ste
 `brake_only_without_input` (`deceleration` only with no input; with input `acceleration` always, also toward a slower target), `air_deceleration` (braking in the air with no
 input; `air_control` 1 makes the speed-up there the full `acceleration`), and per-stance rates from a source: `MoveModifiers::accelerate_at` / `decelerate_at` replace the params
 for that tick (ground and air, also the air braking); the last writer wins, so order the sources.
+
+That is the `Step` model, the default. The `accel` option replaces it on the ground and in the air with the model of *Quake* and *Half-Life* (friction, and a push limited by the speed already projected on the wished direction): see "Air movement in the style of Half-Life (F7)" below.
 
 *Sprint in the air.* The sprint flag (the speed and the stamina drain) is decided on the ground and in the water. With `sprint_in_air` the air decides it every tick as well, by the same
 rule: pressing sprint in the air starts the sprint and letting go ends it on that tick (the take-off value no longer lasts the whole jump), and a glide is no sprint. The host and the client's
@@ -1436,6 +1438,81 @@ A body without a `crouch_height` ignores the input.
   jumps the ledge plain and with a crouch in the air, and shoots a standing and a crouched dummy from a standing and a crouched eye (also the reference replay `crouch.json`).
   `tests/sandbox/crouch.rs` checks the duct, the ledge, the dummy's hurtbox, eye and head, a crouched body riding a lift, a co-op client crouching its own body (the host agrees, no desync), and the replay in heavy mode (`--heavy 10`);
   `tests/motion/crouch.rs` the stance, the ceiling and floor casts, the air shift, the speed cap and the queries on bare worlds.
+
+### Air movement in the style of Half-Life (F7)
+
+By default the controller steps a body's horizontal velocity along the straight line to the velocity its input asks for (`acceleration`, `deceleration`, and in the air `air_control` times
+`acceleration`). The `locomotion` option `accel` picks another model for the ground and the air: **`Projected`**, the model of *Quake* and *Half-Life*, which is what makes strafing,
+air turns and bunny hops feel as they do there. `accel: Step` (the default, left out of the written form) is every body before F7: with the option off the controller runs exactly the code it ran, so
+content hashes and the reference replays do not move.
+
+The names: `Step` is "steps toward a target velocity"; `Projected` says how the other works, **a push is limited by the speed the body already has projected on the direction it wishes to go**, not
+by its total speed. (The FPS spec called the option `Quake`; the engine names a mechanism by what it does, and several games share it.)
+
+```ron
+{
+    // Step, as always: nothing to write.
+    "hero": (run_speed: 5.5),
+    // Half-Life's numbers in metres; any field left out takes them, so `accel: Projected()` is this too.
+    "runner": (
+        run_speed: 8.13, jump_height: 1.14, gravity: 20.32,
+        accel: Projected(ground_accel: 10.0, air_accel: 10.0, air_speed_cap: 0.76, friction: 4.0, stop_speed: 2.54),
+    ),
+}
+```
+
+- **The model.** `wish_dir` is the unit vector of the movement input, `wish_speed` the speed it asks for (the walk, run or sprint speed, scaled by the stick and by the modifiers as always, a crouched body's `crouch_speed` cap included),
+  `v` the horizontal velocity.
+  - *On the ground*, first friction: the speed drops by `max(speed, stop_speed) * friction * dt`, not below 0. Then the push: `add = wish_speed - v . wish_dir`; if `add > 0`, `v += wish_dir * min(add, ground_accel * wish_speed * dt)`.
+    A body reaches its wish speed in about `1 / ground_accel` seconds from rest (0.13 s with Half-Life's numbers, the friction working against the push), and **stops by friction alone**: from 8.13 m/s it is at rest in 0.55 s (an exponential down to the stop speed, then a straight line).
+  - *In the air*, no friction, and the speed to be reached is held to `air_speed_cap`: `add = min(wish_speed, air_speed_cap) - v . wish_dir`; if `add > 0`, `v += wish_dir * min(add, air_accel * wish_speed * dt)`.
+    The cap is on **where the push stops**, not on how hard it pushes (the step comes from the whole wish speed, as in the original games, so Half-Life's `sv_airaccelerate 10` is `air_accel: 10`).
+    A body flying at 8 m/s east that wishes to go north gets `air_speed_cap` (0.76 m/s) of north speed and no more: a nudge at a right angle, which makes its speed `sqrt(8^2 + 0.76^2)`, a little more than before.
+    A wish along the velocity adds nothing once the speed along it is past the cap, so the air does not push a fast body faster; a wish against it brakes.
+    Turned along with the velocity tick after tick, those right-angle nudges are a **strafe**: they swing the velocity round and add a little speed each tick, and landing on a jump pressed in time keeps it (a **bunny hop**).
+- **The numbers** (`Projected(..)`, every field has a default, Half-Life's in metres; 1 unit = 0.0254 m):
+
+  | field | default | what |
+  |---|---|---|
+  | `ground_accel` | 10 | the ground's push, per second as a multiple of the wish speed (a tick adds at most `ground_accel * wish_speed * dt` m/s). Above 0 |
+  | `air_accel` | 10 | the same in the air. 0: no air control. The step is taken from the whole wish speed |
+  | `air_speed_cap` | 0.762 | the most the air adds along the wished direction (m/s; 30 units). Above 0 |
+  | `friction` | 4 | ground friction, per second. 0: ice |
+  | `stop_speed` | 2.54 | under this speed (m/s; 100 units) the friction is a straight `stop_speed * friction` m/s², so a body stops instead of decaying for ever. Above 0 |
+  | `max_air_speed` | none | the highest horizontal speed the air can push a body to (m/s); see the open question below. None: no cap, as in the originals |
+
+  The checks name the field (`accel: ground_accel must be > 0 (is 0)`); a typo is an error with its file and line, like every `locomotion` field.
+- **What it replaces, and what it leaves.** It replaces the steering of the **ground** (the push replaces `acceleration`, the friction replaces `deceleration`) and of the **air with input** (the push replaces `acceleration * air_control`).
+  Under it these do not steer the ground and the air: `acceleration`, `deceleration`, `air_control`, `brake_only_without_input`, `axis_stepping` (but for the optional air drag below), and the modifiers' `acceleration` and `deceleration` rate overrides (they are m/s², the model's numbers
+  are not). A swimmer still reads `acceleration` and the `swim_*` numbers. **Left as they were:** `air_deceleration` with no input (0 by default: the air keeps the speed, as in the originals; a game may add drag with it, a step toward rest at that many m/s² shaped by `axis_stepping` as before, which the modifiers' `deceleration` override does not change under this model), the speed the input asks for
+  (`walk_speed`, `run_speed`, `sprint_speed`, `sprint_in_air`, the modifiers' caps and factors, wading, a root), gravity, `terminal_speed`, the jump with its coyote time and buffer, slopes, steps, ledge climbs, glide, swimming, crouch (the capped
+  wish speed on the ground, the feet pulled up in the air, no cap in the air so a crouch jump keeps its speed), the movers that carry a body (a body standing on a lift has no velocity of its own for the friction to act on), an action's `external` push and a launch, landings.
+  The friction acts on the ground tick only: **a jump pressed on landing is taken before the friction of that tick**, so a bunny hop pays none (the jump buffer is the controller's, `jump_buffer`, 0.12 s).
+  A body that comes down faster than it wishes to walk (after a strafe) is slowed by the friction alone: the push never takes a body above its wish speed.
+- **Open question 3: may a strafe jump gain speed above the run speed?** The engine builds the formula and lets content decide. With `max_air_speed: None` the air strafe can take a body above its run speed, as in the originals (a speed that grows with each good hop,
+  held in check by the friction of every landing that is not a bunny hop). With `max_air_speed: Some(m)` the air can push a body to `m` m/s and no further: a strafe still turns the body, and a hop keeps what it has, but the gain stops at `m`.
+  A body that is already faster (a sprint take-off, a knock) keeps its speed (the cap is `max(m, speed at the start of the tick)`): it is never braked by the cap, it is only not pushed faster. The cap acts on the air push, so a ground run stays what `run_speed` and the modifiers say.
+- **The tick rate.** Each tick is written in closed form for the tick it is given, and the tests hold these to a tolerance:
+  - the friction is the exact solution of `dv/dt = -friction * max(v, stop_speed)` over `dt` (`v * e^(-friction * dt)` above the stop speed, a line below it, a crossing inside a tick split), the same over 1 tick as over 2 of half the length; the original's per-frame rule
+    (`speed - max(speed, stop_speed) * friction * dt` each frame) is the same law stepped by Euler, and the two agree to 3 % at 60 and 120 frames a second;
+  - the push is a clamped straight line, exact for a wish that is held for the tick: a steady wish in the air ends at the same velocity (1e-4 m/s) at 30, 60, 120 and 240 ticks a second; a wish turned 90 degrees over a second keeps the speed it took off with
+    (the speed at the end agrees within 1 % across those rates, and is at least 95 % of the take-off's: it loses none);
+  - a scripted strafe run (east on the ground, a jump, the wish turned to north in 0.6 s, then north on the ground) ends within 3 cm and 2 cm/s of itself at 30, 60, 120 and 240 ticks a second (measured: under 1 cm);
+  - the run-up is first order in the tick, because the friction and the push act one after the other: the speed 0.1 s after the start is 7.15, 6.86, 6.71 and 6.64 m/s at 30, 60, 120 and 240 ticks a second (the continuous law gives 6.57), the run speed is reached exactly
+    at every rate (after 0.133 s), and the distance in 0.3 s is within 1.5 %.
+
+  What **does** depend on the tick rate is a strafe whose wish follows the velocity tick by tick (the view turned with the strafe key held). Each tick is a fresh nudge of up to `min(air_speed_cap, air_accel * wish_speed * dt)`, and the speed those right-angle nudges add is
+  second order in their size: `nudge^2 / (2 * speed)` a tick. With Half-Life's numbers at 8.13 m/s one second of perfect strafing ends at 9.1, 10.0, 11.0 and 9.7 m/s at 30, 60, 120 and 240 ticks a second. It is what the original games' players know as the
+  frame-rate effect, and no closed form removes it: it comes from how a turning wish is sampled. So a strafe is tuned at the tick rate the game runs at (60 here), with `air_accel`, `air_speed_cap` and `max_air_speed`; the gain per tick is largest
+  where `air_accel * wish_speed * dt` is about `air_speed_cap`.
+- **Air braking.** Pressing against the velocity in the air brakes at up to `air_accel * wish_speed` m/s² (81 with Half-Life's numbers): a body can stop dead in the air in a tenth of a second. A game that does not want that lowers `air_accel`, which also slows its turns.
+- **For the AI.** `move_info` gives `accel`: `{"model": "projected", "ground_accel": 10, "air_accel": 10, "air_speed_cap": 0.762, "friction": 4, "stop_speed": 2.54, "max_air_speed": null}`, or `{"model": "step", "acceleration": 40, "deceleration": 50, "air_control": 0.35,
+  "air_deceleration": 0}`, and `speed`, the body's horizontal speed now (the describer shows the vertical speed in the air as before, `air ↑3.1m/s`; the horizontal one is `speed`, or `inspect eN` `MotionState.velocity`). The tools are the same: `move dir=E`, `jump`, `look yaw=-90`, `move_to`.
+  A body with `face: Look` moves in the world's directions as always (`move` is by compass); to strafe by tools, wish a direction at a right angle to the velocity (`move_to` a point beside the path).
+- **In the sandbox**: the locomotion `air_viewer` (`characters/air_move.locomotion.ron`: the `viewer` with Half-Life's numbers written out), the prefab `air_runner` (`characters/air_move.prefab.ron`), and the scenario `air_move.scenario` (on the canyon floor, driven by `look`, `move`, `move_to` and `jump`: the run-up and the stop by friction,
+  the air cap on a sideways push, air braking, a hop that keeps its speed against a landing that pays the friction, a strafe around a point that gains speed, the tool's numbers), also the reference replay `air_move.json`.
+- **Tests**: `controller/accel.rs` (11: the friction and the pushes against numbers worked out by hand in the test, the friction against the original's per-frame rule, the tick-rate runs, a strafe's gain, the cap, the written form, the bad numbers); `tests/motion/air_move.rs` (11: the stop by friction and the run-up at 60, 120 and 240 ticks a second, the scripted strafe run at 30 to 240, a
+  turn that keeps its speed, a strafe with and without `max_air_speed`, a bunny hop against a landing that pays the friction, crouch, a slope, a lift ridden and walked on, the modifiers' rate overrides ignored, the tool and the content); the sandbox's `tests/sandbox/air_move.rs` (3: the locomotion and the prefab, the scenario on its own, the replay in heavy mode with `--heavy 10`); and the unchanged suite: every reference replay recorded before it verifies, the controller parity tests pass with the option off.
 
 ## Actions and combat (E3)
 
@@ -5301,7 +5378,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/obstacle_course.json --verify -
 # replay finished at tick 1010: identical to the recording (17 checks) [1010 ticks in 3.00s, 22 frames]
 ```
 
-**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`), the voxel arena (`voxel_arena`) and its navmesh (`voxel_nav`), the timeline (`timeline`), the context and paired actions (`context`), the body replays (`body_motion`, `body_state`), the encounter (`encounter`), the spawned combat objects (`objects`), the downed state and the revive (`downed`), the boss scheduler (`boss_schedule`), the body parts (`parts`), a first-person look (`look`), the weapons (`weapons`), the movers' room (`movers`), the hitscan shots (`hitscan`), the NPCs and gunfire (`npc_ranged`), crouching (`crouch`) and use by looking (`use`): 26 files, each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
+**Reference replays** are in `tests/replays/` (a folder in git, unlike `replays/`): the obstacle course, the combat prototype, the token director (`npc_director`), the lair guard on the navmesh (`npc_navmesh`), region switching (`region`), a replay from a snapshot (`snapshot`), saves (`saves`), the hit-outcome sparring (`reactions`), the voxel arena (`voxel_arena`) and its navmesh (`voxel_nav`), the timeline (`timeline`), the context and paired actions (`context`), the body replays (`body_motion`, `body_state`), the encounter (`encounter`), the spawned combat objects (`objects`), the downed state and the revive (`downed`), the boss scheduler (`boss_schedule`), the body parts (`parts`), a first-person look (`look`), the weapons (`weapons`), the movers' room (`movers`), the hitscan shots (`hitscan`), the NPCs and gunfire (`npc_ranged`), crouching (`crouch`) and use by looking (`use`) and Half-Life's air movement (`air_move`): 27 files, each played by its scenario in a fresh game. The sandbox test checks each file with the game itself (`sandbox --replay FILE --verify`), and CI also runs them in a window under Xvfb. The template keeps its own in `template/tests/replays/` (`smoke`, `valley`). If gameplay, or content they read, has changed on purpose, record them again (content they never read does not make them diverge): `cargo test -p sandbox --test sandbox -- --ignored record_reference_replays`
 (for the template: `cargo test --test game record_reference_replays -- --ignored`).
 
 - Game data follows the same rule as `inspect`: everything except the `bevy_*` types and the internal markers of `ai_core`, plus `Transform` and `Name`. So components that only the window adds (`Visibility`, `GlobalTransform`, meshes) do not change the hash, and an `Entity` inside a component is hashed as its `AiId`. Labels and describe fragments are text for the AI and are not part of the hash: a new wording or a new describer does not break old replays.
@@ -7663,6 +7740,7 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
 - `weapons.scenario` (F4) — the player is given the sandbox's two test weapons (`give_weapon`; `content/combat/weapons.*.ron`) and plays them through the player's tools: six shots empty the sidearm (`observe` shows `weapon test_sidearm 0/6 (12)`), `light_attack` answers `sidearm empty (0/6): reload`, `reload` moves the six rounds only when its draw ends (0.8 s, `e5 refilled sidearm +6 (6/6), 6 sidearm.reserve left`) and answers `sidearm is already full (6/6)` after; `weapon slot=2` switches at once (`e5 switches to test_blaster (slot 2, from test_sidearm)`), the blaster reloads itself on the press that would fire it empty (`ok: arm_blaster_reload`), and a switch made inside a reload's draw cuts it: nothing was loaded, the sidearm keeps its rounds, and the reload left to end loads what fits. The weapons are taken at the end and the player gets its moveset and flask back. Its session is the reference replay `weapons.json` (and, in heavy mode, the snapshots restored along it)
 - `hitscan.scenario` (F3) — the player, with the `viewer` locomotion and the sandbox's test guns (`give_weapon`; `content/combat/hitscan.*.ron`), shoots range dummies and a pillar spawned with the yard region (nothing names their ids): `observe` shows `SHOT hitscan_rifle_shot -> e… Dummy head 4.8m (x1.00)` and `shot_trace` the whole ray, three head shots kill one dummy (`e5 fires hitscan_rifle_shot: e… head -48 hp (hp 52)`; the look kicks half a degree up after each) and five torso shots another (`torso -24 hp`), a dummy 15 m away keeps 0.88 of the hit (`head -42 hp`), the piercer stops at a pillar (`e… Pillar 3.0m`) and passes one dummy into the one behind it (`head -40 hp (hp 60), e… head -40 hp (hp 60)`), the scatter gun fires `(8 pellets)` and the launcher's bolt leaves the eye (`bolt_fly at` a part); then the guns are taken and the yard takes the targets;
 - `crouch.scenario` (F2) — the player, with the `crouch_viewer` locomotion (`characters/crouch.locomotion.ron`: a crouch to 1.0 m in 0.2 s, a crouched walk of 2 m/s), shoots a standing range dummy and one born crouching (`crouch_dummy`, spawned with the yard region; nothing names their ids): a level look from the 1.6 m eye meets the standing dummy's head (`Dummy head 4.8m`) and passes over the crouched one (`"hits": []`), a look 7.7° down meets its head, now 0.95 m up (`e5 fires hitscan_rifle_shot: e… head -48 hp`), and the player's own shot starts at the crouched eye (`"from": "(-18.0, 0.9, -4.0)"`); then the test room `crouch` (`levels/crouch.gltf`, `world/crouch.level.ron`) is laid on the canyon floor: a standing player stops at the mouth of a duct whose ceiling is 1.2 m up, a crouched one walks in (`e5 crouches`), letting go inside changes nothing (`ok: crouch off, but there is no room to stand`, `crouched, no room to stand`), out the far end it stands (`e5 stands up`), a plain jump 2.1 m short of a 1.7 m ledge stops at its face and a jump with a crouch in the air lands on top;
+- `air_move.scenario` (F7) — the player, with the `air_viewer` locomotion (`characters/air_move.locomotion.ron`: Half-Life's ground friction and air push in metres, `accel: Projected(..)`), on the canyon floor, driven by `look`, `move`, `move_to` and `jump`: `move_info` names the model (`"model": "projected"`) and the body's `speed`; a run reaches 8.13 m/s and no more, friction alone stops it (3.65 m/s after 0.2 s, at rest after 0.55 s); a sideways wish in the air adds the cap, 0.76 m/s, and next to nothing more, and a wish against the velocity brakes (4 m/s off in three ticks); a body at 10 m/s keeps it through four hops pressed a few ticks before each landing, and the same body that lands without a press pays the friction down to 8.13; and a wish toward a point beside the path, which turns with the body, strafes round it and gains speed (8.13 to 9.1 m/s in 30 ticks) (also the reference replay `air_move.json`);
 - `boss_schedule.scenario` (N8a2, N8b) — the warden on two plans with gated options (`angle`, `players`, `max_repeats`, `forbid_after`) that are tokenless and wait in a strafe of their own, on the same director as two skeletons (`sched_arena`: two tokens, strikes 0.7 s apart), all written with `content_apply`; the skeletons take the director's tokens (`e7 takes an attack token on e5`) and the warden none (`!journal "e6 takes an attack token"`), and `npc_state` shows its grant as `"counted": false`: `npc_schedule` explains each refusal (`angle: the target is 10 degrees off the facing; this option needs 95-180`, `players: 1 living, this option needs 2-3`), a 900-tick fight holds every gate under the engine rules (`npc.plan_sequence` among them), and a phase swap keeps the history and the cooldowns the two plans share by name; with N8d a borrowed caster's bolt bursts into a chilling puddle (`chill_puddle`, tagged `capture`) at the player's feet, and the warden's `heavy` (`forbid_while: ["capture"]`) is refused while the puddle is live and open again in its fade; `boss_schedule.json` is its reference replay, and `stand/boss_schedule.scenario` counts the living players in co-op (three, then two when a client's body dies) and shows a client the host's plan history;
 - `boss_fight`, `dodge`, `errors` — the switch to phase 2, a roll to dodge a hit, errors that teach;
 - `npc_director.scenario` (E6) — three skeletons against one player in god mode, 30 s of combat: the sandbox condition `three_attacking`
@@ -7703,8 +7781,8 @@ Everything that is numbers and definitions is content in `crates/sandbox/assets/
   generated`), the hash is `7bbfdc3b62623fbc` again, and `save_check` agrees.
 
 The scenarios start with `heal`/`teleport`/`set`/`npc_set_state … calm`, so they run on a fresh game and after other scenarios, in any order:
-CI runs them forward and then backward in one game. Sessions of twenty-six of them are recorded as reference replays in `tests/replays/`
-(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`, `parts`, `look`, `weapons`, `movers`, `hitscan`, `npc_ranged`, `crouch`, `use`; see "Replays").
+CI runs them forward and then backward in one game. Sessions of twenty-seven of them are recorded as reference replays in `tests/replays/`
+(`obstacle_course`, `combat_prototype`, `npc_director`, `npc_navmesh`, `region`, `snapshot`, `saves`, `reactions`, `voxel_arena`, `voxel_nav`, `timeline`, `context`, `body_motion`, `body_state`, `encounter`, `objects`, `downed`, `boss_schedule`, `parts`, `look`, `weapons`, `movers`, `hitscan`, `npc_ranged`, `crouch`, `use`, `air_move`; see "Replays").
 
 ## Tests and CI
 

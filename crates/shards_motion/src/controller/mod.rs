@@ -28,6 +28,7 @@
 //! held ([`Crouch`], `stance.rs`): the feet stay on the ground and the head stays in the air, a stand-up
 //! waits for room, and everything that reads the body's size asks [`CharacterParams::at_depth`].
 
+mod accel;
 pub(crate) mod locomotion;
 pub(crate) mod mover;
 mod params;
@@ -45,6 +46,7 @@ use shards_content::{ContentAppExt, ContentDb};
 use shards_core::input_names::CROUCH;
 use shards_core::{Intent, NetRole, NetSet, Predicted};
 
+pub use accel::AccelModel;
 pub use params::{CharacterParams, Facing, SprintResume, DEFAULT_EYE_FRACTION, DEFAULT_PITCH_LIMITS_DEG};
 pub use stance::{Crouch, Crouched, Stood};
 pub(crate) use stance::room_to_stand;
@@ -282,6 +284,7 @@ impl Plugin for ControllerPlugin {
             .register_type::<CharacterParams>()
             .register_type::<SprintResume>()
             .register_type::<Facing>()
+            .register_type::<AccelModel>()
             .register_type::<CharacterController>()
             .register_type::<LocomotionInput>()
             .register_type::<MotionMode>()
