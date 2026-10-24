@@ -120,9 +120,9 @@ fn offscreen_marks_lie_on_a_wall_a_floor_and_a_ceiling_and_stay_off_a_body_in_fr
 #[test]
 #[ignore = "needs a GPU, or a software one (WGPU_FORCE_FALLBACK_ADAPTER=1): cargo test -p shards_fx --test fx -- --ignored offscreen"]
 fn offscreen_chunks_of_a_mesh_without_uvs_lie_on_the_floor_where_they_landed() {
-    // The sandbox's chunk of debris (`cargo run -p sandbox --example make_gore`): a binary glTF with positions and
-    // normals and no UVs, which the particle shader has to draw all the same.
-    let chunk: &[u8] = include_bytes!("../../../sandbox/assets/models/chunk.glb");
+    // A chunk of debris, a binary glTF with positions and normals and no UVs (a copy of the sandbox's, made by
+    // `cargo run -p sandbox --example make_gore`), which the particle shader has to draw all the same.
+    let chunk: &[u8] = include_bytes!("assets/chunk.glb");
     let (mut app, _assets) = gore_app("offscreen_chunks", &[("content/fx/chunks.effect.ron", CHUNKS)], &[("models/chunk.glb", chunk)]);
     let world = app.world_mut();
     floor(world);
@@ -169,7 +169,7 @@ const STAMPS: &str = r##"{
 #[test]
 #[ignore = "needs a GPU, or a software one (WGPU_FORCE_FALLBACK_ADAPTER=1): cargo test -p shards_fx --test fx -- --ignored offscreen"]
 fn offscreen_a_quad_wears_its_picture_and_a_plain_one_stays_a_white_spot() {
-    let hole: &[u8] = include_bytes!("../../../sandbox/assets/textures/marks/bullet_hole.png");
+    let hole: &[u8] = include_bytes!("assets/hole.png");
     let (mut app, _assets) = gore_app("offscreen_stamps", &[("content/fx/stamps.effect.ron", STAMPS)], &[("textures/hole.png", hole)]);
     let world = app.world_mut();
     let grey = grey(world);
