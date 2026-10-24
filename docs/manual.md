@@ -619,10 +619,12 @@ content: 286 definitions in 97 files
   encounter_rules  1
   flash  2
   fx  1
+  grading  2
   hitstop  1
   input_map  0
   layout  3
-  level  4
+  level  6
+  light  6
   locale  2
   lock_on  1
   locomotion  7
@@ -637,7 +639,7 @@ content: 286 definitions in 97 files
   perception  6
   perf  2
   poi  4
-  prefab  28
+  prefab  30
   prop  1
   region  3
   room  0
@@ -659,7 +661,7 @@ content: 286 definitions in 97 files
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 275 definitions in 93
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 286 definitions in 97
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -5790,7 +5792,7 @@ attack_assist = true         # false: attacks do not correct their direction tow
 | `graphics` | `shards_settings::apply_graphics`: the main window (fullscreen, vsync, size). `shadow_lights` is read by `shards_light`: of the content lights that ask for a shadow, only that many, the nearest to the camera, cast one (see "Lights and colour grading (F13)"; `shadows = "off"` is none). The window changes when the settings change, not every frame, so the size the player dragged with the mouse is not taken back. Without a window the values are only stored. `render_scale` is applied by `shards::render_scale`: the resolution of the 3D picture, not the window scale (see "3D picture resolution" below). `shadows` is read by the game: `GraphicsSettings::shadow_quality()`; `foliage` is read by `shards_scatter` (`GraphicsSettings::foliage_density()`): at 0.5 half of the same instances stays, with no new ones (see "Foliage and small objects (E10.2)"); `interpolation` is read by `shards_motion` (render interpolation, see "Render interpolation (C8)") |
 | `audio` | `shards_audio`: the volume of the buses `music`, `sfx`, `voice`, `ui` with `master` taken into account (`AudioSettings::volume("music")`), applied to what is already playing (see "Audio") |
 | `controls` | `shards_motion`: `ControlSettings` ⇄ `InputMap` (see "Input" in "Movement (E2)"); the two look speeds (`mouse_sensitivity`, and `aim_sensitivity` while the game sets `CameraOffsets::aiming`), the Y-axis inversion and `camera_auto_centre` go to `CameraSettings`; `attack_assist = false` makes the controls hold `assist_off` for the player's body (see "Action timeline (B2a)") |
-| `accessibility` | `shards_motion`: the field of view and the strength of the camera shake, `MotionBlur` on the cameras that have it (the game adds the component, the setting sets the strength, 0 turns it off), `hold_to_toggle` in the input map; `shards_action`: `flashes` for the blinking of telegraphs and of off-screen markers (`reduced` — half as big and no more than 2 times a second, `off` — a steady light, `draw::pulse_at`) and `shards_ui`: `flashes` for full-screen flashes (`reduced` — at most 0.35 strong, pulses no more than 2 times a second and half as deep, eased fades, `off` — none; see "UI (E9)"); `shards_audio`: `subtitles` for the lines of voices (off: the source `subtitles` is empty; see "Audio") |
+| `accessibility` | `shards_motion`: the field of view and the strength of the camera shake, `MotionBlur` on the cameras that have it (the game adds the component, the setting sets the strength, 0 turns it off), `hold_to_toggle` in the input map; `shards_action`: `flashes` for the blinking of telegraphs and of off-screen markers (`reduced` — half as big and no more than 2 times a second, `off` — a steady light, `draw::pulse_at`) and `shards_ui`: `flashes` for full-screen flashes (`reduced` — at most 0.35 strong, pulses no more than 2 times a second and half as deep, eased fades, `off` — none; see "UI (E9)"); `shards_light`: `flashes` for the flicker of lights (`reduced` — at most 2 steps or changes a second and half as far from the light as written, `off` — steady; see "Lights and colour grading (F13)"); `shards_audio`: `subtitles` for the lines of voices (off: the source `subtitles` is empty; see "Audio") |
 
 **3D picture resolution: `graphics.render_scale` (E8.6, E10).** The 3D world is drawn into a picture of `render_scale` x the window's pixels (with `--offscreen`, the base is the size of the `--offscreen` picture, 1280×720 by default), and the picture is stretched over the whole window with a linear filter;
 the UI, HUD, menus and the developer console stay at the window's native resolution. At 0.5 it is a quarter of the pixels (cheaper and softer), at 2 it is supersampling (four pixels for one). The module `shards::render_scale` (feature `render`, window and `--offscreen`):
@@ -6667,7 +6669,7 @@ Also checked: an effect that starts no particles (neither `count` nor `rate` wit
 
 ## Lights and colour grading (F13)
 
-A light is content, and so is the colour of the picture. The `shards_light` module turns `light` definitions (`*.light.ron`) into the Bevy lights a picture draws; the camera's picture (`picture.grading`, `shards_motion`) carries a colour grade that trigger volumes in a level can change. Both are only pictures: nothing in a tick reads them, so no replay, snapshot or co-op session sees them, and a mistake in one is found by `--check-content`, never by a replay that diverges.
+A light is content, and so is the colour of the picture. The `shards_light` module turns `light` definitions (`*.light.ron`) into the Bevy lights a picture draws; the camera's picture (`picture.grading`, `shards_motion`) carries a colour grade that trigger volumes in a level can change. Both are only pictures: nothing in a tick reads them, so a replay never diverges over them, and a mistake in one is found by `--check-content`. What a snapshot holds is the placed `ContentLight` and `GradingVolume` components with their entities, like any reflected component; the lights' state (`LightState`) and the grade's blend (`GradingBlend`) are the picture's own, and are worked out again from the clock.
 
 ![the lit sandbox room at dusk: a flashing lamp on and off (top), and the player left of the grading volume's line and inside it (bottom)](media/lights.png)
 
@@ -6697,7 +6699,7 @@ The content check names the file, the definition and the field: `intensity` 0 or
 
 **Placing a light.** The component `ContentLight { id }` on an entity makes it shine by the definition `id`, from where its `Transform` is (a spot along its -Z): a level node with the property `light = "sodium"` (the table in "Levels from Blender": a Blender lamp, or an empty), a prefab (`"ContentLight": (id: "lamp")`), or code (`commands.spawn((ContentLight::new("lamp"), Transform::from_xyz(2.0, 3.0, 0.0)))`). **On a Blender lamp, `light=` replaces the lamp's light:** the glTF loader's own `PointLight` or `SpotLight` under that node is taken out of the picture and the content light stands at the node, so the file keeps a lamp for Blender's viewport and the game keeps the numbers in content. A game's other Bevy lights (a sun, a lamp with no `light=`) are the game's and are left alone. The node's name and place are the light's identity (the tie-break of the shadow budget and the noise's seed). The entity that carries `ContentLight` has no `AiId` unless a prefab gives it an `AiKind`; the Bevy light is a child of it (`LightPicture`), so headless and drawn games have the same components on the entities that count. `ContentLight` and `GradingVolume` are `replay_ignore`d (a trigger marker has an id, and so may a lamp prefab), so a replay's hash never sees them; snapshots still hold them.
 
-**Flicker is the simulation's clock.** The brightness at a moment is a pure function of `Time<Fixed>` (elapsed plus the overstep between ticks) and of a seed that is the light's own (its definition's id, its node name and its place), never `SimRng`: a pause freezes a flicker, `step 30` moves it half a second, a headless game and a drawn one show the same brightness at the same tick, and a test knows the letter at tick 30. A pattern with one letter (`"g"`) is a steady brightness (`g` is 6/12: half), which is how a test names one. Two lamps with one noise definition wander differently, and the same lamp does the same in every run.
+**Flicker is the simulation's clock.** The brightness at a moment is a pure function of `Time<Fixed>` (elapsed plus the overstep between ticks) and of a seed that is the light's own (its definition's id, its node name and its place), never `SimRng`: a pause freezes a flicker, `step 30` moves it half a second, a headless game and a drawn one show the same brightness at the same tick, and a test knows the letter at tick 30. A pattern with one letter (`"g"`) is a steady brightness (`g` is 6/12: half), which is how a test names one. Two lamps with one noise definition wander differently, and the same lamp does the same in every run. **The player's `accessibility.flashes`** shapes every flicker as it does the attack warnings, since a light that flickers is what a photosensitive player asks to be spared: `full` is as written; `reduced` is no faster than twice a second (`flicker::REDUCED_RATE`) and half as far from the light as written (a noise's depth halved, a pattern's dark letters half light); `off` is steady. The `lights` query says which is in force and shows the flicker as drawn.
 
 **The shadow budget.** `graphics.shadow_lights` (default 4, 0 to 64, `settings_set group=graphics key=shadow_lights value=2`; `graphics.shadows = "off"` is none) says how many content lights may cast a shadow at once. Of the lights whose definition says `shadows: true`, the ones nearest the viewer get one; the viewer is the active camera (the AI's `AiCamera`, else an orbit camera), and a game with no camera (headless) measures from the local player's eye. Distances are compared to the centimetre and ties go by a key made of the definition's id, the node's name and the place, never by `Entity`, so a shot taken twice from one place shows the same shadows and a headless game agrees with a drawn one standing there. There is no hysteresis: a light that comes nearer than one that has a shadow takes it, once. A cube shadow map is six passes, so this is the knob for a weak GPU. Only content lights that ask are counted: a game's own Bevy lights keep their own `shadow_maps_enabled`.
 
@@ -6723,7 +6725,7 @@ grading: the camera's own
 
 **In the sandbox.** `content/light/` has the lights (`lamp`, `sodium`, `tube`, `flasher`, `dimmer`, `torch`), the gradings (`rust`, `cold`), the prefabs `lit_lamp` and `lit_flasher`, and the level `lit_room` (`assets/levels/lit_room.gltf`, written by `tests/sandbox/lights.rs`): a floor and three walls with six lights (four on Blender lamps that the content lights replace, two on empties) and a trigger volume over its right half that grades with `rust`. `scenarios/lights.scenario` plays it with queries alone, so it runs headless. Tests: `shards_light` (unit tests for the definitions, the flicker and the budget; `tests/light/` for the content check, the query, the clock and the Bevy lights of a drawn game) and the sandbox's `lights.rs`, whose `#[ignore]`d tests need a GPU (`cargo test -p sandbox --test sandbox -- --ignored lights`): the picture holds exactly the six content lights, a flashing lamp lights the room at one moment and not at the next, and a grading volume changes the channel means of the shot and gives them back.
 
-**What is not here.** Directional lights (a sun) are not content yet. Emissive bulbs do not follow a flicker (the material is the game's). There is no area light or light cookie, no hysteresis in the budget, and a spot's shadow costs one pass where a point light's costs six, which the budget does not tell apart. The grade of a second camera that draws the world (a view model) is the game's to copy. Checked on a GPU with `--offscreen` (RTX 5080); not checked by eye in a window.
+**What is not here.** Directional lights (a sun) are not content yet. Emissive bulbs do not follow a flicker (the material is the game's). There is no area light or light cookie, no hysteresis in the budget, and a spot's shadow costs one pass where a point light's costs six, which the budget does not tell apart. The view model's camera (F1b) takes the world camera's grade when that camera does not draw in HDR; under an HDR camera (any `picture.bloom`) it draws over the graded picture and stays ungraded, and any other second camera that draws the world is the game's to grade. Checked on a GPU with `--offscreen` (RTX 5080); not checked by eye in a window.
 
 ## Hit stop (C2)
 

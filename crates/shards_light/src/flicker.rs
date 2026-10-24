@@ -2,7 +2,12 @@
 //! same brightness on every machine, with a window and without. It never draws from `SimRng`: a light's
 //! noise is seeded by what the light is, so no gameplay number moves.
 
+use shards_settings::FlashLevel;
+
 use crate::def::Flicker;
+
+/// The most a flicker steps or changes a second under `accessibility.flashes = "reduced"`.
+pub const REDUCED_RATE: f32 = 2.0;
 
 /// FNV-1a over `bytes`, continuing from `hash`.
 fn fnv(mut hash: u64, bytes: &[u8]) -> u64 {
@@ -47,6 +52,26 @@ pub fn level(flicker: &Flicker, clock: f64, seed: u64) -> f32 {
             }
             1.0 - depth.clamp(0.0, 1.0) * noise(clock * f64::from(*rate), seed)
         }
+    }
+}
+
+/// The flicker the player's `accessibility.flashes` lets through: `Full` as written; `Reduced` no faster than
+/// [`REDUCED_RATE`] a second and half as deep (noise) ; `Off` steady.
+pub fn shaped(flicker: &Flicker, flashes: FlashLevel) -> Flicker {
+    match (flashes, flicker) {
+        (FlashLevel::Full, flicker) => flicker.clone(),
+        (FlashLevel::Off, _) | (_, Flicker::None) => Flicker::None,
+        (FlashLevel::Reduced, Flicker::Pattern { pattern, rate }) => Flicker::Pattern { pattern: pattern.clone(), rate: rate.min(REDUCED_RATE) },
+        (FlashLevel::Reduced, Flicker::Noise { rate, depth }) => Flicker::Noise { rate: rate.min(REDUCED_RATE), depth: depth * 0.5 },
+    }
+}
+
+/// [`level`] of the [`shaped`] flicker; under `Reduced` a pattern's swing round the light as written is halved too.
+pub fn level_for(flicker: &Flicker, clock: f64, seed: u64, flashes: FlashLevel) -> f32 {
+    let raw = level(&shaped(flicker, flashes), clock, seed);
+    match (flashes, flicker) {
+        (FlashLevel::Reduced, Flicker::Pattern { .. }) => 1.0 + (raw - 1.0) * 0.5,
+        _ => raw,
     }
 }
 
@@ -109,5 +134,28 @@ mod tests {
         assert!(run.windows(2).all(|w| (w[0] - w[1]).abs() < 0.1), "no jumps");
         assert_eq!(level(&Flicker::Noise { rate: 6.0, depth: 0.0 }, 3.3, seed), 1.0, "no depth is steady");
         assert_eq!(level(&Flicker::None, 3.3, seed), 1.0);
+    }
+
+    #[test]
+    fn the_players_flash_setting_shapes_a_flicker() {
+        let pattern = Flicker::Pattern { pattern: "ma".into(), rate: 10.0 };
+        assert_eq!(shaped(&pattern, FlashLevel::Full), pattern, "full: as written");
+        assert_eq!(level_for(&pattern, 0.15, 0, FlashLevel::Full), 0.0, "the dark letter is dark");
+        // Reduced: no faster than twice a second, and the swing round the light as written halved.
+        assert_eq!(shaped(&pattern, FlashLevel::Reduced), Flicker::Pattern { pattern: "ma".into(), rate: REDUCED_RATE });
+        assert_eq!(level_for(&pattern, 0.6, 0, FlashLevel::Reduced), 0.5, "the dark letter is half light");
+        assert_eq!(level_for(&pattern, 0.1, 0, FlashLevel::Reduced), 1.0, "and the written one is as written");
+        let slow = Flicker::Pattern { pattern: "ma".into(), rate: 1.0 };
+        assert_eq!(shaped(&slow, FlashLevel::Reduced), slow, "a flicker already slow keeps its rate");
+        // Off: steady.
+        assert_eq!(shaped(&pattern, FlashLevel::Off), Flicker::None);
+        assert!((0..100).all(|i| level_for(&pattern, f64::from(i) / 17.0, 0, FlashLevel::Off) == 1.0));
+        // Noise: slower and half as deep.
+        let noise = Flicker::Noise { rate: 20.0, depth: 0.4 };
+        assert_eq!(shaped(&noise, FlashLevel::Reduced), Flicker::Noise { rate: REDUCED_RATE, depth: 0.2 });
+        let run: Vec<f32> = (0..600).map(|i| level_for(&noise, f64::from(i) / 60.0, 7, FlashLevel::Reduced)).collect();
+        assert!(run.iter().all(|l| (0.8..=1.0).contains(l)), "inside half the depth");
+        assert!(run.windows(2).all(|w| (w[0] - w[1]).abs() < 0.011), "and slow");
+        assert_eq!(shaped(&Flicker::None, FlashLevel::Reduced), Flicker::None);
     }
 }

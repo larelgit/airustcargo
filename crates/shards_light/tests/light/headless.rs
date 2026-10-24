@@ -161,3 +161,27 @@ fn a_game_without_lights_costs_nothing_and_says_so() {
     assert!(said.starts_with("lights: 0 (point 0, spot 0)"), "{said}");
     assert!(said.contains("viewer: none"), "{said}");
 }
+
+#[test]
+fn the_players_flash_setting_calms_a_flicker() {
+    use shards::settings::AccessibilitySettings;
+    let (_assets, mut app) = room("flashes");
+    // Three quarters of a second: at two steps a second the blinking light is on its dark letter.
+    step(&mut app, 45);
+    let said = ok(&mut app, "lights", json!({ "id": "blink" }));
+    assert!(said.contains("step 1 = a: 0 % (0 lm)") && !said.contains("accessibility.flashes"), "{said}");
+    // Reduced: the same step, but the dark letter is half light, and the answer says why.
+    app.world_mut().resource_mut::<AccessibilitySettings>().flashes = "reduced".into();
+    let said = ok(&mut app, "lights", json!({ "id": "blink" }));
+    assert!(said.contains("accessibility.flashes = reduced: a flicker steps or changes at most 2 times a second"), "{said}");
+    assert!(line(&said, "Lamp.B").contains("step 1 = a: 50 % (1000 lm)"), "{said}");
+    // Off: nothing flickers, and the light stays as written; the query still counts what is authored to flicker.
+    app.world_mut().resource_mut::<AccessibilitySettings>().flashes = "off".into();
+    let said = ok(&mut app, "lights", json!({}));
+    assert!(said.contains("accessibility.flashes = off: no light flickers") && said.contains("· 2 flicker ·"), "{said}");
+    assert!(line(&said, "Lamp.B").contains("2000 lm of 2000 · steady (accessibility.flashes = off)"), "{said}");
+    assert!(line(&said, "Lamp.C").contains("3000 lm of 3000 · steady (accessibility.flashes = off)"), "{said}");
+    // The default is as designed.
+    app.world_mut().resource_mut::<AccessibilitySettings>().flashes = "full".into();
+    assert!(!ok(&mut app, "lights", json!({})).contains("accessibility.flashes"));
+}

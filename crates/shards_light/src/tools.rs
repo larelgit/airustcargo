@@ -8,6 +8,7 @@ use serde::Deserialize;
 use shards_content::db::closest;
 use shards_content::ContentDb;
 use shards_motion::camera::{picture_clock, CameraTuning, Grading, GradingBlend, GradingDef};
+use shards_settings::FlashLevel;
 
 use crate::{update_state, Flicker, LightDef, LightInfo, LightState};
 
@@ -32,7 +33,8 @@ fn at(v: Vec3) -> String {
 }
 
 fn flicker_text(light: &LightInfo, def: &LightDef) -> String {
-    match &def.flicker {
+    match &light.flicker {
+        Flicker::None if def.flicker != Flicker::None => "steady (accessibility.flashes = off)".to_owned(),
         Flicker::None => "steady".to_owned(),
         Flicker::Pattern { pattern, rate } => {
             let step = light.step.unwrap_or(0);
@@ -133,6 +135,13 @@ fn lights(In(call): In<Call<LightsArgs>>, world: &mut World) -> ToolResult {
         Some((place, what)) => format!("viewer: the {what} at {}", at(place)),
         None => "viewer: none (no camera and no local player: distances are unknown)".to_owned(),
     });
+    match state.flashes {
+        FlashLevel::Full => {}
+        FlashLevel::Reduced => out.push(
+            "accessibility.flashes = reduced: a flicker steps or changes at most 2 times a second and swings half as far".to_owned(),
+        ),
+        FlashLevel::Off => out.push("accessibility.flashes = off: no light flickers".to_owned()),
+    }
     let limit = limit.unwrap_or(24);
     for light in shown.iter().take(limit) {
         let name = if light.name.is_empty() { String::new() } else { format!(" \"{}\"", light.name) };

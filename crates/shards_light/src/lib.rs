@@ -39,7 +39,7 @@ use serde_json::{json, Value};
 use shards_content::{ContentAppExt, ContentDb};
 use shards_core::{EngineAppExt, LocalPlayer};
 use shards_motion::camera::{picture_clock, FirstPersonCamera, ThirdPersonCamera};
-use shards_settings::GraphicsSettings;
+use shards_settings::{AccessibilitySettings, FlashLevel, GraphicsSettings};
 
 pub use def::{kelvin_srgb, Flicker, LightDef, LightKind, MAX_RANGE};
 pub use tools::LightsArgs;
@@ -81,6 +81,8 @@ pub struct LightInfo {
     pub position: Vec3,
     /// `None`: the definition does not exist (a content error), and nothing is drawn.
     pub def: Option<LightDef>,
+    /// The flicker as drawn: the definition's, as far as the player's `accessibility.flashes` lets it through.
+    pub flicker: Flicker,
     /// The brightness factor of the flicker now (1 steady, 0 dark).
     pub level: f32,
     /// The pattern step the clock is at, for a pattern.
@@ -108,6 +110,8 @@ pub struct LightState {
     pub viewer: Option<(Vec3, &'static str)>,
     /// How many lights may cast a shadow.
     pub budget: usize,
+    /// The player's `accessibility.flashes`: what flickers is slower and shallower (`Reduced`) or steady (`Off`).
+    pub flashes: FlashLevel,
 }
 
 impl LightState {
@@ -166,6 +170,7 @@ fn update_state(
     fixed: Res<Time<Fixed>>,
     db: Option<Res<ContentDb>>,
     settings: Option<Res<GraphicsSettings>>,
+    accessibility: Option<Res<AccessibilitySettings>>,
     placed: Placed,
     cameras: Cameras,
     orbits: OrbitCameras,
@@ -174,6 +179,7 @@ fn update_state(
 ) {
     let clock = picture_clock(&fixed);
     let budget = settings.as_ref().map_or(DEFAULT_SHADOW_LIGHTS, |s| s.shadow_light_budget());
+    let flashes = accessibility.as_ref().map_or(FlashLevel::Full, |a| a.flash_level());
     let viewer = cameras
         .iter()
         .next()
@@ -182,9 +188,10 @@ fn update_state(
         .or_else(|| players.iter().next().map(|t| (t.translation + Vec3::Y * 1.6, "player")));
     // A game with no lights keeps its state as it is (the viewer and the budget, which the query shows, aside).
     if placed.is_empty() && state.lights.is_empty() {
-        if state.viewer != viewer || state.budget != budget {
+        if state.viewer != viewer || state.budget != budget || state.flashes != flashes {
             state.viewer = viewer;
             state.budget = budget;
+            state.flashes = flashes;
         }
         return;
     }
@@ -196,15 +203,16 @@ fn update_state(
             let name = name.map(|n| n.as_str().to_owned()).unwrap_or_default();
             let key = key_of(&light.id, &name, position);
             let def = db.as_ref().and_then(|db| db.peek::<LightDef>(&light.id)).cloned();
-            let (level, step, lumens, srgb, wants_shadow) = match &def {
+            let (shown, level, step, lumens, srgb, wants_shadow) = match &def {
                 Some(def) => {
-                    let level = flicker::level(&def.flicker, clock, flicker::seed_of(&light.id, &key));
-                    (level, flicker::step_of(&def.flicker, clock), def.intensity * level, def.srgb(), def.shadows)
+                    let shown = flicker::shaped(&def.flicker, flashes);
+                    let level = flicker::level_for(&def.flicker, clock, flicker::seed_of(&light.id, &key), flashes);
+                    (shown.clone(), level, flicker::step_of(&shown, clock), def.intensity * level, def.srgb(), def.shadows)
                 }
-                None => (0.0, None, 0.0, [1.0; 3], false),
+                None => (Flicker::None, 0.0, None, 0.0, [1.0; 3], false),
             };
             let distance = viewer.map(|(at, _)| at.distance(position));
-            LightInfo { entity, id: light.id.clone(), name, key, position, def, level, step, lumens, srgb, wants_shadow, casts: false, distance }
+            LightInfo { entity, id: light.id.clone(), name, key, position, def, flicker: shown, level, step, lumens, srgb, wants_shadow, casts: false, distance }
         })
         .collect();
     // Key order, then place: never the order of a query.
@@ -215,7 +223,7 @@ fn update_state(
     for (light, casts) in lights.iter_mut().zip(casts) {
         light.casts = casts;
     }
-    let next = LightState { lights, clock, viewer, budget };
+    let next = LightState { lights, clock, viewer, budget, flashes };
     if *state != next {
         *state = next;
     }
