@@ -20,8 +20,9 @@ fn fnv(mut hash: u64, bytes: &[u8]) -> u64 {
 
 const FNV_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 
-/// A light's seed: a hash of its content id and the key of its place (a node's name and where it stands), so two
-/// lamps with the same definition wander differently, and the same lamp does the same in every run.
+/// A light's seed: a hash of its content id and the key of its place (a node's name and where it stood when it first
+/// appeared; `LightSeeds` keeps it), so two lamps with the same definition wander differently, and the same lamp does
+/// the same in every run.
 pub fn seed_of(id: &str, key: &str) -> u64 {
     fnv(fnv(fnv(FNV_BASIS, id.as_bytes()), &[0xff]), key.as_bytes())
 }

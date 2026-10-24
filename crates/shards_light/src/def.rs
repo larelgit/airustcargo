@@ -37,7 +37,7 @@ pub enum Flicker {
     /// (`(letter - 'a') / 12` times the intensity), `rate` steps a second, looping. `"mmamammmmammamamaaamammma"`
     /// at 10 is a fluorescent tube that is failing.
     Pattern { pattern: String, rate: f32 },
-    /// Smooth random flicker, from a seed of the light's own (its content id and its place), never the simulation's
+    /// Smooth random flicker, from a seed of the light's own (its content id, node name and place when it first appeared, kept while it lives, so a moving light wanders the same way), never the simulation's
     /// random numbers: the brightness wanders between `1 - depth` and 1 times the intensity, `rate` changes a second.
     Noise { rate: f32, depth: f32 },
 }

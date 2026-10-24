@@ -185,3 +185,72 @@ fn the_players_flash_setting_calms_a_flicker() {
     app.world_mut().resource_mut::<AccessibilitySettings>().flashes = "full".into();
     assert!(!ok(&mut app, "lights", json!({})).contains("accessibility.flashes"));
 }
+
+/// The brightness of the light called `name` in the state the last frame made.
+fn level_of(app: &App, name: &str) -> f32 {
+    app.world().resource::<LightState>().lights.iter().find(|l| l.name == name).unwrap_or_else(|| panic!("no light {name}")).level
+}
+
+#[test]
+fn a_noise_light_that_moves_keeps_the_wander_it_started_with() {
+    let assets = Folder::new("moving");
+    let mut app = game(&assets);
+    let lamp = light(&mut app, "wander", "Lamp.M", Vec3::new(1.0, 2.0, 0.0));
+    app.update();
+    step(&mut app, 37);
+    app.update();
+    let before = level_of(&app, "Lamp.M");
+    assert!(before < 1.0, "the noise has taken the light below the written one at this moment: {before}");
+    // The clock stands still (a stepped game between steps) while the lamp is carried about: no frame changes its brightness.
+    for i in 1..=10 {
+        app.world_mut().get_mut::<Transform>(lamp).unwrap().translation = Vec3::new(1.0 + 3.7 * i as f32, 2.0, -2.3 * i as f32);
+        app.update();
+        assert_eq!(level_of(&app, "Lamp.M"), before, "frame {i}: the seed was taken once");
+    }
+    // A twin that never moved, started the same way, is at the same brightness at the same moment.
+    let mut still = game(&Folder::new("still"));
+    light(&mut still, "wander", "Lamp.M", Vec3::new(1.0, 2.0, 0.0));
+    still.update();
+    step(&mut still, 37);
+    still.update();
+    assert_eq!(level_of(&still, "Lamp.M"), before);
+    // The seed goes with the light.
+    assert_eq!(app.world().resource::<shards::light::LightSeeds>().len(), 1);
+    app.world_mut().despawn(lamp);
+    app.update();
+    assert!(app.world().resource::<shards::light::LightSeeds>().is_empty());
+}
+
+#[test]
+fn a_moving_noise_light_stays_within_the_reduced_rate_when_the_player_asks() {
+    use shards::settings::AccessibilitySettings;
+    let assets = Folder::new("moving_reduced");
+    let mut app = game(&assets);
+    app.world_mut().resource_mut::<AccessibilitySettings>().flashes = "reduced".into();
+    let lamp = light(&mut app, "wander", "Lamp.M", Vec3::new(0.0, 2.0, 0.0));
+    app.update();
+    // Three seconds, the lamp carried 0.7 m every tick: its brightness still moves no faster than a reduced noise (2 changes a
+    // second, half the depth of 0.5) can: 0.25 * 1.5 * 2 / 60 = 0.0125 a tick at most.
+    let mut run = Vec::new();
+    for i in 0..180 {
+        step(&mut app, 1);
+        app.world_mut().get_mut::<Transform>(lamp).unwrap().translation.x = 0.7 * i as f32;
+        app.update();
+        run.push(level_of(&app, "Lamp.M"));
+    }
+    assert!(run.iter().all(|l| (0.75..=1.0).contains(l)), "inside half the depth: {run:?}");
+    let jump = run.windows(2).map(|w| (w[0] - w[1]).abs()).fold(0.0f32, f32::max);
+    assert!(jump < 0.013, "no faster than the reduced rate allows: {jump}");
+    // The same lamp, left where it was, wanders exactly so.
+    let mut still = game(&Folder::new("still_reduced"));
+    still.world_mut().resource_mut::<AccessibilitySettings>().flashes = "reduced".into();
+    light(&mut still, "wander", "Lamp.M", Vec3::new(0.0, 2.0, 0.0));
+    still.update();
+    let mut steady = Vec::new();
+    for _ in 0..180 {
+        step(&mut still, 1);
+        still.update();
+        steady.push(level_of(&still, "Lamp.M"));
+    }
+    assert_eq!(run, steady, "carrying a light about does not change how it flickers");
+}

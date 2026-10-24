@@ -11,8 +11,8 @@
 //!   entity without an `AiId`, driven every frame; headless the module keeps only its state (what the `lights`
 //!   query shows). A game's own Bevy lights (a sun, a glTF lamp without `light=`) are the game's and untouched.
 //! - **Flicker** ([`Flicker`]) is a pure function of the simulation's clock (`Time<Fixed>`: a pause stops it and
-//!   `step` moves it, the same headless and drawn) and of a seed that is the light's own (its content id and its
-//!   place), never `SimRng`: a pattern of letters `a` to `z` as brightness steps (the classic light styles), or smooth
+//!   `step` moves it, the same headless and drawn) and of a seed that is the light's own (its content id, node name and place
+//!   when it first appeared, kept while it is placed: a light that moves keeps its wander), never `SimRng`: a pattern of letters `a` to `z` as brightness steps (the classic light styles), or smooth
 //!   noise of a depth.
 //! - **Shadow budget.** `graphics.shadow_lights` (default 4, none under `graphics.shadows = "off"`): of the lights
 //!   whose content says `shadows: true`, the nearest that many to the viewer (the active camera, else the local player)
@@ -34,6 +34,8 @@ mod tools;
 pub use render::LightPicture;
 
 use ai_core::{AiAppExt, AiCamera};
+use std::collections::BTreeMap;
+
 use bevy::prelude::*;
 use serde_json::{json, Value};
 use shards_content::{ContentAppExt, ContentDb};
@@ -67,6 +69,43 @@ impl ContentLight {
     }
 }
 
+/// The noise seed each content light took when it first appeared (its definition id, node name and place then), kept for
+/// as long as the entity is placed and its definition id stays: a light that moves (a lamp a body carries, a mover's
+/// child) keeps wandering the same way, at the rate its definition and the player's `accessibility.flashes` allow.
+/// A resource, not a `Local`: the `lights` tool runs its own cached `update_state`, and both must agree.
+#[derive(Resource, Default, Debug)]
+pub struct LightSeeds(BTreeMap<Entity, (String, u64)>);
+
+impl LightSeeds {
+    /// The seed of `entity`, made from `id` and `key` the first time it is asked for (or after its id changed).
+    fn seed(&mut self, entity: Entity, id: &str, key: &str) -> u64 {
+        if let Some((have, seed)) = self.0.get(&entity)
+            && have == id
+        {
+            return *seed;
+        }
+        let seed = flicker::seed_of(id, key);
+        self.0.insert(entity, (id.to_owned(), seed));
+        seed
+    }
+
+    /// How many lights have a seed.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Forgets the entities that are no longer placed.
+    fn forget_unplaced(&mut self, placed: &Placed) {
+        if self.0.keys().any(|e| !placed.contains(*e)) {
+            self.0.retain(|e, _| placed.contains(*e));
+        }
+    }
+}
+
 /// What the module knows of one content light now.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LightInfo {
@@ -75,7 +114,7 @@ pub struct LightInfo {
     pub id: String,
     /// The entity's name (a level node's), if it has one.
     pub name: String,
-    /// A stable key for ties and the noise seed: the id, the name and the place.
+    /// A key for ties and for the noise seed it took when it first appeared (see [`LightSeeds`]): the id, the name and the place now.
     pub key: String,
     /// Where it stands (world).
     pub position: Vec3,
@@ -141,6 +180,7 @@ impl Plugin for LightPlugin {
             .replay_ignore::<ContentLight>()
             .add_content::<LightDef>()
             .init_resource::<LightState>()
+            .init_resource::<LightSeeds>()
             .add_engine_module("light", VERSION)
             .add_ai_status("light", status)
             .add_dev_entry("world", "lights", "Lights: the content lights, their flicker, shadows and the picture's grade", ai_core::DevCommand::Run("lights".into()))
@@ -156,7 +196,7 @@ fn key_of(id: &str, name: &str, at: Vec3) -> String {
     format!("{id}|{name}|{:.3},{:.3},{:.3}", at.x, at.y, at.z)
 }
 
-/// What the viewer is: the active camera (the AI's, else an orbit camera), else the local player's eye.
+/// What the viewer is: the active camera (the AI's, else a third-person or first-person camera), else the local player's eye.
 type Cameras<'w, 's> = Query<'w, 's, &'static GlobalTransform, With<AiCamera>>;
 type OrbitCameras<'w, 's> = Query<'w, 's, &'static GlobalTransform, Or<(With<ThirdPersonCamera>, With<FirstPersonCamera>)>>;
 type Players<'w, 's> = Query<'w, 's, &'static Transform, With<LocalPlayer>>;
@@ -176,6 +216,7 @@ fn update_state(
     orbits: OrbitCameras,
     players: Players,
     mut state: ResMut<LightState>,
+    mut seeds: ResMut<LightSeeds>,
 ) {
     let clock = picture_clock(&fixed);
     let budget = settings.as_ref().map_or(DEFAULT_SHADOW_LIGHTS, |s| s.shadow_light_budget());
@@ -206,7 +247,7 @@ fn update_state(
             let (shown, level, step, lumens, srgb, wants_shadow) = match &def {
                 Some(def) => {
                     let shown = flicker::shaped(&def.flicker, flashes);
-                    let level = flicker::level_for(&def.flicker, clock, flicker::seed_of(&light.id, &key), flashes);
+                    let level = flicker::level_for(&def.flicker, clock, seeds.seed(entity, &light.id, &key), flashes);
                     (shown.clone(), level, flicker::step_of(&shown, clock), def.intensity * level, def.srgb(), def.shadows)
                 }
                 None => (Flicker::None, 0.0, None, 0.0, [1.0; 3], false),
@@ -215,6 +256,7 @@ fn update_state(
             LightInfo { entity, id: light.id.clone(), name, key, position, def, flicker: shown, level, step, lumens, srgb, wants_shadow, casts: false, distance }
         })
         .collect();
+    seeds.forget_unplaced(&placed);
     // Key order, then place: never the order of a query.
     lights.sort_by(|a, b| a.key.cmp(&b.key).then_with(|| a.position.to_array().map(f32::to_bits).cmp(&b.position.to_array().map(f32::to_bits))));
     let candidates: Vec<budget::Candidate> =
