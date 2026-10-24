@@ -1,0 +1,24 @@
+// The effects of the sandbox's gore (F9): what a shot stirs up where it stops, the spray of a body it goes
+// through, and the chunks of a body part that breaks off, which land, bounce, slide and come to rest on the floor and
+// stay there (`rest: UntilCleared`) until `fx_clear tag=gore` or a new region takes them away. `sandbox.fx.ron` plays
+// them from the events `shot_impact`, `shot_hit` and `part_broken`.
+{
+    // Chips off a wall where a shot stopped, out along its normal.
+    "wall_chips": (
+        count: 6, shape: Cube, aim: Surface, spread: 80.0, speed: (1.5, 4.0), gravity: -9.8, lifetime: (0.25, 0.55),
+        size: (0.015, 0.03), size_end: 0.4, color: "#a39a8a", color_end: "#a39a8a00", unlit: true, max_live: 192,
+    ),
+    // A fine spray from a body a shot went through, back toward the shooter.
+    "blood_spray": (
+        count: 9, aim: Hit, lift: 15.0, spread: 50.0, speed: (1.0, 3.5), gravity: -9.8, lifetime: (0.3, 0.6),
+        size: (0.03, 0.06), size_end: 0.5, color: "#7a1014", color_end: "#7a101400", max_live: 128,
+    ),
+    // Chunks of what broke off, thrown away from the blow. A mesh each (`models/chunk.glb`), bouncing on the world's
+    // colliders, sliding and lying where they stop. 3 s of flight at most; then they are where they landed for good.
+    "meat_chunk": (
+        count: 5, mesh: "models/chunk.glb", collide: true, restitution: 0.35, friction: 0.7, rest: UntilCleared,
+        aim: Away, lift: 35.0, spread: 90.0, speed: (2.0, 5.5), gravity: -9.8, spin: 540.0, lifetime: (3.0, 3.0),
+        size: (0.08, 0.16), size_end: 1.0, color: "#7a2a2a", color_end: "#7a2a2a", offset: (0.0, 0.1, 0.0), max_live: 48,
+        tags: ["gore"],
+    ),
+}

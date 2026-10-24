@@ -34,16 +34,21 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let srgba = unpack4x8unorm(get_tag(in.instance_index));
     var rgb = srgb_to_linear(srgba.rgb);
     var alpha = srgba.a;
-    // Sampled before any branch: a sample needs uniform control flow.
-    let wear = textureSample(image, image_sampler, in.uv);
+    // Sampled before any branch: a sample needs uniform control flow. A mesh without UVs (a chunk of debris) has none.
+    var wear = vec4<f32>(1.0);
+@if(VERTEX_UVS_A) {
+    wear = textureSample(image, image_sampler, in.uv);
+}
     if particle.kind == 3u {
         // Its colour times the picture's, its shape the picture's alpha (the picture is sRGB, sampled as linear light).
         rgb = rgb * wear.rgb;
         alpha = alpha * wear.a;
     } else if particle.kind == 0u {
         // Whole in the middle, nothing at the quad's edge: a round spot, not a square.
+@if(VERTEX_UVS_A) {
         let r = length(in.uv - vec2<f32>(0.5)) * 2.0;
         alpha = alpha * (1.0 - smoothstep(0.25, 1.0, r));
+}
     } else if particle.kind == 1u {
         let n = normalize(in.world_normal);
         let light = 0.45 + 0.55 * max(dot(n, normalize(vec3<f32>(0.35, 1.0, 0.25))), 0.0);

@@ -1,0 +1,36 @@
+// The sandbox's marks (content kind `mark`; F9, the manual's "Gore: marks and debris"): spots laid on surfaces, a
+// decal each, projected along the surface's normal onto a wall, a ceiling or a floor and lit as the surface is.
+// `sandbox.fx.ron` lays them from a shot (a hole where it stops, blood on the wall behind a body it went through)
+// and from a blow (a pool on the floor under who was hit). Neutral numbers and art: the textures are white on clear
+// (`cargo run -p sandbox --example make_gore`), so the colour makes them what they are.
+{
+    // Where a shot stopped: dark in the middle with a ring of dust. Lasts two minutes, fades over the last half.
+    "bullet_hole": (
+        texture: "textures/marks/bullet_hole.png",
+        size: (0.07, 0.11),
+        lifetime: Secs(120.0),
+        fade_out: 30.0,
+        max_live: 96,
+        roughness: 0.95,
+        tags: ["gore"],
+    ),
+    // Blood thrown at a wall: a splatter that shows in over a quarter of a second and stays until it is cleared.
+    "blood_splat": (
+        texture: "textures/marks/blood_splat.png",
+        color: "#7a1014",
+        size: (0.25, 0.6),
+        fade_in: 0.25,
+        max_live: 64,
+        roughness: 0.3,
+        tags: ["gore", "blood"],
+    ),
+    // A pool on the floor: a soft round spot that spreads in over a second and a half.
+    "blood_pool": (
+        color: "#5c0b0e",
+        size: (0.4, 0.8),
+        fade_in: 1.5,
+        max_live: 32,
+        roughness: 0.25,
+        tags: ["gore", "blood"],
+    ),
+}
