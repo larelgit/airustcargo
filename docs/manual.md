@@ -525,10 +525,10 @@ The game's numbers and definitions live in files, not in code: attacks, prefabs,
 
 - An id is a non-empty string without spaces or control characters; it is unique within its content kind across all files.
 - The engine registers its own content kinds: `prefab`, `locomotion`, `action`, `moveset`, `status`, `combat_tuning`, `animset`, `prop`,
-  `input_map`, the camera `camera`, `lock_on` and `shot` (see "Scene cameras (K3)"), levels `level`, world `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`,
+  `input_map`, the camera `camera`, `lock_on`, `shot` (see "Scene cameras (K3)") and `grading` (see "Lights and colour grading (F13)"), levels `level`, world `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`,
   voxels `voxel_palette` and `voxel_region`, enemies `behavior`, `perception`, `director`, `attack_plan`, `npc_tuning`, `nav` and `turret`,
   encounters `encounter` and `encounter_rules` (see "Encounters (G9)"), sound `audio`, `sound` and `music`, screens `screen` and `theme`, `locale`, `save`, `net`, `perf`, `devmenu`, mesh looks `look` (see "Stylised materials (E10.1)"),
-  foliage `scatter` (see "Foliage and small objects (E10.2)"), effects `effect` and `fx` (see "Effects and decals
+  foliage `scatter` (see "Foliage and small objects (E10.2)"), lights `light` (see "Lights and colour grading (F13)"), effects `effect` and `fx` (see "Effects and decals
   (E10.3)"), hit stop `hitstop` (see "Hit stop (C2)"), rules `rule_set` and `rules` (see "Rules (C3)"), with the `steam` feature, achievements `achievement` (see "Steam (E10.5)"). The game adds its own: the sandbox has `layout` and `bounds`, the template has
   `arena`.
   `content_list` (the tool) shows the content kinds and the number of definitions.
