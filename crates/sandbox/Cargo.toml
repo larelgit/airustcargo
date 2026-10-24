@@ -40,3 +40,8 @@ libc.workspace = true
 [[example]]
 name = "make_art"
 required-features = ["render"]
+
+# Draws the gore textures and the chunk of debris; the PNG encoder comes with rendering.
+[[example]]
+name = "make_gore"
+required-features = ["render"]

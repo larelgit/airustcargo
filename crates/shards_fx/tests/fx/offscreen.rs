@@ -22,13 +22,13 @@ const BEACON: &str = r##"{"beacon": (count: 6, speed: (0.0, 0.0), lifetime: (30.
     "pad": (count: 1, speed: (0.0, 0.0), lifetime: (30.0, 30.0), size: (2.0, 2.0), size_end: 1.0, shape: Disc,
     color: "#ff00ffcc", color_end: "#ff00ffcc", unlit: true, offset: (0.0, 0.05, 0.0), max_live: 1)}"##;
 
-const SIZE: (u32, u32) = (320, 240);
+pub(crate) const SIZE: (u32, u32) = (320, 240);
 
 /// The picture: each pixel's sRGB.
-struct Picture {
-    width: u32,
-    height: u32,
-    pixels: Vec<[u8; 3]>,
+pub(crate) struct Picture {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) pixels: Vec<[u8; 3]>,
 }
 
 impl Picture {
@@ -45,7 +45,7 @@ impl Picture {
     }
 
     /// The pixels where `is` holds, as (x, y).
-    fn find(&self, is: impl Fn([u8; 3]) -> bool) -> Vec<Vec2> {
+    pub(crate) fn find(&self, is: impl Fn([u8; 3]) -> bool) -> Vec<Vec2> {
         (0..self.height)
             .flat_map(|y| (0..self.width).map(move |x| (x, y)))
             .filter(|(x, y)| is(self.pixels[(y * self.width + x) as usize]))
@@ -55,7 +55,7 @@ impl Picture {
 }
 
 /// The floor: unlit grey.
-fn floor_px([r, g, b]: [u8; 3]) -> bool {
+pub(crate) fn floor_px([r, g, b]: [u8; 3]) -> bool {
     r.abs_diff(g) < 6 && g.abs_diff(b) < 6 && (100..=160).contains(&g)
 }
 
@@ -64,20 +64,20 @@ fn warm([r, g, b]: [u8; 3]) -> bool {
     r > g.saturating_add(30) && r > b.saturating_add(30)
 }
 
-fn green([r, g, b]: [u8; 3]) -> bool {
+pub(crate) fn green([r, g, b]: [u8; 3]) -> bool {
     g > r.saturating_add(50) && g > b.saturating_add(50)
 }
 
-fn magenta([r, g, b]: [u8; 3]) -> bool {
+pub(crate) fn magenta([r, g, b]: [u8; 3]) -> bool {
     r > g.saturating_add(80) && b > g.saturating_add(80)
 }
 
-fn mean(points: &[Vec2]) -> Vec2 {
+pub(crate) fn mean(points: &[Vec2]) -> Vec2 {
     points.iter().copied().sum::<Vec2>() / points.len().max(1) as f32
 }
 
 /// The offscreen image once the GPU has drawn it.
-fn capture(app: &mut App) -> Picture {
+pub(crate) fn capture(app: &mut App) -> Picture {
     let image = app.world().resource::<Offscreen>().image.clone();
     let slot: Arc<Mutex<Option<Image>>> = Arc::default();
     let into = slot.clone();
@@ -95,7 +95,7 @@ fn capture(app: &mut App) -> Picture {
 }
 
 /// Captures until `done` holds of the picture (pipelines compile a few frames in).
-fn capture_until(app: &mut App, what: &str, done: impl Fn(&Picture) -> bool) -> Picture {
+pub(crate) fn capture_until(app: &mut App, what: &str, done: impl Fn(&Picture) -> bool) -> Picture {
     let started = Instant::now();
     loop {
         let picture = capture(app);
@@ -111,7 +111,7 @@ fn capture_until(app: &mut App, what: &str, done: impl Fn(&Picture) -> bool) -> 
 }
 
 /// Where `at` is on the picture.
-fn on_screen(app: &mut App, camera: Entity, at: Vec3) -> Vec2 {
+pub(crate) fn on_screen(app: &mut App, camera: Entity, at: Vec3) -> Vec2 {
     let world = app.world_mut();
     let mut query = world.query::<(&Camera, &GlobalTransform)>();
     let (camera, transform) = query.get(world, camera).unwrap();

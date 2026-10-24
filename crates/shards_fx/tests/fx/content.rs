@@ -64,3 +64,96 @@ fn a_broken_effect_says_what_and_where() {
         assert!(said.contains(wanted), "no `{wanted}` in:\n{said}");
     }
 }
+
+#[test]
+fn a_broken_mark_a_broken_chunk_and_a_broken_link_say_what_and_where() {
+    let assets = Folder::empty("gore_broken");
+    assets.put(
+        "content/fx/bad.mark.ron",
+        r##"{
+            "hole": (size: (0.1, 0.2)),
+            "upside_down": (size: (0.5, 0.1)),
+            "no_cap": (max_live: 0),
+            "backwards": (fade_in: -1.0),
+            "never_ends": (fade_out: 2.0),
+            "crowded": (lifetime: Secs(1.0), fade_in: 0.8, fade_out: 0.8),
+            "short": (lifetime: Secs(0.0)),
+            "thin": (depth: 0.0),
+            "shiny": (roughness: 2.0),
+            "bad_colour": (color: "red"),
+            "climbs": (texture: "../hole.png"),
+            "not_a_png": (texture: "textures/hole.jpg"),
+            "missing": (texture: "textures/none.png"),
+            "twice": (tags: ["gore", "gore", ""]),
+        }"##,
+    );
+    assets.put(
+        "content/fx/bad.effect.ron",
+        r##"{
+            "bouncy": (collide: true, restitution: 1.5),
+            "sticky": (collide: true, friction: -1.0),
+            "lonely": (restitution: 0.9),
+            "stays_up": (rest: UntilCleared),
+            "floats": (collide: true, rest: UntilCleared, gravity: 1.0),
+            "meshy": (mesh: "models/none.glb", shape: Cube, image: "textures/none.png"),
+            "wrong_file": (mesh: "models/chunk.obj"),
+            "flat": (image: "textures/leaf.png", shape: Cube),
+        }"##,
+    );
+    assets.put(
+        "content/fx/links.fx.ron",
+        r#"{"links": (
+            marks: {
+                "shot_imapct": [(mark: "hole")],
+                "damaged": [(mark: "hol", place: Behind(0.0), count: 99, spread: 200.0)],
+                "died": [(mark: "hole")],
+                "shot_impact": [(mark: "hole", spread: 1.0), (mark: "hole", count: 2), (mark: "hole")],
+                "shot_hit": [(mark: "hole", place: Below(150.0))],
+            },
+        )}"#,
+    );
+    let mut app = game(&assets);
+    let said = errors(&mut app);
+    for wanted in [
+        "size: (min, max) in metres with min above 0 and at most max, not (0.5, 0.1)",
+        "max_live: 1 to 4096, not 0",
+        "fade_in: seconds, 0 or more, not -1",
+        "fade_out: a mark that lasts until cleared has no end to fade out towards",
+        "fade_in 0.8 and fade_out 0.8 do not fit in lifetime Secs(1)",
+        "lifetime: Secs(n) with n above 0 and at most 86400, not 0",
+        "depth: metres above 0, not 0",
+        "roughness: 0 to 1, not 2",
+        "color: ",
+        "texture `../hole.png` leaves the assets folder",
+        "texture `textures/hole.jpg` is not a .png file",
+        "texture `textures/none.png` is no file in the assets folder",
+        "tags[1]: `gore` twice",
+        "tags[2]: a word of 1 to 64 characters without control characters, not ``",
+        "bad.mark.ron",
+        "restitution: 0 (it lands dead) to 1 (it keeps all its speed), not 1.5",
+        "friction: 0 or more, not -1",
+        "restitution and friction act on a particle that lands: add `collide: true`",
+        "rest: UntilCleared is for a particle that lands: add `collide: true`",
+        "rest: UntilCleared needs `gravity` below 0",
+        "mesh `models/none.glb` is no file in the assets folder",
+        "mesh replaces `shape`",
+        "mesh and image: a particle is a mesh or a picture",
+        "mesh `models/chunk.obj` is not a .glb or .gltf file",
+        "image: only a `Quad` particle wears a picture",
+        "bad.effect.ron",
+        "no event `shot_imapct` lays marks (did you mean `shot_impact`?)",
+        "marks.damaged[0].mark -> unknown mark `hol` (did you mean `hole`?)",
+        "marks.damaged[0].count: 1 to 16, not 99",
+        "marks.damaged[0].spread: 0 to 180 degrees across, not 200",
+        "marks.damaged[0].place: a reach above 0 and at most 100 metres, not 0",
+        "marks.died[0].place: `died` has no surface of its own to lay a mark on",
+        "marks.shot_impact[0]: `spread` and `offset` search for a surface",
+        "marks.shot_impact[1].count: `At` lays one mark on the one surface",
+        "marks.shot_hit[0].place: a reach above 0 and at most 100 metres, not 150",
+        "links.fx.ron",
+    ] {
+        assert!(said.contains(wanted), "no `{wanted}` in:\n{said}");
+    }
+    // The one good thing in all of it raises no complaint.
+    assert!(!said.contains("mark `hole`:") && !said.contains("marks.shot_impact[2]"), "{said}");
+}

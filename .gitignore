@@ -9,6 +9,7 @@ saves/
 .shards/
 *.png
 !assets/**/*.png
+!crates/*/assets/**/*.png
 !docs/*.png
 !docs/media/*.png
 # Pictures a test loads from its own asset folder.

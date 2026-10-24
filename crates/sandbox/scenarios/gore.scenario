@@ -1,0 +1,149 @@
+# Gore (F9, the manual's "Gore: marks and debris"): spots laid on surfaces (the `mark` kind, `content/fx/gore.mark.ron`)
+# and chunks that land and stay (`collide`, `rest: UntilCleared`, `content/fx/gore.effect.ron`), linked to the events
+# of a shot, a blow, a death and a part that breaks off by `content/fx/sandbox.fx.ron`. Marks and chunks are the
+# picture's: headless nothing is laid, nothing flies and the tools say so, but the content, its checks and the links
+# are the same. This file only asks (and fires a few shots at a room built from `content/fx/gore.prefab.ron` to see
+# that a machine with no picture lays nothing); what is drawn is `crates/shards_fx/tests/fx/gore.rs` and
+# `tests/sandbox/gore.rs`.
+#
+# The room stands 40 m up, over the arena, so that nothing else is in it: a floor, a wall 6 m ahead and a ceiling, each
+# a `RegionPart` so the `regen` at the end takes it away whatever its id. Nothing here names the id of a spawned body.
+
+seed 42
+
+# --- setup (dev): the yard loaded, everyone stands down and away, the player with a first-person body
+act regen region=yard seed=1
+expect result contains "ok: yard seed 1"
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act look clear=true
+act god on=false
+act? take_weapon id=e5 slot=1
+act? take_weapon id=e5 slot=2
+act? take_weapon id=e5 slot=3
+act? take_weapon id=e5 slot=4
+act set id=e5 component=CharacterController path=params value='"viewer"'
+step 150
+act heal id=e5
+act heal id=e6
+act heal id=e7
+act teleport id=e7 x=-16 z=16 y=0
+act teleport id=e8 x=14 z=16 y=0
+act teleport id=e6 x=14 z=-16 y=0
+act teleport id=e14 x=-16 z=-16 y=0
+act telegraph_decals on=true
+
+# --- 1. what is defined: three marks (a picture, a plain spot, a spot that spreads in), the effects that chip, spray
+# and throw chunks, and the table's links; no picture, so no live count and no debris line
+act effects
+expect result contains "11 effects · nothing is drawn headless: effects play in a window or with --offscreen"
+expect result contains "  wall_chips   6 cube unlit #a39a8a → #a39a8a00 · 0.25-0.55 s · aim surface · gravity -9.8 · pool 192"
+expect result contains "  blood_spray  9 quad #7a1014 → #7a101400 · 0.3-0.6 s · aim hit · gravity -9.8 · pool 128"
+expect result contains "  meat_chunk   5 mesh #7a2a2a → #7a2a2a · 3 s · aim away · gravity -9.8 · mesh models/chunk.glb · lands (bounce 0.35, friction 0.7, stays) · pool 48"
+expect result contains "part_broken → meat_chunk"
+expect result contains "shot_hit → blood_spray"
+expect result contains "shot_impact → wall_chips"
+expect result contains "marks on damaged: blood_pool Below(2.5)"
+expect result contains "marks on part_broken: blood_splat Behind(8.0)"
+expect result contains "marks on shot_hit: blood_splat Behind(8.0)"
+expect result contains "marks on shot_impact: bullet_hole At"
+expect result contains "3 marks · nothing is drawn headless: marks are laid in a window or with --offscreen"
+expect result contains "  blood_pool   spot #5c0b0e · 0.4-0.8 m · until cleared · fade in 1.5 s · tags gore, blood · up to 32"
+expect result contains "  blood_splat  textures/marks/blood_splat.png #7a1014 · 0.25-0.6 m · until cleared · fade in 0.25 s · tags gore, blood · up to 64"
+expect result contains "  bullet_hole  textures/marks/bullet_hole.png #ffffff · 0.1-0.16 m · 120 s · fade out 30 s · tags gore · up to 96"
+expect result !contains "debris:"
+act content_get kind=mark id=bullet_hole
+expect result contains "gore.mark.ron"
+expect result contains "textures/marks/bullet_hole.png"
+act content_get kind=effect id=meat_chunk
+expect result contains "UntilCleared"
+expect result contains "models/chunk.glb"
+
+# --- 2. headless a mark is known but laid nowhere, a chunk flies nowhere, and the errors say why; a typo names the closest
+act? mark_spawn mark=bullet_hole point=[0,41,-6] normal=[0,0,1]
+expect result contains "nothing is drawn headless: marks are laid in a window or with --offscreen (mark `bullet_hole` is known)"
+act? mark_spawn mark=bullet_hol point=[0,41,-6] normal=[0,0,1]
+expect result contains "no mark `bullet_hol` (did you mean `bullet_hole`?)"
+act? mark_spawn mark=bullet_hole
+expect result contains "give `point` and `normal`, or `from` and `toward` (a search for the surface)"
+act? effect_play effect=meat_chunk point=[0,41,0]
+expect result contains "nothing is drawn headless: effects play in a window or with --offscreen (effect `meat_chunk` is known)"
+act? fx_clear
+expect result contains "give a `tag` (`fx_clear tag=gore`) or `all=true`"
+
+# --- 3. a room: a floor, a wall 6 m ahead of the player, a ceiling and a dummy; shots at the dummy and the wall land as
+# they always did, and a machine that draws nothing lays nothing for them
+act spawn_prefab id=gore_floor x=0 y=40 z=0 overrides='{"RegionPart": {}}'
+act spawn_prefab id=gore_wall x=0 y=40 z=-6 overrides='{"RegionPart": {}}'
+act spawn_prefab id=gore_ceiling x=0 y=43.5 z=0 overrides='{"RegionPart": {}}'
+act spawn_prefab id=range_dummy x=0 y=40 z=-3 overrides='{"RegionPart": {}}'
+act teleport id=e5 x=0 y=40 z=0
+act give_weapon id=e5 moveset=hitscan_rifle
+expect result contains "e5 carries hitscan_rifle in slot 1"
+step 5
+act look yaw=0 pitch=0
+mark
+act fire
+step 2
+expect journal " fires hitscan_rifle_shot: "
+expect journal " head -48 hp"
+step 25
+act look yaw=-30 pitch=-5
+act fire
+step 2
+expect journal " Wall "
+act effects
+expect result contains "nothing is drawn headless"
+expect result !contains "alive"
+act fx_clear tag=gore
+expect result contains "cleared 0 marks and 0 particles tagged `gore`"
+act fx_clear all=true
+expect result contains "cleared 0 marks and 0 particles of every kind"
+
+# --- 4. a mark or a link that would not draw is refused, and the error says what and where
+act? content_apply changes='[{"kind": "mark", "id": "bad", "def": {"size": [0.5, 0.1], "max_live": 0, "fade_in": -1.0, "texture": "../hole.png", "lifetime": {"Secs": 0.0}}}]'
+expect result contains "refused, it would break content: mark `bad`: "
+expect result contains "size: (min, max) in metres with min above 0 and at most max, not (0.5, 0.1)"
+expect result contains "max_live: 1 to 4096, not 0"
+expect result contains "fade_in: seconds, 0 or more, not -1"
+expect result contains "texture `../hole.png` leaves the assets folder"
+expect result contains "lifetime: Secs(n) with n above 0"
+act? content_apply changes='[{"kind": "effect", "id": "bad_chunk", "def": {"count": 4, "restitution": 2.0, "rest": "UntilCleared", "mesh": "models/missing.glb", "tags": [""]}}]'
+expect result contains "refused, it would break content: effect `bad_chunk`: "
+expect result contains "restitution: 0 (it lands dead) to 1 (it keeps all its speed), not 2"
+expect result contains "rest: UntilCleared is for a particle that lands: add `collide: true`"
+expect result contains "mesh `models/missing.glb` is no file in the assets folder"
+expect result contains "tags[0]: a word of 1 to 64 characters"
+act? content_apply changes='[{"kind": "fx", "id": "spare", "def": {"marks": {"shot_imapct": [{"mark": "bullet_hole"}], "damaged": [{"mark": "blood_pol", "place": {"Behind": 0.0}, "count": 99}], "died": [{"mark": "blood_pool"}]}}}]'
+expect result contains "no event `shot_imapct` lays marks (did you mean `shot_impact`?)"
+expect result contains "unknown mark `blood_pol` (did you mean `blood_pool`?)"
+expect result contains "marks.damaged[0].count: 1 to 16, not 99"
+expect result contains "marks.damaged[0].place: a reach above 0 and at most 100 metres, not 0"
+expect result contains "marks.died[0].place: `died` has no surface of its own to lay a mark on"
+
+# --- the world as it was: the weapon taken, the player's own moveset and locomotion, the yard again (it takes the
+# room and the dummy)
+act take_weapon id=e5 slot=1
+expect result contains "e5 no longer carries hitscan_rifle (slot 1)"
+act look clear=true
+act set id=e5 component=CharacterController path=params value='"player"'
+act regen region=yard seed=1
+expect result contains "ok: yard seed 1"
+step 2
+act get id=e5 component=Fighter path=moveset
+expect result contains "player"
+act heal id=e5
+act teleport id=e5 x=0 z=12 y=0
+act teleport id=e7 x=-12 z=2 y=0
+act teleport id=e6 x=0 z=-6 y=0
+act teleport id=e8 x=12 z=-2 y=0
+act teleport id=e14 x=-18 z=-18 y=0
+step 2
+observe
+expect result !contains "Dummy"
