@@ -39,7 +39,7 @@ fn fingerprint_hash(app: &mut App) -> u64 {
 /// numbering and the physics shapes, so it is the same in a headless build
 /// (`cargo test -p shards_level`) and with the `render` feature (`cargo test --workspace`):
 /// both check this value. (Update it when the arena or the numbering changes on purpose.)
-const ARENA_FINGERPRINT: u64 = 11462270193469146411;
+const ARENA_FINGERPRINT: u64 = 17602491870142193101;
 
 #[test]
 fn the_arena_spawns_the_same_world_in_every_build() {
@@ -347,4 +347,22 @@ fn nodes_that_only_group_or_show_spawn_no_entity() {
     plain.child(group, NodeSpec::new("Visual").mesh(cube));
     assert_eq!(spawn(&mut app, &plain).unwrap(), []);
     assert_eq!(app.world().resource::<LevelInstances>().iter().count(), 1, "still an instance, with nothing in it");
+}
+
+#[test]
+fn a_level_goes_in_its_file_order_whatever_order_the_world_lists_it_in() {
+    // The entities with an `AiId` leave tombstones in the order they go, which a snapshot's twin must repeat: it is the
+    // node order of the file, not the order of a query (which follows the tables the entities sit in).
+    #[derive(Component)]
+    struct Moved;
+    let mut app = app();
+    let nodes = spawn_arena(&mut app);
+    // The first entity changes table: a query now lists it after the others.
+    app.world_mut().entity_mut(nodes["Markers/Spawns/PlayerStart"]).insert(Moved);
+    app.world_mut().entity_mut(nodes["Shrine"]).insert(Moved);
+    let before: Vec<u32> = app.world().resource::<ai_core::AiIndex>().graveyard().map(|t| t.id.0).collect();
+    let instance = app.world().resource::<LevelInstances>().iter().next().unwrap().id;
+    despawn_level(app.world_mut(), instance);
+    let buried: Vec<u32> = app.world().resource::<ai_core::AiIndex>().graveyard().map(|t| t.id.0).skip(before.len()).collect();
+    assert_eq!(buried, [1, 2, 3, 4, 5, 6], "the visible nodes of the arena, in file order");
 }

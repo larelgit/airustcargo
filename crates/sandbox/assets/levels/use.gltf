@@ -1,0 +1,437 @@
+{
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 24,
+      "max": [
+        0.05000000074505806,
+        0.20000000298023224,
+        0.25
+      ],
+      "min": [
+        -0.05000000074505806,
+        -0.20000000298023224,
+        -0.25
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 24,
+      "max": [
+        0.019999999552965164,
+        1.0,
+        1.0
+      ],
+      "min": [
+        -0.019999999552965164,
+        -1.0,
+        -1.0
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 5,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 6,
+      "componentType": 5126,
+      "count": 24,
+      "max": [
+        0.15000000596046448,
+        0.20000000298023224,
+        0.20000000298023224
+      ],
+      "min": [
+        -0.15000000596046448,
+        -0.20000000298023224,
+        -0.20000000298023224
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 7,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 8,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 9,
+      "componentType": 5126,
+      "count": 24,
+      "max": [
+        1.0,
+        1.25,
+        0.10000000149011612
+      ],
+      "min": [
+        -1.0,
+        -1.25,
+        -0.10000000149011612
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 10,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 11,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR"
+    }
+  ],
+  "asset": {
+    "generator": "shards_level test fixture (stands in for Blender's exporter)",
+    "version": "2.0"
+  },
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 0,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 288,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 72,
+      "byteOffset": 576,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 648,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 936,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 72,
+      "byteOffset": 1224,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 1296,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 1584,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 72,
+      "byteOffset": 1872,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 1944,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 288,
+      "byteOffset": 2232,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 72,
+      "byteOffset": 2520,
+      "target": 34963
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 2592,
+      "uri": "data:application/octet-stream;base64,zcxMPc3MTL4AAIC+zcxMPc3MTD4AAIC+zcxMPc3MTD4AAIA+zcxMPc3MTL4AAIA+zcxMvc3MTL4AAIC+zcxMvc3MTL4AAIA+zcxMvc3MTD4AAIA+zcxMvc3MTD4AAIC+zcxMvc3MTD4AAIC+zcxMvc3MTD4AAIA+zcxMPc3MTD4AAIA+zcxMPc3MTD4AAIC+zcxMvc3MTL4AAIC+zcxMPc3MTL4AAIC+zcxMPc3MTL4AAIA+zcxMvc3MTL4AAIA+zcxMvc3MTL4AAIA+zcxMPc3MTL4AAIA+zcxMPc3MTD4AAIA+zcxMvc3MTD4AAIA+zcxMvc3MTL4AAIC+zcxMvc3MTD4AAIC+zcxMPc3MTD4AAIC+zcxMPc3MTL4AAIC+AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcACtejPAAAgL8AAIC/CtejPAAAgD8AAIC/CtejPAAAgD8AAIA/CtejPAAAgL8AAIA/CtejvAAAgL8AAIC/CtejvAAAgL8AAIA/CtejvAAAgD8AAIA/CtejvAAAgD8AAIC/CtejvAAAgD8AAIC/CtejvAAAgD8AAIA/CtejPAAAgD8AAIA/CtejPAAAgD8AAIC/CtejvAAAgL8AAIC/CtejPAAAgL8AAIC/CtejPAAAgL8AAIA/CtejvAAAgL8AAIA/CtejvAAAgL8AAIA/CtejPAAAgL8AAIA/CtejPAAAgD8AAIA/CtejvAAAgD8AAIA/CtejvAAAgL8AAIC/CtejvAAAgD8AAIC/CtejPAAAgD8AAIC/CtejPAAAgL8AAIC/AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcAmpkZPs3MTL7NzEy+mpkZPs3MTD7NzEy+mpkZPs3MTD7NzEw+mpkZPs3MTL7NzEw+mpkZvs3MTL7NzEy+mpkZvs3MTL7NzEw+mpkZvs3MTD7NzEw+mpkZvs3MTD7NzEy+mpkZvs3MTD7NzEy+mpkZvs3MTD7NzEw+mpkZPs3MTD7NzEw+mpkZPs3MTD7NzEy+mpkZvs3MTL7NzEy+mpkZPs3MTL7NzEy+mpkZPs3MTL7NzEw+mpkZvs3MTL7NzEw+mpkZvs3MTL7NzEw+mpkZPs3MTL7NzEw+mpkZPs3MTD7NzEw+mpkZvs3MTD7NzEw+mpkZvs3MTL7NzEy+mpkZvs3MTD7NzEy+mpkZPs3MTD7NzEy+mpkZPs3MTL7NzEy+AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcAAACAPwAAoL/NzMy9AACAPwAAoD/NzMy9AACAPwAAoD/NzMw9AACAPwAAoL/NzMw9AACAvwAAoL/NzMy9AACAvwAAoL/NzMw9AACAvwAAoD/NzMw9AACAvwAAoD/NzMy9AACAvwAAoD/NzMy9AACAvwAAoD/NzMw9AACAPwAAoD/NzMw9AACAPwAAoD/NzMy9AACAvwAAoL/NzMy9AACAPwAAoL/NzMy9AACAPwAAoL/NzMw9AACAvwAAoL/NzMw9AACAvwAAoL/NzMw9AACAPwAAoL/NzMw9AACAPwAAoD/NzMw9AACAvwAAoD/NzMw9AACAvwAAoL/NzMy9AACAvwAAoD/NzMy9AACAPwAAoD/NzMy9AACAPwAAoL/NzMy9AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcA"
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Panel",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 1,
+            "POSITION": 0
+          },
+          "indices": 2
+        }
+      ]
+    },
+    {
+      "name": "Pane",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 4,
+            "POSITION": 3
+          },
+          "indices": 5
+        }
+      ]
+    },
+    {
+      "name": "Valve",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 7,
+            "POSITION": 6
+          },
+          "indices": 8
+        }
+      ]
+    },
+    {
+      "name": "Slab",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 10,
+            "POSITION": 9
+          },
+          "indices": 11
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "extras": {
+        "marker": "interactable",
+        "name": "lever"
+      },
+      "name": "Lever",
+      "translation": [
+        -1.5,
+        1.600000023841858,
+        -13.5
+      ]
+    },
+    {
+      "extras": {
+        "marker": "interactable",
+        "name": "panel"
+      },
+      "mesh": 0,
+      "name": "Panel",
+      "translation": [
+        -1.5499999523162842,
+        1.600000023841858,
+        -10.5
+      ]
+    },
+    {
+      "extras": {
+        "marker": "interactable",
+        "name": "far_panel"
+      },
+      "mesh": 0,
+      "name": "FarPanel",
+      "translation": [
+        -3.549999952316284,
+        1.600000023841858,
+        -7.5
+      ]
+    },
+    {
+      "extras": {
+        "marker": "interactable",
+        "name": "console",
+        "use_range": 4.0
+      },
+      "mesh": 0,
+      "name": "Console",
+      "translation": [
+        -3.549999952316284,
+        1.600000023841858,
+        -4.5
+      ]
+    },
+    {
+      "extras": {
+        "collider": "auto"
+      },
+      "mesh": 1,
+      "name": "Pane",
+      "translation": [
+        -1.0,
+        1.0,
+        -1.5
+      ]
+    },
+    {
+      "extras": {
+        "marker": "interactable",
+        "name": "behind_glass"
+      },
+      "mesh": 0,
+      "name": "BehindGlass",
+      "translation": [
+        -1.600000023841858,
+        1.600000023841858,
+        -1.5
+      ]
+    },
+    {
+      "extras": {
+        "hold_s": 1.0,
+        "marker": "interactable",
+        "name": "valve",
+        "prompt": "Turn the valve"
+      },
+      "mesh": 2,
+      "name": "Valve",
+      "translation": [
+        -1.350000023841858,
+        1.600000023841858,
+        1.5
+      ]
+    },
+    {
+      "extras": {
+        "marker": "interactable",
+        "name": "near_switch"
+      },
+      "mesh": 0,
+      "name": "NearSwitch",
+      "translation": [
+        -1.0499999523162842,
+        1.600000023841858,
+        4.5
+      ]
+    },
+    {
+      "extras": {
+        "marker": "interactable",
+        "name": "far_switch"
+      },
+      "mesh": 0,
+      "name": "FarSwitch",
+      "translation": [
+        -1.850000023841858,
+        1.600000023841858,
+        4.5
+      ]
+    },
+    {
+      "extras": {
+        "marker": "interactable",
+        "name": "twin_a"
+      },
+      "mesh": 0,
+      "name": "TwinA",
+      "translation": [
+        -1.5499999523162842,
+        1.600000023841858,
+        7.5
+      ]
+    },
+    {
+      "extras": {
+        "marker": "interactable",
+        "name": "twin_b"
+      },
+      "mesh": 0,
+      "name": "TwinB",
+      "translation": [
+        -1.5499999523162842,
+        1.600000023841858,
+        7.5
+      ]
+    },
+    {
+      "extras": {
+        "collider": "auto",
+        "marker": "interactable",
+        "mover": "gate",
+        "name": "door"
+      },
+      "mesh": 3,
+      "name": "Door",
+      "rotation": [
+        0.0,
+        0.7071067690849304,
+        0.0,
+        0.7071067690849304
+      ],
+      "translation": [
+        -1.5,
+        1.25,
+        10.5
+      ]
+    }
+  ],
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Scene",
+      "nodes": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ]
+    }
+  ]
+}
