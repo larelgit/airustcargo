@@ -53,11 +53,12 @@
 //! | `size` | `[x, y, z]` or one number | box size (full extents, meters); the mesh bounds when left out |
 //! | `radius`, `height` | numbers | sphere, capsule, cylinder, cone; the mesh bounds when left out |
 //! | `offset` | `[x, y, z]` | the collider's center in the node's space; the middle of the mesh bounds when left out |
-//! | `layers` | `world`, `character`, `volume`, `game0`..`game15`, ... (a name or a list) | what the collider is; solids default to `world`, volumes to `volume` |
+//! | `layers` | `world`, `character`, `volume`, `use`, `game0`..`game15`, ... (a name or a list) | what the collider is; solids default to `world`, volumes to `volume` |
 //! | `collides_with` | the same names | what it reacts to (solids: everything, volumes: characters) |
 //! | `volume` | `water`, `updraft`, `trigger` | a sensor [`Volume`](shards_motion::Volume), shaped by `collider` (default `auto`) |
 //! | `accel`, `max_speed` | numbers | an updraft's pull (m/s²) and top speed (m/s) |
 //! | `prefab` | text | spawn the content prefab with that id at the node; component properties patch it |
+//! | `hold_s`, `use_range`, `prompt` | seconds (zero or more), metres (above zero, at most 100), text | for an `interactable` (F5): the seconds the button is held for a use (0 is a press), how far from the eye it can be used (the body's own reach when left out), and what a HUD shows (a Fluent `@id` or text; the name when left out) |
 //! | `mover` | text | the node becomes a [`Mover`](shards_motion::Mover) going through the keys of that `mover` definition (F6); the nodes below it move with it as its [`MoverPart`](shards_motion::MoverPart)s, and its picture follows it; movers do not nest |
 //!
 //! Every other key is a **component**: its short name (`Health`) or full type path
@@ -89,7 +90,7 @@
 //! | `socket` | [`LevelMarker`] named by the socket type | no (plumbing) |
 //! | `navlink` | [`LevelMarker`] with `to` set to the end's world position | no |
 //! | `trigger` | [`LevelMarker`], a trigger [`Volume`](shards_motion::Volume) and its collider | `Trigger "goal"` |
-//! | `interactable` | [`LevelMarker`] | `Interactable "door"` |
+//! | `interactable` | [`LevelMarker`], [`Usable`](shards_motion::Usable) and a use area (F5): the node's collider on the `USE` layer, solid too when the node has a `collider` of its own | `Interactable "door"` |
 //! | `camp` | [`LevelMarker`] | `Camp "bandits"` |
 //! | `landmark` | [`LevelMarker`], `AiLandmark`, `AiKind` named by the marker | on the LANDMARKS line |
 //! | `custom:<name>` | [`LevelMarker`] | no (add an `AiKind` component if it should) |

@@ -11,6 +11,7 @@ use shards_core::{Gaze, Intent};
 
 use super::{CharacterController, MotionMode};
 use crate::physics::{Collider, CollisionLayers, Shape};
+use crate::usable::{DEFAULT_USE_RANGE, PROBE_RANGE};
 
 /// How far above `mantle_height` a ledge may stand and still be climbed (m): float noise.
 pub(crate) const MANTLE_SLACK: f32 = 1e-3;
@@ -297,6 +298,11 @@ pub struct CharacterParams {
     /// the eye keeps its place in the shorter capsule (`crouch_height`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub eye_height: Option<f32>,
+    /// How far the body reaches to use something it looks at (m, F5): the longest distance from its
+    /// eye at which `use_target` counts a `Usable`, unless the thing says its own `use_range`.
+    /// Above 0 and at most 100 (how far a use is looked for); the default is 2 m.
+    #[serde(skip_serializing_if = "use_range_is_default")]
+    pub use_range: f32,
     /// The capsule's height when crouched (F2), in meters from the feet. `None`: the body cannot
     /// crouch (a `crouch` input does nothing, and the `crouch` tool says why). The eye keeps its
     /// place in the capsule: crouched, it is [`eye_above_feet`](Self::eye_above_feet) scaled by
@@ -385,6 +391,7 @@ impl Default for CharacterParams {
             face: Facing::Move,
             pitch_limits_deg: DEFAULT_PITCH_LIMITS_DEG,
             eye_height: None,
+            use_range: DEFAULT_USE_RANGE,
             crouch_height: None,
             crouch_speed: None,
             crouch_time: 0.0,
@@ -424,6 +431,10 @@ fn is_move(v: &Facing) -> bool {
 
 fn pitch_limits_are_default(v: &(f32, f32)) -> bool {
     *v == DEFAULT_PITCH_LIMITS_DEG
+}
+
+fn use_range_is_default(v: &f32) -> bool {
+    *v == DEFAULT_USE_RANGE
 }
 
 /// What a character without content moves by: the code defaults.
@@ -743,6 +754,9 @@ impl CharacterParams {
         {
             errors.push(format!("eye_height must be above 0 and at most height {} (is {eye})", self.height));
         }
+        if !(self.use_range > 0.0 && self.use_range <= PROBE_RANGE) {
+            errors.push(format!("use_range must be a number of metres above 0 and at most {PROBE_RANGE} (is {})", self.use_range));
+        }
         match self.crouch_height {
             Some(crouched) => {
                 if !(crouched.is_finite() && crouched >= 2.0 * self.radius && crouched < self.height) {
@@ -888,6 +902,20 @@ mod tests {
             assert!(err.contains("eye_height"), "{eye}: {err}");
         }
         CharacterParams { eye_height: Some(1.8), ..default() }.check().unwrap();
+    }
+
+    #[test]
+    fn the_use_range_defaults_to_two_metres_and_stays_out_of_the_written_form() {
+        let p = CharacterParams::default();
+        assert_eq!(p.use_range, 2.0);
+        assert!(!ron::to_string(&p).unwrap().contains("use_range"), "a definition that never mentions it keeps its hash");
+        let set: CharacterParams = ron::from_str("(use_range: 3.5)").unwrap();
+        assert_eq!(set.use_range, 3.5);
+        assert!(ron::to_string(&set).unwrap().contains("use_range:3.5"));
+        for bad in [0.0, -1.0, f32::NAN, f32::INFINITY, 100.5] {
+            let err = CharacterParams { use_range: bad, ..default() }.check().unwrap_err();
+            assert!(err.contains("use_range must be a number of metres above 0 and at most 100"), "{bad}: {err}");
+        }
     }
 
     #[test]
