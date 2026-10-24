@@ -139,6 +139,7 @@ impl Plugin for LightPlugin {
             .init_resource::<LightState>()
             .add_engine_module("light", VERSION)
             .add_ai_status("light", status)
+            .add_dev_entry("world", "lights", "Lights: the content lights, their flicker, shadows and the picture's grade", ai_core::DevCommand::Run("lights".into()))
             .add_systems(Update, update_state);
         tools::register(app.world_mut());
         #[cfg(feature = "render")]

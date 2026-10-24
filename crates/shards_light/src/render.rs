@@ -62,50 +62,25 @@ fn spot_of(light: &LightInfo) -> Option<SpotLight> {
     })
 }
 
-/// Writes `want` into `light` field by field, touching it (and so its change flag) only where something differs: a steady
-/// light is never rewritten.
+/// Writes the named fields of `want` into `light`, each only where it differs, so that a steady light is never touched
+/// (a write is what sets a component's change flag).
+macro_rules! sync_fields {
+    ($light:expr, $want:expr, [$($field:ident),+ $(,)?]) => {{
+        let now = **$light;
+        $(
+            if now.$field != $want.$field {
+                $light.$field = $want.$field;
+            }
+        )+
+    }};
+}
+
 fn set_point(light: &mut Mut<PointLight>, want: &PointLight) {
-    let now = **light;
-    if now.color != want.color {
-        light.color = want.color;
-    }
-    if now.intensity != want.intensity {
-        light.intensity = want.intensity;
-    }
-    if now.range != want.range {
-        light.range = want.range;
-    }
-    if now.radius != want.radius {
-        light.radius = want.radius;
-    }
-    if now.shadow_maps_enabled != want.shadow_maps_enabled {
-        light.shadow_maps_enabled = want.shadow_maps_enabled;
-    }
+    sync_fields!(light, want, [color, intensity, range, radius, shadow_maps_enabled]);
 }
 
 fn set_spot(light: &mut Mut<SpotLight>, want: &SpotLight) {
-    let now = **light;
-    if now.color != want.color {
-        light.color = want.color;
-    }
-    if now.intensity != want.intensity {
-        light.intensity = want.intensity;
-    }
-    if now.range != want.range {
-        light.range = want.range;
-    }
-    if now.radius != want.radius {
-        light.radius = want.radius;
-    }
-    if now.shadow_maps_enabled != want.shadow_maps_enabled {
-        light.shadow_maps_enabled = want.shadow_maps_enabled;
-    }
-    if now.inner_angle != want.inner_angle {
-        light.inner_angle = want.inner_angle;
-    }
-    if now.outer_angle != want.outer_angle {
-        light.outer_angle = want.outer_angle;
-    }
+    sync_fields!(light, want, [color, intensity, range, radius, shadow_maps_enabled, inner_angle, outer_angle]);
 }
 
 /// `Update`, after the state: each content light has the Bevy light its definition and the budget say, and a

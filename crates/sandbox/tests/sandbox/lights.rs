@@ -11,12 +11,10 @@
 //! `scenarios/lights.scenario` plays the room with queries alone.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use shards::ai_core::display::Offscreen;
 use shards::bevy::light::{DirectionalLight, GlobalAmbientLight, PointLight, SpotLight};
-use shards::bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use shards::content::ContentDb;
 use shards::level::{check_level, spawn_level_by_id, LevelAsset};
 use shards::light::{ContentLight, LightPicture, LightState};
@@ -27,6 +25,7 @@ use shards::serde_json::{json, Value};
 
 use crate::common::*;
 use crate::gltf::{Gltf, NodeSpec};
+use crate::offscreen::{block, bytes, capture, capture_stable, mean_difference, offscreen_app, settle};
 
 /// The room, in its own frame (the level `lit_room` places it on the canyon floor between the course's two blocks of rock, at x 112): a floor 12 x 12 m with a back wall and two
 /// side walls 4 m high and no ceiling or front; a pillar; six lights, four of them on Blender lamps (`Lamp.Steady`,
@@ -256,79 +255,6 @@ fn the_grading_volume_blends_the_picture_while_the_player_is_inside() {
 }
 
 // --- the pictures (a GPU) --------------------------------------------------------------------
-
-fn offscreen_app() -> App {
-    shards::testing::test_app(
-        |config| (config.headless, config.offscreen) = (false, true),
-        |app| {
-            app.add_plugins((sandbox::SandboxPlugin, sandbox::visuals::VisualsPlugin));
-        },
-    )
-}
-
-fn settle(app: &mut App, frames: u32) {
-    for _ in 0..frames {
-        app.update();
-    }
-}
-
-/// `image` as the GPU drew it, read back.
-fn capture(app: &mut App, image: Handle<Image>) -> Image {
-    let slot: Arc<Mutex<Option<Image>>> = Arc::default();
-    let into = slot.clone();
-    app.world_mut().spawn(Screenshot::image(image)).observe(move |captured: On<ScreenshotCaptured>| {
-        *into.lock().unwrap() = Some(captured.image.clone());
-    });
-    let started = Instant::now();
-    loop {
-        app.update();
-        if let Some(image) = slot.lock().unwrap().take() {
-            return image;
-        }
-        assert!(started.elapsed() < Duration::from_secs(60), "no capture within a minute");
-    }
-}
-
-fn bytes(image: &Image) -> &[u8] {
-    image.data.as_deref().expect("a captured image has its data")
-}
-
-/// The mean absolute difference between two pictures of one size, per colour byte (0 to 255).
-fn mean_difference(a: &Image, b: &Image) -> f64 {
-    assert_eq!(a.size(), b.size());
-    let (a, b) = (bytes(a).as_chunks::<4>().0, bytes(b).as_chunks::<4>().0);
-    let sum: u64 = a.iter().zip(b).flat_map(|(x, y)| (0..3).map(move |c| u64::from(x[c].abs_diff(y[c])))).sum();
-    sum as f64 / (a.len() * 3) as f64
-}
-
-/// [`capture`] until two captures in a row are alike: pipelines compile a few frames in.
-fn capture_stable(app: &mut App, image: &Handle<Image>) -> Image {
-    let started = Instant::now();
-    let mut before = capture(app, image.clone());
-    loop {
-        let now = capture(app, image.clone());
-        if mean_difference(&before, &now) < 0.2 {
-            return now;
-        }
-        assert!(started.elapsed() < Duration::from_secs(120), "the picture never settled");
-        before = now;
-    }
-}
-
-/// The mean RGB of the `w` x `h` block at (`x`, `y`).
-fn block(image: &Image, x: u32, y: u32, w: u32, h: u32) -> [f64; 3] {
-    let (data, width) = (bytes(image), image.width() as usize);
-    let mut sum = [0u64; 3];
-    for row in y..y + h {
-        for col in x..x + w {
-            let at = (row as usize * width + col as usize) * 4;
-            for (c, s) in sum.iter_mut().enumerate() {
-                *s += u64::from(data[at + c]);
-            }
-        }
-    }
-    sum.map(|s| s as f64 / f64::from(w * h))
-}
 
 fn mean(image: &Image) -> [f64; 3] {
     block(image, 0, 0, image.width(), image.height())
