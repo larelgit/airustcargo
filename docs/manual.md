@@ -622,7 +622,7 @@ content: 286 definitions in 98 files
   level  5
   locale  2
   lock_on  1
-  locomotion  7
+  locomotion  8
   look  15
   mark  3
   mover  4
@@ -635,7 +635,7 @@ content: 286 definitions in 98 files
   perception  6
   perf  2
   poi  4
-  prefab  31
+  prefab  32
   prop  1
   region  3
   room  0
