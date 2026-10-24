@@ -22,7 +22,7 @@ use shards_content::db::closest;
 use shards_content::ContentDb;
 use shards_motion::{LayerMask, PhysicsWorld, QueryFilter};
 
-use crate::mark::{Mark, MarkDef, MarkLink, MarkPool, Place};
+use crate::mark::{Mark, MarkDef, MarkLink, MarkPool, Place, MAX_COUNT};
 use crate::{clock, draws, fx_def, place, play_quietly, sim, EffectAt, Particles};
 
 /// Rays a frame the debris steps may cast before the rest wait for the next frame.
@@ -269,7 +269,7 @@ fn lay_marks(world: &mut World, happened: &Happened) {
     let Some(links) = fx_def(world).and_then(|fx| fx.marks.get(happened.event).cloned()) else { return };
     for (index, MarkLink { mark, place, count, spread, offset }) in links.into_iter().enumerate() {
         let from = happened.point + Vec3::new(offset.0, offset.1, offset.2);
-        for k in 0..count {
+        for k in 0..count.min(MAX_COUNT) {
             let seed = seed_of(&[happened.seed as u32, (happened.seed >> 32) as u32, index as u32, k]);
             let found = match place {
                 Place::At => happened.normal.map(|n| (happened.point, n)),

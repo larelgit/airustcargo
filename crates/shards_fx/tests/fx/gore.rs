@@ -405,3 +405,26 @@ fn a_machine_that_draws_nothing_lays_nothing_and_says_so() {
     assert_eq!(app.world_mut().query::<&MarkDecal>().iter(app.world()).count(), 0);
     assert_eq!(ok(&mut app, "fx_clear", json!({"all": true})), "cleared 0 marks and 0 particles of every kind");
 }
+
+#[test]
+fn a_count_that_no_check_passed_lays_no_more_than_the_limit() {
+    // A table with an error still loads (the first load plays what it has): a count of four billion must not run four
+    // billion searches when a shot lands.
+    let assets = Folder::empty("count_limit");
+    assets.put("content/fx/gore.mark.ron", MARKS);
+    assets.put("content/fx/gore.fx.ron", r#"{"big": (marks: {"shot_impact": [(mark: "hole", place: Below(5.0), count: 4000000000)]})}"#);
+    let mut app = drawn(&assets);
+    step(&mut app, 2);
+    app.update();
+    let me = body(app.world_mut(), Vec3::new(-1.0, 0.0, 0.0));
+    let said = errors_of(&mut app);
+    assert!(said.contains("count: 1 to 16, not 4000000000"), "{said}");
+    impact(app.world_mut(), me, Vec3::new(2.0, 1.0, 0.0), Vec3::NEG_X, None);
+    let marks = app.world().resource::<Marks>();
+    assert_eq!((marks.laid, marks.live()), (16, 16), "sixteen at most, each below the point");
+    assert_eq!(app.world().resource::<GoreStats>().searches, 16);
+}
+
+fn errors_of(app: &mut App) -> String {
+    text(&shards::testing::call(app, "content_check", json!({})))
+}

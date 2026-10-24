@@ -611,7 +611,7 @@ content: 284 definitions in 96 files
   devmenu  4
   director  2
   dungeon  0
-  effect  8
+  effect  11
   encounter  2
   encounter_rules  1
   flash  2
@@ -619,11 +619,12 @@ content: 284 definitions in 96 files
   hitstop  1
   input_map  0
   layout  3
-  level  4
+  level  5
   locale  2
   lock_on  1
   locomotion  7
   look  15
+  mark  3
   mover  4
   moveset  21
   music  1
@@ -634,7 +635,7 @@ content: 284 definitions in 96 files
   perception  6
   perf  2
   poi  4
-  prefab  28
+  prefab  31
   prop  1
   region  3
   room  0
@@ -6614,16 +6615,19 @@ replay or the snapshot. `mark_spawn` and `fx_clear` (marks and landing particles
 
 ```text
 $ shards act effects
-8 effects · 36 particles alive in pools of 520 · telegraph decals on, on the ground: 2
+11 effects · 36 particles alive in pools of 888 · telegraph decals on, on the ground: 2
+  blood_spray  9 quad #7a1014 → #7a101400 · 0.3-0.6 s · aim hit · gravity -9.8 · pool 0/128
   block_spark  10 shard #bfe6ff → #4d9fff00 · 0.3-0.5 s · aim hit · gravity -12 · pool 0/64
   death_dust   16 cube + 24/s for 0.8s #8c8061cc → #5c554400 · 0.8-1.4 s · gravity -0.6 · pool 0/96
   guard_ring   1 disc unlit #ffb36bb3 → transparent · 0.3 s · size ease 2.5 · strength: count +0, size · pool 0/8
   heal_glow    8 quad + 30/s for 0.6s glow #7dff9e → #2bd96b00 · 0.6-1 s · pool 0/48
   hit_spark    18 quad glow x3 #fff2b3 → #ff6a1a00 · 0.2-0.4 s · aim hit · gravity -9 · pool 36/128
   kick_dust    8 cube #8c8061d9 → transparent · 0.4-0.6 s · swell 1 · push 0.6-1 · strength: count +4, speed · pool 0/64
+  meat_chunk   5 mesh #7a2a2a → #7a2a2a · 3 s · aim away · gravity -9.8 · mesh models/chunk.glb · lands (bounce 0.35, friction 0.7, stays) · pool 0/48 (0 at rest)
   parry_flash  24 quad glow #ffffff → #ffd24d00 · 0.12-0.22 s · pool 0/64
   step_dust    4 cube #8c806199 → #5c554400 · 0.3-0.5 s · gravity -1 · pool 0/48
-events: blocked → block_spark · damaged → hit_spark · died → death_dust · guard_broken → guard_ring · healed → heal_glow · parried → parry_flash
+  wall_chips   6 cube unlit #a39a8a → #a39a8a00 · 0.25-0.55 s · aim surface · gravity -9.8 · pool 0/192
+events: blocked → block_spark · damaged → hit_spark · died → death_dust · guard_broken → guard_ring · healed → heal_glow · parried → parry_flash · part_broken → meat_chunk · shot_hit → blood_spray · shot_impact → wall_chips
 cues: footstep → step_dust
   decal e7 claw: sector 3.1×2.2 m, fill 0.82, hostile
   decal e8 claw: sector 3.1×2.2 m, fill 1.00, hostile
@@ -6635,11 +6639,11 @@ $ shards act telegraph_decals on=false
 telegraph decals off: the gizmos draw the fill
 ```
 
-Without rendering, `effects` says `8 effects · nothing is drawn headless: effects play in a window or with --offscreen · telegraph
+Without rendering, `effects` says `11 effects · nothing is drawn headless: effects play in a window or with --offscreen · telegraph
 decals on` and lists the effects with their pool sizes, and `effect_play` refuses: ``nothing is drawn headless: effects play in a window
 or with --offscreen (effect `hit_spark` is known)``; events then play nothing. For an effect that is not in the content, `effect_play`
 suggests the nearest name (``no effect `hit_sprak` (did you mean `hit_spark`?)``), and `PlayEffect` writes to the journal once
-(`fx: PlayEffect: no effect …`). `ai/status` has the field `fx`: `{"effects": 8, "live": 36, "decals": 2, "telegraph_decals": true, "marks": 0, "debris": {"resting": 0, "flying": 0}, "rays": {"last": 0, "max": 0, "total": 0, "budget": 2048}}` (the last three are the gore's performance counters). In the developer menu there is the item `effects` ("Effects, their pools and decals", section `world`) and the switch `telegraph_decals` ("Telegraphs as
+(`fx: PlayEffect: no effect …`). `ai/status` has the field `fx`: `{"effects": 11, "live": 36, "decals": 2, "telegraph_decals": true, "marks": 0, "debris": {"resting": 0, "flying": 0}, "rays": {"last": 0, "max": 0, "total": 0, "budget": 2048}}` (the last three are the gore's performance counters). In the developer menu there is the item `effects` ("Effects, their pools and decals", section `world`) and the switch `telegraph_decals` ("Telegraphs as
 decals on the ground", section `combat`).
 
 **Checking the content.** `--check-content` and `content_check` name the file, the effect and the field:
