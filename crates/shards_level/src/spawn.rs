@@ -17,7 +17,7 @@ use ai_core::prelude::*;
 use bevy::prelude::*;
 use serde_json::Value;
 use shards_content::{spawn_prefab, ContentDb};
-use shards_motion::{CharacterController, Collider, Mover, MoverPart, Shape, Volume};
+use shards_motion::{CharacterController, Collider, Mover, MoverPart, Shape, Usable, Volume};
 
 use crate::asset::{Bounds, Fnv, LevelAsset};
 use crate::library::level_asset;
@@ -136,7 +136,11 @@ pub fn despawn_level(world: &mut World, instance: u32) -> usize {
 /// [`despawn_level`] for one that is placed again right after (a reload): it stays placed.
 fn despawn_instance(world: &mut World, instance: u32) -> usize {
     let mut found = world.query::<(Entity, &FromLevel)>();
-    let doomed: Vec<Entity> = found.iter(world).filter(|(_, from)| from.instance == instance).map(|(e, _)| e).collect();
+    // In the file's node order, not the query's: the entities with an `AiId` leave tombstones in the order they go, and
+    // a snapshot's twin (which spawned them in another table order) must bury them the same way.
+    let mut doomed: Vec<(u32, Entity)> = found.iter(world).filter(|(_, from)| from.instance == instance).map(|(e, from)| (from.index, e)).collect();
+    doomed.sort_unstable();
+    let doomed: Vec<Entity> = doomed.into_iter().map(|(_, e)| e).collect();
     for entity in &doomed {
         world.despawn(*entity);
     }
@@ -331,6 +335,11 @@ fn insert_marker(e: &mut EntityWorldMut, spec: &MarkerSpec, to: Option<Vec3>) {
         MarkerKind::SpawnPoint | MarkerKind::Camp | MarkerKind::Interactable | MarkerKind::Trigger => {
             if !e.contains::<AiKind>() {
                 e.insert(AiKind::new(spec.kind.label()));
+            }
+            // What a character can use by looking at it (F5): its use area is the node's collider (`props`).
+            if spec.kind == MarkerKind::Interactable {
+                let using = &spec.using;
+                e.insert(Usable { name: spec.name.clone(), prompt: using.prompt.clone(), hold_s: using.hold_s, use_range: using.use_range });
             }
         }
         MarkerKind::Socket | MarkerKind::NavLink | MarkerKind::Custom(_) => {}

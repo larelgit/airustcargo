@@ -1,0 +1,188 @@
+# Use by looking (F5, the manual's "Use by looking"): a press of `interact` uses the thing the body's look meets,
+# when it is in reach and nothing solid is nearer on the ray. The test room `use` (`content/world/use.level.ron`,
+# `assets/levels/use.gltf`, written by `tests/sandbox/using.rs`) is laid on the canyon floor (its origin at x 100,
+# y -10, z 0): eight stations 3 m apart along z, the player standing at x 100 with the first-person body (`viewer`),
+# looking west (yaw 90). Each station is one rule: a panel in reach; one past the body's 2 m and one that the
+# marker's own `use_range` brings back; a panel behind a pane of glass; a valve held for a second (held, let go,
+# looked away from, held to the end); two switches on one line and two things at one distance; a door that is solid,
+# usable and a mover (the engine says it was used; opening it is the game's, here `mover_go` stands in).
+#
+# The things' ids depend on what was spawned before the room, so the scenario names them by what `observe` shows
+# (`USE e41 "panel" 1.5m`): `tests/sandbox/using.rs` names them for `interact target=`.
+
+seed 42
+
+# --- the arena as the game spawns it, whatever was played in it before: everyone stands down
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+act heal id=e5
+act stop
+act block on=false
+act lock_on off=true
+act god on=false
+act look clear=true
+act? level_despawn id=use
+act set id=e5 component=CharacterController path=params value='"viewer"'
+step 30
+act heal id=e5
+
+# --- the room, on the canyon floor: a bare marker with no shape (the lever) is no use area, the glass is a solid,
+# the door is a solid too
+act spawn_level id=use x=100 y=-10 z=0
+expect result contains "spawned level `use`"
+expect result contains "12 entities (2 solids, 0 volumes, 9 use areas, 11 markers)"
+
+# --- 1. a panel 1.5 m ahead: in reach, the nearest thing the look meets
+act teleport id=e5 x=100 z=-10.5 y=-10
+act look yaw=90 pitch=0
+step 3
+observe
+expect result contains "USE e"
+expect result contains "\"panel\" 1.5m"
+mark
+act interact
+expect result contains "ok: using e"
+expect result contains "\"panel\" 1.5m"
+step 2
+expect journal "e5 uses e"
+expect journal "\"panel\""
+
+# --- 2. a panel 3.5 m ahead is past the body's 2 m: not in `observe`, not used, and the refusal says how far
+act teleport id=e5 x=100 z=-7.5 y=-10
+step 3
+observe
+expect result !contains "USE e"
+mark
+act? interact
+expect result contains "nothing to use: e"
+expect result contains "\"far_panel\" is 3.5m away and can be used from 2.0m: walk closer"
+step 2
+expect !journal "uses"
+
+# --- 3. the same distance, but the marker says `use_range 4`: its own reach, not the body's
+act teleport id=e5 x=100 z=-4.5 y=-10
+step 3
+observe
+expect result contains "\"console\" 3.5m"
+mark
+act interact
+expect result contains "ok: using e"
+step 2
+expect journal "\"console\""
+
+# --- 4. a panel 1.55 m ahead behind a pane of glass 1 m ahead: glass is a wall, and blocks a use
+act teleport id=e5 x=100 z=-1.5 y=-10
+step 3
+observe
+expect result !contains "USE e"
+expect result contains "AIM wall 1.0m"
+mark
+act? interact
+expect result contains "nothing to use: you look at wall 1.0m ahead and nothing usable is in front of it"
+step 2
+expect !journal "uses"
+
+# --- 5. a valve that takes a second: a tap does nothing, a hold grows while it is held and the look stays on
+# the valve, letting go and looking away cancel it, and the full second ends in the use
+act teleport id=e5 x=100 z=1.5 y=-10
+step 3
+observe
+expect result contains "\"valve\" 1.2m hold 1.0s"
+mark
+act? interact
+expect result contains "takes 1.0s to use: hold the button"
+act interact hold=true
+expect result contains "ok: holding e"
+expect result contains "for 1.0s"
+step 31
+observe
+expect result contains "hold 1.0s, using 0.5/1.0s"
+act interact hold=false
+step 2
+observe
+expect result !contains "using"
+expect !journal "uses"
+act interact hold=true
+step 20
+act look yaw=0 pitch=0
+step 2
+act look yaw=90 pitch=0
+step 5
+observe
+expect result contains "\"valve\" 1.2m hold 1.0s"
+expect result !contains "using"
+expect !journal "uses"
+act interact hold=false
+step 2
+act interact hold=true
+step 70
+expect journal "e5 uses e"
+expect journal "\"valve\""
+observe
+expect result !contains "using"
+act interact hold=false
+step 2
+
+# --- 6. two switches on one line (1 m and 1.8 m ahead): the nearer is used
+act teleport id=e5 x=100 z=4.5 y=-10
+step 3
+observe
+expect result contains "\"near_switch\" 1.0m"
+mark
+act interact
+step 2
+expect journal "\"near_switch\""
+expect !journal "far_switch"
+
+# --- 7. two things at one distance: the lower collider id, which is the one the file lists first
+act teleport id=e5 x=100 z=7.5 y=-10
+step 3
+observe
+expect result contains "\"twin_a\" 1.5m"
+mark
+act interact
+step 2
+expect journal "\"twin_a\""
+expect !journal "twin_b"
+
+# --- 8. a door: solid and usable at once. The use is told; opening it is the game's (here `mover_go`), and its
+# use area slides with it
+act teleport id=e5 x=100 z=10.5 y=-10
+step 3
+observe
+expect result contains "\"door\" 1.4m"
+mark
+act interact
+step 2
+expect journal "\"door\""
+act mover_go name=door key=1
+step 400 --until named:mover_arrived
+expect stopped "mover_arrived"
+step 2
+observe
+expect result !contains "USE e"
+act teleport id=e5 x=100 z=13.5 y=-10
+step 3
+observe
+expect result contains "\"door\" 1.4m"
+act mover_go name=door key=0
+step 400 --until named:mover_arrived
+
+# --- 9. nothing to use where there is no use area: the bare marker has none
+act teleport id=e5 x=100 z=-13.5 y=-10
+step 3
+observe
+expect result !contains "USE e"
+act? interact
+expect result contains "nothing to use: you look at"
+
+# --- the room goes; the player goes back to the arena
+act level_despawn id=use
+expect result contains "ok: level taken away: use"
+act look clear=true
+act set id=e5 component=CharacterController path=params value='"player"'
+act teleport id=e5 x=0 z=0 y=0
+act heal id=e5
+step 30

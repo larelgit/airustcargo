@@ -302,3 +302,58 @@ fn the_sequence_replay_continues_alike_from_its_snapshots() {
     let checked: u64 = verdict.split("heavy: ").nth(1).and_then(|r| r.split(' ').next()).and_then(|n| n.parse().ok()).unwrap_or(0);
     assert!(checked >= 50, "a twin every 10 ticks: {verdict}");
 }
+
+/// The use room (F5, `tests/sandbox/using.rs`) with the player at its station `z`, looking west with a first-person body.
+fn at_a_station(z: f32) -> App {
+    let mut app = sandbox::test_app(42);
+    calm_skeletons(&mut app);
+    calm_warden(&mut app);
+    ok(&mut app, "set", json!({"id": PLAYER, "component": "CharacterController", "path": "params", "value": "viewer"}));
+    step(&mut app, 30);
+    ok(&mut app, "spawn_level", json!({"id": "use", "x": 100.0, "y": -10.0, "z": 0.0}));
+    step(&mut app, 2);
+    ok(&mut app, "teleport", json!({"id": PLAYER, "x": 100.0, "z": z, "y": -10.0}));
+    ok(&mut app, "look", json!({"yaw": 90, "pitch": 0}));
+    step(&mut app, 3);
+    app
+}
+
+fn uses(app: &App) -> usize {
+    events(app).iter().filter(|l| l.contains(" uses ")).count()
+}
+
+#[test]
+fn a_lock_on_actions_blocks_a_use_and_a_hold_and_a_lock_on_movement_does_not() {
+    use shards::action::UseProgress;
+    // A press: the panel 1.5 m ahead is used with the button, not with the actions locked.
+    let mut app = at_a_station(-10.5);
+    let me = player_entity(&app);
+    ok(&mut app, "lock_controls", json!({"reason": "a", "actions": true}));
+    app.world_mut().get_mut::<Intent>(me).unwrap().press("interact");
+    step(&mut app, 3);
+    assert_eq!(uses(&app), 0, "no use under an actions lock: {:#?}", events(&app));
+    assert!(fails(&mut app, "interact", json!({})).contains("your actions are locked (a)"));
+    ok(&mut app, "unlock_controls", json!({"reason": "a"}));
+    // A movement lock leaves it be: using is not moving.
+    ok(&mut app, "lock_controls", json!({"reason": "m", "movement": true}));
+    app.world_mut().get_mut::<Intent>(me).unwrap().press("interact");
+    step(&mut app, 3);
+    assert_eq!(uses(&app), 1, "a movement lock does not stop a use: {:#?}", events(&app));
+    ok(&mut app, "unlock_controls", json!({"reason": "m"}));
+
+    // A hold under way (the valve, 1 s): the lock takes the button, so the hold is cancelled at once and never finishes.
+    let mut app = at_a_station(1.5);
+    let me = player_entity(&app);
+    ok(&mut app, "interact", json!({"hold": true}));
+    step(&mut app, 20);
+    assert!(app.world().get::<UseProgress>(me).is_some_and(|p| p.elapsed > 0.2), "the hold is under way");
+    ok(&mut app, "lock_controls", json!({"reason": "a", "actions": true}));
+    step(&mut app, 120);
+    assert!(app.world().get::<UseProgress>(me).is_none(), "the lock let go of the button for the body: the hold is cancelled");
+    assert_eq!(uses(&app), 0, "and the valve was never turned: {:#?}", events(&app));
+    // The key is still down in the intent: it comes back with the lock, and a hold that began before does not begin again by itself.
+    ok(&mut app, "unlock_controls", json!({"reason": "a"}));
+    assert!(app.world().get::<Intent>(me).unwrap().is_held("interact"));
+    step(&mut app, 120);
+    assert_eq!(uses(&app), 0, "a held button alone starts nothing: only a press does");
+}

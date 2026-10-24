@@ -183,10 +183,7 @@ fn look_tool(In(call): In<Call<LookArgs>>, world: &mut World) -> ToolResult {
                 return Err("that is you; look at something else".into());
             }
             let (point, name) = point_of(world, target, part.as_deref())?;
-            let gaze = Gaze::toward(eye, point).ok_or_else(|| format!("{name} is where your eye is; there is no direction to it"))?;
-            // Straight above or below there is no heading: keep the one you have.
-            let keeps = Vec2::new(point.x - eye.x, point.z - eye.z).length() <= 1e-6;
-            let gaze = if keeps { Gaze { yaw: current(world, me).yaw, ..gaze } } else { gaze };
+            let gaze = gaze_toward(world, me, eye, point, &name)?;
             (gaze, format!("at {name}, {}", relative(eye, point)))
         }
         None if yaw.is_none() && pitch.is_none() => return Err(format!("nothing to do: {USAGE}")),
@@ -211,6 +208,14 @@ fn look_tool(In(call): In<Call<LookArgs>>, world: &mut World) -> ToolResult {
         held.pitch.to_degrees(),
         clamped.unwrap_or_default()
     ))
+}
+
+/// The angles from `eye` to `point` (`name` is what it is, for the error): the look that meets it.
+/// Straight above or below there is no heading, so the one `me` has is kept.
+pub(crate) fn gaze_toward(world: &World, me: Entity, eye: Vec3, point: Vec3, name: &str) -> Result<Gaze, String> {
+    let gaze = Gaze::toward(eye, point).ok_or_else(|| format!("{name} is where your eye is; there is no direction to it"))?;
+    let keeps = Vec2::new(point.x - eye.x, point.z - eye.z).length() <= 1e-6;
+    Ok(if keeps { Gaze { yaw: current(world, me).yaw, ..gaze } } else { gaze })
 }
 
 /// The look `me` has now, or the way its body faces, level.
