@@ -55,18 +55,19 @@ Instructions for agents are in [AGENTS.md](../AGENTS.md) (the short core and an 
 27. [Stylised materials (E10.1)](#stylised-materials-e101)
 28. [Foliage and small objects (E10.2)](#foliage-and-small-objects-e102)
 29. [Effects and decals (E10.3)](#effects-and-decals-e103): [gore: marks and debris (F9)](#gore-marks-and-debris-f9)
-30. [Hit stop (C2)](#hit-stop-c2)
-31. [Rules (C3)](#rules-c3)
-32. [Voxel terrain (core)](#voxel-terrain-core)
-33. [Voxel regions (A2c)](#voxel-regions-a2c)
-34. [Steam (E10.5)](#steam-e105)
-35. [Builds for players and Windows (E10.6)](#builds-for-players-and-windows-e106)
-36. [Crash reports (E10.7)](#crash-reports-e107)
-37. [The sandbox](#the-sandbox)
-38. [Tests and CI](#tests-and-ci)
-39. [What's next](#whats-next)
-40. [Building and iterating fast](#building-and-iterating-fast)
-41. [Conventions and building](#conventions-and-building)
+30. [Lights and colour grading (F13)](#lights-and-colour-grading-f13)
+31. [Hit stop (C2)](#hit-stop-c2)
+32. [Rules (C3)](#rules-c3)
+33. [Voxel terrain (core)](#voxel-terrain-core)
+34. [Voxel regions (A2c)](#voxel-regions-a2c)
+35. [Steam (E10.5)](#steam-e105)
+36. [Builds for players and Windows (E10.6)](#builds-for-players-and-windows-e106)
+37. [Crash reports (E10.7)](#crash-reports-e107)
+38. [The sandbox](#the-sandbox)
+39. [Tests and CI](#tests-and-ci)
+40. [What's next](#whats-next)
+41. [Building and iterating fast](#building-and-iterating-fast)
+42. [Conventions and building](#conventions-and-building)
 
 ## Quick start
 
@@ -85,7 +86,7 @@ cargo shards observe                       # the world as text, plus the journal
 cargo shards tools                         # what you can do (--json: with argument schemas)
 cargo shards act attack target=e6 repeat=true
 cargo shards step --until journal:winds    # the reply has CHANGES and JOURNAL
-cargo shards content check                 # ok: 286 definitions in 98 files
+cargo shards content check                 # ok: 297 definitions in 102 files
 cargo shards act regen region=wilds seed=42   # a generated region south of the arena; the player is at its gate
 cargo shards act nav_path to='{"x": 24, "z": 140}'   # a route to the lair over the navmesh: path 94.5m, 4 turns: 33.9m SE → …
 cargo shards worldgen --region wilds --seeds 1..1000 --report   # check the generator on a thousand seeds
@@ -108,7 +109,7 @@ xvfb-run -a cargo sandbox --replay tests/replays/combat_prototype.json --verify 
 
 # 6. Content without the game: reads and checks all files (including the tile level files and the baked navigation), exit code 0 or 1.
 cargo sandbox --check-content
-# ok: 286 definitions in 98 files
+# ok: 297 definitions in 102 files
 
 # 7. The world without the game: the generator on a thousand seeds (exit code 0 if all pass) and baking the tile navigation.
 cargo sandbox --worldgen-report wilds --seeds 1..1000
@@ -306,7 +307,8 @@ generation is a pure function (seed, version, content) on `DetRng`, not `SimRng`
 it takes the tile graph, the active zones and the "region loaded" event from the world, and the tile files for baking from the levels. `shards_dev`
 (the developer menu and console) does not know any module: modules register their own menu items in `ai_core` (`add_dev_entry`),
 and it calls their tools by name. `shards_look` (how meshes are drawn) knows only `ai_core`, the core and the content: it reaches prefabs through a check it adds to the `prefab` kind (`add_content_check`), and it does not touch gameplay; `shards_action` reads it for one thing, a prop's `look` (the `Look` component and the check that the look exists). `shards_scatter`
-(foliage) sits above the world and the looks: it scatters instances over the tiles of a region in `shards_world`, finds the ground under them with the physics of `shards_motion`, and colours them with the looks of `shards_look`. `shards_fx` (effects) knows `ai_core`, the core, the content, movement and combat: it reads combat events and attack zones, and it does not change the world. `shards_voxel` (voxel terrain) knows `ai_core`, the core, the content, `shards_look` (a palette names looks, checked with `refs.require`), `shards_motion` (the field, water volumes, `Current`) and `shards_world` (its region kind; registered only when the world module is in the game): without `look` (`--without look`) a palette with a `look:` reports that no content kind `look` is registered, as with `shards_scatter`. `shards_action` uses `look` the same way for a prop's `look:` (`--without look` and a prop with a `look`: the same message).
+(foliage) sits above the world and the looks: it scatters instances over the tiles of a region in `shards_world`, finds the ground under them with the physics of `shards_motion`, and colours them with the looks of `shards_look`. `shards_fx` (effects) knows `ai_core`, the core, the content, movement and combat: it reads combat events and attack zones, and it does not change the world. `shards_voxel` (voxel terrain) knows `ai_core`, the core, the content, `shards_look` (a palette names looks, checked with `refs.require`), `shards_motion` (the field, water volumes, `Current`) and `shards_world` (its region kind; registered only when the world module is in the game): without `look` (`--without look`) a palette with a `look:` reports that no content kind `look` is registered, as with `shards_scatter`. `shards_action` uses `look` the same way for a prop's `look:` (`--without look` and a prop with a `look`: the same message). `shards_light` (lights from content) knows `ai_core`, the core, the content, the settings and `shards_motion` (the camera it measures the shadow budget from, and the clock of the camera's picture); `shards_level` knows it (a node's `light=<id>` places a `ContentLight` and the check asks whether the `light` definition exists), and it does not know the level; the colour grade and the volumes that blend it are the camera's, in `shards_motion`. Without `light` (`--without light`) a `light=` on a node is reported as naming no `light` definition.
+
 
 ### Crates
 
@@ -332,6 +334,7 @@ and it calls their tools by name. `shards_look` (how meshes are drawn) knows onl
 | `crates/shards_voxel` | voxel terrain (G1): the core (A2b: `VoxelVolume` with the chunk size a parameter, edits for generation, the FNV hash, the `voxel_palette` content kind, deterministic noise, the registry of generation steps and checks with versions, `generate`, the stock steps `noise_hills` and `fill_water`, the merged boxes `column_boxes` and `water_boxes`) and the voxel region kind (A2c: the `voxel_region` content kind, generation with attempts and a fallback seed, the build of the terrain field, water, sea and current, the rebuild cache, `voxel.volume`, hot reload, `sea_current_at`, `voxel_info`, `in_current`, `near_grid_edge`); no meshing yet (its navigation is baked in memory by `shards_npc` since A2e, see "Navigation") |
 | `crates/shards_fx` | effects (E10.3): effects in the content (`effect`, `*.effect.ron`) and the event table (`fx`, `*.fx.ron`): particles from pools (`max_live` meshes per effect, one mesh and one material, the colour in `MeshTag`), camera-facing quads, cubes and shards, glow, flight that follows a formula on the simulation clock; `PlayEffect`, effects for combat events and clip markers; telegraph decals (`ForwardDecal` with a zone material in WESL: circle, sector, rectangle, "stadium", the fill grows toward the hit), `DepthPrepass` on the `AiCamera` cameras; marks on any surface (F9: the `mark` kind, decals of the standard material turned along a surface's normal, `ShotImpact`, `Damaged`, `Died` and `PartBroken` links in the `fx` table) and debris that lands and lasts (a `mesh` or an `image` per particle, `collide`, `rest: UntilCleared`, `clear`); the `effects`, `effect_play`, `telegraph_decals`, `mark_spawn` and `fx_clear` tools, the `fx` field in `ai/status`, two developer menu items; with the `render` feature, drawing (window or `--offscreen`) |
 | `crates/shards_hitstop` | hit stop (C2): the `hitstop` content kind (`*.hitstop.ron`, an ordered list of rules over the combat events, the first match gives a hold in seconds), the `HitStopped` event and its `hitstop:` journal line on every machine that sees combat, the real-time clock hold alone with a picture (`ai_core::ClockHold`: virtual speed 0, zero ticks, `speed` masked) and the pictures-only hold in co-op (`ai_core::PresentationHolds`, read by the animation bridge), the accessibility settings `hit_stop` and `hit_stop_local_only`, the tools `hitstop` and `hitstop_play` |
+| `crates/shards_light` | lights from content (F13): the `light` content kind (`*.light.ron`: point or spot, `color` or `kelvin`, lumens, range, `shadows`, `flicker` as a letter pattern or noise), the `ContentLight { id }` component a level node's `light=<id>` or a prefab places, the flicker as a pure function of the simulation's clock, the shadow budget `graphics.shadow_lights` (the nearest lights that ask get a shadow), the Bevy lights of the picture (`render`, on a child entity without an `AiId`), and the query `lights` |
 | `crates/shards_rules` | rules (C3): the content kinds `rule_set` (`*.rule_set.ron`, one definition per mode) and `rules` (`*.rules.ron`, the one definition `default`) and their checks, the resource `ActiveRules` (the mode in play, its generation, the session size) with its snapshot prepare and optional replay check, the components `RuleClass` and `RuleScaled`, `SessionFilter`, the out-of-combat guards (`add_rules_guard`), the read API the hook sites use (`shards::rules::read`), the session count each tick, the tools `rules` and `rules_set`, the condition `rules_changeable`, the engine rule `rules.mode_known`; damage reads it since C3.2, the other hook sites do not yet |
 | `crates/shards_steam` | Steam (E10.5), behind the umbrella crate's `steam` feature (off by default; `steam_sdk` is the real client on `steamworks`): co-op over the Steam relay (`--steam-host` for a lobby with invites, `--steam-server` for an anonymous game server, `--join steam:<id>`, `+connect_lobby`), the `SteamTransport` transport for `shards_net`, achievements from the content (`achievement`, `UnlockAchievement`), copies of saves in Steam Cloud and their check at launch, a fake of the Steam process (`FakeSteam`) for tests, the `steam`, `steam_host`, `steam_join`, `steam_invite` and `achievement_unlock` tools, the `steam` field in `ai/status`, the `steam` section of the developer menu |
 | `crates/shards_dev` | developer menu and console (E11): items from modules (`add_dev_entry`) and from the game (the `devmenu` content kind), a console that takes `tool key=value` lines, the `dev_menu` and `console` tools; with the `render` feature, panels in the window (F10 and `` ` ``), Tab completes names from the schemas, the `dev` input context |
@@ -453,7 +456,7 @@ line, and tests take `shards::testing::config()`.
 | `exit_with_host` | a client exits when the session ends instead of going back to the menu: with code 0 if the host ended it, 1 for a refusal, a kick, loss of the host, or a world that is not accepted; 2 if the session cannot be opened (an address that cannot be parsed; a busy port for `--host`). A host (`--host`) does not exit on `net_end` |
 | `without` | engine modules the game leaves out (`--without audio,scatter`): their plugins are not added, see below |
 
-**Modules the game leaves out.** `EngineConfig::without` (or `--without`) names modules the way `ai/status` lists them (`engine.modules`), and `EnginePlugins` does not add their plugins: a game without sound does not need `audio`, and a server without graphics does not need `look`, `scatter` or `fx`. You can turn off `level`, `world`, `npc`, `encounter`, `net`, `save`, `coop`, `locale`, `ui`, `audio`, `look`, `scatter`, `voxel`, `fx`, `hitstop`, `steam` and `dev` (`shards::modules::OPTIONAL_MODULES`); `core`, `content`, `settings`, `motion`, `rules` and `action` are in every game (`shards::modules::REQUIRED_MODULES`). A module that another one needs can only leave together with it: `--without locale` gives ``--without: `ui` (screens, menus and the HUD) needs `locale`: leave out both (`--without locale,ui`) or
+**Modules the game leaves out.** `EngineConfig::without` (or `--without`) names modules the way `ai/status` lists them (`engine.modules`), and `EnginePlugins` does not add their plugins: a game without sound does not need `audio`, and a server without graphics does not need `look`, `scatter` or `fx`. You can turn off `level`, `world`, `npc`, `encounter`, `net`, `save`, `coop`, `locale`, `ui`, `audio`, `look`, `scatter`, `voxel`, `fx`, `hitstop`, `light`, `steam` and `dev` (`shards::modules::OPTIONAL_MODULES`); `core`, `content`, `settings`, `motion`, `rules` and `action` are in every game (`shards::modules::REQUIRED_MODULES`). A module that another one needs can only leave together with it: `--without locale` gives ``--without: `ui` (screens, menus and the HUD) needs `locale`: leave out both (`--without locale,ui`) or
 neither``, and `steam` (in a build that includes it) needs `net`. Something that only joins two modules goes with either of them: `coop` goes with `net` or `save`, and levels as tiles go with `level` or `world`. The command line checks the rest as well: `--without net` with `--host`, `--join` or `--stand`, `--without save` with `--character` or `--world`, `--without steam` with the Steam flags (`--steam-host`, `--steam-lobby`, `--stand-steam`, `--steam-server`, `--steam-relay-only`, `--steam-app`, `--join steam:…`), and `--without world` with `--worldgen-report`
 is an error with exit code 2; `EnginePlugins` with an invalid `without` panics with the same text. Stand members leave out the same modules as the host: the clients of `--stand N` take its setting, and the child processes of `--stand-udp` get its `--without`. A game that calls the API of a module it left out (`add_ui_action` without `ui`) is responsible for that itself. Without `ui`, the main menu is skipped by default, because there is nothing to draw it with (`--menu` still sets `MainMenu`, and `new_game` leads out of it). The test `a_game_runs_without_each_module_it_may_leave_out` (`crates/shards/tests/engine.rs`) turns off each module (along with the ones that need it) and runs the engine for 60 ticks.
 
@@ -503,7 +506,7 @@ The engine's input names are in `shards::core::input_names` (`jump`, `sprint`, `
 - `player_body(world, n)` returns the body with `PlayerId(n)`; an agent bound to a player finds its body through it.
 
 **`ai/status`** shows the version and the modules: `engine: {version: "0.2.0", modules: [core, content, settings, motion, rules, action, level,
-world, npc, net, save, coop, locale, ui, audio, look, scatter, voxel, fx, hitstop, dev], state: "InGame", pause: "Running"}` and `loading: []`, while
+world, npc, net, save, coop, locale, ui, audio, look, scatter, voxel, fx, hitstop, light, dev], state: "InGame", pause: "Running"}` and `loading: []`, while
 nothing is loading; with a region in the world there is also a `world` field.
 
 ## Content (E4)
@@ -522,10 +525,10 @@ The game's numbers and definitions live in files, not in code: attacks, prefabs,
 
 - An id is a non-empty string without spaces or control characters; it is unique within its content kind across all files.
 - The engine registers its own content kinds: `prefab`, `locomotion`, `action`, `moveset`, `status`, `combat_tuning`, `animset`, `prop`,
-  `input_map`, the camera `camera`, `lock_on` and `shot` (see "Scene cameras (K3)"), levels `level`, world `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`,
+  `input_map`, the camera `camera`, `lock_on`, `shot` (see "Scene cameras (K3)") and `grading` (see "Lights and colour grading (F13)"), levels `level`, world `tile`, `socket_rules`, `poi`, `region`, `tile_map`, `room`, `dungeon`,
   voxels `voxel_palette` and `voxel_region`, enemies `behavior`, `perception`, `director`, `attack_plan`, `npc_tuning`, `nav` and `turret`,
   encounters `encounter` and `encounter_rules` (see "Encounters (G9)"), sound `audio`, `sound` and `music`, screens `screen` and `theme`, `locale`, `save`, `net`, `perf`, `devmenu`, mesh looks `look` (see "Stylised materials (E10.1)"),
-  foliage `scatter` (see "Foliage and small objects (E10.2)"), effects `effect` and `fx`, spots on surfaces `mark` (see "Effects and decals
+  foliage `scatter` (see "Foliage and small objects (E10.2)"), lights `light` (see "Lights and colour grading (F13)"), effects `effect` and `fx`, spots on surfaces `mark` (see "Effects and decals
   (E10.3)" and "Gore: marks and debris (F9)"), hit stop `hitstop` (see "Hit stop (C2)"), rules `rule_set` and `rules` (see "Rules (C3)"), with the `steam` feature, achievements `achievement` (see "Steam (E10.5)"). The game adds its own: the sandbox has `layout` and `bounds`, the template has
   `arena`.
   `content_list` (the tool) shows the content kinds and the number of definitions.
@@ -599,7 +602,7 @@ checks them without applying anything), `content_reload` (reread and apply, like
 
 ```text
 $ shards act content_list
-content: 286 definitions in 98 files
+content: 297 definitions in 102 files
   action  80
   animset  2
   attack_plan  5
@@ -616,10 +619,12 @@ content: 286 definitions in 98 files
   encounter_rules  1
   flash  2
   fx  1
+  grading  2
   hitstop  1
   input_map  0
   layout  3
-  level  5
+  level  6
+  light  6
   locale  2
   lock_on  1
   locomotion  8
@@ -635,7 +640,7 @@ content: 286 definitions in 98 files
   perception  6
   perf  2
   poi  4
-  prefab  32
+  prefab  34
   prop  1
   region  3
   room  0
@@ -657,7 +662,7 @@ content: 286 definitions in 98 files
   voxel_region  1
 ```
 
-**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 286 definitions in 98
+**`--check-content` and `shards content check`.** The first reads the files without the game (for CI: code 0 or 1; a missing `content` folder is an error too, so the check cannot pass without checking anything), the second asks the running game: `ok: 297 definitions in 102
 files`. Modules add their own checks: the level files named by `level` definitions (each node, component and required marker), the level files that tiles are built from (they must lie in the assets folder and are read the same way as a `level` file), and the baked tile navigation (with a `nav` definition, a stale or missing file is an error that gives the command
 `--bake-nav`).
 
@@ -1104,6 +1109,7 @@ For the AI: `observe` shows `slowed x0.60, rooted, capped 3.0m/s, no sprint, spr
 | `picture.bloom.intensity` / `low_frequency_boost` / `low_frequency_boost_curvature` / `high_pass_frequency` | `0.15` / `0.7` / `0.95` / `1` | Bevy's natural bloom: how strong the glow is, how much more the wide part of it weighs and how that falls off, and how wide it reaches (above 0, at most 1) |
 | `picture.bloom.threshold` / `threshold_softness` | `0` / `0` | only light brighter than this spreads (linear; 0 lets everything glow a little, as Bevy's natural bloom does); how soft the knee at the threshold is, 0 to 1 |
 | `picture.bloom.composite` | `EnergyConserving` | `EnergyConserving`: the glow takes its share of the light from the picture (Bevy's natural bloom); `Additive`: it is added on top |
+| `picture.grading` | `None`: the camera's own | a colour grade of the whole picture: `exposure` (stops), `temperature` and `tint` (white balance, `-1` to `1`), `hue_deg`, `saturation`, `contrast`, `lift`, `gamma` and `gain` (the neutral values: 0, 0, 0, 0, 1, 1, 0, 1, 1); Bevy's `ColorGrading` with the same values for shadows, midtones and highlights. Bevy grades just before tone mapping, so it shows nothing under `tone_mapping: None`. A grading volume blends the picture away from it and back (the picture, below; "Lights and colour grading (F13)") |
 | `mode` | `ThirdPerson` | the camera the game plays through: `FirstPerson` puts a `FirstPersonCamera` on every `ThirdPersonCamera` entity (F1b, "The first-person camera and the view model") |
 | `first_person.*` | see the table in "The first-person camera and the view model (F1b)" | the first-person camera's own numbers: the ease on steps, the landing dip, the bob, the lean, the default view model; read by `FirstPersonCamera` only |
 
@@ -1167,7 +1173,7 @@ down the framed arm may go (`(0.0, 0.7)` keeps it level with the head next to a 
 lock pick and the flick read the camera's `Transform`, so with a tilt they measure from what the player sees. The far plane
 (Bevy's default 1000 m) did not need a number. The sandbox's `combat/camera.camera.ron` turns the fit on for its colossus.
 
-**The picture (`picture`).** The camera content can also say how the picture is drawn: its tone mapping and its bloom (`shards::motion::camera::{PictureTuning, ToneMapping, BloomTuning, BloomComposite}`). Both are left out by default, and then every camera keeps what the game spawned it with, so a game without a `picture` sees no change. They apply to every 3D camera with `ThirdPersonCamera`, a camera spawned later included. A bloom makes the camera draw in HDR (Bevy's `Bloom` requires `Hdr`): the materials' colours are no longer stopped at full, and tone mapping moves from each material's shader to one pass over the whole picture, so light brighter than white (a lamp, an effect with an `intensity` above 1, see "Effects and decals") keeps its brightness until the tone mapping and the bloom see it. Taking `bloom` out of the content (or the whole definition) gives the camera back its own bloom, or none, and leaves HDR off again if the content turned it on. The same holds for `tone_mapping`. A game that sets its own `Bloom`, `Hdr` or `Tonemapping` on the camera keeps them while the content says nothing. The picture changes nothing else: the `camera` kind is not simulation content, so no replay changes. With HDR on, everything is tone mapped once, in the post pass, particles included (the particles' shader has no tone mapping of its own, so without HDR their colours reach the screen as written).
+**The picture (`picture`).** The camera content can also say how the picture is drawn: its tone mapping, its bloom and its colour grade (`shards::motion::camera::{PictureTuning, ToneMapping, BloomTuning, BloomComposite, Grading}`). All three are left out by default, and then every camera keeps what the game spawned it with, so a game without a `picture` sees no change. They apply to every 3D camera with `ThirdPersonCamera` or `FirstPersonCamera`, a camera spawned later included. A bloom makes the camera draw in HDR (Bevy's `Bloom` requires `Hdr`): the materials' colours are no longer stopped at full, and tone mapping moves from each material's shader to one pass over the whole picture, so light brighter than white (a lamp, an effect with an `intensity` above 1, see "Effects and decals") keeps its brightness until the tone mapping and the bloom see it. Taking `bloom` out of the content (or the whole definition) gives the camera back its own bloom, or none, and leaves HDR off again if the content turned it on. The same holds for `tone_mapping`. A game that sets its own `Bloom`, `Hdr` or `Tonemapping` on the camera keeps them while the content says nothing. The picture changes nothing else: the `camera` kind is not simulation content, so no replay changes. With HDR on, everything is tone mapped once, in the post pass, particles included (the particles' shader has no tone mapping of its own, so without HDR their colours reach the screen as written).
 
 ```ron
 // assets/content/combat/camera.camera.ron: the sandbox's bloom; only light 1.5 times past white glows, so nothing
@@ -2668,6 +2674,8 @@ Blender (.blend) ── export glTF ──► tiles/ruin.gltf ──► LevelAss
 | `volume` | `water`, `updraft`, `trigger` | a `Volume` sensor with the `collider` shape (default `auto`); `accel` and `max_speed` are for the flow |
 | `prefab` | text | spawns a prefab from the content at the node; component properties edit its fields |
 | `mover` | text | the node is a mover (F6) that goes through the keys of that `mover` definition, and the nodes below it move with it (see "Movers (F6)") |
+| `light` | text | the node shines by that `light` definition (F13, `shards_light::ContentLight`) from where it stands: a Blender lamp, whose own glTF light is taken out of the picture and replaced, or an empty; a spot points along the node's -Z (see "Lights and colour grading (F13)") |
+| `grading` | text | on a `marker` = `trigger` node: the picture blends toward that `grading` definition (F13, `GradingVolume`) while the local player is inside, and back when it leaves |
 | `hold_s`, `use_range`, `prompt` | seconds (zero or more), metres (above zero, at most 100), text | for an `interactable` (F5, see "Use by looking"): the seconds the button is held for a use (0, the default, is a press), how far from the eye it can be used (without it, the body's own `use_range`), and the text a HUD shows (a Fluent `@id` or plain text; without it, the marker's name) |
 
 Any other key is a **component**: a short name (`Health`) or the full type path. The value is JSON in the form that `inspect` and `get` show:
@@ -5822,6 +5830,7 @@ vsync = true
 resolution = "1920x1080"     # "auto" — the game's own choice
 render_scale = 1.0           # 0.5…2: the 3D world is drawn at this many times the window's pixels (UI stays at native)
 shadows = "high"             # off | low | medium | high
+shadow_lights = 4           # 0…64: how many lights from content cast shadows, the nearest to the camera first (shards_light); `shadows = "off"` is none
 foliage = 1.0                # 0…1: how much foliage and small objects to scatter (scatter)
 interpolation = true         # draw bodies between their last two ticks (smooth at any refresh rate); false: the last tick's pose
 
@@ -5858,10 +5867,10 @@ attack_assist = true         # false: attacks do not correct their direction tow
 
 | group | who and how |
 |---|---|
-| `graphics` | `shards_settings::apply_graphics`: the main window (fullscreen, vsync, size). The window changes when the settings change, not every frame, so the size the player dragged with the mouse is not taken back. Without a window the values are only stored. `render_scale` is applied by `shards::render_scale`: the resolution of the 3D picture, not the window scale (see "3D picture resolution" below). `shadows` is read by the game: `GraphicsSettings::shadow_quality()`; `foliage` is read by `shards_scatter` (`GraphicsSettings::foliage_density()`): at 0.5 half of the same instances stays, with no new ones (see "Foliage and small objects (E10.2)"); `interpolation` is read by `shards_motion` (render interpolation, see "Render interpolation (C8)") |
+| `graphics` | `shards_settings::apply_graphics`: the main window (fullscreen, vsync, size). `shadow_lights` is read by `shards_light`: of the content lights that ask for a shadow, only that many, the nearest to the camera, cast one (see "Lights and colour grading (F13)"; `shadows = "off"` is none). The window changes when the settings change, not every frame, so the size the player dragged with the mouse is not taken back. Without a window the values are only stored. `render_scale` is applied by `shards::render_scale`: the resolution of the 3D picture, not the window scale (see "3D picture resolution" below). `shadows` is read by the game: `GraphicsSettings::shadow_quality()`; `foliage` is read by `shards_scatter` (`GraphicsSettings::foliage_density()`): at 0.5 half of the same instances stays, with no new ones (see "Foliage and small objects (E10.2)"); `interpolation` is read by `shards_motion` (render interpolation, see "Render interpolation (C8)") |
 | `audio` | `shards_audio`: the volume of the buses `music`, `sfx`, `voice`, `ui` with `master` taken into account (`AudioSettings::volume("music")`), applied to what is already playing (see "Audio") |
 | `controls` | `shards_motion`: `ControlSettings` ⇄ `InputMap` (see "Input" in "Movement (E2)"); the two look speeds (`mouse_sensitivity`, and `aim_sensitivity` while the game sets `CameraOffsets::aiming`), the Y-axis inversion and `camera_auto_centre` go to `CameraSettings`; `attack_assist = false` makes the controls hold `assist_off` for the player's body (see "Action timeline (B2a)") |
-| `accessibility` | `shards_motion`: the field of view and the strength of the camera shake, `MotionBlur` on the cameras that have it (the game adds the component, the setting sets the strength, 0 turns it off), `hold_to_toggle` in the input map; `shards_action`: `flashes` for the blinking of telegraphs and of off-screen markers (`reduced` — half as big and no more than 2 times a second, `off` — a steady light, `draw::pulse_at`) and `shards_ui`: `flashes` for full-screen flashes (`reduced` — at most 0.35 strong, pulses no more than 2 times a second and half as deep, eased fades, `off` — none; see "UI (E9)"); `shards_audio`: `subtitles` for the lines of voices (off: the source `subtitles` is empty; see "Audio") |
+| `accessibility` | `shards_motion`: the field of view and the strength of the camera shake, `MotionBlur` on the cameras that have it (the game adds the component, the setting sets the strength, 0 turns it off), `hold_to_toggle` in the input map; `shards_action`: `flashes` for the blinking of telegraphs and of off-screen markers (`reduced` — half as big and no more than 2 times a second, `off` — a steady light, `draw::pulse_at`) and `shards_ui`: `flashes` for full-screen flashes (`reduced` — at most 0.35 strong, pulses no more than 2 times a second and half as deep, eased fades, `off` — none; see "UI (E9)"); `shards_light`: `flashes` for the flicker of lights (`reduced` — at most 2 steps or changes a second and half as far from the light as written, `off` — steady; see "Lights and colour grading (F13)"); `shards_audio`: `subtitles` for the lines of voices (off: the source `subtitles` is empty; see "Audio") |
 
 **3D picture resolution: `graphics.render_scale` (E8.6, E10).** The 3D world is drawn into a picture of `render_scale` x the window's pixels (with `--offscreen`, the base is the size of the `--offscreen` picture, 1280×720 by default), and the picture is stretched over the whole window with a linear filter;
 the UI, HUD, menus and the developer console stay at the window's native resolution. At 0.5 it is a quarter of the pixels (cheaper and softer), at 2 it is supersampling (four pixels for one). The module `shards::render_scale` (feature `render`, window and `--offscreen`):
@@ -6841,6 +6850,66 @@ cleared 5 marks and 5 particles tagged `gore`
 **Limits.** Marks are laid in world space: a mark on a door, a lift or any collider that moves stays where it was laid while the surface goes (no parenting yet). Decals on bodies (a mark that sticks to a character) are not built: a mark only paints what is within its `depth` of the plane it was laid on, so a body that stands there is painted at its feet and not above. A decal is a flat quad: it is as good as the surface is flat; on a curved or very steep-viewed surface its edges stretch (a first-person camera that looks along a wall sees a hole smeared). The depth fade makes a mark vanish on a surface more than `depth` away from its plane (a hole on a wall does not wrap round an inside corner unless `depth` is big). Debris sees `WORLD` colliders only, never bodies, and the physics world as the last tick left it (a mover that has just moved is a tick late). The chunks and marks a `shot_hit` sprays are not a ray against the bodies behind the first (`pierce`): only the first world surface along the shot gets the blood.
 
 **Deviations from the spec, on purpose.** (1) The spec's `lifetime` for a mark is `Secs(f32) | UntilCleared`; so is the field. (2) The cap and the pool of resting debris are the effect's `max_live`, not a second number: a pool is one number for what flies and what lies. (3) `fade_out` is an error for an `UntilCleared` mark instead of a silent nothing. (4) The shot's direction is not on `ShotImpact` (F3's event is as F3 left it): the picture remembers where each shooter's last `ShotFired` started and takes the way from there to the point (the way back along the normal when it has not seen one). (5) Marks need no new `Intent`, `AiId` or net event: they ride the ones that exist.
+
+## Lights and colour grading (F13)
+
+A light is content, and so is the colour of the picture. The `shards_light` module turns `light` definitions (`*.light.ron`) into the Bevy lights a picture draws; the camera's picture (`picture.grading`, `shards_motion`) carries a colour grade that trigger volumes in a level can change. Both are only pictures: nothing in a tick reads them, so a replay never diverges over them, and a mistake in one is found by `--check-content`. What a snapshot holds is the placed `ContentLight` and `GradingVolume` components with their entities, like any reflected component; the lights' state (`LightState`) and the grade's blend (`GradingBlend`) are presentation state: neither changes the simulation or a replay's checks, `GradingBlend` is moved by each tick's volumes (`FixedLast`) and both are worked out again from the clock after a snapshot loads.
+
+![the lit sandbox room at dusk: a flashing lamp on and off (top), and the player left of the grading volume's line and inside it (bottom)](media/lights.png)
+
+```ron
+// content/light/lights.light.ron
+{
+    "lamp": (color: "#ffe6bf", intensity: 150000.0, range: 12.0, shadows: true),
+    "sodium": (color: "#ffb347", intensity: 120000.0, range: 14.0, shadows: true, flicker: Noise(rate: 6.0, depth: 0.25)),
+    "tube": (kelvin: 6500.0, intensity: 80000.0, flicker: Pattern(pattern: "mmamammmmammamamaaamammma", rate: 10.0)),
+    "torch": (kind: Spot(inner_deg: 25.0, outer_deg: 50.0), intensity: 300000.0, range: 20.0, shadows: true),
+}
+// content/light/grading.grading.ron
+{ "rust": (blend_s: 1.5, grading: (temperature: 0.1, tint: 0.05, saturation: 0.8, contrast: 1.1)) }
+```
+
+| field of a `light` | default | meaning |
+|---|---|---|
+| `kind` | `Point` | `Point`, or `Spot(inner_deg, outer_deg)`: a cone along the light's own -Z (the way a glTF lamp points), the angles its whole opening in degrees as Blender's *Spot Size* is; `0 < inner_deg <= outer_deg < 180` |
+| `color` / `kelvin` | white | the colour as `#rrggbb` (sRGB), or as a temperature from 1000 to 40000 K (1900 a candle, 2700 a bulb, 6500 daylight). Not both |
+| `intensity` | `100000` | the power in lumens, as Bevy takes it (`PointLight::intensity`), 0 or more. At Bevy's default camera exposure 20000 is a dim bulb, 100000 a lamp that lights a room, 1000000 a floodlight. A flicker multiplies it |
+| `range` | `15` | how far it reaches (m), above 0 and at most 1000 |
+| `radius` | `0` | the size of the source (m): bigger softens its highlight |
+| `shadows` | `false` | whether it asks for a shadow; the shadow budget decides whether it gets one |
+| `flicker` | `None` | `Pattern(pattern, rate)`: one letter `a`-`z` per step, `rate` steps a second, looping; `a` is dark, `m` the light as written, `z` about twice (`(letter - 'a') / 12`), the classic light styles. `Noise(rate, depth)`: smooth noise that wanders between `1 - depth` and 1 times the intensity, `rate` times a second |
+
+The content check names the file, the definition and the field: `intensity` 0 or more, `range` above 0, the spot angles as above, a pattern of the letters `a`-`z` only (and not empty), `rate` above 0 (at most 240), `depth` from 0 to 1, a `color` that reads, a `kelvin` from 1000 to 40000, and not a `color` with a `kelvin`. A `grading` definition (`blend_s`, `grading`) is checked the same way: `blend_s` from 0 to 60 seconds, `temperature` and `tint` from -1 to 1, `exposure` from -10 to 10, `hue_deg` from -180 to 180, `saturation` and `contrast` from 0 to 4, `lift` from -1 to 1, `gamma` from 0.05 to 4, `gain` from 0 to 8. Both kinds are not simulation content (`SIMULATION = false`): editing them never makes a replay diverge.
+
+**Placing a light.** The component `ContentLight { id }` on an entity makes it shine by the definition `id`, from where its `Transform` is (a spot along its -Z): a level node with the property `light = "sodium"` (the table in "Levels from Blender": a Blender lamp, or an empty), a prefab (`"ContentLight": (id: "lamp")`), or code (`commands.spawn((ContentLight::new("lamp"), Transform::from_xyz(2.0, 3.0, 0.0)))`). **On a Blender lamp, `light=` replaces the lamp's light:** the glTF loader's own `PointLight` or `SpotLight` under that node is taken out of the picture and the content light stands at the node, so the file keeps a lamp for Blender's viewport and the game keeps the numbers in content. A game's other Bevy lights (a sun, a lamp with no `light=`) are the game's and are left alone. The node's name and place are the light's identity (the tie-break of the shadow budget and the noise's seed). The entity that carries `ContentLight` has no `AiId` unless a prefab gives it an `AiKind`; the Bevy light is a child of it (`LightPicture`), so headless and drawn games have the same components on the entities that count. `ContentLight` and `GradingVolume` are `replay_ignore`d (a trigger marker has an id, and so may a lamp prefab), so a replay's hash never sees them; snapshots still hold them.
+
+**Flicker is the simulation's clock.** The brightness at a moment is a pure function of `Time<Fixed>` (elapsed plus the overstep between ticks) and of a seed that is the light's own (its definition's id, its node name and its place when it first appeared; `LightSeeds` keeps it while the light is placed, so a lamp that is carried about wanders as it did, at the rate its definition and `accessibility.flashes` allow), never `SimRng`: a pause freezes a flicker, `step 30` moves it half a second, a headless game and a drawn one show the same brightness at the same tick, and a test knows the letter at tick 30. A pattern with one letter (`"g"`) is a steady brightness (`g` is 6/12: half), which is how a test names one. Two lamps with one noise definition wander differently, and the same lamp does the same in every run. **The player's `accessibility.flashes`** shapes every flicker as it does the attack warnings, since a light that flickers is what a photosensitive player asks to be spared: `full` is as written; `reduced` is no faster than twice a second (`flicker::REDUCED_RATE`) and half as far from the light as written (a noise's depth halved, a pattern's dark letters half light); `off` is steady. The `lights` query says which is in force and shows the flicker as drawn.
+
+**The shadow budget.** `graphics.shadow_lights` (default 4, 0 to 64, `settings_set group=graphics key=shadow_lights value=2`; `graphics.shadows = "off"` is none) says how many content lights may cast a shadow at once. Of the lights whose definition says `shadows: true`, the ones nearest the viewer get one; the viewer is the active camera (the AI's `AiCamera`, else a `ThirdPersonCamera` or a `FirstPersonCamera`), and a game with no camera (headless) measures from the local player's eye; with no camera and no local player there is no viewer, the `lights` query says so and every distance is unknown, and ties go by the key alone. Distances are compared to the centimetre and ties go by a key made of the definition's id, the node's name and the place, never by `Entity`, so a shot taken twice from one place shows the same shadows and a headless game agrees with a drawn one standing there. There is no hysteresis: a light that comes nearer than one that has a shadow takes it, once. A cube shadow map is six passes, so this is the knob for a weak GPU. Only content lights that ask are counted: a game's own Bevy lights keep their own `shadow_maps_enabled`.
+
+**Colour grading.** `picture.grading` of the `camera` content is a `Grading`: `exposure` (stops), `temperature` and `tint` (white balance: positive is redder or more magenta), `hue_deg`, `saturation`, `contrast`, `lift`, `gamma`, `gain` (the offset, power and slope of the ASC CDL). It becomes Bevy's `ColorGrading` on every 3D camera with a `ThirdPersonCamera` or a `FirstPersonCamera` (the same cameras as the rest of the picture), the same values for the shadows, the midtones and the highlights; Bevy grades just before tone mapping, so a camera whose `tone_mapping` is `None` shows none of it. Per-channel lift/gamma/gain wheels and a LUT are not in Bevy's built-in path (its sections are scalar, its LUT is the tone mapper's), so they are not here: `temperature` and `tint` are the colour casts. A camera keeps its own `ColorGrading` (a game's) while the content says nothing, and gets it back when the content stops saying anything.
+
+A **grading volume** changes it where the player stands. A level node with `marker = "trigger"` (a collider shapes it, `auto` by default) and `grading = "rust"`, or a prefab with `"GradingVolume": (id: "rust")` on an entity with a trigger `Volume`: while the local player's body touches it (`MotionState::volumes`), the picture blends from what it shows toward the `rust` definition over its `blend_s` (eased, smoothstep), holds it, and blends back to the camera's own grade over the same time when the player leaves; a game with no local player uses the volumes the camera stands in. Where volumes overlap, the one placed last (the highest collider id) wins; a blend that changes course starts from what is shown, so nothing jumps. The state is the resource `GradingBlend`, tracked in `FixedLast` on every tick (so a `step` of 100 ticks sees the tick the player crossed the line) and evaluated on the simulation's clock, which is why a headless game can say where the blend is. It is in no snapshot or replay.
+
+**For the AI.** The query `lights` (player scope, the same headless and drawn): the lights by kind, how many flicker, how many want a shadow and cast one against the budget, the viewer the budget measures from, and a line per light: its definition, name, place, distance, lumens now against its definition's, the flicker (pattern step and letter, or noise, with the percentage now) and `shadow: yes`, `no (over the budget)`, `no (budget 0)` or `not asked`; then the grade the picture shows and where its blend is (the line reads "blending toward `rust`, 62 % done", "holding `rust` (blend done)", "blending back to the camera's own, 30 % done" or "the camera's own"). `lights id=sodium` lists one definition, `limit=` the first lights (24). `ai/status` has `light: {lights, casting, flickering, budget}`. The tool refreshes the state first, as a frame does, so a stepped game answers for now.
+
+```text
+$ shards act lights
+lights: 6 (point 5, spot 1) · 4 flicker · 3 want a shadow, 3 cast one (budget 4: graphics.shadow_lights) · clock 1.500 s
+viewer: the camera at (111.2, -4.6, 9.0)
+  dimmer "Lamp.Dim" point at (117.0, -7.0, 2.0) 9.4 m away · 50000 lm of 100000 · pattern `g` at 1/s, step 0 = g: 50 % (50000 lm) · shadow: not asked
+  flasher "Lamp.Flash" point at (112.0, -7.0, -4.0) 13.3 m away · 0 lm of 400000 · pattern `ma` at 1/s, step 1 = a: 0 % (0 lm) · shadow: not asked
+  lamp "Lamp.Steady" point at (109.0, -7.0, 0.0) 9.6 m away · 150000 lm of 150000 · steady · shadow: yes
+  sodium "Lamp.Sodium" point at (107.0, -7.0, -2.0) 12.0 m away · 98740 lm of 120000 · noise 6/s depth 0.25: 82 % (98740 lm) · shadow: yes
+  …
+grading: the camera's own
+  shows: no grade of the content (the camera keeps whatever the game gave it)
+  the target has changed 0 times
+```
+
+**In the sandbox.** `content/light/` has the lights (`lamp`, `sodium`, `tube`, `flasher`, `dimmer`, `torch`), the gradings (`rust`, `cold`), the prefabs `lit_lamp` and `lit_flasher`, and the level `lit_room` (`assets/levels/lit_room.gltf`, written by `tests/sandbox/lights.rs`): a floor and three walls with six lights (four on Blender lamps that the content lights replace, two on empties) and a trigger volume over its right half that grades with `rust`. `scenarios/lights.scenario` plays it with queries alone, so it runs headless. Tests: `shards_light` (unit tests for the definitions, the flicker and the budget; `tests/light/` for the content check, the query, the clock and the Bevy lights of a drawn game) and the sandbox's `lights.rs`, whose `#[ignore]`d tests need a GPU (`cargo test -p sandbox --test sandbox -- --ignored lights`): the picture holds exactly the six content lights, a flashing lamp lights the room at one moment and not at the next, and a grading volume changes the channel means of the shot and gives them back.
+
+**What is not here.** Directional lights (a sun) are not content yet. Emissive bulbs do not follow a flicker (the material is the game's). There is no area light or light cookie, no hysteresis in the budget, and a spot's shadow costs one pass where a point light's costs six, which the budget does not tell apart. The view model's camera (F1b) takes the world camera's grade when that camera does not draw in HDR; under an HDR camera (any `picture.bloom`) it draws over the graded picture and stays ungraded, and any other second camera that draws the world is the game's to grade. Checked on a GPU with `--offscreen` (RTX 5080); not checked by eye in a window.
 
 ## Hit stop (C2)
 

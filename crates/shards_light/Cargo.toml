@@ -1,0 +1,29 @@
+[package]
+name = "shards_light"
+description = "Shards lights (F13): point and spot lights as content (colour or temperature, flicker, shadows) with a shadow budget for the picture."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[features]
+# Bevy's lights under every content light, driven every frame. Without it the kind, its checks, the
+# flicker and the `lights` query are still there: a headless game draws nothing.
+render = ["ai_core/render", "shards_motion/render", "bevy/3d_bevy_render", "bevy/bevy_pbr"]
+
+[dependencies]
+ai_core.workspace = true
+shards_core.workspace = true
+shards_content.workspace = true
+shards_motion.workspace = true
+shards_settings.workspace = true
+bevy = { workspace = true, features = ["std", "serialize", "bevy_asset"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+ron.workspace = true
+# Integration tests build apps the way a game does: the whole engine (`shards::testing`).
+shards = { workspace = true, features = ["render", "remote", "hot_reload"] }

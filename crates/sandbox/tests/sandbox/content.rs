@@ -64,7 +64,7 @@ fn the_player_is_the_local_player() {
 #[test]
 fn the_sandbox_content_is_clean() {
     let mut app = sandbox::test_app(42);
-    assert_eq!(text(&ok(&mut app, "content_check", json!({}))), "ok: 286 definitions in 98 files");
+    assert_eq!(text(&ok(&mut app, "content_check", json!({}))), "ok: 297 definitions in 102 files");
     let light = ok(&mut app, "content_get", json!({"kind": "action", "id": "light_1"})).result;
     assert_eq!(light["def"]["hits"][0]["damage"], json!(20.0));
     assert_eq!(light["file"], "content/combat/player.action.ron");
@@ -72,7 +72,7 @@ fn the_sandbox_content_is_clean() {
     for kind in ["action", "moveset", "prefab", "locomotion", "layout", "combat_tuning", "behavior", "perception", "director", "attack_plan", "tile", "region", "poi", "nav", "level", "sound", "music", "audio", "perf", "look", "scatter", "effect", "fx", "encounter", "encounter_rules", "hitstop", "rule_set", "rules", "prop", "flash", "view_model", "animset", "mark"] {
         assert!(kinds.contains(kind), "{kind} missing: {kinds}");
     }
-    assert!(events(&app).contains(&"0 content loaded: 286 definitions in 98 files".to_owned()), "{:?}", events(&app));
+    assert!(events(&app).contains(&"0 content loaded: 297 definitions in 102 files".to_owned()), "{:?}", events(&app));
 }
 
 #[test]
@@ -234,7 +234,7 @@ fn prefabs_spawn_the_sandbox_characters() {
     assert!(events(&app).iter().any(|l| l.contains("e15 -> e5 claw")), "{:?}", events(&app));
     let refused = act(&mut app, "spawn_prefab", json!({"id": "lich", "x": 0, "z": 0}));
     assert!(
-        text(&refused).starts_with("unknown prefab `lich`; known: air_runner, armed, audio_hum, audio_pane, audio_wall, bolt, bolt_homing, camp_skeleton, colossus, crouch_dummy, den_guard, frost_warden, gore_ceiling, gore_floor, gore_wall, pillar, player, range_dummy, ranged_bystander, ranged_gunner, ranged_post, ranged_strafer, ranged_turret, ranged_wall, skeleton"),
+        text(&refused).starts_with("unknown prefab `lich`; known: air_runner, armed, audio_hum, audio_pane, audio_wall, bolt, bolt_homing, camp_skeleton, colossus, crouch_dummy, den_guard, frost_warden, gore_ceiling, gore_floor, gore_wall, lit_flasher, lit_lamp, pillar, player, range_dummy, ranged_bystander, ranged_gunner, ranged_post, ranged_strafer, ranged_turret, ranged_wall, skeleton"),
         "{}",
         text(&refused)
     );

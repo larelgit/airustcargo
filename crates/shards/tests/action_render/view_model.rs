@@ -216,3 +216,33 @@ fn the_rig_plays_the_clip_of_the_bodys_action_though_it_is_no_fighter() {
     app.update();
     assert!(rigs(&mut app).is_empty() && view_cameras(&mut app).is_empty());
 }
+
+#[test]
+fn a_world_camera_that_grades_in_its_shaders_hands_its_grade_to_the_view_model_camera() {
+    use shards::bevy::camera::Hdr;
+    use shards::bevy::render::view::ColorGrading;
+    use shards::motion::camera::Grading;
+
+    let World3 { mut app, camera, .. } = scene("action_render_view_model_grade");
+    app.update();
+    app.update();
+    let vm = view_cameras(&mut app)[0];
+    // A camera always has a grade (Bevy's required component, neutral by default); absent counts as neutral.
+    let grade_of = |app: &App, e: Entity| app.world().get::<ColorGrading>(e).cloned().unwrap_or_default();
+    assert_eq!(grade_of(&app, vm), ColorGrading::default(), "no grade, nothing to hand over");
+
+    // A camera that does not draw in HDR tone maps and grades in each material's shader: the second camera must grade alike.
+    let grade = Grading { temperature: 0.2, saturation: 0.5, ..default() }.bevy();
+    app.world_mut().entity_mut(camera).insert(grade.clone());
+    app.update();
+    assert_eq!(grade_of(&app, vm), grade, "the view model is graded like the world");
+    app.world_mut().entity_mut(camera).remove::<ColorGrading>();
+    app.update();
+    assert_eq!(grade_of(&app, vm), ColorGrading::default(), "and ungraded when the world is");
+
+    // An HDR camera grades the finished picture, which the second camera draws over (with no tone mapping of its own, so no grade).
+    app.world_mut().entity_mut(camera).insert((Hdr, grade));
+    app.update();
+    app.update();
+    assert_eq!(grade_of(&app, vm), ColorGrading::default(), "under HDR the view model is drawn over the graded picture, ungraded");
+}

@@ -1,0 +1,10 @@
+// The lit test room (F13), written by the sandbox's tests (`tests/sandbox/lights.rs`): a floor 12 x 12 m with
+// three walls and no ceiling, a pillar, a Blender lamp node with the `light` property that replaces its own light
+// with the content light (a flashing lamp, a sodium lamp, a torch on the pillar) and a trigger volume over the
+// room that grades the picture (`grading = "rust"`). `scenarios/lights.scenario` lays it on the canyon floor.
+{
+    "lit_room": (
+        file: "levels/lit_room.gltf",
+        required_markers: [(kind: "spawn", name: "door")],
+    ),
+}

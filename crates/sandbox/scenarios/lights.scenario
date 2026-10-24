@@ -1,0 +1,116 @@
+# Lights from content (F13), told by the `lights` query alone, so it runs headless: the lit room
+# (`content/light/lit_room.level.ron`, a glTF whose lamp nodes say `light = "<id>"` and whose trigger volume
+# says `grading = "rust"`) is laid on the canyon floor and the query is asked what the picture's lights and
+# its colour grade are doing. Nothing here is the simulation's: no replay, no snapshot sees a light.
+#
+#   1. six content lights (five point, one spot), each with its definition's numbers; a flicker is a pure
+#      function of the simulation's clock, so a one-letter pattern is a brightness the scenario can name,
+#   2. the shadow budget (`graphics.shadow_lights`): of the three lights that ask for a shadow, the nearest to
+#      the viewer (headless: the player's eye) get one, and none when the budget is 0 or shadows are off,
+#   3. the grading volume covers the room's right half: the picture blends toward `rust` over its 1.5 s while the
+#      player is inside, holds it, and blends back to the camera's own when the player leaves.
+#
+# The room is a level instance that `level_despawn` takes away again. The clock a scenario starts at depends on
+# the ones before it, so the phase of a flasher is not named here (the tests name it from tick 0), and the blend
+# is measured from the tick the player entered.
+
+seed 42
+
+# --- setup (dev): everyone stands down, the settings as shipped, no room
+act npc_set_state id=e7 state=calm
+act npc_set_state id=e8 state=calm
+act npc_set_state id=e14 state=calm
+act npc_set_state id=e6 state=calm
+act heal id=e5
+act stop
+act god on=false
+act settings_set group=graphics reset=true
+act? level_despawn id=lit_room
+step 2
+act lights
+expect result contains "lights: 0 (point 0, spot 0)"
+expect result contains "grading: the camera's own"
+
+# --- 1. the room: six lights, the hero on the left half (outside the zone), 4 m from nothing in particular
+act spawn_level id=lit_room x=112 y=-10 z=0
+expect result contains "spawned level `lit_room`"
+act teleport id=e5 x=109 y=-9.7 z=1
+step 5
+act lights
+expect result contains "lights: 6 (point 5, spot 1)"
+expect result contains "4 flicker"
+expect result contains "viewer: the player at"
+expect result contains "Lamp.Dim"
+expect result contains "Spot.Torch\" spot at"
+
+# a one-letter pattern is a fixed brightness: `g` is 6/12 of the light as written
+act lights id=dimmer
+expect result contains "pattern `g` at 1/s, step 0 = g: 50 % (50000 lm)"
+expect result contains "50000 lm of 100000"
+# noise and a pattern say how they move; a light with no flicker is steady
+act lights id=sodium
+expect result contains "noise 6/s depth 0.25"
+act lights id=tube
+expect result contains "pattern `mmamammmmammamamaaamammma` at 10/s"
+act lights id=lamp
+expect result contains "steady"
+expect result contains "150000 lm of 150000"
+act? lights id=sodum
+expect result contains "no light of definition `sodum` (did you mean `sodium`?)"
+
+# --- 2. the shadow budget: three lights ask for a shadow (lamp, sodium, torch), four may have one
+act lights
+expect result contains "3 want a shadow, 3 cast one (budget 4: graphics.shadow_lights)"
+act settings_set group=graphics key=shadow_lights value=2
+act lights id=torch
+expect result contains "3 want a shadow, 2 cast one (budget 2: graphics.shadow_lights)"
+# the torch is the farthest from the hero's eye on the left half: it is the one without
+expect result contains "shadow: no (over the budget)"
+act lights id=lamp
+expect result contains "shadow: yes"
+act lights id=flasher
+expect result contains "shadow: not asked"
+act settings_set group=graphics key=shadow_lights value=0
+act lights id=lamp
+expect result contains "0 cast one (budget 0"
+expect result contains "shadow: no (budget 0)"
+# shadows off in the settings is a budget of none, whatever shadow_lights says
+act settings_set group=graphics key=shadow_lights value=4
+act settings_set group=graphics key=shadows value=off
+act lights
+expect result contains "0 cast one (budget 0"
+act settings_set group=graphics reset=true
+
+# --- 3. the grading volume
+act lights
+expect result contains "grading: the camera's own"
+act teleport id=e5 x=115 y=-9.7 z=1
+step 45
+act lights
+expect result contains "grading: blending toward `rust`"
+expect result contains "% done"
+step 60
+act lights
+expect result contains "grading: holding `rust` (blend done)"
+expect result contains "shows: temperature 0.100, tint 0.050, saturation 0.800, contrast 1.100"
+# the torch is the nearest light to the right half: the budget of 2 moves to it
+act settings_set group=graphics key=shadow_lights value=2
+act lights id=torch
+expect result contains "shadow: yes"
+act settings_set group=graphics reset=true
+
+# leaving the volume blends back over the same time
+act teleport id=e5 x=109 y=-9.7 z=1
+step 45
+act lights
+expect result contains "grading: blending back to the camera's own"
+step 60
+act lights
+expect result contains "grading: the camera's own"
+
+# --- the room goes again
+act level_despawn id=lit_room
+act settings_set group=graphics reset=true
+step 2
+act lights
+expect result contains "lights: 0 (point 0, spot 0)"

@@ -82,6 +82,7 @@ pub use shards_encounter as encounter;
 pub use shards_fx as fx;
 pub use shards_hitstop as hitstop;
 pub use shards_level as level;
+pub use shards_light as light;
 pub use shards_look as look;
 pub use shards_locale as locale;
 pub use shards_motion as motion;

@@ -59,7 +59,7 @@ pub(crate) fn plugin(app: &mut App) {
     use bevy::transform::TransformSystems;
     use shards_motion::InterpSystems;
 
-    app.add_systems(Update, follow::find_mover_pictures)
+    app.add_systems(PostUpdate, lamps::replace_lamps).add_systems(Update, follow::find_mover_pictures)
         .add_systems(FixedLast, follow::capture_movers.after(InterpSystems::Capture))
         .add_systems(PostUpdate, follow::draw_movers.after(InterpSystems::Blend).before(TransformSystems::Propagate));
 }
@@ -206,6 +206,33 @@ mod follow {
             let local = Transform::from_matrix(above.inverse() * moved * above * picture.rest.to_matrix());
             if *tf != local {
                 *tf = local;
+            }
+        }
+    }
+}
+
+/// A level node's `light=<id>` (a content light, `shards_light`) replaces the lamp the node was exported with: the glTF
+/// loader's own light is taken out of the picture, and the content light stands at the node. A node without a lamp
+/// (an empty) has nothing to take out.
+#[cfg(feature = "render")]
+mod lamps {
+    use bevy::gltf::GltfExtras;
+    use bevy::light::{DirectionalLight, PointLight, SpotLight};
+    use bevy::prelude::*;
+
+    use super::LevelVisual;
+
+    /// The lights the loader just made.
+    type NewLamps<'w, 's> = Query<'w, 's, (Entity, &'static ChildOf), Or<(Added<PointLight>, Added<SpotLight>, Added<DirectionalLight>)>>;
+
+    /// `PostUpdate`, before the frame is extracted: a lamp under a level's picture whose node (its parent) has `light` among
+    /// its extras is despawned.
+    pub(super) fn replace_lamps(mut commands: Commands, lamps: NewLamps, nodes: Query<&GltfExtras>, visuals: Query<(), With<LevelVisual>>, parents: Query<&ChildOf>) {
+        for (lamp, parent) in &lamps {
+            let Ok(extras) = nodes.get(parent.parent()) else { continue };
+            let names_a_light = serde_json::from_str::<serde_json::Value>(&extras.value).is_ok_and(|v| v.get("light").is_some());
+            if names_a_light && parents.iter_ancestors(lamp).any(|a| visuals.contains(a)) {
+                commands.entity(lamp).despawn();
             }
         }
     }

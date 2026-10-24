@@ -18,7 +18,7 @@ use bevy::camera::visibility::{NoFrustumCulling, RenderLayers, VisibilitySystems
 use bevy::camera::{Camera, Camera3d, ClearColorConfig, Hdr, PerspectiveProjection, Projection};
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
-use bevy::render::view::{Msaa, Tonemapping};
+use bevy::render::view::{ColorGrading, Msaa, Tonemapping};
 use shards_content::ContentDb;
 use shards_core::LocalPlayer;
 use shards_look::Look;
@@ -58,7 +58,7 @@ pub(super) fn plugin(app: &mut App) {
 type WorldCameras<'w, 's> = Query<
     'w,
     's,
-    (Entity, &'static FirstPersonCamera, &'static Camera, Has<Hdr>, Option<&'static Msaa>, Option<&'static Tonemapping>),
+    (Entity, &'static FirstPersonCamera, &'static Camera, Has<Hdr>, Option<&'static Msaa>, Option<&'static Tonemapping>, Option<&'static ColorGrading>),
     Without<ViewModelCamera>,
 >;
 
@@ -66,7 +66,7 @@ type WorldCameras<'w, 's> = Query<
 type ViewCameras<'w, 's> = Query<
     'w,
     's,
-    (Entity, &'static ChildOf, &'static mut Camera, &'static mut Projection, Has<Hdr>, Option<&'static Msaa>, Option<&'static Tonemapping>),
+    (Entity, &'static ChildOf, &'static mut Camera, &'static mut Projection, Has<Hdr>, Option<&'static Msaa>, Option<&'static Tonemapping>, Option<&'static ColorGrading>),
     With<ViewModelCamera>,
 >;
 
@@ -108,7 +108,7 @@ fn sync_view_model(
     let player = players.single().ok();
     // A scene camera shot (K3) has the view: the arms are not drawn over it.
     let in_shot = shots.is_some_and(|s| s.playing().is_some());
-    for (world, first, world_camera, hdr, msaa, tonemapping) in &worlds {
+    for (world, first, world_camera, hdr, msaa, tonemapping, world_grading) in &worlds {
         let subject = if first.target == Entity::PLACEHOLDER { player } else { Some(first.target) };
         let shown = subject.and_then(|body| {
             let moveset = bodies.get(body).ok()?.map(|f| f.moveset.as_str());
@@ -128,8 +128,11 @@ fn sync_view_model(
         let right_projection = |p: &Projection| matches!(p, Projection::Perspective(p) if (p.fov - fov).abs() < 1e-6 && (p.near - near).abs() < 1e-9);
         // An HDR world camera has tone mapped what it drew; the view model is drawn over that as it is.
         let tone = if hdr { Some(Tonemapping::None) } else { tonemapping.copied() };
+        // A camera that does not draw in HDR tone maps (and grades, F13) in each material's shader, so the view model's own
+        // camera wants the world camera's grade to match; an HDR one grades the finished picture, which this camera draws over.
+        let grading = if hdr { None } else { world_grading.cloned() };
         let camera = match existing {
-            Some((camera, _, mut cam, mut proj, has_hdr, has_msaa, has_tone)) => {
+            Some((camera, _, mut cam, mut proj, has_hdr, has_msaa, has_tone, has_grading)) => {
                 let active = world_camera.is_active && !in_shot;
                 if cam.order != world_camera.order + 1 || cam.is_active != active {
                     cam.order = world_camera.order + 1;
@@ -156,6 +159,12 @@ fn sync_view_model(
                 {
                     e.insert(tone);
                 }
+                if has_grading != grading.as_ref() {
+                    match &grading {
+                        Some(grading) => e.insert(grading.clone()),
+                        None => e.remove::<ColorGrading>(),
+                    };
+                }
                 camera
             }
             None => {
@@ -177,6 +186,9 @@ fn sync_view_model(
                 }
                 if let Some(tone) = tone {
                     e.insert(tone);
+                }
+                if let Some(grading) = grading {
+                    e.insert(grading);
                 }
                 e.id()
             }

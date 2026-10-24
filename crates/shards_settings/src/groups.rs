@@ -75,6 +75,9 @@ impl ShadowQuality {
     }
 }
 
+/// The most lights from content that may cast shadows at once ([`GraphicsSettings::shadow_lights`]).
+pub const MAX_SHADOW_LIGHTS: u32 = 64;
+
 /// Window and rendering. Applied to the primary window by [`apply_graphics`](crate::apply_graphics)
 /// while there is one; a headless game only keeps the values.
 #[derive(Resource, Reflect, SettingsGroup, Clone, Debug, PartialEq)]
@@ -95,6 +98,10 @@ pub struct GraphicsSettings {
     pub render_scale: f64,
     /// `off`, `low`, `medium` or `high`. The game's lights read it ([`GraphicsSettings::shadow_quality`]).
     pub shadows: String,
+    /// How many lights from content (the `light` kind) cast shadows at once, the ones nearest the camera first (0 to 64,
+    /// [`GraphicsSettings::shadow_light_budget`]): a light that wants shadows and is farther than that many has none.
+    /// Under `shadows = "off"` none does. A cube shadow map is six passes, so this is the knob for a weak GPU.
+    pub shadow_lights: u32,
     /// How much of the foliage and small props the scatter module strews (0 none to 1 all of it,
     /// [`GraphicsSettings::foliage_density`]): fewer instances of the same scatter, never others.
     pub foliage: f64,
@@ -112,6 +119,7 @@ impl Default for GraphicsSettings {
             resolution: "auto".into(),
             render_scale: 1.0,
             shadows: "high".into(),
+            shadow_lights: 4,
             foliage: 1.0,
             interpolation: true,
         }
@@ -142,6 +150,11 @@ impl GraphicsSettings {
         ShadowQuality::parse(&self.shadows).unwrap_or_default()
     }
 
+    /// How many lights from content may cast shadows now: `shadow_lights` within 0 to 64, and none under `shadows = "off"`.
+    pub fn shadow_light_budget(&self) -> usize {
+        if self.shadow_quality() == ShadowQuality::Off { 0 } else { self.shadow_lights.min(MAX_SHADOW_LIGHTS) as usize }
+    }
+
     /// Why these values are not allowed, if they are not (what `settings_set` refuses).
     pub fn check(&self) -> Result<(), String> {
         if self.resolution.trim() != "auto" && self.window_size().is_none() {
@@ -152,6 +165,9 @@ impl GraphicsSettings {
         }
         range("graphics.render_scale", self.render_scale, 0.5, 2.0)?;
         range("graphics.foliage", self.foliage, 0.0, 1.0)?;
+        if self.shadow_lights > MAX_SHADOW_LIGHTS {
+            return Err(format!("graphics.shadow_lights {} is out of range: use a whole number from 0 to {MAX_SHADOW_LIGHTS}", self.shadow_lights));
+        }
         if ShadowQuality::parse(&self.shadows).is_none() {
             return Err(format!("graphics.shadows `{}` is not one of {}", self.shadows, ShadowQuality::NAMES.join(", ")));
         }
@@ -388,6 +404,9 @@ mod tests {
         assert_eq!(g.shadow_quality(), ShadowQuality::High, "an unknown word is the default");
         assert_eq!(GraphicsSettings { resolution: "10x10".into(), ..default() }.window_size(), None);
         assert_eq!(GraphicsSettings { resolution: "auto".into(), ..default() }.window_size(), None);
+        assert_eq!(GraphicsSettings::default().shadow_light_budget(), 4, "four shadow lights by default");
+        assert_eq!(GraphicsSettings { shadow_lights: 1000, ..default() }.shadow_light_budget(), 64, "a hand-edited 1000 is the most");
+        assert_eq!(GraphicsSettings { shadows: "off".into(), ..default() }.shadow_light_budget(), 0, "no shadows is no shadow lights");
         let a = AccessibilitySettings { camera_shake: f64::NAN, fov_deg: 400.0, flashes: "strobe".into(), ..default() };
         assert_eq!((a.shake(), a.fov(), a.flash_level()), (1.0, 120.0, FlashLevel::Full));
         let audio = AudioSettings { master: 0.5, music: 0.5, ..default() };
@@ -403,6 +422,8 @@ mod tests {
         assert!(bad.contains("full, reduced, off"), "{bad}");
         let bad = GraphicsSettings { resolution: "wide".into(), ..default() }.check().unwrap_err();
         assert!(bad.contains("1920x1080"), "{bad}");
+        let bad = GraphicsSettings { shadow_lights: 65, ..default() }.check().unwrap_err();
+        assert!(bad.contains("graphics.shadow_lights 65") && bad.contains("0 to 64"), "{bad}");
         let mut controls = ControlSettings::default();
         controls.hold_or_toggle.insert("gameplay.sprint".into(), "tap".into());
         assert!(controls.check().unwrap_err().contains("press, hold, toggle"));
