@@ -1,0 +1,19 @@
+// The body of the air movement scenario and tests (F7, `scenarios/air_move.scenario`): a fighter with the player's moves
+// that faces its look and moves by the `air_viewer` locomotion (Half-Life's ground friction and air strafing,
+// `characters/air_move.locomotion.ron`). Not in the arena; `spawn_prefab id=air_runner x=0 z=0` brings one, and a
+// player-scope agent drives it with `session --subject eN` and the tools `move`, `jump` and `look`.
+{
+    "air_runner": (
+        components: {
+            "Name": "Runner",
+            "AiKind": ("Runner"),
+            "Team": ("heroes"),
+            "Fighter": (moveset: "player"),
+            "Health": (current: 100.0, max: 100.0),
+            "Stamina": (current: 100.0, max: 100.0, regen: 45.0, delay: 0.5, since_use: 0.5),
+            "Poise": (current: 60.0, max: 60.0, regen: 20.0, delay: 2.0, since_hit: 2.0, broken: 0.0),
+            "CharacterController": (params: "air_viewer"),
+            "Look": ("player"),
+        },
+    ),
+}
